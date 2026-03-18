@@ -3,13 +3,29 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { spawnPty, writePty, resizePty, killPty } from "../lib/pty-bridge";
+import { useWorkspaceStore } from "../stores/workspace";
 import "@xterm/xterm/css/xterm.css";
 
-export default function TerminalPane() {
+interface TerminalPaneProps {
+  paneId: string;
+  isFocused: boolean;
+}
+
+export default function TerminalPane({ paneId, isFocused }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+  const registerSurface = useWorkspaceStore((s) => s.registerSurface);
+  const unregisterSurface = useWorkspaceStore((s) => s.unregisterSurface);
+
+  // Focus the xterm instance when isFocused changes
+  useEffect(() => {
+    if (isFocused && termRef.current) {
+      termRef.current.focus();
+    }
+  }, [isFocused]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -78,6 +94,7 @@ export default function TerminalPane() {
           return;
         }
         ptyIdRef.current = id;
+        registerSurface(paneId, id);
 
         // Send initial resize based on actual terminal dimensions
         const { cols, rows } = term;
@@ -132,16 +149,22 @@ export default function TerminalPane() {
         killPty(id).catch(console.error);
         ptyIdRef.current = null;
       }
+      unregisterSurface(paneId);
     };
+    // paneId is stable for the lifetime of this component
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div
       ref={containerRef}
+      onClick={() => setFocusedPane(paneId)}
       style={{
         width: "100%",
         height: "100%",
         overflow: "hidden",
+        border: isFocused ? "2px solid #89b4fa" : "2px solid transparent",
+        boxSizing: "border-box",
       }}
     />
   );

@@ -18,3 +18,15 @@ body,
   height: 100%;
   display: flex;
 }
+
+/* react-resizable-panels resize handle */
+.resize-handle {
+  flex: 0 0 4px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.resize-handle:hover,
+.resize-handle[data-resize-handle-active] {
+  background-color: #585b70;
+}
