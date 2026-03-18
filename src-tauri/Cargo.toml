@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
-portable-pty = "0.8"
+portable-pty = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 thiserror = "2"
 base64 = "0.22"

@@ -2,8 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { spawnPty, writePty, resizePty } from "../lib/pty-bridge";
+import { spawnPty, writePty, resizePty, killPty } from "../lib/pty-bridge";
 import "@xterm/xterm/css/xterm.css";
 
 export default function TerminalPane() {
@@ -52,17 +51,8 @@ export default function TerminalPane() {
 
     term.open(container);
 
-    // Canvas renderer by default, try WebGL with fallback
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-        term.loadAddon(new CanvasAddon());
-      });
-      term.loadAddon(webglAddon);
-    } catch {
-      term.loadAddon(new CanvasAddon());
-    }
+    // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
+    term.loadAddon(new CanvasAddon());
 
     fitAddon.fit();
 
@@ -82,7 +72,11 @@ export default function TerminalPane() {
       },
     )
       .then((id) => {
-        if (disposed) return;
+        if (disposed) {
+          // React StrictMode double-mount: kill the orphaned PTY
+          killPty(id).catch(console.error);
+          return;
+        }
         ptyIdRef.current = id;
 
         // Send initial resize based on actual terminal dimensions
@@ -102,11 +96,16 @@ export default function TerminalPane() {
       }
     });
 
-    // Resize handling
+    // Debounced resize handling via ResizeObserver
+    let resizeRaf: number | null = null;
     const resizeObserver = new ResizeObserver(() => {
-      if (fitAddonRef.current) {
-        fitAddonRef.current.fit();
-      }
+      if (resizeRaf !== null) return;
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = null;
+        if (fitAddonRef.current) {
+          fitAddonRef.current.fit();
+        }
+      });
     });
     resizeObserver.observe(container);
 
@@ -119,10 +118,20 @@ export default function TerminalPane() {
 
     return () => {
       disposed = true;
+      if (resizeRaf !== null) {
+        cancelAnimationFrame(resizeRaf);
+      }
       resizeObserver.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
       term.dispose();
+
+      // Kill PTY process on cleanup
+      const id = ptyIdRef.current;
+      if (id !== null) {
+        killPty(id).catch(console.error);
+        ptyIdRef.current = null;
+      }
     };
   }, []);
 

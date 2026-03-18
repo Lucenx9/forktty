@@ -122,7 +122,6 @@ impl PtyManager {
     }
 
     /// Kill a PTY process and remove it.
-    #[allow(dead_code)] // Used in Phase 2+ for pane close
     pub fn kill(&mut self, id: u32) -> Result<(), PtyError> {
         let handle = self.ptys.remove(&id).ok_or(PtyError::NotFound(id))?;
         if let Ok(mut child) = handle.child.lock() {

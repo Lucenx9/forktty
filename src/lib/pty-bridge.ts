@@ -1,5 +1,21 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 
+interface PtyEventOutput {
+  kind: "Output";
+  data: string;
+}
+
+interface PtyEventEof {
+  kind: "Eof";
+}
+
+interface PtyEventError {
+  kind: "Error";
+  data: string;
+}
+
+type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError;
+
 /**
  * Spawn a new PTY and start streaming output.
  * Returns the PTY id. Calls onOutput with decoded binary data from the PTY.
@@ -9,25 +25,24 @@ export function spawnPty(
   onOutput: (data: Uint8Array) => void,
   onExit: () => void,
 ): Promise<number> {
-  const onOutputChannel = new Channel<string>();
+  const onOutputChannel = new Channel<PtyEvent>();
 
-  onOutputChannel.onmessage = (message: string) => {
-    if (message === "__EOF__") {
-      onExit();
-      return;
+  onOutputChannel.onmessage = (event: PtyEvent) => {
+    switch (event.kind) {
+      case "Output": {
+        const binary = atob(event.data);
+        const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+        onOutput(bytes);
+        break;
+      }
+      case "Eof":
+        onExit();
+        break;
+      case "Error":
+        console.error("PTY error:", event.data);
+        onExit();
+        break;
     }
-    if (message.startsWith("__ERROR__:")) {
-      console.error("PTY error:", message.slice(10));
-      onExit();
-      return;
-    }
-    // Decode base64 to binary
-    const binary = atob(message);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    onOutput(bytes);
   };
 
   return invoke<number>("pty_spawn", { onOutput: onOutputChannel });
@@ -49,4 +64,11 @@ export function resizePty(
   rows: number,
 ): Promise<void> {
   return invoke("pty_resize", { id, cols, rows });
+}
+
+/**
+ * Kill a PTY process.
+ */
+export function killPty(id: number): Promise<void> {
+  return invoke("pty_kill", { id });
 }
