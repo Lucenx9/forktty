@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(cargo *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Agent(*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Bash(rm -rf /)*"
+    ]
+  },
+  "plansDirectory": "./plans",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/simone/forktty && ([ -f src-tauri/Cargo.toml ] && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>/dev/null || true) && ([ -f package.json ] && npx prettier --write --log-level silent src/ 2>/dev/null || true)"
+          }
+        ]
+      }
+    ]
+  }
+}
