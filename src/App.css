@@ -19,7 +19,7 @@ body,
   display: flex;
 }
 
-/* react-resizable-panels resize handle */
+/* react-resizable-panels v4 resize handle */
 .resize-handle {
   flex: 0 0 4px;
   background: transparent;
@@ -27,6 +27,6 @@ body,
 }
 
 .resize-handle:hover,
-.resize-handle[data-resize-handle-active] {
+.resize-handle[data-separator="active"] {
   background-color: #585b70;
 }

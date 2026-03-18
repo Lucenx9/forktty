@@ -139,8 +139,10 @@ function removeLeaf(
       return { tree: remaining[0]!, focusId: result.focusId };
     }
     const newSizes = node.sizes.filter((_, i) => i !== childIndex);
+    const totalSize = newSizes.reduce((a, b) => a + b, 0);
+    const normalizedSizes = newSizes.map((s) => (s / totalSize) * 100);
     return {
-      tree: { ...node, children: remaining, sizes: newSizes },
+      tree: { ...node, children: remaining, sizes: normalizedSizes },
       focusId: result.focusId,
     };
   }

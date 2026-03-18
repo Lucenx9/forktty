@@ -11,6 +11,9 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // NOTE: These shortcuts override terminal keys (Ctrl+D = EOF, Ctrl+W = delete word).
+      // This matches SPEC.md. Users can still exit shells via `exit` command.
+
       // Ctrl+Shift+D: split down (vertical)
       // Must check Shift first since Ctrl+D without Shift is split right
       if (e.ctrlKey && e.shiftKey && e.key === "D") {
