@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useConfigStore } from "../stores/config";
 import type { AppConfig } from "../lib/pty-bridge";
+import { CloseIcon } from "./Icons";
 
 export default function SettingsPanel() {
   const config = useConfigStore((s) => s.config);
@@ -64,8 +65,12 @@ export default function SettingsPanel() {
           >
             {saving ? "Saving..." : "Save"}
           </button>
-          <button className="settings-close-btn" onClick={toggleSettings}>
-            x
+          <button
+            className="settings-close-btn"
+            onClick={toggleSettings}
+            aria-label="Close settings"
+          >
+            <CloseIcon />
           </button>
         </div>
       </div>

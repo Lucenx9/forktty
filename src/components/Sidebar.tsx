@@ -9,6 +9,7 @@ import {
   worktreeStatus,
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
+import { CloseIcon, MergeIcon, TrashIcon } from "./Icons";
 import WorkspaceMetadataView from "./WorkspaceMetadataView";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
@@ -442,11 +443,6 @@ function WorkspaceEntry({
             className="sidebar-status-dot"
             style={{ backgroundColor: statusColor }}
           />
-          {workspace.unreadCount > 0 && (
-            <span className="sidebar-unread-badge">
-              {workspace.unreadCount}
-            </span>
-          )}
           {editing ? (
             <input
               ref={inputRef}
@@ -468,13 +464,19 @@ function WorkspaceEntry({
               {workspace.name}
             </span>
           )}
+          {workspace.unreadCount > 0 && (
+            <span className="sidebar-unread-badge">
+              {workspace.unreadCount}
+            </span>
+          )}
           {canClose && (
             <button
               className="sidebar-close-btn"
               onClick={handleClose}
               title="Close workspace"
+              aria-label={`Close ${workspace.name}`}
             >
-              x
+              <CloseIcon size={10} />
             </button>
           )}
         </div>
@@ -510,14 +512,16 @@ function WorkspaceEntry({
               onClick={handleMerge}
               title="Merge branch into main"
             >
-              merge
+              <MergeIcon />
+              <span>Merge</span>
             </button>
             <button
               className="sidebar-action-btn sidebar-action-danger"
               onClick={handleRemove}
               title="Remove worktree and delete branch"
             >
-              remove
+              <TrashIcon />
+              <span>Remove</span>
             </button>
           </div>
         )}

@@ -357,15 +357,18 @@ textarea {
 }
 
 .sidebar-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: rgba(205, 214, 244, 0.04);
   border: 1px solid rgba(88, 91, 112, 0.65);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 3px 8px;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  padding: 4px 9px;
   cursor: pointer;
   transition:
     background-color var(--transition-fast),
@@ -384,6 +387,10 @@ textarea {
   background-color: rgba(243, 139, 168, 0.15);
   color: var(--theme-red);
   border-color: var(--theme-red);
+}
+
+.sidebar-action-btn svg {
+  flex-shrink: 0;
 }
 
 /* --- Sidebar close button (visible on hover) --- */
@@ -419,6 +426,10 @@ textarea {
 .sidebar-close-btn:hover {
   background: rgba(243, 139, 168, 0.15);
   color: var(--theme-red);
+}
+
+.sidebar-close-btn svg {
+  flex-shrink: 0;
 }
 
 .sidebar-entry:hover .sidebar-close-btn,
@@ -585,6 +596,10 @@ textarea {
 .notification-close-btn:hover {
   background: rgba(205, 214, 244, 0.06);
   color: var(--theme-fg);
+}
+
+.notification-close-btn svg {
+  flex-shrink: 0;
 }
 
 .notification-list {
@@ -765,6 +780,10 @@ textarea {
 .settings-close-btn:hover {
   background: rgba(205, 214, 244, 0.06);
   color: var(--theme-fg);
+}
+
+.settings-close-btn svg {
+  flex-shrink: 0;
 }
 
 .settings-content {
@@ -1036,6 +1055,16 @@ textarea {
   transform: translateY(-1px);
 }
 
+.find-bar-btn-active {
+  background: rgba(137, 180, 250, 0.14);
+  color: var(--theme-blue);
+  box-shadow: inset 0 0 0 1px rgba(137, 180, 250, 0.16);
+}
+
+.find-bar-btn svg {
+  flex-shrink: 0;
+}
+
 /* --- Toast notifications --- */
 
 .toast-container {
@@ -1104,6 +1133,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  position: relative;
+  z-index: 2;
   height: 30px;
   padding: 0 10px;
   background:
@@ -1198,9 +1229,60 @@ textarea {
     box-shadow var(--transition-med);
 }
 
+.terminal-pane-surface {
+  position: relative;
+  z-index: 0;
+  transition:
+    filter var(--transition-med),
+    opacity var(--transition-med);
+}
+
 .terminal-pane-focused {
   border-color: rgba(137, 180, 250, 0.4);
   box-shadow: inset 0 0 0 1px rgba(137, 180, 250, 0.16);
+}
+
+.terminal-pane-inactive {
+  border-color: rgba(166, 173, 200, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(17, 17, 27, 0.42);
+}
+
+.terminal-pane-inactive::after {
+  content: "";
+  position: absolute;
+  inset: 30px 0 0;
+  z-index: 1;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(17, 17, 27, 0.02),
+      rgba(17, 17, 27, 0.12)
+    );
+  opacity: 0.18;
+  pointer-events: none;
+  transition: opacity var(--transition-med);
+}
+
+.terminal-pane-inactive .pane-toolbar {
+  color: rgba(166, 173, 200, 0.72);
+}
+
+.terminal-pane-inactive .pane-toolbar-title {
+  opacity: 0.88;
+}
+
+.terminal-pane-inactive .terminal-pane-surface {
+  opacity: 0.94;
+  filter: saturate(0.9) brightness(0.94);
+}
+
+.terminal-pane-inactive:hover::after {
+  opacity: 0.1;
+}
+
+.terminal-pane-inactive:hover .terminal-pane-surface {
+  opacity: 0.97;
+  filter: saturate(0.94) brightness(0.97);
 }
 
 /* --- Notification ring (blue glow on panes with unread notifications) --- */
@@ -1707,6 +1789,52 @@ textarea {
   .branch-picker-confirm-btn {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --muted: #9399b2;
+    --sidebar-border: #4a4d68;
+    --sidebar-hover: rgba(69, 71, 90, 0.94);
+    --sidebar-active: rgba(137, 180, 250, 0.22);
+    --sidebar-active-hover: rgba(137, 180, 250, 0.28);
+  }
+
+  .sidebar-entry,
+  .notification-item,
+  .command-palette-item,
+  .branch-picker-item,
+  .context-menu,
+  .settings-input,
+  .settings-select,
+  .find-bar,
+  .find-bar-input,
+  .terminal-pane {
+    border-color: rgba(166, 173, 200, 0.26);
+  }
+
+  .sidebar-entry-active,
+  .command-palette-item-selected,
+  .branch-picker-item-selected,
+  .find-bar-btn-active {
+    border-color: rgba(137, 180, 250, 0.38);
+    background: rgba(137, 180, 250, 0.22);
+  }
+
+  .context-menu-shortcut,
+  .command-palette-shortcut {
+    background: rgba(205, 214, 244, 0.14);
+    color: var(--theme-fg);
+  }
+
+  .terminal-pane-inactive::after {
+    opacity: 0.08;
+  }
+
+  .terminal-pane-inactive .terminal-pane-surface {
+    opacity: 0.97;
+    filter: saturate(0.96) brightness(0.97);
   }
 }
 

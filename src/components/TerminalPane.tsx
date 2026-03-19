@@ -537,6 +537,7 @@ export default function TerminalPane({
   const paneClasses = [
     "terminal-pane",
     isFocused ? "terminal-pane-focused" : "",
+    !isFocused ? "terminal-pane-inactive" : "",
     !isFocused && hasUnreadNotification ? "pane-notification-ring" : "",
     flashBorder ? "pane-focus-flash" : "",
   ]
@@ -576,6 +577,7 @@ export default function TerminalPane({
       )}
       <div
         ref={containerRef}
+        className="terminal-pane-surface"
         onClick={() => setFocusedPane(paneId)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -585,7 +587,7 @@ export default function TerminalPane({
         }}
         style={{
           width: "100%",
-          height: "calc(100% - 28px)",
+          height: "calc(100% - 30px)",
         }}
       />
       {paneContextMenu && (

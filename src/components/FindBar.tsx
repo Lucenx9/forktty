@@ -1,4 +1,10 @@
 import { useState, useRef, useEffect } from "react";
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CloseIcon,
+  MatchCaseIcon,
+} from "./Icons";
 
 interface FindBarProps {
   onFind: (term: string, options: { caseSensitive: boolean }) => void;
@@ -54,29 +60,37 @@ export default function FindBar({
         placeholder="Find..."
       />
       <button
-        className="find-bar-btn"
+        className={`find-bar-btn ${caseSensitive ? "find-bar-btn-active" : ""}`}
         onClick={() => setCaseSensitive(!caseSensitive)}
         title="Case sensitive"
-        style={{ opacity: caseSensitive ? 1 : 0.4 }}
+        aria-label="Toggle case sensitive search"
+        aria-pressed={caseSensitive}
       >
-        Aa
+        <MatchCaseIcon />
       </button>
       <button
         className="find-bar-btn"
         onClick={onFindPrevious}
         title="Previous (Shift+Enter)"
+        aria-label="Find previous match"
       >
-        ^
+        <ChevronUpIcon />
       </button>
       <button
         className="find-bar-btn"
         onClick={onFindNext}
         title="Next (Enter)"
+        aria-label="Find next match"
       >
-        v
+        <ChevronDownIcon />
       </button>
-      <button className="find-bar-btn" onClick={onClose} title="Close (Esc)">
-        x
+      <button
+        className="find-bar-btn"
+        onClick={onClose}
+        title="Close (Esc)"
+        aria-label="Close find bar"
+      >
+        <CloseIcon />
       </button>
     </div>
   );

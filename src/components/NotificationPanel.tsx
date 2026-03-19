@@ -1,4 +1,5 @@
 import { useWorkspaceStore } from "../stores/workspace";
+import { CloseIcon } from "./Icons";
 
 function formatTime(timestamp: number): string {
   const diff = Math.floor((Date.now() - timestamp) / 1000);
@@ -38,8 +39,9 @@ export default function NotificationPanel() {
           <button
             className="notification-close-btn"
             onClick={toggleNotificationPanel}
+            aria-label="Close notifications"
           >
-            x
+            <CloseIcon />
           </button>
         </div>
       </div>
