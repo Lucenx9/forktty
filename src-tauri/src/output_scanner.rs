@@ -49,16 +49,15 @@ impl OutputScanner {
     /// Scan a chunk of PTY output. Returns any detected events.
     pub fn scan(&mut self, data: &[u8]) -> Vec<ScanEvent> {
         let mut events = Vec::new();
-        let osc_data = if self.osc_buf.is_empty() {
-            data.to_vec()
+
+        // 1. Scan for OSC 133 sequences (avoid allocation in the common case)
+        if self.osc_buf.is_empty() {
+            self.scan_osc133(data, &mut events);
         } else {
             let mut combined = std::mem::take(&mut self.osc_buf);
             combined.extend_from_slice(data);
-            combined
-        };
-
-        // 1. Scan for OSC 133 sequences
-        self.scan_osc133(&osc_data, &mut events);
+            self.scan_osc133(&combined, &mut events);
+        }
 
         // 2. Update line buffer and check prompt patterns
         self.update_line_buffer(data, &mut events);
@@ -84,7 +83,12 @@ impl OutputScanner {
             let Some((terminator_start, terminator_len)) =
                 find_osc_terminator(&data[sequence_start..])
             else {
-                self.osc_buf.extend_from_slice(&data[start..]);
+                // Buffer partial sequence; cap at 4KB to prevent memory exhaustion
+                if self.osc_buf.len() + (data.len() - start) <= 4096 {
+                    self.osc_buf.extend_from_slice(&data[start..]);
+                } else {
+                    self.osc_buf.clear(); // discard malformed/oversized sequence
+                }
                 return;
             };
 
@@ -114,7 +118,12 @@ impl OutputScanner {
         }
 
         if let Some(start) = trailing_partial_osc_prefix(data, prefix) {
-            self.osc_buf.extend_from_slice(&data[start..]);
+            let partial = &data[start..];
+            if self.osc_buf.len() + partial.len() <= 4096 {
+                self.osc_buf.extend_from_slice(partial);
+            } else {
+                self.osc_buf.clear();
+            }
         }
     }
 

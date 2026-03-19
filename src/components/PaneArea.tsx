@@ -1,3 +1,4 @@
+import { useRef, useCallback } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { PaneNode } from "../stores/workspace";
@@ -96,6 +97,25 @@ export default function PaneArea({ workspaceId }: PaneAreaProps) {
   );
   const updatePaneSizes = useWorkspaceStore((s) => s.updatePaneSizes);
 
+  // Debounce layout changes to avoid write storms during drag
+  const rafRef = useRef<number | null>(null);
+  const pendingRef = useRef<{ id: string; sizes: number[] } | null>(null);
+  const debouncedPaneLayout = useCallback(
+    (splitId: string, sizes: number[]) => {
+      pendingRef.current = { id: splitId, sizes };
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null;
+          if (pendingRef.current) {
+            updatePaneSizes(pendingRef.current.id, pendingRef.current.sizes);
+            pendingRef.current = null;
+          }
+        });
+      }
+    },
+    [updatePaneSizes],
+  );
+
   if (!root) return null;
 
   // Only pass focusedPaneId when this workspace is active,
@@ -108,7 +128,7 @@ export default function PaneArea({ workspaceId }: PaneAreaProps) {
       focusedPaneId={effectiveFocusId}
       cwd={cwd}
       workspaceId={workspaceId}
-      onPaneLayout={updatePaneSizes}
+      onPaneLayout={debouncedPaneLayout}
     />
   );
 }

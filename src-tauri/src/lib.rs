@@ -233,14 +233,30 @@ fn worktree_merge(name: String) -> Result<String, String> {
 #[tauri::command]
 fn worktree_status(path: String) -> Result<String, String> {
     let canonical = std::fs::canonicalize(&path).map_err(|e| format!("Invalid path: {e}"))?;
-    worktree::status(canonical.to_str().unwrap_or("")).map_err(|e| e.to_string())
+    let canonical_str = canonical.to_str().ok_or("Non-UTF-8 path")?;
+    // Verify path is inside a git repository to prevent arbitrary filesystem access
+    let repo = git2::Repository::discover(canonical_str)
+        .map_err(|_| "Path is not inside a git repository".to_string())?;
+    let workdir = repo.workdir().ok_or("Bare repository")?;
+    if !canonical.starts_with(workdir) {
+        return Err("Path is outside the repository working directory".to_string());
+    }
+    worktree::status(canonical_str).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<i32>, String> {
     let canonical =
         std::fs::canonicalize(&worktree_path).map_err(|e| format!("Invalid path: {e}"))?;
-    worktree::run_hook(canonical.to_str().unwrap_or(""), &hook_name).map_err(|e| e.to_string())
+    let canonical_str = canonical.to_str().ok_or("Non-UTF-8 path")?;
+    // Verify path is inside a git repository to prevent arbitrary hook execution
+    let repo = git2::Repository::discover(canonical_str)
+        .map_err(|_| "Path is not inside a git repository".to_string())?;
+    let workdir = repo.workdir().ok_or("Bare repository")?;
+    if !canonical.starts_with(workdir) {
+        return Err("Path is outside the repository working directory".to_string());
+    }
+    worktree::run_hook(canonical_str, &hook_name).map_err(|e| e.to_string())
 }
 
 // --- Config commands ---
