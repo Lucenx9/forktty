@@ -1,0 +1,5 @@
+# Personal project settings (not shared with team)
+settings.local.json
+
+# Hook logs
+hooks/logs/

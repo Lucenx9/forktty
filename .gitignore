@@ -18,3 +18,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Claude Code personal settings (team settings are in .claude/settings.json)
+.claude/settings.local.json
+
+# ForkTTY runtime
+/tmp/forktty.sock
