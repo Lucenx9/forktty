@@ -35,17 +35,41 @@ interface PaneRect {
 
 type Direction = "left" | "right" | "up" | "down";
 
-// --- Store interface ---
+// --- Workspace ---
 
-interface WorkspaceState {
+interface Workspace {
+  id: string;
+  name: string;
   root: PaneNode;
   surfaces: Record<string, Surface>;
   focusedPaneId: string;
+  workingDir: string;
+  gitBranch: string;
+  createdAt: string;
+}
 
+// --- Store interface ---
+
+interface WorkspaceState {
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  workspaceOrder: string[];
+
+  // Workspace actions
+  createWorkspace: (name?: string) => string;
+  switchWorkspace: (id: string) => void;
+  closeWorkspace: (id: string) => void;
+  renameWorkspace: (id: string, name: string) => void;
+  setWorkspaceGitBranch: (id: string, branch: string) => void;
+  setWorkspaceWorkingDir: (id: string, dir: string) => void;
+
+  // Pane actions (scoped to active workspace)
   splitPane: (paneId: string, direction: "horizontal" | "vertical") => void;
   closePane: (paneId: string) => void;
   setFocusedPane: (paneId: string) => void;
   moveFocus: (direction: Direction) => void;
+
+  // Surface lifecycle (finds workspace by paneId)
   registerSurface: (paneId: string, ptyId: number) => void;
   unregisterSurface: (paneId: string) => void;
 }
@@ -133,7 +157,7 @@ function removeLeaf(
   // Target is deeper in this child
   const result = removeLeaf(child, targetId);
   if (result.tree === null) {
-    // The entire subtree was removed (shouldn't happen for single leaf removal)
+    // The entire subtree was removed
     const remaining = node.children.filter((_, i) => i !== childIndex);
     if (remaining.length === 1) {
       return { tree: remaining[0]!, focusId: result.focusId };
@@ -269,20 +293,137 @@ function findNeighbor(
   return best.id;
 }
 
+// --- Workspace helpers ---
+
+function generateWorkspaceName(workspaces: Record<string, Workspace>): string {
+  const existingNames = new Set(Object.values(workspaces).map((w) => w.name));
+  let n = 1;
+  while (existingNames.has(`Workspace ${n}`)) {
+    n++;
+  }
+  return `Workspace ${n}`;
+}
+
+function makeWorkspace(name: string): Workspace {
+  const leaf = makeLeaf();
+  return {
+    id: crypto.randomUUID(),
+    name,
+    root: leaf,
+    surfaces: { [leaf.surfaceId]: makeSurface(leaf.surfaceId) },
+    focusedPaneId: leaf.id,
+    workingDir: "",
+    gitBranch: "",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** Find workspace ID that contains the given pane. */
+function findWorkspaceIdByPane(
+  workspaces: Record<string, Workspace>,
+  paneId: string,
+): string | null {
+  for (const [wsId, ws] of Object.entries(workspaces)) {
+    if (ws.surfaces[paneId]) {
+      return wsId;
+    }
+  }
+  return null;
+}
+
 // --- Initial state ---
 
-const initialLeaf = makeLeaf();
+const initialWorkspace = makeWorkspace("Workspace 1");
 
 // --- Store ---
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  root: initialLeaf,
-  surfaces: { [initialLeaf.surfaceId]: makeSurface(initialLeaf.surfaceId) },
-  focusedPaneId: initialLeaf.id,
+  workspaces: { [initialWorkspace.id]: initialWorkspace },
+  activeWorkspaceId: initialWorkspace.id,
+  workspaceOrder: [initialWorkspace.id],
+
+  // --- Workspace actions ---
+
+  createWorkspace: (name?) => {
+    const { workspaces, workspaceOrder } = get();
+    const wsName = name ?? generateWorkspaceName(workspaces);
+    const ws = makeWorkspace(wsName);
+
+    set({
+      workspaces: { ...workspaces, [ws.id]: ws },
+      activeWorkspaceId: ws.id,
+      workspaceOrder: [...workspaceOrder, ws.id],
+    });
+
+    return ws.id;
+  },
+
+  switchWorkspace: (id) => {
+    const { workspaces } = get();
+    if (!workspaces[id]) return;
+    set({ activeWorkspaceId: id });
+  },
+
+  closeWorkspace: (id) => {
+    const { workspaces, workspaceOrder, activeWorkspaceId } = get();
+    if (workspaceOrder.length <= 1) return; // Can't close last workspace
+
+    const newWorkspaces = { ...workspaces };
+    delete newWorkspaces[id];
+    const newOrder = workspaceOrder.filter((wId) => wId !== id);
+
+    let newActiveId = activeWorkspaceId;
+    if (activeWorkspaceId === id) {
+      const oldIndex = workspaceOrder.indexOf(id);
+      newActiveId =
+        newOrder[Math.min(oldIndex, newOrder.length - 1)] ?? newOrder[0]!;
+    }
+
+    set({
+      workspaces: newWorkspaces,
+      workspaceOrder: newOrder,
+      activeWorkspaceId: newActiveId,
+    });
+  },
+
+  renameWorkspace: (id, name) => {
+    const { workspaces } = get();
+    const ws = workspaces[id];
+    if (!ws) return;
+
+    set({
+      workspaces: { ...workspaces, [id]: { ...ws, name } },
+    });
+  },
+
+  setWorkspaceGitBranch: (id, branch) => {
+    const { workspaces } = get();
+    const ws = workspaces[id];
+    if (!ws) return;
+
+    set({
+      workspaces: { ...workspaces, [id]: { ...ws, gitBranch: branch } },
+    });
+  },
+
+  setWorkspaceWorkingDir: (id, dir) => {
+    const { workspaces } = get();
+    const ws = workspaces[id];
+    if (!ws) return;
+
+    set({
+      workspaces: { ...workspaces, [id]: { ...ws, workingDir: dir } },
+    });
+  },
+
+  // --- Pane actions (scoped to active workspace) ---
 
   splitPane: (paneId, direction) => {
-    const { root, surfaces } = get();
-    const existingLeaf = findLeaf(root, paneId);
+    const { workspaces, activeWorkspaceId } = get();
+    const ws = workspaces[activeWorkspaceId];
+    if (!ws) return;
+
+    const existingLeaf = findLeaf(ws.root, paneId);
     if (!existingLeaf) return;
 
     const newLeaf = makeLeaf();
@@ -294,77 +435,151 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       sizes: [50, 50],
     };
 
-    const newRoot = replaceNode(root, paneId, splitNode);
+    const newRoot = replaceNode(ws.root, paneId, splitNode);
     if (!newRoot) return;
 
     set({
-      root: newRoot,
-      surfaces: {
-        ...surfaces,
-        [newLeaf.surfaceId]: makeSurface(newLeaf.surfaceId),
+      workspaces: {
+        ...workspaces,
+        [activeWorkspaceId]: {
+          ...ws,
+          root: newRoot,
+          surfaces: {
+            ...ws.surfaces,
+            [newLeaf.surfaceId]: makeSurface(newLeaf.surfaceId),
+          },
+          focusedPaneId: newLeaf.id,
+        },
       },
-      focusedPaneId: newLeaf.id,
     });
   },
 
   closePane: (paneId) => {
-    const { root, surfaces } = get();
-    const leaves = collectLeafIds(root);
+    const { workspaces, activeWorkspaceId } = get();
+    const ws = workspaces[activeWorkspaceId];
+    if (!ws) return;
+
+    const leaves = collectLeafIds(ws.root);
     // Don't close the last pane
     if (leaves.length <= 1) return;
 
-    const result = removeLeaf(root, paneId);
+    const result = removeLeaf(ws.root, paneId);
     if (!result.tree) return;
 
     // Remove the surface for the closed pane
-    const newSurfaces = { ...surfaces };
+    const newSurfaces = { ...ws.surfaces };
     delete newSurfaces[paneId];
 
     set({
-      root: result.tree,
-      surfaces: newSurfaces,
-      focusedPaneId: result.focusId ?? firstLeafId(result.tree),
+      workspaces: {
+        ...workspaces,
+        [activeWorkspaceId]: {
+          ...ws,
+          root: result.tree,
+          surfaces: newSurfaces,
+          focusedPaneId: result.focusId ?? firstLeafId(result.tree),
+        },
+      },
     });
   },
 
   setFocusedPane: (paneId) => {
-    set({ focusedPaneId: paneId });
+    const { workspaces, activeWorkspaceId } = get();
+    const ws = workspaces[activeWorkspaceId];
+    if (!ws) return;
+
+    set({
+      workspaces: {
+        ...workspaces,
+        [activeWorkspaceId]: { ...ws, focusedPaneId: paneId },
+      },
+    });
   },
 
   moveFocus: (direction) => {
-    const { root, focusedPaneId } = get();
-    const rects = buildLayoutRects(root, 0, 0, 1000, 1000);
-    const neighborId = findNeighbor(rects, focusedPaneId, direction);
-    if (neighborId) {
-      set({ focusedPaneId: neighborId });
-    }
-  },
+    const { workspaces, activeWorkspaceId } = get();
+    const ws = workspaces[activeWorkspaceId];
+    if (!ws) return;
 
-  registerSurface: (paneId, ptyId) => {
-    const { surfaces } = get();
-    const surface = surfaces[paneId];
-    if (surface) {
+    const rects = buildLayoutRects(ws.root, 0, 0, 1000, 1000);
+    const neighborId = findNeighbor(rects, ws.focusedPaneId, direction);
+    if (neighborId) {
       set({
-        surfaces: {
-          ...surfaces,
-          [paneId]: { ...surface, ptyId },
+        workspaces: {
+          ...workspaces,
+          [activeWorkspaceId]: { ...ws, focusedPaneId: neighborId },
         },
       });
     }
+  },
+
+  // --- Surface lifecycle (finds workspace by paneId) ---
+
+  registerSurface: (paneId, ptyId) => {
+    const { workspaces } = get();
+    const wsId = findWorkspaceIdByPane(workspaces, paneId);
+    if (!wsId) return;
+
+    const ws = workspaces[wsId]!;
+    const surface = ws.surfaces[paneId];
+    if (!surface) return;
+
+    set({
+      workspaces: {
+        ...workspaces,
+        [wsId]: {
+          ...ws,
+          surfaces: {
+            ...ws.surfaces,
+            [paneId]: { ...surface, ptyId },
+          },
+        },
+      },
+    });
   },
 
   unregisterSurface: (paneId) => {
-    const { surfaces } = get();
-    const surface = surfaces[paneId];
-    if (surface) {
-      set({
-        surfaces: {
-          ...surfaces,
-          [paneId]: { ...surface, ptyId: null },
+    const { workspaces } = get();
+    const wsId = findWorkspaceIdByPane(workspaces, paneId);
+    if (!wsId) return;
+
+    const ws = workspaces[wsId]!;
+    const surface = ws.surfaces[paneId];
+    if (!surface) return;
+
+    set({
+      workspaces: {
+        ...workspaces,
+        [wsId]: {
+          ...ws,
+          surfaces: {
+            ...ws.surfaces,
+            [paneId]: { ...surface, ptyId: null },
+          },
         },
-      });
-    }
+      },
+    });
   },
 }));
 
-export type { PaneNode, PaneLeaf, PaneSplit, Surface, Direction };
+// --- Activity tracking (outside Zustand to avoid re-render churn) ---
+
+const surfaceActivityMap = new Map<string, number>();
+
+export function updateSurfaceActivity(paneId: string): void {
+  surfaceActivityMap.set(paneId, Date.now());
+}
+
+export function getLastActivity(paneId: string): number {
+  return surfaceActivityMap.get(paneId) ?? 0;
+}
+
+export type {
+  PaneNode,
+  PaneLeaf,
+  PaneSplit,
+  Surface,
+  Direction,
+  Workspace,
+  WorkspaceState,
+};

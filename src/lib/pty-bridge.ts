@@ -72,3 +72,18 @@ export function resizePty(
 export function killPty(id: number): Promise<void> {
   return invoke("pty_kill", { id });
 }
+
+/**
+ * Get the current git branch for a directory.
+ * Returns empty string if not a git repo.
+ */
+export function getGitBranch(cwd: string): Promise<string> {
+  return invoke<string>("get_git_branch", { cwd });
+}
+
+/**
+ * Get the app's current working directory.
+ */
+export function getCwd(): Promise<string> {
+  return invoke<string>("get_cwd");
+}

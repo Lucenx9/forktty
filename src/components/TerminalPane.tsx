@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { spawnPty, writePty, resizePty, killPty } from "../lib/pty-bridge";
-import { useWorkspaceStore } from "../stores/workspace";
+import { useWorkspaceStore, updateSurfaceActivity } from "../stores/workspace";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -16,6 +16,7 @@ export default function TerminalPane({ paneId, isFocused }: TerminalPaneProps) {
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const lastActivityCallRef = useRef(0);
   const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
   const registerSurface = useWorkspaceStore((s) => s.registerSurface);
   const unregisterSurface = useWorkspaceStore((s) => s.unregisterSurface);
@@ -79,6 +80,13 @@ export default function TerminalPane({ paneId, isFocused }: TerminalPaneProps) {
       (data) => {
         if (!disposed) {
           term.write(data);
+
+          // Throttled activity tracking (at most once per second)
+          const now = Date.now();
+          if (now - lastActivityCallRef.current > 1000) {
+            lastActivityCallRef.current = now;
+            updateSurfaceActivity(paneId);
+          }
         }
       },
       () => {

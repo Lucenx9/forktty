@@ -91,6 +91,28 @@ fn pty_kill(state: State<'_, AppState>, id: u32) -> Result<(), String> {
     mgr.kill(id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_git_branch(cwd: String) -> Result<String, String> {
+    let repo = match git2::Repository::discover(&cwd) {
+        Ok(r) => r,
+        Err(_) => return Ok(String::new()), // Not a git repo
+    };
+
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(String::new()), // Empty repo, no HEAD
+    };
+
+    Ok(head.shorthand().unwrap_or("detached").to_string())
+}
+
+#[tauri::command]
+fn get_cwd() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -98,7 +120,7 @@ pub fn run() {
             pty_manager: Mutex::new(PtyManager::new()),
         })
         .invoke_handler(tauri::generate_handler![
-            pty_spawn, pty_write, pty_resize, pty_kill
+            pty_spawn, pty_write, pty_resize, pty_kill, get_git_branch, get_cwd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

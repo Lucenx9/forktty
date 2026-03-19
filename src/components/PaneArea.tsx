@@ -3,9 +3,17 @@ import { useWorkspaceStore } from "../stores/workspace";
 import type { PaneNode } from "../stores/workspace";
 import TerminalPane from "./TerminalPane";
 
-function RenderNode({ node }: { node: PaneNode }) {
-  const focusedPaneId = useWorkspaceStore((s) => s.focusedPaneId);
+interface PaneAreaProps {
+  workspaceId: string;
+}
 
+function RenderNode({
+  node,
+  focusedPaneId,
+}: {
+  node: PaneNode;
+  focusedPaneId: string | undefined;
+}) {
   if (node.type === "leaf") {
     return (
       <TerminalPane paneId={node.id} isFocused={node.id === focusedPaneId} />
@@ -17,7 +25,7 @@ function RenderNode({ node }: { node: PaneNode }) {
       {node.children.map((child, i) => (
         <PanelWithHandle key={child.id} index={i} total={node.children.length}>
           <Panel id={child.id} defaultSize={node.sizes[i]} minSize={5}>
-            <RenderNode node={child} />
+            <RenderNode node={child} focusedPaneId={focusedPaneId} />
           </Panel>
         </PanelWithHandle>
       ))}
@@ -47,7 +55,20 @@ function PanelWithHandle({
   );
 }
 
-export default function PaneArea() {
-  const root = useWorkspaceStore((s) => s.root);
-  return <RenderNode node={root} />;
+export default function PaneArea({ workspaceId }: PaneAreaProps) {
+  const root = useWorkspaceStore((s) => s.workspaces[workspaceId]?.root);
+  const isActive = useWorkspaceStore(
+    (s) => s.activeWorkspaceId === workspaceId,
+  );
+  const focusedPaneId = useWorkspaceStore(
+    (s) => s.workspaces[workspaceId]?.focusedPaneId,
+  );
+
+  if (!root) return null;
+
+  // Only pass focusedPaneId when this workspace is active,
+  // so only the active workspace's focused terminal gets DOM focus
+  const effectiveFocusId = isActive ? focusedPaneId : undefined;
+
+  return <RenderNode node={root} focusedPaneId={effectiveFocusId} />;
 }
