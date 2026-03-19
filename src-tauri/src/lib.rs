@@ -1,6 +1,7 @@
 mod notification;
 mod output_scanner;
 mod pty_manager;
+mod socket_api;
 mod worktree;
 
 use base64::Engine;
@@ -8,12 +9,14 @@ use output_scanner::{OutputScanner, ScanEvent};
 use pty_manager::PtyManager;
 use serde::Serialize;
 use std::io::Read;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
 
 struct AppState {
-    pty_manager: Mutex<PtyManager>,
+    pty_manager: Arc<Mutex<PtyManager>>,
+    socket_pending: socket_api::PendingRequests,
+    socket_path: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -30,19 +33,36 @@ fn pty_spawn(
     state: State<'_, AppState>,
     on_output: Channel<PtyEvent>,
     cwd: Option<String>,
+    workspace_id: Option<String>,
+    surface_id: Option<String>,
 ) -> Result<u32, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    let socket_path = state.socket_path.clone();
+
+    // Build env vars for the spawned shell
+    let mut env_pairs: Vec<(String, String)> = Vec::new();
+    if let Some(ref ws_id) = workspace_id {
+        env_pairs.push(("FORKTTY_WORKSPACE_ID".to_string(), ws_id.clone()));
+    }
+    if let Some(ref sf_id) = surface_id {
+        env_pairs.push(("FORKTTY_SURFACE_ID".to_string(), sf_id.clone()));
+    }
+    env_pairs.push(("FORKTTY_SOCKET_PATH".to_string(), socket_path));
+
+    let env_refs: Vec<(&str, &str)> = env_pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     let (id, reader) = {
         let mut mgr = state
             .pty_manager
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
-        mgr.spawn(&shell, 80, 24, cwd.as_deref())
+        mgr.spawn(&shell, 80, 24, cwd.as_deref(), Some(&env_refs))
             .map_err(|e| e.to_string())?
     };
 
-    // Background read loop: read PTY output, scan, send via channel
     std::thread::spawn(move || {
         read_pty_output(reader, on_output);
     });
@@ -63,17 +83,13 @@ fn read_pty_output(mut reader: Box<dyn Read + Send>, channel: Channel<PtyEvent>)
             }
             Ok(n) => {
                 let data = &buf[..n];
-
-                // Run output scanner before forwarding to frontend
                 let scan_events = scanner.scan(data);
 
-                // Send the raw output
                 let encoded = engine.encode(data);
                 if channel.send(PtyEvent::Output(encoded)).is_err() {
                     break;
                 }
 
-                // Send any scan events
                 for event in scan_events {
                     if channel.send(PtyEvent::Scan(event)).is_err() {
                         break;
@@ -121,12 +137,10 @@ fn get_git_branch(cwd: String) -> Result<String, String> {
         Ok(r) => r,
         Err(_) => return Ok(String::new()),
     };
-
     let head = match repo.head() {
         Ok(h) => h,
         Err(_) => return Ok(String::new()),
     };
-
     Ok(head.shorthand().unwrap_or("detached").to_string())
 }
 
@@ -135,6 +149,18 @@ fn get_cwd() -> Result<String, String> {
     std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_socket_path(state: State<'_, AppState>) -> String {
+    state.socket_path.clone()
+}
+
+// --- Socket bridge: frontend responds to bridged requests ---
+
+#[tauri::command]
+fn socket_respond(state: State<'_, AppState>, id: String, result: serde_json::Value) {
+    socket_api::resolve_request(&state.socket_pending, &id, result);
 }
 
 // --- Notification commands ---
@@ -176,12 +202,10 @@ fn worktree_remove(name: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .to_string_lossy()
         .to_string();
-
     let worktrees = worktree::list(&cwd).map_err(|e| e.to_string())?;
     if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
         let _ = worktree::run_hook(&wt.path, "teardown");
     }
-
     worktree::remove(&cwd, &name, true).map_err(|e| e.to_string())
 }
 
@@ -206,9 +230,35 @@ fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let socket_path = std::env::var("FORKTTY_SOCKET_PATH")
+        .unwrap_or_else(|_| "/tmp/forktty.sock".to_string());
+
+    let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    let socket_pending = socket_api::PendingRequests::default();
+
+    let pty_mgr_for_socket = pty_manager.clone();
+    let pending_for_socket = socket_pending.clone();
+    let socket_path_clone = socket_path.clone();
+
     tauri::Builder::default()
         .manage(AppState {
-            pty_manager: Mutex::new(PtyManager::new()),
+            pty_manager,
+            socket_pending,
+            socket_path,
+        })
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            // Start socket server in background thread with its own tokio runtime
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                rt.block_on(socket_api::run(
+                    socket_path_clone,
+                    handle,
+                    pty_mgr_for_socket,
+                    pending_for_socket,
+                ));
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
@@ -217,6 +267,8 @@ pub fn run() {
             pty_kill,
             get_git_branch,
             get_cwd,
+            get_socket_path,
+            socket_respond,
             send_desktop_notification,
             send_custom_notification,
             worktree_create,

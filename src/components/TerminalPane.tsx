@@ -17,12 +17,14 @@ interface TerminalPaneProps {
   paneId: string;
   isFocused: boolean;
   cwd: string;
+  workspaceId: string;
 }
 
 export default function TerminalPane({
   paneId,
   isFocused,
   cwd,
+  workspaceId,
 }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -115,8 +117,8 @@ export default function TerminalPane({
       sendDesktopNotification("ForkTTY", body).catch(console.error);
     }
 
-    spawnPty(
-      (data) => {
+    spawnPty({
+      onOutput: (data) => {
         if (!disposed) {
           term.write(data);
 
@@ -128,14 +130,16 @@ export default function TerminalPane({
           }
         }
       },
-      () => {
+      onExit: () => {
         if (!disposed) {
           term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
         }
       },
-      cwd || undefined,
-      handleScanEvent,
-    )
+      cwd: cwd || undefined,
+      workspaceId,
+      surfaceId: paneId,
+      onScanEvent: handleScanEvent,
+    })
       .then((id) => {
         if (disposed) {
           // React StrictMode double-mount: kill the orphaned PTY

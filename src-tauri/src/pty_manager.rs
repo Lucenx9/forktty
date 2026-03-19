@@ -40,14 +40,15 @@ impl PtyManager {
         }
     }
 
-    /// Spawn a new PTY with the given shell, dimensions, and optional working directory.
-    /// Returns (pty_id, reader) where reader is for the background read loop.
+    /// Spawn a new PTY with the given shell, dimensions, optional working directory,
+    /// and optional env vars for workspace/surface/socket identification.
     pub fn spawn(
         &mut self,
         shell: &str,
         cols: u16,
         rows: u16,
         cwd: Option<&str>,
+        env_vars: Option<&[(&str, &str)]>,
     ) -> Result<(u32, Box<dyn Read + Send>), PtyError> {
         let pty_system = native_pty_system();
 
@@ -64,6 +65,11 @@ impl PtyManager {
         cmd.env("TERM", "xterm-256color");
         if let Some(dir) = cwd {
             cmd.cwd(dir);
+        }
+        if let Some(vars) = env_vars {
+            for (key, val) in vars {
+                cmd.env(key, val);
+            }
         }
 
         let child = pair
@@ -123,6 +129,11 @@ impl PtyManager {
             })
             .map_err(|e| PtyError::Resize(e.to_string()))?;
         Ok(())
+    }
+
+    /// List all active PTY IDs.
+    pub fn list_ids(&self) -> Vec<u32> {
+        self.ptys.keys().copied().collect()
     }
 
     /// Kill a PTY process and remove it.

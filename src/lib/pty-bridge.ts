@@ -46,12 +46,14 @@ type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError | PtyEventScan;
  * Calls onScanEvent when the output scanner detects a prompt or command event.
  * Optional cwd sets the working directory for the shell.
  */
-export function spawnPty(
-  onOutput: (data: Uint8Array) => void,
-  onExit: () => void,
-  cwd?: string,
-  onScanEvent?: (event: ScanEventData) => void,
-): Promise<number> {
+export function spawnPty(opts: {
+  onOutput: (data: Uint8Array) => void;
+  onExit: () => void;
+  cwd?: string;
+  workspaceId?: string;
+  surfaceId?: string;
+  onScanEvent?: (event: ScanEventData) => void;
+}): Promise<number> {
   const onOutputChannel = new Channel<PtyEvent>();
 
   onOutputChannel.onmessage = (event: PtyEvent) => {
@@ -59,19 +61,19 @@ export function spawnPty(
       case "Output": {
         const binary = atob(event.data);
         const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-        onOutput(bytes);
+        opts.onOutput(bytes);
         break;
       }
       case "Eof":
-        onExit();
+        opts.onExit();
         break;
       case "Error":
         console.error("PTY error:", event.data);
-        onExit();
+        opts.onExit();
         break;
       case "Scan":
-        if (onScanEvent) {
-          onScanEvent(event.data);
+        if (opts.onScanEvent) {
+          opts.onScanEvent(event.data);
         }
         break;
     }
@@ -79,7 +81,9 @@ export function spawnPty(
 
   return invoke<number>("pty_spawn", {
     onOutput: onOutputChannel,
-    cwd: cwd ?? null,
+    cwd: opts.cwd ?? null,
+    workspaceId: opts.workspaceId ?? null,
+    surfaceId: opts.surfaceId ?? null,
   });
 }
 
@@ -120,6 +124,22 @@ export function getGitBranch(cwd: string): Promise<string> {
  */
 export function getCwd(): Promise<string> {
   return invoke<string>("get_cwd");
+}
+
+// --- Socket bridge ---
+
+/**
+ * Respond to a socket API request bridged from the backend.
+ */
+export function socketRespond(id: string, result: unknown): Promise<void> {
+  return invoke("socket_respond", { id, result });
+}
+
+/**
+ * Get the socket path used by the app.
+ */
+export function getSocketPath(): Promise<string> {
+  return invoke<string>("get_socket_path");
 }
 
 // --- Notification commands ---

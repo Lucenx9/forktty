@@ -11,10 +11,12 @@ function RenderNode({
   node,
   focusedPaneId,
   cwd,
+  workspaceId,
 }: {
   node: PaneNode;
   focusedPaneId: string | undefined;
   cwd: string;
+  workspaceId: string;
 }) {
   if (node.type === "leaf") {
     return (
@@ -22,6 +24,7 @@ function RenderNode({
         paneId={node.id}
         isFocused={node.id === focusedPaneId}
         cwd={cwd}
+        workspaceId={workspaceId}
       />
     );
   }
@@ -31,7 +34,12 @@ function RenderNode({
       {node.children.map((child, i) => (
         <PanelWithHandle key={child.id} index={i} total={node.children.length}>
           <Panel id={child.id} defaultSize={node.sizes[i]} minSize={5}>
-            <RenderNode node={child} focusedPaneId={focusedPaneId} cwd={cwd} />
+            <RenderNode
+              node={child}
+              focusedPaneId={focusedPaneId}
+              cwd={cwd}
+              workspaceId={workspaceId}
+            />
           </Panel>
         </PanelWithHandle>
       ))}
@@ -79,5 +87,12 @@ export default function PaneArea({ workspaceId }: PaneAreaProps) {
   // so only the active workspace's focused terminal gets DOM focus
   const effectiveFocusId = isActive ? focusedPaneId : undefined;
 
-  return <RenderNode node={root} focusedPaneId={effectiveFocusId} cwd={cwd} />;
+  return (
+    <RenderNode
+      node={root}
+      focusedPaneId={effectiveFocusId}
+      cwd={cwd}
+      workspaceId={workspaceId}
+    />
+  );
 }

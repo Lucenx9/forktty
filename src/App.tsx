@@ -5,7 +5,14 @@ import Sidebar from "./components/Sidebar";
 import NotificationPanel from "./components/NotificationPanel";
 import { useWorkspaceStore } from "./stores/workspace";
 import type { Direction } from "./stores/workspace";
-import { worktreeCreate, worktreeRunHook } from "./lib/pty-bridge";
+import {
+  worktreeCreate,
+  worktreeRunHook,
+  writePty,
+  socketRespond,
+  sendDesktopNotification,
+} from "./lib/pty-bridge";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 export default function App() {
@@ -33,6 +40,177 @@ export default function App() {
   useEffect(() => {
     markWorkspaceRead(activeWorkspaceId);
   }, [activeWorkspaceId, markWorkspaceRead]);
+
+  // Listen for socket API bridge events
+  useEffect(() => {
+    const unlisten = listen<{
+      id: string;
+      method: string;
+      params: Record<string, unknown>;
+    }>("socket-request", (event) => {
+      const { id, method, params } = event.payload;
+      handleSocketRequest(id, method, params);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  function handleSocketRequest(
+    id: string,
+    method: string,
+    params: Record<string, unknown>,
+  ) {
+    const state = useWorkspaceStore.getState();
+    let result: unknown;
+
+    try {
+      switch (method) {
+        case "workspace.list": {
+          const list = state.workspaceOrder.map((wsId) => {
+            const ws = state.workspaces[wsId];
+            return ws
+              ? {
+                  id: ws.id,
+                  name: ws.name,
+                  gitBranch: ws.gitBranch,
+                  workingDir: ws.workingDir,
+                  surfaces: Object.keys(ws.surfaces).length,
+                  active: wsId === state.activeWorkspaceId,
+                }
+              : null;
+          });
+          result = { result: list.filter(Boolean) };
+          break;
+        }
+        case "workspace.create": {
+          const name = params.name as string | undefined;
+          const wsId = state.createWorkspace(name ?? undefined);
+          result = { result: { id: wsId } };
+          break;
+        }
+        case "workspace.select": {
+          const name = params.name as string;
+          const target = state.workspaceOrder.find(
+            (wsId) => state.workspaces[wsId]?.name === name,
+          );
+          if (target) {
+            state.switchWorkspace(target);
+            result = { result: true };
+          } else {
+            result = { error: `Workspace "${name}" not found` };
+          }
+          break;
+        }
+        case "workspace.close": {
+          const name = params.name as string;
+          const target = state.workspaceOrder.find(
+            (wsId) => state.workspaces[wsId]?.name === name,
+          );
+          if (target) {
+            state.closeWorkspace(target);
+            result = { result: true };
+          } else {
+            result = { error: `Workspace "${name}" not found` };
+          }
+          break;
+        }
+        case "surface.list": {
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) {
+            result = {
+              result: Object.values(ws.surfaces).map((s) => ({
+                id: s.id,
+                ptyId: s.ptyId,
+                title: s.title,
+              })),
+            };
+          } else {
+            result = { result: [] };
+          }
+          break;
+        }
+        case "surface.split": {
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) {
+            const dir =
+              (params.direction as string) === "down"
+                ? "vertical"
+                : "horizontal";
+            state.splitPane(ws.focusedPaneId, dir as "horizontal" | "vertical");
+            result = { result: true };
+          } else {
+            result = { error: "No active workspace" };
+          }
+          break;
+        }
+        case "surface.close": {
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) {
+            state.closePane(ws.focusedPaneId);
+            result = { result: true };
+          } else {
+            result = { error: "No active workspace" };
+          }
+          break;
+        }
+        case "surface.send_text": {
+          // Direct PTY write — find the surface's pty_id
+          const surfaceId = params.surface_id as string | undefined;
+          const text = params.text as string;
+          if (surfaceId) {
+            for (const ws of Object.values(state.workspaces)) {
+              const surface = ws.surfaces[surfaceId];
+              if (surface?.ptyId != null) {
+                writePty(surface.ptyId, text).catch(console.error);
+                result = { result: true };
+                break;
+              }
+            }
+            if (!result) result = { error: "Surface not found" };
+          } else if (params.pty_id != null) {
+            // Handled directly in Rust, shouldn't reach here
+            result = { result: true };
+          } else {
+            result = { error: "Missing surface_id or pty_id" };
+          }
+          break;
+        }
+        case "notification.create": {
+          const title = (params.title as string) || "ForkTTY";
+          const body = (params.body as string) || "";
+          state.addNotification(state.activeWorkspaceId, title, body);
+          sendDesktopNotification(title, body).catch(console.error);
+          result = { result: true };
+          break;
+        }
+        case "notification.list": {
+          result = {
+            result: state.notifications.map((n) => ({
+              id: n.id,
+              workspaceName: n.workspaceName,
+              title: n.title,
+              body: n.body,
+              timestamp: n.timestamp,
+              read: n.read,
+            })),
+          };
+          break;
+        }
+        case "notification.clear": {
+          state.clearNotifications();
+          result = { result: true };
+          break;
+        }
+        default:
+          result = { error: `Unknown method: ${method}` };
+      }
+    } catch (err) {
+      result = { error: String(err) };
+    }
+
+    socketRespond(id, result).catch(console.error);
+  }
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
