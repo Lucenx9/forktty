@@ -111,6 +111,9 @@ function WorkspaceEntry({
           className="sidebar-status-dot"
           style={{ backgroundColor: statusColor }}
         />
+        {workspace.unreadCount > 0 && (
+          <span className="sidebar-unread-badge">{workspace.unreadCount}</span>
+        )}
         {editing ? (
           <input
             ref={inputRef}

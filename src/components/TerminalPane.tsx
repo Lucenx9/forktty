@@ -2,7 +2,14 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
-import { spawnPty, writePty, resizePty, killPty } from "../lib/pty-bridge";
+import {
+  spawnPty,
+  writePty,
+  resizePty,
+  killPty,
+  sendDesktopNotification,
+} from "../lib/pty-bridge";
+import type { ScanEventData } from "../lib/pty-bridge";
 import { useWorkspaceStore, updateSurfaceActivity } from "../stores/workspace";
 import "@xterm/xterm/css/xterm.css";
 
@@ -81,6 +88,33 @@ export default function TerminalPane({
     // Spawn PTY and wire data flow
     let disposed = false;
 
+    // Debounce notifications: at most one per 5 seconds per pane
+    let lastNotifyTime = 0;
+
+    function handleScanEvent(event: ScanEventData) {
+      if (disposed) return;
+      if (event.event_type !== "prompt_detected") return;
+
+      // Check if workspace containing this pane is unfocused
+      const state = useWorkspaceStore.getState();
+      const wsId = Object.entries(state.workspaces).find(([, ws]) =>
+        Object.prototype.hasOwnProperty.call(ws.surfaces, paneId),
+      )?.[0];
+      if (!wsId || wsId === state.activeWorkspaceId) return;
+
+      // Debounce
+      const now = Date.now();
+      if (now - lastNotifyTime < 5000) return;
+      lastNotifyTime = now;
+
+      const ws = state.workspaces[wsId];
+      const title = "Prompt waiting";
+      const body = `${ws?.name ?? "Workspace"} needs attention`;
+
+      state.addNotification(wsId, title, body);
+      sendDesktopNotification("ForkTTY", body).catch(console.error);
+    }
+
     spawnPty(
       (data) => {
         if (!disposed) {
@@ -100,6 +134,7 @@ export default function TerminalPane({
         }
       },
       cwd || undefined,
+      handleScanEvent,
     )
       .then((id) => {
         if (disposed) {

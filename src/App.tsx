@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
+import NotificationPanel from "./components/NotificationPanel";
 import { useWorkspaceStore } from "./stores/workspace";
 import type { Direction } from "./stores/workspace";
 import { worktreeCreate, worktreeRunHook } from "./lib/pty-bridge";
@@ -17,8 +18,21 @@ export default function App() {
   const createWorktreeWorkspace = useWorkspaceStore(
     (s) => s.createWorktreeWorkspace,
   );
+  const toggleNotificationPanel = useWorkspaceStore(
+    (s) => s.toggleNotificationPanel,
+  );
+  const jumpToUnread = useWorkspaceStore((s) => s.jumpToUnread);
+  const markWorkspaceRead = useWorkspaceStore((s) => s.markWorkspaceRead);
+  const showNotificationPanel = useWorkspaceStore(
+    (s) => s.showNotificationPanel,
+  );
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+
+  // Mark workspace as read when it becomes active
+  useEffect(() => {
+    markWorkspaceRead(activeWorkspaceId);
+  }, [activeWorkspaceId, markWorkspaceRead]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -66,6 +80,20 @@ export default function App() {
           .catch((err) => {
             console.error("Failed to create worktree:", err);
           });
+        return;
+      }
+
+      // Ctrl+Shift+I: toggle notification panel
+      if (e.ctrlKey && e.shiftKey && e.key === "I") {
+        e.preventDefault();
+        toggleNotificationPanel();
+        return;
+      }
+
+      // Ctrl+Shift+U: jump to latest unread workspace
+      if (e.ctrlKey && e.shiftKey && e.key === "U") {
+        e.preventDefault();
+        jumpToUnread();
         return;
       }
 
@@ -144,6 +172,8 @@ export default function App() {
     closeWorkspace,
     switchWorkspace,
     createWorktreeWorkspace,
+    toggleNotificationPanel,
+    jumpToUnread,
   ]);
 
   return (
@@ -169,6 +199,7 @@ export default function App() {
           </div>
         </Panel>
       </Group>
+      {showNotificationPanel && <NotificationPanel />}
     </div>
   );
 }

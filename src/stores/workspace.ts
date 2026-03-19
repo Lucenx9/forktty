@@ -48,7 +48,18 @@ interface Workspace {
   worktreeDir: string;
   worktreeName: string;
   worktreeStatus: string;
+  unreadCount: number;
   createdAt: string;
+}
+
+interface AppNotification {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  title: string;
+  body: string;
+  timestamp: number;
+  read: boolean;
 }
 
 // --- Store interface ---
@@ -57,6 +68,8 @@ interface WorkspaceState {
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
   workspaceOrder: string[];
+  notifications: AppNotification[];
+  showNotificationPanel: boolean;
 
   // Workspace actions
   createWorkspace: (name?: string) => string;
@@ -83,6 +96,13 @@ interface WorkspaceState {
   // Surface lifecycle (finds workspace by paneId)
   registerSurface: (paneId: string, ptyId: number) => void;
   unregisterSurface: (paneId: string) => void;
+
+  // Notification actions
+  addNotification: (workspaceId: string, title: string, body: string) => void;
+  markWorkspaceRead: (workspaceId: string) => void;
+  clearNotifications: () => void;
+  toggleNotificationPanel: () => void;
+  jumpToUnread: () => void;
 }
 
 // --- Helper functions ---
@@ -336,6 +356,7 @@ function makeWorkspace(
     worktreeDir: opts?.worktreeDir ?? "",
     worktreeName: opts?.worktreeName ?? "",
     worktreeStatus: "",
+    unreadCount: 0,
     createdAt: new Date().toISOString(),
   };
 }
@@ -363,6 +384,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: { [initialWorkspace.id]: initialWorkspace },
   activeWorkspaceId: initialWorkspace.id,
   workspaceOrder: [initialWorkspace.id],
+  notifications: [],
+  showNotificationPanel: false,
 
   // --- Workspace actions ---
 
@@ -619,6 +642,75 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       },
     });
   },
+
+  // --- Notification actions ---
+
+  addNotification: (workspaceId, title, body) => {
+    const { workspaces, notifications } = get();
+    const ws = workspaces[workspaceId];
+    if (!ws) return;
+
+    const notification: AppNotification = {
+      id: crypto.randomUUID(),
+      workspaceId,
+      workspaceName: ws.name,
+      title,
+      body,
+      timestamp: Date.now(),
+      read: false,
+    };
+
+    set({
+      notifications: [notification, ...notifications].slice(0, 100),
+      workspaces: {
+        ...workspaces,
+        [workspaceId]: { ...ws, unreadCount: ws.unreadCount + 1 },
+      },
+    });
+  },
+
+  markWorkspaceRead: (workspaceId) => {
+    const { workspaces, notifications } = get();
+    const ws = workspaces[workspaceId];
+    if (!ws || ws.unreadCount === 0) return;
+
+    set({
+      workspaces: {
+        ...workspaces,
+        [workspaceId]: { ...ws, unreadCount: 0 },
+      },
+      notifications: notifications.map((n) =>
+        n.workspaceId === workspaceId ? { ...n, read: true } : n,
+      ),
+    });
+  },
+
+  clearNotifications: () => {
+    const { workspaces } = get();
+    const cleared: Record<string, Workspace> = {};
+    for (const [id, ws] of Object.entries(workspaces)) {
+      cleared[id] = { ...ws, unreadCount: 0 };
+    }
+    set({ notifications: [], workspaces: cleared });
+  },
+
+  toggleNotificationPanel: () => {
+    set({ showNotificationPanel: !get().showNotificationPanel });
+  },
+
+  jumpToUnread: () => {
+    const { workspaces, workspaceOrder, activeWorkspaceId } = get();
+    // Find first workspace with unread notifications (not the active one)
+    const target = workspaceOrder.find(
+      (id) =>
+        id !== activeWorkspaceId &&
+        workspaces[id] &&
+        workspaces[id]!.unreadCount > 0,
+    );
+    if (target) {
+      set({ activeWorkspaceId: target });
+    }
+  },
 }));
 
 // --- Activity tracking (outside Zustand to avoid re-render churn) ---
@@ -641,4 +733,5 @@ export type {
   Direction,
   Workspace,
   WorkspaceState,
+  AppNotification,
 };

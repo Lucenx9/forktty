@@ -14,18 +14,43 @@ interface PtyEventError {
   data: string;
 }
 
-type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError;
+interface PtyEventScan {
+  kind: "Scan";
+  data: ScanEventData;
+}
+
+interface ScanEventPrompt {
+  event_type: "prompt_detected";
+}
+
+interface ScanEventCommandStarted {
+  event_type: "command_started";
+}
+
+interface ScanEventCommandFinished {
+  event_type: "command_finished";
+  exit_code: number | null;
+}
+
+type ScanEventData =
+  | ScanEventPrompt
+  | ScanEventCommandStarted
+  | ScanEventCommandFinished;
+
+type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError | PtyEventScan;
 
 /**
  * Spawn a new PTY and start streaming output.
  * Returns the PTY id. Calls onOutput with decoded binary data from the PTY.
  * Calls onExit when the shell process exits.
+ * Calls onScanEvent when the output scanner detects a prompt or command event.
  * Optional cwd sets the working directory for the shell.
  */
 export function spawnPty(
   onOutput: (data: Uint8Array) => void,
   onExit: () => void,
   cwd?: string,
+  onScanEvent?: (event: ScanEventData) => void,
 ): Promise<number> {
   const onOutputChannel = new Channel<PtyEvent>();
 
@@ -43,6 +68,11 @@ export function spawnPty(
       case "Error":
         console.error("PTY error:", event.data);
         onExit();
+        break;
+      case "Scan":
+        if (onScanEvent) {
+          onScanEvent(event.data);
+        }
         break;
     }
   };
@@ -80,7 +110,6 @@ export function killPty(id: number): Promise<void> {
 
 /**
  * Get the current git branch for a directory.
- * Returns empty string if not a git repo.
  */
 export function getGitBranch(cwd: string): Promise<string> {
   return invoke<string>("get_git_branch", { cwd });
@@ -93,6 +122,29 @@ export function getCwd(): Promise<string> {
   return invoke<string>("get_cwd");
 }
 
+// --- Notification commands ---
+
+/**
+ * Send a desktop notification via notify-rust (XDG/D-Bus).
+ */
+export function sendDesktopNotification(
+  title: string,
+  body: string,
+): Promise<void> {
+  return invoke("send_desktop_notification", { title, body });
+}
+
+/**
+ * Run a custom notification command with env vars.
+ */
+export function sendCustomNotification(
+  command: string,
+  title: string,
+  body: string,
+): Promise<void> {
+  return invoke("send_custom_notification", { command, title, body });
+}
+
 // --- Worktree commands ---
 
 export interface WorktreeInfo {
@@ -101,10 +153,6 @@ export interface WorktreeInfo {
   branch: string;
 }
 
-/**
- * Create a new git worktree with a branch.
- * Layout: "nested" (.worktrees/<name>), "sibling", "outer-nested".
- */
 export function worktreeCreate(
   name: string,
   layout?: string,
@@ -115,39 +163,22 @@ export function worktreeCreate(
   });
 }
 
-/**
- * List all git worktrees.
- */
 export function worktreeList(): Promise<WorktreeInfo[]> {
   return invoke<WorktreeInfo[]>("worktree_list");
 }
 
-/**
- * Remove a git worktree and delete its branch.
- * Runs .forktty/teardown hook if present.
- */
 export function worktreeRemove(name: string): Promise<void> {
   return invoke("worktree_remove", { name });
 }
 
-/**
- * Merge a worktree's branch into the main checkout's current branch.
- */
 export function worktreeMerge(name: string): Promise<string> {
   return invoke<string>("worktree_merge", { name });
 }
 
-/**
- * Get worktree status: "clean", "dirty", or "conflicts".
- */
 export function worktreeStatus(path: string): Promise<string> {
   return invoke<string>("worktree_status", { path });
 }
 
-/**
- * Run a hook (.forktty/setup or .forktty/teardown) in a worktree.
- * Returns exit code or null if hook doesn't exist.
- */
 export function worktreeRunHook(
   worktreePath: string,
   hookName: string,
@@ -157,3 +188,5 @@ export function worktreeRunHook(
     hookName,
   });
 }
+
+export type { ScanEventData };
