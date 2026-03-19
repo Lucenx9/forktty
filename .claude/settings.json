@@ -4,17 +4,38 @@
     "allow": [
       "Edit(*)",
       "Write(*)",
+      "Read(*)",
       "Bash(cargo *)",
       "Bash(npm *)",
       "Bash(npx *)",
-      "Bash(git *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git branch *)",
+      "Bash(git show *)",
       "Bash(ls *)",
       "Bash(mkdir *)",
-      "Agent(*)"
+      "Bash(cat *)",
+      "Bash(wc *)",
+      "Agent(*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:tauri.app)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(rm *)",
+      "Bash(cargo publish *)",
+      "Bash(cargo tauri build *)"
     ],
     "deny": [
       "Read(.env)",
-      "Bash(rm -rf /)*"
+      "Bash(rm -rf /)*",
+      "Bash(git push --force *)"
     ]
   },
   "plansDirectory": "./plans",
