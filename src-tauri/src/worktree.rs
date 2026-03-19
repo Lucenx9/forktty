@@ -55,8 +55,25 @@ fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> PathBuf {
     }
 }
 
+/// Validate a worktree name: reject path-traversal characters.
+fn validate_worktree_name(name: &str) -> Result<(), WorktreeError> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.contains('\0')
+    {
+        return Err(WorktreeError::Other(format!(
+            "Invalid worktree name: {name:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// Create a new git worktree with a branch.
 pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo, WorktreeError> {
+    validate_worktree_name(name)?;
+
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
 
@@ -222,7 +239,8 @@ pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError
             return Err(WorktreeError::MergeConflicts);
         }
 
-        // Create merge commit
+        // Flush in-memory index to disk before creating the tree
+        index.write()?;
         let tree_oid = index.write_tree()?;
         let tree = repo.find_tree(tree_oid)?;
         let head_commit = repo.head()?.peel_to_commit()?;
@@ -307,4 +325,42 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
         .status()?;
 
     Ok(Some(status.code().unwrap_or(-1)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_worktree_name_valid() {
+        assert!(validate_worktree_name("my-feature").is_ok());
+        assert!(validate_worktree_name("branch_123").is_ok());
+        assert!(validate_worktree_name("a").is_ok());
+    }
+
+    #[test]
+    fn test_validate_worktree_name_rejects_slash() {
+        assert!(validate_worktree_name("foo/bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_worktree_name_rejects_backslash() {
+        assert!(validate_worktree_name("foo\\bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_worktree_name_rejects_dotdot() {
+        assert!(validate_worktree_name("..secret").is_err());
+        assert!(validate_worktree_name("foo..bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_worktree_name_rejects_null() {
+        assert!(validate_worktree_name("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_worktree_name_rejects_empty() {
+        assert!(validate_worktree_name("").is_err());
+    }
 }

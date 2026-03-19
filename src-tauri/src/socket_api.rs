@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::oneshot;
 
@@ -29,10 +29,12 @@ pub type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>;
 
 /// Resolve a pending bridge request (called from Tauri command).
 pub fn resolve_request(pending: &PendingRequests, id: &str, result: Value) {
-    if let Ok(mut map) = pending.lock() {
-        if let Some(tx) = map.remove(id) {
-            let _ = tx.send(result);
-        }
+    let Ok(mut map) = pending.lock() else {
+        eprintln!("CRITICAL: pending requests mutex poisoned");
+        return;
+    };
+    if let Some(tx) = map.remove(id) {
+        let _ = tx.send(result);
     }
 }
 
@@ -45,7 +47,9 @@ pub async fn run(
 ) {
     // Remove stale socket file
     if Path::new(&socket_path).exists() {
-        let _ = std::fs::remove_file(&socket_path);
+        if let Err(e) = std::fs::remove_file(&socket_path) {
+            eprintln!("Warning: could not remove stale socket at {socket_path}: {e}");
+        }
     }
 
     let listener = match UnixListener::bind(&socket_path) {
@@ -56,9 +60,11 @@ pub async fn run(
         }
     };
 
-    // Restrict socket to owner only (mode 0600)
+    // Restrict socket to owner only (mode 0600) — security invariant
     if let Err(e) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
-        eprintln!("Failed to set socket permissions: {e}");
+        eprintln!("CRITICAL: Failed to set socket permissions, removing socket: {e}");
+        let _ = std::fs::remove_file(&socket_path);
+        return;
     }
 
     loop {
@@ -85,17 +91,18 @@ async fn handle_connection(
     pending: PendingRequests,
 ) {
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut buf_reader = BufReader::new(reader);
 
-    // `BufReader::lines()` buffers the full line before yielding it, so the
-    // 1 MiB check below is post-read. Fixing that requires length-prefixed
-    // framing instead of newline-delimited JSON, which is out of scope here.
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.len() > MAX_REQUEST_SIZE {
-            let resp = json!({"id": null, "ok": false, "error": {"code": "request_too_large", "message": "Request exceeds 1 MiB"}});
-            let _ = write_response(&mut writer, &resp).await;
-            break;
-        }
+    loop {
+        let line = match read_limited_line(&mut buf_reader, MAX_REQUEST_SIZE).await {
+            None => break, // EOF
+            Some(Err(_)) => {
+                let resp = json!({"id": null, "ok": false, "error": {"code": "request_too_large", "message": "Request exceeds 1 MiB"}});
+                let _ = write_response(&mut writer, &resp).await;
+                break;
+            }
+            Some(Ok(line)) => line,
+        };
 
         let request: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
@@ -132,6 +139,45 @@ async fn write_response(
     writer.write_all(&bytes).await?;
     writer.flush().await?;
     Ok(())
+}
+
+/// Read a newline-delimited line, enforcing a maximum byte size before allocation.
+/// Uses fill_buf/consume to avoid buffering unbounded data.
+/// Returns None on EOF, Some(Err) if the line exceeds max_size, Some(Ok) otherwise.
+async fn read_limited_line(
+    reader: &mut (impl AsyncBufRead + Unpin),
+    max_size: usize,
+) -> Option<Result<String, ()>> {
+    let mut buf = Vec::with_capacity(4096);
+    loop {
+        let available = reader.fill_buf().await.ok()?;
+        if available.is_empty() {
+            return if buf.is_empty() {
+                None
+            } else {
+                Some(String::from_utf8(buf).map_err(|_| ()))
+            };
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            buf.extend_from_slice(&available[..pos]);
+            reader.consume(pos + 1);
+            break;
+        }
+        let len = available.len();
+        buf.extend_from_slice(available);
+        reader.consume(len);
+        if buf.len() > max_size {
+            return Some(Err(()));
+        }
+    }
+    if buf.len() > max_size {
+        return Some(Err(()));
+    }
+    // Strip trailing \r for Windows-style line endings
+    if buf.last() == Some(&b'\r') {
+        buf.pop();
+    }
+    Some(String::from_utf8(buf).map_err(|_| ()))
 }
 
 async fn dispatch(
@@ -248,6 +294,7 @@ async fn dispatch(
         | "surface.list"
         | "surface.split"
         | "surface.close"
+        | "surface.read_screen"
         | "notification.create"
         | "notification.list"
         | "notification.clear" => bridge_to_frontend(app, pending, method, params).await,
@@ -314,5 +361,107 @@ async fn bridge_to_frontend(
             }
             Err("Request timed out (frontend not responding)".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use tokio::io::BufReader;
+
+    // -- read_limited_line tests --
+
+    #[tokio::test]
+    async fn test_read_limited_line_normal() {
+        let data = b"hello world\n";
+        let mut reader = BufReader::new(Cursor::new(data.to_vec()));
+        let result = read_limited_line(&mut reader, 1024).await;
+        assert_eq!(result, Some(Ok("hello world".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_read_limited_line_oversized() {
+        let data = b"this line is too long\n";
+        let mut reader = BufReader::new(Cursor::new(data.to_vec()));
+        let result = read_limited_line(&mut reader, 5).await;
+        assert_eq!(result, Some(Err(())));
+    }
+
+    #[tokio::test]
+    async fn test_read_limited_line_eof_empty() {
+        let data = b"";
+        let mut reader = BufReader::new(Cursor::new(data.to_vec()));
+        let result = read_limited_line(&mut reader, 1024).await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_read_limited_line_eof_partial() {
+        let data = b"partial";
+        let mut reader = BufReader::new(Cursor::new(data.to_vec()));
+        let result = read_limited_line(&mut reader, 1024).await;
+        assert_eq!(result, Some(Ok("partial".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_read_limited_line_crlf() {
+        let data = b"windows line\r\n";
+        let mut reader = BufReader::new(Cursor::new(data.to_vec()));
+        let result = read_limited_line(&mut reader, 1024).await;
+        assert_eq!(result, Some(Ok("windows line".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_read_limited_line_invalid_utf8() {
+        let data = vec![0xFF, 0xFE, b'\n'];
+        let mut reader = BufReader::new(Cursor::new(data));
+        let result = read_limited_line(&mut reader, 1024).await;
+        assert_eq!(result, Some(Err(())));
+    }
+
+    #[tokio::test]
+    async fn test_read_limited_line_empty_line() {
+        let data = b"\n";
+        let mut reader = BufReader::new(Cursor::new(data.to_vec()));
+        let result = read_limited_line(&mut reader, 1024).await;
+        assert_eq!(result, Some(Ok(String::new())));
+    }
+
+    // -- resolve_request tests --
+
+    #[test]
+    fn test_resolve_request_normal() {
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, mut rx) = oneshot::channel();
+        pending.lock().unwrap().insert("r1".to_string(), tx);
+
+        resolve_request(&pending, "r1", json!({"ok": true}));
+
+        let result = rx.try_recv().unwrap();
+        assert_eq!(result, json!({"ok": true}));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_resolve_request_unknown_id() {
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        // Should not panic
+        resolve_request(&pending, "nonexistent", json!(null));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_resolve_request_poisoned_mutex() {
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        // Poison the mutex by panicking inside a lock
+        let pending_clone = pending.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = pending_clone.lock().unwrap();
+            panic!("intentional poison");
+        })
+        .join();
+        // Mutex is now poisoned — should not panic, just log
+        resolve_request(&pending, "r1", json!(null));
     }
 }
