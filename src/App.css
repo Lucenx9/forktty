@@ -150,6 +150,64 @@ body,
   color: #6c7086;
 }
 
+/* --- Worktree status indicators --- */
+
+.sidebar-wt-status {
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.sidebar-wt-clean {
+  color: #a6e3a1;
+}
+
+.sidebar-wt-dirty {
+  color: #f9e2af;
+  background: rgba(249, 226, 175, 0.1);
+}
+
+.sidebar-wt-conflicts {
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.1);
+}
+
+/* --- Sidebar entry actions (worktree merge/remove) --- */
+
+.sidebar-entry-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  padding-left: 12px;
+}
+
+.sidebar-action-btn {
+  background: transparent;
+  border: 1px solid #45475a;
+  border-radius: 3px;
+  color: #6c7086;
+  font-family: inherit;
+  font-size: 9px;
+  padding: 1px 5px;
+  cursor: pointer;
+  transition:
+    background-color 0.1s ease,
+    color 0.1s ease;
+}
+
+.sidebar-action-btn:hover {
+  background-color: #313244;
+  color: #cdd6f4;
+}
+
+.sidebar-action-danger:hover {
+  background-color: rgba(243, 139, 168, 0.15);
+  color: #f38ba8;
+  border-color: #f38ba8;
+}
+
 /* --- Sidebar rename input --- */
 
 .sidebar-rename-input {
@@ -165,10 +223,16 @@ body,
   outline: none;
 }
 
-/* --- New workspace button --- */
+/* --- New workspace buttons --- */
+
+.sidebar-buttons {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+}
 
 .sidebar-new-btn {
-  margin: 6px;
+  flex: 1;
   padding: 6px;
   background: transparent;
   border: 1px dashed #45475a;
@@ -187,4 +251,14 @@ body,
   background-color: #313244;
   color: #cdd6f4;
   border-color: #585b70;
+}
+
+.sidebar-worktree-btn {
+  border-color: rgba(166, 227, 161, 0.3);
+  color: rgba(166, 227, 161, 0.6);
+}
+
+.sidebar-worktree-btn:hover {
+  border-color: #a6e3a1;
+  color: #a6e3a1;
 }

@@ -1,4 +1,5 @@
 mod pty_manager;
+mod worktree;
 
 use base64::Engine;
 use pty_manager::PtyManager;
@@ -21,7 +22,11 @@ enum PtyEvent {
 }
 
 #[tauri::command]
-fn pty_spawn(state: State<'_, AppState>, on_output: Channel<PtyEvent>) -> Result<u32, String> {
+fn pty_spawn(
+    state: State<'_, AppState>,
+    on_output: Channel<PtyEvent>,
+    cwd: Option<String>,
+) -> Result<u32, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 
     let (id, reader) = {
@@ -29,7 +34,8 @@ fn pty_spawn(state: State<'_, AppState>, on_output: Channel<PtyEvent>) -> Result
             .pty_manager
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
-        mgr.spawn(&shell, 80, 24).map_err(|e| e.to_string())?
+        mgr.spawn(&shell, 80, 24, cwd.as_deref())
+            .map_err(|e| e.to_string())?
     };
 
     // Background read loop: read PTY output, base64 encode, send via channel
@@ -113,6 +119,63 @@ fn get_cwd() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+// --- Worktree commands ---
+
+#[tauri::command]
+fn worktree_create(name: String, layout: Option<String>) -> Result<worktree::WorktreeInfo, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    let layout = layout.as_deref().unwrap_or("nested");
+    worktree::create(&cwd, &name, layout).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn worktree_list() -> Result<Vec<worktree::WorktreeInfo>, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    worktree::list(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn worktree_remove(name: String) -> Result<(), String> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+
+    // Find the worktree path first for teardown hook
+    let worktrees = worktree::list(&cwd).map_err(|e| e.to_string())?;
+    if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
+        // Run teardown hook before removal
+        let _ = worktree::run_hook(&wt.path, "teardown");
+    }
+
+    worktree::remove(&cwd, &name, true).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn worktree_merge(name: String) -> Result<String, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    worktree::merge(&cwd, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn worktree_status(path: String) -> Result<String, String> {
+    worktree::status(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<i32>, String> {
+    worktree::run_hook(&worktree_path, &hook_name).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -120,7 +183,18 @@ pub fn run() {
             pty_manager: Mutex::new(PtyManager::new()),
         })
         .invoke_handler(tauri::generate_handler![
-            pty_spawn, pty_write, pty_resize, pty_kill, get_git_branch, get_cwd
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill,
+            get_git_branch,
+            get_cwd,
+            worktree_create,
+            worktree_list,
+            worktree_remove,
+            worktree_merge,
+            worktree_status,
+            worktree_run_hook
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,6 +4,7 @@ import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
 import { useWorkspaceStore } from "./stores/workspace";
 import type { Direction } from "./stores/workspace";
+import { worktreeCreate, worktreeRunHook } from "./lib/pty-bridge";
 import "./App.css";
 
 export default function App() {
@@ -13,6 +14,9 @@ export default function App() {
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
+  const createWorktreeWorkspace = useWorkspaceStore(
+    (s) => s.createWorktreeWorkspace,
+  );
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
 
@@ -39,6 +43,29 @@ export default function App() {
           }
         }
         closeWorkspace(state.activeWorkspaceId);
+        return;
+      }
+
+      // Ctrl+Shift+N: new worktree workspace
+      if (e.ctrlKey && e.shiftKey && e.key === "N") {
+        e.preventDefault();
+        const name = window.prompt("Worktree name (becomes branch name):");
+        if (!name || !name.trim()) return;
+        const trimmed = name.trim();
+        worktreeCreate(trimmed)
+          .then((info) => {
+            createWorktreeWorkspace(
+              trimmed,
+              info.path,
+              info.branch,
+              info.path,
+              info.name,
+            );
+            worktreeRunHook(info.path, "setup").catch(console.error);
+          })
+          .catch((err) => {
+            console.error("Failed to create worktree:", err);
+          });
         return;
       }
 
@@ -116,6 +143,7 @@ export default function App() {
     createWorkspace,
     closeWorkspace,
     switchWorkspace,
+    createWorktreeWorkspace,
   ]);
 
   return (

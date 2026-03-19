@@ -9,9 +9,14 @@ import "@xterm/xterm/css/xterm.css";
 interface TerminalPaneProps {
   paneId: string;
   isFocused: boolean;
+  cwd: string;
 }
 
-export default function TerminalPane({ paneId, isFocused }: TerminalPaneProps) {
+export default function TerminalPane({
+  paneId,
+  isFocused,
+  cwd,
+}: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<number | null>(null);
@@ -94,6 +99,7 @@ export default function TerminalPane({ paneId, isFocused }: TerminalPaneProps) {
           term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
         }
       },
+      cwd || undefined,
     )
       .then((id) => {
         if (disposed) {

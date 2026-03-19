@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useWorkspaceStore, getLastActivity } from "../stores/workspace";
 import type { Workspace } from "../stores/workspace";
-import { getCwd, getGitBranch } from "../lib/pty-bridge";
+import {
+  getCwd,
+  getGitBranch,
+  worktreeCreate,
+  worktreeMerge,
+  worktreeRemove,
+  worktreeRunHook,
+  worktreeStatus,
+} from "../lib/pty-bridge";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
 
@@ -23,6 +31,7 @@ function WorkspaceEntry({
 }) {
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+  const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(workspace.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +63,43 @@ function WorkspaceEntry({
     }
     setEditing(false);
   }
+
+  function handleMerge(e: React.MouseEvent) {
+    e.stopPropagation();
+    worktreeMerge(workspace.worktreeName)
+      .then((msg) => {
+        console.log("Merge result:", msg);
+      })
+      .catch((err) => {
+        console.error("Merge failed:", err);
+      });
+  }
+
+  function handleRemove(e: React.MouseEvent) {
+    e.stopPropagation();
+    const statusWarning =
+      workspace.worktreeStatus === "dirty"
+        ? " (has uncommitted changes!)"
+        : workspace.worktreeStatus === "conflicts"
+          ? " (has merge conflicts!)"
+          : "";
+    if (
+      !window.confirm(
+        `Remove worktree "${workspace.worktreeName}" and delete branch?${statusWarning}`,
+      )
+    ) {
+      return;
+    }
+    worktreeRemove(workspace.worktreeName)
+      .then(() => {
+        closeWorkspace(workspace.id);
+      })
+      .catch((err) => {
+        console.error("Remove failed:", err);
+      });
+  }
+
+  const isWorktree = workspace.worktreeDir !== "";
 
   return (
     <div
@@ -90,6 +136,13 @@ function WorkspaceEntry({
       {workspace.gitBranch && (
         <div className="sidebar-entry-meta">
           <span className="sidebar-branch">{workspace.gitBranch}</span>
+          {isWorktree && workspace.worktreeStatus && (
+            <span
+              className={`sidebar-wt-status sidebar-wt-${workspace.worktreeStatus}`}
+            >
+              {workspace.worktreeStatus}
+            </span>
+          )}
         </div>
       )}
       {workspace.workingDir && (
@@ -97,6 +150,24 @@ function WorkspaceEntry({
           <span className="sidebar-cwd">
             {truncatePath(workspace.workingDir, 28)}
           </span>
+        </div>
+      )}
+      {isWorktree && isActive && (
+        <div className="sidebar-entry-actions">
+          <button
+            className="sidebar-action-btn"
+            onClick={handleMerge}
+            title="Merge branch into main"
+          >
+            merge
+          </button>
+          <button
+            className="sidebar-action-btn sidebar-action-danger"
+            onClick={handleRemove}
+            title="Remove worktree and delete branch"
+          >
+            remove
+          </button>
         </div>
       )}
     </div>
@@ -108,12 +179,16 @@ export default function Sidebar() {
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
+  const createWorktreeWorkspace = useWorkspaceStore(
+    (s) => s.createWorktreeWorkspace,
+  );
   const setWorkspaceGitBranch = useWorkspaceStore(
     (s) => s.setWorkspaceGitBranch,
   );
   const setWorkspaceWorkingDir = useWorkspaceStore(
     (s) => s.setWorkspaceWorkingDir,
   );
+  const setWorktreeStatus = useWorkspaceStore((s) => s.setWorktreeStatus);
 
   // 1-second tick for status dot re-evaluation
   const [now, setNow] = useState(Date.now());
@@ -155,6 +230,46 @@ export default function Sidebar() {
     }
   }, [activeWorkspaceId, setWorkspaceGitBranch]);
 
+  // Poll worktree status every 5 seconds for worktree-backed workspaces
+  useEffect(() => {
+    function refreshStatus() {
+      const { workspaces: current } = useWorkspaceStore.getState();
+      for (const [id, ws] of Object.entries(current)) {
+        if (ws.worktreeDir) {
+          worktreeStatus(ws.worktreeDir)
+            .then((status) => setWorktreeStatus(id, status))
+            .catch(() => {});
+        }
+      }
+    }
+    refreshStatus();
+    const interval = setInterval(refreshStatus, 5000);
+    return () => clearInterval(interval);
+  }, [setWorktreeStatus]);
+
+  function handleNewWorktree() {
+    const name = window.prompt("Worktree name (becomes branch name):");
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+
+    worktreeCreate(trimmed)
+      .then((info) => {
+        const wsId = createWorktreeWorkspace(
+          trimmed,
+          info.path,
+          info.branch,
+          info.path,
+          info.name,
+        );
+        // Run setup hook
+        worktreeRunHook(info.path, "setup").catch(console.error);
+        return wsId;
+      })
+      .catch((err) => {
+        console.error("Failed to create worktree:", err);
+      });
+  }
+
   return (
     <div className="sidebar">
       <div className="sidebar-header">Workspaces</div>
@@ -172,13 +287,22 @@ export default function Sidebar() {
           );
         })}
       </div>
-      <button
-        className="sidebar-new-btn"
-        onClick={() => createWorkspace()}
-        title="New workspace (Ctrl+N)"
-      >
-        + New
-      </button>
+      <div className="sidebar-buttons">
+        <button
+          className="sidebar-new-btn"
+          onClick={() => createWorkspace()}
+          title="New workspace (Ctrl+N)"
+        >
+          + New
+        </button>
+        <button
+          className="sidebar-new-btn sidebar-worktree-btn"
+          onClick={handleNewWorktree}
+          title="New worktree workspace (Ctrl+Shift+N)"
+        >
+          + Worktree
+        </button>
+      </div>
     </div>
   );
 }

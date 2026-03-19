@@ -20,10 +20,12 @@ type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError;
  * Spawn a new PTY and start streaming output.
  * Returns the PTY id. Calls onOutput with decoded binary data from the PTY.
  * Calls onExit when the shell process exits.
+ * Optional cwd sets the working directory for the shell.
  */
 export function spawnPty(
   onOutput: (data: Uint8Array) => void,
   onExit: () => void,
+  cwd?: string,
 ): Promise<number> {
   const onOutputChannel = new Channel<PtyEvent>();
 
@@ -45,7 +47,10 @@ export function spawnPty(
     }
   };
 
-  return invoke<number>("pty_spawn", { onOutput: onOutputChannel });
+  return invoke<number>("pty_spawn", {
+    onOutput: onOutputChannel,
+    cwd: cwd ?? null,
+  });
 }
 
 /**
@@ -86,4 +91,69 @@ export function getGitBranch(cwd: string): Promise<string> {
  */
 export function getCwd(): Promise<string> {
   return invoke<string>("get_cwd");
+}
+
+// --- Worktree commands ---
+
+export interface WorktreeInfo {
+  name: string;
+  path: string;
+  branch: string;
+}
+
+/**
+ * Create a new git worktree with a branch.
+ * Layout: "nested" (.worktrees/<name>), "sibling", "outer-nested".
+ */
+export function worktreeCreate(
+  name: string,
+  layout?: string,
+): Promise<WorktreeInfo> {
+  return invoke<WorktreeInfo>("worktree_create", {
+    name,
+    layout: layout ?? null,
+  });
+}
+
+/**
+ * List all git worktrees.
+ */
+export function worktreeList(): Promise<WorktreeInfo[]> {
+  return invoke<WorktreeInfo[]>("worktree_list");
+}
+
+/**
+ * Remove a git worktree and delete its branch.
+ * Runs .forktty/teardown hook if present.
+ */
+export function worktreeRemove(name: string): Promise<void> {
+  return invoke("worktree_remove", { name });
+}
+
+/**
+ * Merge a worktree's branch into the main checkout's current branch.
+ */
+export function worktreeMerge(name: string): Promise<string> {
+  return invoke<string>("worktree_merge", { name });
+}
+
+/**
+ * Get worktree status: "clean", "dirty", or "conflicts".
+ */
+export function worktreeStatus(path: string): Promise<string> {
+  return invoke<string>("worktree_status", { path });
+}
+
+/**
+ * Run a hook (.forktty/setup or .forktty/teardown) in a worktree.
+ * Returns exit code or null if hook doesn't exist.
+ */
+export function worktreeRunHook(
+  worktreePath: string,
+  hookName: string,
+): Promise<number | null> {
+  return invoke<number | null>("worktree_run_hook", {
+    worktreePath,
+    hookName,
+  });
 }

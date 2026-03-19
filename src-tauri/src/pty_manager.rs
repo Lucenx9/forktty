@@ -40,13 +40,14 @@ impl PtyManager {
         }
     }
 
-    /// Spawn a new PTY with the given shell and dimensions.
+    /// Spawn a new PTY with the given shell, dimensions, and optional working directory.
     /// Returns (pty_id, reader) where reader is for the background read loop.
     pub fn spawn(
         &mut self,
         shell: &str,
         cols: u16,
         rows: u16,
+        cwd: Option<&str>,
     ) -> Result<(u32, Box<dyn Read + Send>), PtyError> {
         let pty_system = native_pty_system();
 
@@ -61,6 +62,9 @@ impl PtyManager {
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
+        if let Some(dir) = cwd {
+            cmd.cwd(dir);
+        }
 
         let child = pair
             .slave

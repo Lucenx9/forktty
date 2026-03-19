@@ -45,6 +45,9 @@ interface Workspace {
   focusedPaneId: string;
   workingDir: string;
   gitBranch: string;
+  worktreeDir: string;
+  worktreeName: string;
+  worktreeStatus: string;
   createdAt: string;
 }
 
@@ -57,11 +60,19 @@ interface WorkspaceState {
 
   // Workspace actions
   createWorkspace: (name?: string) => string;
+  createWorktreeWorkspace: (
+    name: string,
+    workingDir: string,
+    gitBranch: string,
+    worktreeDir: string,
+    worktreeName: string,
+  ) => string;
   switchWorkspace: (id: string) => void;
   closeWorkspace: (id: string) => void;
   renameWorkspace: (id: string, name: string) => void;
   setWorkspaceGitBranch: (id: string, branch: string) => void;
   setWorkspaceWorkingDir: (id: string, dir: string) => void;
+  setWorktreeStatus: (id: string, status: string) => void;
 
   // Pane actions (scoped to active workspace)
   splitPane: (paneId: string, direction: "horizontal" | "vertical") => void;
@@ -304,7 +315,15 @@ function generateWorkspaceName(workspaces: Record<string, Workspace>): string {
   return `Workspace ${n}`;
 }
 
-function makeWorkspace(name: string): Workspace {
+function makeWorkspace(
+  name: string,
+  opts?: {
+    workingDir?: string;
+    gitBranch?: string;
+    worktreeDir?: string;
+    worktreeName?: string;
+  },
+): Workspace {
   const leaf = makeLeaf();
   return {
     id: crypto.randomUUID(),
@@ -312,8 +331,11 @@ function makeWorkspace(name: string): Workspace {
     root: leaf,
     surfaces: { [leaf.surfaceId]: makeSurface(leaf.surfaceId) },
     focusedPaneId: leaf.id,
-    workingDir: "",
-    gitBranch: "",
+    workingDir: opts?.workingDir ?? "",
+    gitBranch: opts?.gitBranch ?? "",
+    worktreeDir: opts?.worktreeDir ?? "",
+    worktreeName: opts?.worktreeName ?? "",
+    worktreeStatus: "",
     createdAt: new Date().toISOString(),
   };
 }
@@ -348,6 +370,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const { workspaces, workspaceOrder } = get();
     const wsName = name ?? generateWorkspaceName(workspaces);
     const ws = makeWorkspace(wsName);
+
+    set({
+      workspaces: { ...workspaces, [ws.id]: ws },
+      activeWorkspaceId: ws.id,
+      workspaceOrder: [...workspaceOrder, ws.id],
+    });
+
+    return ws.id;
+  },
+
+  createWorktreeWorkspace: (
+    name,
+    workingDir,
+    gitBranch,
+    worktreeDir,
+    worktreeName,
+  ) => {
+    const { workspaces, workspaceOrder } = get();
+    const ws = makeWorkspace(name, {
+      workingDir,
+      gitBranch,
+      worktreeDir,
+      worktreeName,
+    });
 
     set({
       workspaces: { ...workspaces, [ws.id]: ws },
@@ -413,6 +459,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     set({
       workspaces: { ...workspaces, [id]: { ...ws, workingDir: dir } },
+    });
+  },
+
+  setWorktreeStatus: (id, status) => {
+    const { workspaces } = get();
+    const ws = workspaces[id];
+    if (!ws) return;
+
+    set({
+      workspaces: {
+        ...workspaces,
+        [id]: { ...ws, worktreeStatus: status },
+      },
     });
   },
 
