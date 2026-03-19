@@ -55,7 +55,7 @@ Each entry in the sidebar displays:
 │  Frontend (React 19 + TypeScript + Vite)            │
 │                                                     │
 │  ┌─────────┐  ┌─────────────────────────────────┐   │
-│  │ Sidebar  │  │  Pane Area (Allotment splits)   │   │
+│  │ Sidebar  │  │  Pane Area (react-resizable-panels splits) │   │
 │  │          │  │  ┌──────────┐ ┌──────────┐      │   │
 │  │ workspace│  │  │ xterm.js │ │ xterm.js │      │   │
 │  │ list     │  │  │ (WebGL)  │ │ (canvas) │      │   │

@@ -1,0 +1,459 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ConfigError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("TOML parse error: {0}")]
+    TomlParse(#[from] toml::de::Error),
+    #[error("TOML serialize error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
+    #[error("Config directory not found")]
+    NoCfgDir,
+}
+
+// --- ForkTTY config (TOML) ---
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppConfig {
+    #[serde(default)]
+    pub general: GeneralConfig,
+    #[serde(default)]
+    pub appearance: AppearanceConfig,
+    #[serde(default)]
+    pub notifications: NotificationConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneralConfig {
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default = "default_shell")]
+    pub shell: String,
+    #[serde(default = "default_worktree_layout")]
+    pub worktree_layout: String,
+    #[serde(default)]
+    pub notification_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppearanceConfig {
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: u16,
+    #[serde(default = "default_sidebar_position")]
+    pub sidebar_position: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationConfig {
+    #[serde(default = "default_true")]
+    pub desktop: bool,
+    #[serde(default = "default_true")]
+    pub sound: bool,
+    #[serde(default = "default_idle_threshold")]
+    pub idle_threshold_ms: u64,
+}
+
+fn default_theme() -> String {
+    "ghostty".to_string()
+}
+fn default_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+fn default_worktree_layout() -> String {
+    "nested".to_string()
+}
+fn default_font_family() -> String {
+    "JetBrains Mono".to_string()
+}
+fn default_font_size() -> u16 {
+    14
+}
+fn default_sidebar_position() -> String {
+    "left".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_idle_threshold() -> u64 {
+    2000
+}
+
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+            shell: default_shell(),
+            worktree_layout: default_worktree_layout(),
+            notification_command: String::new(),
+        }
+    }
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            font_family: default_font_family(),
+            font_size: default_font_size(),
+            sidebar_position: default_sidebar_position(),
+        }
+    }
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            desktop: true,
+            sound: true,
+            idle_threshold_ms: default_idle_threshold(),
+        }
+    }
+}
+
+/// Get ForkTTY config directory (~/.config/forktty/)
+fn config_dir() -> Result<PathBuf, ConfigError> {
+    dirs::config_dir()
+        .map(|d| d.join("forktty"))
+        .ok_or(ConfigError::NoCfgDir)
+}
+
+/// Get ForkTTY config file path
+fn config_path() -> Result<PathBuf, ConfigError> {
+    Ok(config_dir()?.join("config.toml"))
+}
+
+/// Load ForkTTY config, returning defaults if file doesn't exist.
+pub fn load_config() -> Result<AppConfig, ConfigError> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok(AppConfig::default());
+    }
+    let content = fs::read_to_string(&path)?;
+    let config: AppConfig = toml::from_str(&content)?;
+    Ok(config)
+}
+
+/// Save ForkTTY config to disk.
+pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
+    let dir = config_dir()?;
+    fs::create_dir_all(&dir)?;
+    let content = toml::to_string_pretty(config)?;
+    fs::write(config_path()?, content)?;
+    Ok(())
+}
+
+// --- Ghostty theme parsing ---
+
+/// Parsed terminal theme colors.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TerminalTheme {
+    pub background: Option<String>,
+    pub foreground: Option<String>,
+    pub cursor: Option<String>,
+    pub selection_background: Option<String>,
+    pub selection_foreground: Option<String>,
+    pub black: Option<String>,
+    pub red: Option<String>,
+    pub green: Option<String>,
+    pub yellow: Option<String>,
+    pub blue: Option<String>,
+    pub magenta: Option<String>,
+    pub cyan: Option<String>,
+    pub white: Option<String>,
+    pub bright_black: Option<String>,
+    pub bright_red: Option<String>,
+    pub bright_green: Option<String>,
+    pub bright_yellow: Option<String>,
+    pub bright_blue: Option<String>,
+    pub bright_magenta: Option<String>,
+    pub bright_cyan: Option<String>,
+    pub bright_white: Option<String>,
+    pub font_family: Option<String>,
+    pub font_size: Option<u16>,
+}
+
+/// Parse a Ghostty config file (key = value format).
+fn parse_ghostty_file(path: &Path) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return map,
+    };
+
+    for line in content.lines() {
+        let line = line.trim();
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    map
+}
+
+/// Extract a TerminalTheme from parsed Ghostty key-value pairs.
+/// Note: palette colors must be applied separately via `apply_palette` + `parse_palette_from_content`,
+/// because Ghostty uses duplicate `palette` keys that a HashMap cannot represent.
+fn theme_from_ghostty_map(map: &HashMap<String, String>) -> TerminalTheme {
+    TerminalTheme {
+        background: map.get("background").cloned(),
+        foreground: map.get("foreground").cloned(),
+        cursor: map.get("cursor-color").cloned(),
+        selection_background: map.get("selection-background").cloned(),
+        selection_foreground: map.get("selection-foreground").cloned(),
+        font_family: map.get("font-family").cloned(),
+        font_size: map.get("font-size").and_then(|s| s.parse().ok()),
+        ..Default::default()
+    }
+}
+
+/// Parse palette entries from raw Ghostty config content (handles duplicate `palette` keys).
+fn parse_palette_from_content(content: &str) -> HashMap<u8, String> {
+    let mut palette = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            if key == "palette" {
+                let value = value.trim();
+                if let Some((idx_str, color)) = value.split_once('=') {
+                    if let Ok(idx) = idx_str.trim().parse::<u8>() {
+                        palette.insert(idx, color.trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+    palette
+}
+
+/// Load Ghostty theme from config and optional theme file.
+fn load_ghostty_theme() -> TerminalTheme {
+    let ghostty_dir = dirs::config_dir()
+        .map(|d| d.join("ghostty"))
+        .unwrap_or_default();
+
+    let config_path = ghostty_dir.join("config");
+    let map = parse_ghostty_file(&config_path);
+
+    // If a theme is referenced, load the theme file first as base
+    let mut theme = if let Some(theme_name) = map.get("theme") {
+        if theme_name.contains('/') || theme_name.contains("..") {
+            return TerminalTheme::default();
+        }
+        let theme_file = ghostty_dir.join("themes").join(theme_name);
+        if theme_file.exists() {
+            let theme_map = parse_ghostty_file(&theme_file);
+            let content = fs::read_to_string(&theme_file).unwrap_or_default();
+            let palette = parse_palette_from_content(&content);
+            let mut t = theme_from_ghostty_map(&theme_map);
+            // Apply palette entries from theme file
+            apply_palette(&mut t, &palette);
+            t
+        } else {
+            // Also check system-wide Ghostty themes
+            let sys_theme = PathBuf::from("/usr/share/ghostty/themes").join(theme_name);
+            if sys_theme.exists() {
+                let theme_map = parse_ghostty_file(&sys_theme);
+                let content = fs::read_to_string(&sys_theme).unwrap_or_default();
+                let palette = parse_palette_from_content(&content);
+                let mut t = theme_from_ghostty_map(&theme_map);
+                apply_palette(&mut t, &palette);
+                t
+            } else {
+                TerminalTheme::default()
+            }
+        }
+    } else {
+        TerminalTheme::default()
+    };
+
+    // Override with entries from main config (config overrides theme file)
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let palette = parse_palette_from_content(&content);
+    apply_palette(&mut theme, &palette);
+
+    // Non-palette overrides
+    if let Some(v) = map.get("background") {
+        theme.background = Some(v.clone());
+    }
+    if let Some(v) = map.get("foreground") {
+        theme.foreground = Some(v.clone());
+    }
+    if let Some(v) = map.get("cursor-color") {
+        theme.cursor = Some(v.clone());
+    }
+    if let Some(v) = map.get("selection-background") {
+        theme.selection_background = Some(v.clone());
+    }
+    if let Some(v) = map.get("selection-foreground") {
+        theme.selection_foreground = Some(v.clone());
+    }
+    if let Some(v) = map.get("font-family") {
+        theme.font_family = Some(v.clone());
+    }
+    if let Some(v) = map.get("font-size") {
+        if let Ok(size) = v.parse::<u16>() {
+            theme.font_size = Some(size);
+        }
+    }
+
+    theme
+}
+
+fn apply_palette(theme: &mut TerminalTheme, palette: &HashMap<u8, String>) {
+    let fields: &mut [(&mut Option<String>, u8)] = &mut [
+        (&mut theme.black, 0),
+        (&mut theme.red, 1),
+        (&mut theme.green, 2),
+        (&mut theme.yellow, 3),
+        (&mut theme.blue, 4),
+        (&mut theme.magenta, 5),
+        (&mut theme.cyan, 6),
+        (&mut theme.white, 7),
+        (&mut theme.bright_black, 8),
+        (&mut theme.bright_red, 9),
+        (&mut theme.bright_green, 10),
+        (&mut theme.bright_yellow, 11),
+        (&mut theme.bright_blue, 12),
+        (&mut theme.bright_magenta, 13),
+        (&mut theme.bright_cyan, 14),
+        (&mut theme.bright_white, 15),
+    ];
+    for (field, idx) in fields {
+        if let Some(c) = palette.get(idx) {
+            **field = Some(c.clone());
+        }
+    }
+}
+
+/// Resolve the full terminal theme based on config.
+/// If theme = "ghostty", reads Ghostty config.
+/// AppConfig appearance settings override everything.
+pub fn resolve_theme(config: &AppConfig) -> TerminalTheme {
+    let mut theme = if config.general.theme == "ghostty" {
+        load_ghostty_theme()
+    } else {
+        // Built-in Catppuccin Mocha as fallback
+        default_catppuccin_mocha()
+    };
+
+    // AppConfig appearance overrides
+    if !config.appearance.font_family.is_empty() {
+        theme.font_family = Some(config.appearance.font_family.clone());
+    }
+    if config.appearance.font_size > 0 {
+        theme.font_size = Some(config.appearance.font_size);
+    }
+
+    // Fill in any missing values with Catppuccin Mocha defaults
+    let defaults = default_catppuccin_mocha();
+    theme.background = theme.background.or(defaults.background);
+    theme.foreground = theme.foreground.or(defaults.foreground);
+    theme.cursor = theme.cursor.or(defaults.cursor);
+    theme.selection_background = theme.selection_background.or(defaults.selection_background);
+    theme.black = theme.black.or(defaults.black);
+    theme.red = theme.red.or(defaults.red);
+    theme.green = theme.green.or(defaults.green);
+    theme.yellow = theme.yellow.or(defaults.yellow);
+    theme.blue = theme.blue.or(defaults.blue);
+    theme.magenta = theme.magenta.or(defaults.magenta);
+    theme.cyan = theme.cyan.or(defaults.cyan);
+    theme.white = theme.white.or(defaults.white);
+    theme.bright_black = theme.bright_black.or(defaults.bright_black);
+    theme.bright_red = theme.bright_red.or(defaults.bright_red);
+    theme.bright_green = theme.bright_green.or(defaults.bright_green);
+    theme.bright_yellow = theme.bright_yellow.or(defaults.bright_yellow);
+    theme.bright_blue = theme.bright_blue.or(defaults.bright_blue);
+    theme.bright_magenta = theme.bright_magenta.or(defaults.bright_magenta);
+    theme.bright_cyan = theme.bright_cyan.or(defaults.bright_cyan);
+    theme.bright_white = theme.bright_white.or(defaults.bright_white);
+    theme.font_family = theme.font_family.or(defaults.font_family);
+    theme.font_size = theme.font_size.or(defaults.font_size);
+
+    theme
+}
+
+/// Catppuccin Mocha — the default dark theme (matches current hardcoded colors).
+fn default_catppuccin_mocha() -> TerminalTheme {
+    TerminalTheme {
+        background: Some("#1e1e2e".to_string()),
+        foreground: Some("#cdd6f4".to_string()),
+        cursor: Some("#f5e0dc".to_string()),
+        selection_background: Some("#585b70".to_string()),
+        selection_foreground: None,
+        black: Some("#45475a".to_string()),
+        red: Some("#f38ba8".to_string()),
+        green: Some("#a6e3a1".to_string()),
+        yellow: Some("#f9e2af".to_string()),
+        blue: Some("#89b4fa".to_string()),
+        magenta: Some("#f5c2e7".to_string()),
+        cyan: Some("#94e2d5".to_string()),
+        white: Some("#bac2de".to_string()),
+        bright_black: Some("#585b70".to_string()),
+        bright_red: Some("#f38ba8".to_string()),
+        bright_green: Some("#a6e3a1".to_string()),
+        bright_yellow: Some("#f9e2af".to_string()),
+        bright_blue: Some("#89b4fa".to_string()),
+        bright_magenta: Some("#f5c2e7".to_string()),
+        bright_cyan: Some("#94e2d5".to_string()),
+        bright_white: Some("#a6adc8".to_string()),
+        font_family: Some("JetBrains Mono".to_string()),
+        font_size: Some(14),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = AppConfig::default();
+        assert_eq!(config.general.theme, "ghostty");
+        assert_eq!(config.appearance.font_size, 14);
+        assert!(config.notifications.desktop);
+    }
+
+    #[test]
+    fn test_parse_ghostty_content() {
+        let content = "background = #303446\nforeground = #c6d0f5\n# comment\npalette = 0=#51576d\npalette = 1=#e78284\nfont-size = 16\n";
+        let palette = parse_palette_from_content(content);
+        assert_eq!(palette.get(&0), Some(&"#51576d".to_string()));
+        assert_eq!(palette.get(&1), Some(&"#e78284".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_theme_defaults() {
+        let config = AppConfig {
+            general: GeneralConfig {
+                theme: "builtin".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let theme = resolve_theme(&config);
+        assert_eq!(theme.background, Some("#1e1e2e".to_string()));
+        assert_eq!(theme.font_size, Some(14));
+    }
+
+    #[test]
+    fn test_config_roundtrip() {
+        let config = AppConfig::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.general.theme, config.general.theme);
+        assert_eq!(parsed.appearance.font_size, config.appearance.font_size);
+    }
+}

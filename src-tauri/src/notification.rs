@@ -11,14 +11,16 @@ pub fn send_desktop(title: &str, body: &str) -> Result<(), String> {
 }
 
 /// Run a custom notification command with env vars.
+/// Uses argv splitting instead of sh -c to prevent command injection.
 pub fn run_custom_command(command: &str, title: &str, body: &str) -> Result<(), String> {
     if command.is_empty() {
         return Ok(());
     }
 
-    std::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    let (prog, args) = parts.split_first().ok_or("Empty command")?;
+    std::process::Command::new(prog)
+        .args(args)
         .env("FORKTTY_NOTIFICATION_TITLE", title)
         .env("FORKTTY_NOTIFICATION_BODY", body)
         .spawn()

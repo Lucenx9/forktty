@@ -1,6 +1,8 @@
+mod config;
 mod notification;
 mod output_scanner;
 mod pty_manager;
+mod session;
 mod socket_api;
 mod worktree;
 
@@ -36,7 +38,17 @@ fn pty_spawn(
     workspace_id: Option<String>,
     surface_id: Option<String>,
 ) -> Result<u32, String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    let shell = config::load_config()
+        .ok()
+        .map(|c| c.general.shell)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
+
+    let shell_path = std::path::Path::new(&shell);
+    if !shell_path.is_absolute() || !shell_path.exists() {
+        return Err(format!("Invalid shell path: {shell}"));
+    }
+
     let socket_path = state.socket_path.clone();
 
     // Build env vars for the spawned shell
@@ -220,18 +232,70 @@ fn worktree_merge(name: String) -> Result<String, String> {
 
 #[tauri::command]
 fn worktree_status(path: String) -> Result<String, String> {
-    worktree::status(&path).map_err(|e| e.to_string())
+    let canonical = std::fs::canonicalize(&path).map_err(|e| format!("Invalid path: {e}"))?;
+    if let Some(home) = dirs::home_dir() {
+        if !canonical.starts_with(&home) {
+            return Err("Path must be inside home directory".to_string());
+        }
+    }
+    worktree::status(canonical.to_str().unwrap_or("")).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<i32>, String> {
-    worktree::run_hook(&worktree_path, &hook_name).map_err(|e| e.to_string())
+    let canonical =
+        std::fs::canonicalize(&worktree_path).map_err(|e| format!("Invalid path: {e}"))?;
+    if let Some(home) = dirs::home_dir() {
+        if !canonical.starts_with(&home) {
+            return Err("Path must be inside home directory".to_string());
+        }
+    }
+    worktree::run_hook(canonical.to_str().unwrap_or(""), &hook_name).map_err(|e| e.to_string())
+}
+
+// --- Config commands ---
+
+#[tauri::command]
+fn get_config() -> Result<config::AppConfig, String> {
+    config::load_config().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_config(config_data: config::AppConfig) -> Result<(), String> {
+    config::save_config(&config_data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_theme() -> Result<config::TerminalTheme, String> {
+    let cfg = config::load_config().map_err(|e| e.to_string())?;
+    Ok(config::resolve_theme(&cfg))
+}
+
+// --- Session commands ---
+
+#[tauri::command]
+fn save_session(data: session::SessionData) -> Result<(), String> {
+    session::save_session(&data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_session() -> Result<Option<session::SessionData>, String> {
+    session::load_session().map_err(|e| e.to_string())
+}
+
+// --- Logging command ---
+
+#[tauri::command]
+fn write_log(level: String, message: String) -> Result<(), String> {
+    session::write_log(&level, &message).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let socket_path = std::env::var("FORKTTY_SOCKET_PATH")
-        .unwrap_or_else(|_| "/tmp/forktty.sock".to_string());
+    let _ = session::write_log("INFO", "ForkTTY starting");
+
+    let socket_path =
+        std::env::var("FORKTTY_SOCKET_PATH").unwrap_or_else(|_| socket_api::default_socket_path());
 
     let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
     let socket_pending = socket_api::PendingRequests::default();
@@ -276,7 +340,13 @@ pub fn run() {
             worktree_remove,
             worktree_merge,
             worktree_status,
-            worktree_run_hook
+            worktree_run_hook,
+            get_config,
+            save_config,
+            get_theme,
+            save_session,
+            load_session,
+            write_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

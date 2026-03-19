@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,6 +9,18 @@ use tokio::net::UnixListener;
 use tokio::sync::oneshot;
 
 use crate::pty_manager::PtyManager;
+
+/// Maximum request size (1 MiB).
+const MAX_REQUEST_SIZE: usize = 1_048_576;
+
+/// Returns the default socket path, preferring XDG_RUNTIME_DIR for security.
+pub fn default_socket_path() -> String {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        format!("{runtime_dir}/forktty.sock")
+    } else {
+        "/tmp/forktty.sock".to_string()
+    }
+}
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -43,6 +56,11 @@ pub async fn run(
         }
     };
 
+    // Restrict socket to owner only (mode 0600)
+    if let Err(e) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+        eprintln!("Failed to set socket permissions: {e}");
+    }
+
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
@@ -70,6 +88,12 @@ async fn handle_connection(
     let mut lines = BufReader::new(reader).lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
+        if line.len() > MAX_REQUEST_SIZE {
+            let resp = json!({"id": null, "ok": false, "error": {"code": "request_too_large", "message": "Request exceeds 1 MiB"}});
+            let _ = write_response(&mut writer, &resp).await;
+            break;
+        }
+
         let request: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
@@ -80,10 +104,7 @@ async fn handle_connection(
         };
 
         let id = request.get("id").cloned().unwrap_or(Value::Null);
-        let method = request
-            .get("method")
-            .and_then(|m| m.as_str())
-            .unwrap_or("");
+        let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or(json!({}));
 
         let result = dispatch(method, params, &app, &pty_manager, &pending).await;
@@ -125,16 +146,28 @@ async fn dispatch(
             let pty_id = params
                 .get("pty_id")
                 .and_then(|v| v.as_u64())
-                .ok_or("Missing pty_id")?
-                as u32;
+                .ok_or("Missing pty_id")? as u32;
             let text = params
                 .get("text")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing text")?;
+            if text.len() > MAX_REQUEST_SIZE {
+                return Err("Text exceeds 1 MiB".to_string());
+            }
             let mgr = pty_manager.lock().map_err(|e| format!("Lock: {e}"))?;
             mgr.write(pty_id, text.as_bytes())
                 .map_err(|e| e.to_string())?;
             Ok(json!(true))
+        }
+
+        "worktree.merge" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing name")?;
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            crate::worktree::merge(&cwd.to_string_lossy(), name).map_err(|e| e.to_string())?;
+            Ok(json!(format!("Merged '{name}'")))
         }
 
         // --- Bridged to frontend ---

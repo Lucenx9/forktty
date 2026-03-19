@@ -57,6 +57,15 @@ fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> PathBuf {
 
 /// Create a new git worktree with a branch.
 pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo, WorktreeError> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.contains('\0')
+    {
+        return Err(WorktreeError::Other("Invalid worktree name".to_string()));
+    }
+
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
 
@@ -223,6 +232,7 @@ pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError
         }
 
         // Create merge commit
+        index.write()?;
         let tree_oid = index.write_tree()?;
         let tree = repo.find_tree(tree_oid)?;
         let head_commit = repo.head()?.peel_to_commit()?;

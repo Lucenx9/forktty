@@ -25,11 +25,11 @@ pub struct OutputScanner {
 impl OutputScanner {
     pub fn new() -> Self {
         let patterns = vec![
-            r"^>\s*$",                    // Claude Code ">" prompt
-            r"^❯\s*$",                   // Unicode prompt variant
-            r"\? .+\(Y/n\)",              // Confirmation prompt
-            r"\? .+:\s*$",                // Input prompt
-            r"Do you want to proceed",    // Permission prompt
+            r"^>\s*$",                 // Claude Code ">" prompt
+            r"^❯\s*$",                 // Unicode prompt variant
+            r"\? .+\(Y/n\)",           // Confirmation prompt
+            r"\? .+:\s*$",             // Input prompt
+            r"Do you want to proceed", // Permission prompt
         ];
 
         let prompt_patterns = patterns
@@ -60,13 +60,8 @@ impl OutputScanner {
     /// Scan for OSC 133 sequences: ESC ] 133 ; <cmd> BEL
     fn scan_osc133(&mut self, data: &[u8], events: &mut Vec<ScanEvent>) {
         let prefix = b"\x1b]133;";
-        if data.len() < prefix.len() + 1 {
-            // Check if entire chunk could contain the sequence
-            if data.len() >= 2 {
-                // Still scan with windows
-            } else {
-                return;
-            }
+        if data.len() < 2 {
+            return;
         }
 
         for i in 0..data.len() {
@@ -139,7 +134,9 @@ impl OutputScanner {
         }
 
         // Also check the current (incomplete) line — prompts don't end with \n
-        if !self.line_buf.is_empty() && !self.prompt_emitted_for_line && self.matches_prompt_pattern()
+        if !self.line_buf.is_empty()
+            && !self.prompt_emitted_for_line
+            && self.matches_prompt_pattern()
         {
             events.push(ScanEvent::PromptDetected);
             self.prompt_emitted_for_line = true;
@@ -155,6 +152,12 @@ impl OutputScanner {
             return false;
         }
         self.prompt_patterns.iter().any(|re| re.is_match(trimmed))
+    }
+}
+
+impl Default for OutputScanner {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -225,9 +228,7 @@ mod tests {
         let events = scanner.scan(b"\x1b]133;D;0\x07");
         assert!(matches!(
             events[0],
-            ScanEvent::CommandFinished {
-                exit_code: Some(0)
-            }
+            ScanEvent::CommandFinished { exit_code: Some(0) }
         ));
     }
 
@@ -236,7 +237,9 @@ mod tests {
         let mut scanner = OutputScanner::new();
         let data = b"> \n";
         let events = scanner.scan(data);
-        assert!(events.iter().any(|e| matches!(e, ScanEvent::PromptDetected)));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ScanEvent::PromptDetected)));
     }
 
     #[test]

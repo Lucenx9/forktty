@@ -122,7 +122,7 @@
 - [ ] 6.1 — Unix domain socket server in Rust (tokio), JSON-RPC protocol
 - [ ] 6.2 — Implement MVP methods: system.ping, workspace.*, surface.*, notification.*
 - [ ] 6.3 — CLI binary (`forktty`): clap-based, connects to socket, sends JSON-RPC
-- [ ] 6.4 — Set env vars in spawned shells: `AGENTMUX_WORKSPACE_ID`, `AGENTMUX_SURFACE_ID`, `AGENTMUX_SOCKET_PATH`
+- [ ] 6.4 — Set env vars in spawned shells: `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, `FORKTTY_SOCKET_PATH`
 - [ ] 6.5 — `forktty send <surface> "text"`: send keystrokes to a specific terminal
 - [ ] 6.6 — `forktty read-screen [surface]`: dump current terminal buffer content
 
@@ -169,7 +169,7 @@
 - [ ] 8.6 — Logging: structured logs to `~/.local/share/forktty/logs/`
 - [ ] 8.7 — Package as .deb and AppImage via Tauri bundler
 - [ ] 8.8 — README with install instructions, screenshots, usage guide
-- [ ] 8.9 — License: choose license (MIT or AGPL to match inspiration)
+- [x] 8.9 — License: switch project to AGPL-3.0
 
 ### Acceptance
 - Install from .deb on Debian 13

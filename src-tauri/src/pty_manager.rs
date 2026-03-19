@@ -131,11 +131,7 @@ impl PtyManager {
         Ok(())
     }
 
-    /// List all active PTY IDs.
-    pub fn list_ids(&self) -> Vec<u32> {
-        self.ptys.keys().copied().collect()
-    }
-
+    /// Kill a PTY process and remove it.
     /// Kill a PTY process and remove it.
     pub fn kill(&mut self, id: u32) -> Result<(), PtyError> {
         let handle = self.ptys.remove(&id).ok_or(PtyError::NotFound(id))?;
@@ -143,5 +139,11 @@ impl PtyManager {
             let _ = child.kill();
         }
         Ok(())
+    }
+}
+
+impl Default for PtyManager {
+    fn default() -> Self {
+        Self::new()
     }
 }

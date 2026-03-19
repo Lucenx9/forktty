@@ -3,11 +3,22 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 
+fn default_socket_path() -> String {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        format!("{runtime_dir}/forktty.sock")
+    } else {
+        "/tmp/forktty.sock".to_string()
+    }
+}
+
 #[derive(Parser)]
-#[command(name = "forktty-cli", about = "ForkTTY CLI — control the terminal from scripts")]
+#[command(
+    name = "forktty-cli",
+    about = "ForkTTY CLI — control the terminal from scripts"
+)]
 struct Cli {
-    /// Socket path (default: /tmp/forktty.sock or $FORKTTY_SOCKET_PATH)
-    #[arg(long, env = "FORKTTY_SOCKET_PATH", default_value = "/tmp/forktty.sock")]
+    /// Socket path (default: $XDG_RUNTIME_DIR/forktty.sock or /tmp/forktty.sock)
+    #[arg(long, env = "FORKTTY_SOCKET_PATH", default_value_t = default_socket_path())]
     socket: String,
 
     #[command(subcommand)]
@@ -101,7 +112,7 @@ fn main() {
             json!({ "title": title, "body": body }),
         ),
         Commands::Split { direction } => ("surface.split", json!({ "direction": direction })),
-        Commands::Merge { name } => ("workspace.close", json!({ "name": name, "merge": true })),
+        Commands::Merge { name } => ("worktree.merge", json!({ "name": name })),
         Commands::Rm { name } => ("workspace.close", json!({ "name": name })),
         Commands::Notifications => ("notification.list", json!({})),
         Commands::ClearNotifications => ("notification.clear", json!({})),
@@ -141,7 +152,7 @@ fn send_request(socket_path: &str, method: &str, params: Value) -> Result<Value,
         UnixStream::connect(socket_path).map_err(|e| format!("Cannot connect: {e}"))?;
 
     let request = json!({
-        "id": "1",
+        "id": format!("cli-{}", std::process::id()),
         "method": method,
         "params": params,
     });

@@ -10,6 +10,7 @@ import {
   worktreeRunHook,
   worktreeStatus,
 } from "../lib/pty-bridge";
+import { showToast } from "./ErrorToast";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
 
@@ -68,10 +69,10 @@ function WorkspaceEntry({
     e.stopPropagation();
     worktreeMerge(workspace.worktreeName)
       .then((msg) => {
-        console.log("Merge result:", msg);
+        showToast(String(msg), "info");
       })
       .catch((err) => {
-        console.error("Merge failed:", err);
+        showToast(String(err), "error");
       });
   }
 
@@ -95,7 +96,7 @@ function WorkspaceEntry({
         closeWorkspace(workspace.id);
       })
       .catch((err) => {
-        console.error("Remove failed:", err);
+        showToast(String(err), "error");
       });
   }
 
