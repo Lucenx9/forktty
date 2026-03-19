@@ -176,22 +176,20 @@ async fn dispatch(
                 .unwrap_or_else(|| "nested".to_string());
 
             let info = crate::worktree::create(&cwd, name, &layout).map_err(|e| e.to_string())?;
+            // Intentional: setup hook failure is advisory and should not block worktree creation
             let _ = crate::worktree::run_hook(&info.path, "setup");
-            let info_name = info.name.clone();
-            let info_path = info.path.clone();
-            let info_branch = info.branch.clone();
 
             let workspace = bridge_to_frontend(
                 app,
                 pending,
                 "workspace.create",
                 json!({
-                    "name": info_name.clone(),
-                    "workingDir": info_path.clone(),
-                    "gitBranch": info_branch.clone(),
-                    "worktreeDir": info_path,
-                    "worktreeName": info_name,
-                    "prompt": prompt.clone(),
+                    "name": &info.name,
+                    "workingDir": &info.path,
+                    "gitBranch": &info.branch,
+                    "worktreeDir": &info.path,
+                    "worktreeName": &info.name,
+                    "prompt": &prompt,
                 }),
             )
             .await?;
@@ -220,6 +218,7 @@ async fn dispatch(
 
             if let Ok(worktrees) = crate::worktree::list(&cwd) {
                 if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
+                    // Intentional: teardown hook failure is advisory and should not block removal
                     let _ = crate::worktree::run_hook(&wt.path, "teardown");
                 }
             }

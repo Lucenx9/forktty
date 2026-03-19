@@ -217,9 +217,11 @@ fn find_osc_terminator(data: &[u8]) -> Option<(usize, usize)> {
 }
 
 fn trailing_partial_osc_prefix(data: &[u8], prefix: &[u8]) -> Option<usize> {
-    for start in (0..data.len()).rev() {
+    // Only the last (prefix.len - 1) bytes can be a partial prefix
+    let scan_start = data.len().saturating_sub(prefix.len() - 1);
+    for start in (scan_start..data.len()).rev() {
         let suffix = &data[start..];
-        if suffix.first() == Some(&0x1b) && prefix.starts_with(suffix) {
+        if prefix.starts_with(suffix) {
             return Some(start);
         }
     }

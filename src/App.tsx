@@ -184,7 +184,11 @@ export default function App() {
     markWorkspaceRead(activeWorkspaceId);
   }, [activeWorkspaceId, markWorkspaceRead]);
 
-  // Listen for socket API bridge events
+  // Listen for socket API bridge events.
+  // Empty deps is intentional: handleSocketRequest reads all state via
+  // useWorkspaceStore.getState() / useConfigStore.getState() at call time,
+  // so the closure never goes stale. Do NOT add handleSocketRequest to deps
+  // without wrapping it in useCallback first.
   useEffect(() => {
     const unlisten = listen<{
       id: string;
