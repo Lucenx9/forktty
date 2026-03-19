@@ -153,7 +153,7 @@ These MUST NOT be broken. Run `/security-audit` after any change to these files:
 - `socket_api.rs`: socket permissions 0o600, XDG_RUNTIME_DIR default, 1MiB request size limit
 - `notification.rs`: argv splitting only, never `sh -c`
 - `lib.rs`: shell path must be absolute+exist, worktree_run_hook/status must canonicalize + verify git-workdir boundary
-- `worktree.rs`: name validation rejects `/`, `\`, `..`, `\0`
+- `worktree.rs`: name validation rejects `/`, `\`, `..`, `\0`; `validate_worktree_name()` called at top of `create()`
 - `tauri.conf.json`: CSP must never be null
 - `config.rs`: Ghostty theme name must not contain `/` or `..`
 
@@ -166,6 +166,11 @@ These MUST NOT be broken. Run `/security-audit` after any change to these files:
 - **Don't allocate in hot paths** — output_scanner runs on every PTY read chunk (thousands/sec). Avoid `data.to_vec()` when a reference suffices.
 - **Don't fire Zustand writes on every mouse pixel** — debounce `onLayoutChange` with requestAnimationFrame.
 - **Don't use `console.log` in production** — use `showToast` for user-visible feedback, `writeLog` for structured logging.
+- **Don't use `filter_map(ok())` on compile-time constant regex patterns** — if a pattern fails to compile, it silently disappears. Use `unwrap_or_else(panic!)` for patterns that must always be valid.
+- **Don't use empty `.catch(() => {})` blocks** — this violates error handling principles. At minimum set an error state so the user gets feedback.
+- **Socket `read_limited_line`: don't use `BufReader::lines()` for untrusted input** — it allocates the full line before yielding, allowing OOM. Use `fill_buf`/`consume` with incremental size checking.
+- **Don't continue serving if socket permissions fail** — if `set_permissions(0o600)` fails, remove the socket and return. The socket could be world-accessible.
+- **Always call `index.write()` before `index.write_tree()` in git2** — this was already documented but was still missed in the merge path. Double-check every git2 index→tree codepath.
 
 ## Debugging Tips
 
