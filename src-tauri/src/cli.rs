@@ -35,8 +35,8 @@ enum Commands {
 
     /// Create a new workspace (optionally with worktree)
     New {
-        /// Workspace name
-        name: String,
+        /// Worktree/workspace name
+        name: Option<String>,
         /// Send initial prompt text after creation
         #[arg(short, long)]
         prompt: Option<String>,
@@ -95,28 +95,7 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
-    let (method, params) = match &cli.command {
-        Commands::Ping => ("system.ping", json!({})),
-        Commands::Ls => ("workspace.list", json!({})),
-        Commands::New { name, prompt } => (
-            "workspace.create",
-            json!({ "name": name, "prompt": prompt }),
-        ),
-        Commands::Select { name } => ("workspace.select", json!({ "name": name })),
-        Commands::Send { pty_id, text } => (
-            "surface.send_text",
-            json!({ "pty_id": pty_id, "text": text }),
-        ),
-        Commands::Notify { title, body } => (
-            "notification.create",
-            json!({ "title": title, "body": body }),
-        ),
-        Commands::Split { direction } => ("surface.split", json!({ "direction": direction })),
-        Commands::Merge { name } => ("worktree.merge", json!({ "name": name })),
-        Commands::Rm { name } => ("workspace.close", json!({ "name": name })),
-        Commands::Notifications => ("notification.list", json!({})),
-        Commands::ClearNotifications => ("notification.clear", json!({})),
-    };
+    let (method, params) = build_request(&cli.command);
 
     match send_request(&cli.socket, method, params) {
         Ok(response) => {
@@ -147,6 +126,31 @@ fn main() {
     }
 }
 
+fn build_request(command: &Commands) -> (&'static str, Value) {
+    match command {
+        Commands::Ping => ("system.ping", json!({})),
+        Commands::Ls => ("workspace.list", json!({})),
+        Commands::New { name, prompt } => match name {
+            Some(name) => ("worktree.create", json!({ "name": name, "prompt": prompt })),
+            None => ("workspace.create", json!({ "prompt": prompt })),
+        },
+        Commands::Select { name } => ("workspace.select", json!({ "name": name })),
+        Commands::Send { pty_id, text } => (
+            "surface.send_text",
+            json!({ "pty_id": pty_id, "text": text }),
+        ),
+        Commands::Notify { title, body } => (
+            "notification.create",
+            json!({ "title": title, "body": body }),
+        ),
+        Commands::Split { direction } => ("surface.split", json!({ "direction": direction })),
+        Commands::Merge { name } => ("worktree.merge", json!({ "name": name })),
+        Commands::Rm { name } => ("worktree.remove", json!({ "name": name })),
+        Commands::Notifications => ("notification.list", json!({})),
+        Commands::ClearNotifications => ("notification.clear", json!({})),
+    }
+}
+
 fn send_request(socket_path: &str, method: &str, params: Value) -> Result<Value, String> {
     let mut stream =
         UnixStream::connect(socket_path).map_err(|e| format!("Cannot connect: {e}"))?;
@@ -168,4 +172,43 @@ fn send_request(socket_path: &str, method: &str, params: Value) -> Result<Value,
         .map_err(|e: std::io::Error| e.to_string())?;
 
     serde_json::from_str(&line).map_err(|e| format!("Invalid response: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_with_name_uses_worktree_create() {
+        let (method, params) = build_request(&Commands::New {
+            name: Some("feature-x".to_string()),
+            prompt: Some("hello".to_string()),
+        });
+
+        assert_eq!(method, "worktree.create");
+        assert_eq!(params["name"], "feature-x");
+        assert_eq!(params["prompt"], "hello");
+    }
+
+    #[test]
+    fn new_without_name_uses_workspace_create() {
+        let (method, params) = build_request(&Commands::New {
+            name: None,
+            prompt: Some("hello".to_string()),
+        });
+
+        assert_eq!(method, "workspace.create");
+        assert!(params.get("name").is_none());
+        assert_eq!(params["prompt"], "hello");
+    }
+
+    #[test]
+    fn rm_uses_worktree_remove() {
+        let (method, params) = build_request(&Commands::Rm {
+            name: "feature-x".to_string(),
+        });
+
+        assert_eq!(method, "worktree.remove");
+        assert_eq!(params["name"], "feature-x");
+    }
 }

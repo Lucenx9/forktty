@@ -92,6 +92,7 @@ interface WorkspaceState {
   closePane: (paneId: string) => void;
   setFocusedPane: (paneId: string) => void;
   moveFocus: (direction: Direction) => void;
+  updatePaneSizes: (splitId: string, sizes: number[]) => void;
 
   // Surface lifecycle (finds workspace by paneId)
   registerSurface: (paneId: string, ptyId: number) => void;
@@ -231,6 +232,37 @@ function removeLeaf(
 function containsLeaf(node: PaneNode, leafId: string): boolean {
   if (node.type === "leaf") return node.id === leafId;
   return node.children.some((child) => containsLeaf(child, leafId));
+}
+
+function updateSplitSizes(
+  node: PaneNode,
+  splitId: string,
+  sizes: number[],
+): PaneNode {
+  if (node.type === "leaf") {
+    return node;
+  }
+
+  if (node.id === splitId) {
+    if (node.sizes.length !== sizes.length) {
+      return node;
+    }
+
+    const nextSizes = sizes.map((size) => Number(size));
+    const changed = nextSizes.some((size, index) => size !== node.sizes[index]);
+    return changed ? { ...node, sizes: nextSizes } : node;
+  }
+
+  let changed = false;
+  const children = node.children.map((child) => {
+    const nextChild = updateSplitSizes(child, splitId, sizes);
+    if (nextChild !== child) {
+      changed = true;
+    }
+    return nextChild;
+  });
+
+  return changed ? { ...node, children } : node;
 }
 
 function firstLeafId(node: PaneNode): string {
@@ -431,7 +463,7 @@ function snapshotPaneTree(node: PaneNode): PaneTreeSnap {
   return {
     type: node.type,
     children: node.children.map(snapshotPaneTree),
-    sizes: node.sizes,
+    sizes: [...node.sizes],
   };
 }
 
@@ -653,6 +685,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           [activeWorkspaceId]: { ...ws, focusedPaneId: neighborId },
         },
       });
+    }
+  },
+
+  updatePaneSizes: (splitId, sizes) => {
+    const { workspaces } = get();
+
+    for (const [workspaceId, workspace] of Object.entries(workspaces)) {
+      const nextRoot = updateSplitSizes(workspace.root, splitId, sizes);
+      if (nextRoot !== workspace.root) {
+        set({
+          workspaces: {
+            ...workspaces,
+            [workspaceId]: { ...workspace, root: nextRoot },
+          },
+        });
+        return;
+      }
     }
   },
 

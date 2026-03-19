@@ -23,6 +23,54 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
+function getWorkspacePtyId(workspaceId: string): number | null {
+  const workspace = useWorkspaceStore.getState().workspaces[workspaceId];
+  if (!workspace) {
+    return null;
+  }
+
+  return (
+    Object.values(workspace.surfaces).find((surface) => surface.ptyId != null)
+      ?.ptyId ?? null
+  );
+}
+
+function waitForWorkspacePty(
+  workspaceId: string,
+  timeoutMs = 5000,
+): Promise<number> {
+  const existingPtyId = getWorkspacePtyId(workspaceId);
+  if (existingPtyId != null) {
+    return Promise.resolve(existingPtyId);
+  }
+
+  return new Promise((resolve, reject) => {
+    let unsubscribe = () => {};
+    const timeoutId = window.setTimeout(() => {
+      unsubscribe();
+      reject(new Error("Timed out waiting for workspace PTY"));
+    }, timeoutMs);
+
+    unsubscribe = useWorkspaceStore.subscribe((state) => {
+      const workspace = state.workspaces[workspaceId];
+      if (!workspace) {
+        return;
+      }
+
+      const ptyId =
+        Object.values(workspace.surfaces).find(
+          (surface) => surface.ptyId != null,
+        )?.ptyId ?? null;
+
+      if (ptyId != null) {
+        window.clearTimeout(timeoutId);
+        unsubscribe();
+        resolve(ptyId);
+      }
+    });
+  });
+}
+
 export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
@@ -50,6 +98,9 @@ export default function App() {
   const showSettings = useConfigStore((s) => s.showSettings);
   const sidebarPosition = useConfigStore(
     (s) => s.config?.appearance.sidebar_position ?? "left",
+  );
+  const worktreeLayout = useConfigStore(
+    (s) => s.config?.general.worktree_layout ?? "nested",
   );
 
   const restoreSession = useWorkspaceStore((s) => s.restoreSession);
@@ -141,19 +192,20 @@ export default function App() {
       params: Record<string, unknown>;
     }>("socket-request", (event) => {
       const { id, method, params } = event.payload;
-      handleSocketRequest(id, method, params);
+      void handleSocketRequest(id, method, params);
     });
     return () => {
       unlisten.then((fn) => fn());
     };
   }, []);
 
-  function handleSocketRequest(
+  async function handleSocketRequest(
     id: string,
     method: string,
     params: Record<string, unknown>,
-  ) {
+  ): Promise<void> {
     const state = useWorkspaceStore.getState();
+    const config = useConfigStore.getState().config;
     let result: unknown;
 
     try {
@@ -177,8 +229,43 @@ export default function App() {
         }
         case "workspace.create": {
           const name = params.name as string | undefined;
-          const wsId = state.createWorkspace(name ?? undefined);
-          result = { result: { id: wsId } };
+          const prompt =
+            typeof params.prompt === "string" && params.prompt.length > 0
+              ? params.prompt
+              : undefined;
+          const worktreeDir =
+            typeof params.worktreeDir === "string" ? params.worktreeDir : "";
+          const worktreeName =
+            typeof params.worktreeName === "string" ? params.worktreeName : "";
+          const workingDir =
+            typeof params.workingDir === "string"
+              ? params.workingDir
+              : worktreeDir;
+          const gitBranch =
+            typeof params.gitBranch === "string" ? params.gitBranch : "";
+          const isWorktree = worktreeDir.length > 0;
+
+          const wsId = isWorktree
+            ? state.createWorktreeWorkspace(
+                name ?? worktreeName,
+                workingDir,
+                gitBranch,
+                worktreeDir,
+                worktreeName || name || "",
+              )
+            : state.createWorkspace(name ?? undefined);
+
+          const response: Record<string, unknown> = { id: wsId };
+          if (prompt) {
+            const ptyId = await waitForWorkspacePty(wsId);
+            response.pty_id = ptyId;
+
+            if (!isWorktree) {
+              await writePty(ptyId, prompt);
+            }
+          }
+
+          result = { result: response };
           break;
         }
         case "workspace.select": {
@@ -272,7 +359,9 @@ export default function App() {
           const title = (params.title as string) || "ForkTTY";
           const body = (params.body as string) || "";
           state.addNotification(state.activeWorkspaceId, title, body);
-          sendDesktopNotification(title, body).catch(console.error);
+          if (config?.notifications.desktop ?? true) {
+            sendDesktopNotification(title, body).catch(console.error);
+          }
           result = { result: true };
           break;
         }
@@ -336,7 +425,7 @@ export default function App() {
         const name = window.prompt("Worktree name (becomes branch name):");
         if (!name || !name.trim()) return;
         const trimmed = name.trim();
-        worktreeCreate(trimmed)
+        worktreeCreate(trimmed, worktreeLayout)
           .then((info) => {
             createWorktreeWorkspace(
               trimmed,
@@ -459,6 +548,7 @@ export default function App() {
     toggleNotificationPanel,
     jumpToUnread,
     toggleSettings,
+    worktreeLayout,
   ]);
 
   const closeCommandPalette = useCallback(

@@ -10,6 +10,7 @@ import {
   resizePty,
   killPty,
   sendDesktopNotification,
+  sendCustomNotification,
 } from "../lib/pty-bridge";
 import type { ScanEventData } from "../lib/pty-bridge";
 import { useWorkspaceStore, updateSurfaceActivity } from "../stores/workspace";
@@ -144,9 +145,19 @@ export default function TerminalPane({
       const ws = state.workspaces[wsId];
       const title = "Prompt waiting";
       const body = `${ws?.name ?? "Workspace"} needs attention`;
+      const config = useConfigStore.getState().config;
+      const notificationCommand =
+        config?.general.notification_command.trim() ?? "";
 
       state.addNotification(wsId, title, body);
-      sendDesktopNotification("ForkTTY", body).catch(console.error);
+      if (config?.notifications.desktop ?? true) {
+        sendDesktopNotification(title, body).catch(console.error);
+      }
+      if (notificationCommand) {
+        sendCustomNotification(notificationCommand, title, body).catch(
+          console.error,
+        );
+      }
     }
 
     spawnPty({

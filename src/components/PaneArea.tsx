@@ -12,11 +12,13 @@ function RenderNode({
   focusedPaneId,
   cwd,
   workspaceId,
+  onPaneLayout,
 }: {
   node: PaneNode;
   focusedPaneId: string | undefined;
   cwd: string;
   workspaceId: string;
+  onPaneLayout: (splitId: string, sizes: number[]) => void;
 }) {
   if (node.type === "leaf") {
     return (
@@ -30,7 +32,18 @@ function RenderNode({
   }
 
   return (
-    <Group orientation={node.type} id={node.id}>
+    <Group
+      orientation={node.type}
+      id={node.id}
+      onLayoutChange={(layout) =>
+        onPaneLayout(
+          node.id,
+          node.children.map(
+            (child, index) => layout[child.id] ?? node.sizes[index]!,
+          ),
+        )
+      }
+    >
       {node.children.map((child, i) => (
         <PanelWithHandle key={child.id} index={i} total={node.children.length}>
           <Panel id={child.id} defaultSize={node.sizes[i]} minSize={5}>
@@ -39,6 +52,7 @@ function RenderNode({
               focusedPaneId={focusedPaneId}
               cwd={cwd}
               workspaceId={workspaceId}
+              onPaneLayout={onPaneLayout}
             />
           </Panel>
         </PanelWithHandle>
@@ -80,6 +94,7 @@ export default function PaneArea({ workspaceId }: PaneAreaProps) {
   const cwd = useWorkspaceStore(
     (s) => s.workspaces[workspaceId]?.workingDir ?? "",
   );
+  const updatePaneSizes = useWorkspaceStore((s) => s.updatePaneSizes);
 
   if (!root) return null;
 
@@ -93,6 +108,7 @@ export default function PaneArea({ workspaceId }: PaneAreaProps) {
       focusedPaneId={effectiveFocusId}
       cwd={cwd}
       workspaceId={workspaceId}
+      onPaneLayout={updatePaneSizes}
     />
   );
 }

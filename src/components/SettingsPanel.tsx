@@ -192,6 +192,7 @@ export default function SettingsPanel() {
             />
             <span className="settings-label">Notification sound</span>
           </label>
+          {/* Sound notifications are stored in config, but playback support has not landed yet. */}
 
           <label className="settings-field">
             <span className="settings-label">Idle threshold (ms)</span>
@@ -210,6 +211,7 @@ export default function SettingsPanel() {
               }
             />
           </label>
+          {/* Idle detection will use this threshold in a future Phase 5 notification pass. */}
         </div>
       </div>
     </div>

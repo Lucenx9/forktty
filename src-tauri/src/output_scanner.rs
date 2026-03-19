@@ -16,6 +16,7 @@ pub enum ScanEvent {
 /// Claude Code prompt patterns. Runs inline in the PTY read loop.
 pub struct OutputScanner {
     line_buf: Vec<u8>,
+    osc_buf: Vec<u8>,
     prompt_patterns: Vec<Regex>,
     /// Track if we already emitted PromptDetected for the current line
     /// to avoid duplicate notifications from both OSC and pattern match.
@@ -39,6 +40,7 @@ impl OutputScanner {
 
         Self {
             line_buf: Vec::with_capacity(1024),
+            osc_buf: Vec::with_capacity(64),
             prompt_patterns,
             prompt_emitted_for_line: false,
         }
@@ -47,9 +49,16 @@ impl OutputScanner {
     /// Scan a chunk of PTY output. Returns any detected events.
     pub fn scan(&mut self, data: &[u8]) -> Vec<ScanEvent> {
         let mut events = Vec::new();
+        let osc_data = if self.osc_buf.is_empty() {
+            data.to_vec()
+        } else {
+            let mut combined = std::mem::take(&mut self.osc_buf);
+            combined.extend_from_slice(data);
+            combined
+        };
 
         // 1. Scan for OSC 133 sequences
-        self.scan_osc133(data, &mut events);
+        self.scan_osc133(&osc_data, &mut events);
 
         // 2. Update line buffer and check prompt patterns
         self.update_line_buffer(data, &mut events);
@@ -60,43 +69,60 @@ impl OutputScanner {
     /// Scan for OSC 133 sequences: ESC ] 133 ; <cmd> BEL
     fn scan_osc133(&mut self, data: &[u8], events: &mut Vec<ScanEvent>) {
         let prefix = b"\x1b]133;";
-        if data.len() < 2 {
+        if data.is_empty() {
             return;
         }
 
-        for i in 0..data.len() {
-            if data[i..].starts_with(prefix) {
-                let cmd_idx = i + prefix.len();
-                if cmd_idx < data.len() {
-                    match data[cmd_idx] {
-                        b'A' => {
-                            if !self.prompt_emitted_for_line {
-                                events.push(ScanEvent::PromptDetected);
-                                self.prompt_emitted_for_line = true;
-                            }
-                        }
-                        b'C' => {
-                            events.push(ScanEvent::CommandStarted);
-                            self.prompt_emitted_for_line = false;
-                        }
-                        b'D' => {
-                            let exit_code = self.parse_osc133d_exit_code(data, cmd_idx);
-                            events.push(ScanEvent::CommandFinished { exit_code });
-                            self.prompt_emitted_for_line = false;
-                        }
-                        _ => {}
+        let mut index = 0;
+        while index < data.len() {
+            let Some(rel_start) = find_subslice(&data[index..], prefix) else {
+                break;
+            };
+            let start = index + rel_start;
+            let sequence_start = start + prefix.len();
+
+            let Some((terminator_start, terminator_len)) =
+                find_osc_terminator(&data[sequence_start..])
+            else {
+                self.osc_buf.extend_from_slice(&data[start..]);
+                return;
+            };
+
+            let sequence_end = sequence_start + terminator_start;
+            let sequence = &data[sequence_start..sequence_end];
+
+            match sequence.first().copied() {
+                Some(b'A') => {
+                    if !self.prompt_emitted_for_line {
+                        events.push(ScanEvent::PromptDetected);
+                        self.prompt_emitted_for_line = true;
                     }
                 }
+                Some(b'C') => {
+                    events.push(ScanEvent::CommandStarted);
+                    self.prompt_emitted_for_line = false;
+                }
+                Some(b'D') => {
+                    let exit_code = self.parse_osc133d_exit_code(sequence);
+                    events.push(ScanEvent::CommandFinished { exit_code });
+                    self.prompt_emitted_for_line = false;
+                }
+                _ => {}
             }
+
+            index = sequence_end + terminator_len;
+        }
+
+        if let Some(start) = trailing_partial_osc_prefix(data, prefix) {
+            self.osc_buf.extend_from_slice(&data[start..]);
         }
     }
 
     /// Parse exit code from OSC 133 D sequence: ";D;0\x07"
-    fn parse_osc133d_exit_code(&self, data: &[u8], d_idx: usize) -> Option<i32> {
+    fn parse_osc133d_exit_code(&self, data: &[u8]) -> Option<i32> {
         // Look for ";digits" after D
-        let after_d = d_idx + 1;
-        if after_d < data.len() && data[after_d] == b';' {
-            let start = after_d + 1;
+        if data.first() == Some(&b'D') && data.get(1) == Some(&b';') {
+            let start = 2;
             let mut end = start;
             while end < data.len() && data[end].is_ascii_digit() {
                 end += 1;
@@ -159,6 +185,36 @@ impl Default for OutputScanner {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn find_osc_terminator(data: &[u8]) -> Option<(usize, usize)> {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0x07 {
+            return Some((i, 1));
+        }
+        if data[i] == 0x1b && data.get(i + 1) == Some(&b'\\') {
+            return Some((i, 2));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn trailing_partial_osc_prefix(data: &[u8], prefix: &[u8]) -> Option<usize> {
+    for start in (0..data.len()).rev() {
+        let suffix = &data[start..];
+        if suffix.first() == Some(&0x1b) && prefix.starts_with(suffix) {
+            return Some(start);
+        }
+    }
+    None
 }
 
 /// Strip ANSI escape sequences from byte data.
@@ -260,5 +316,34 @@ mod tests {
             .filter(|e| matches!(e, ScanEvent::PromptDetected))
             .count();
         assert_eq!(prompt_count, 1);
+    }
+
+    #[test]
+    fn test_osc133_prompt_split_across_chunks() {
+        let mut scanner = OutputScanner::new();
+
+        let events = scanner.scan(b"\x1b]13");
+        assert!(events.is_empty());
+
+        let events = scanner.scan(b"3;A\x07");
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, ScanEvent::PromptDetected)));
+    }
+
+    #[test]
+    fn test_osc133_exit_code_split_across_chunks() {
+        let mut scanner = OutputScanner::new();
+
+        let events = scanner.scan(b"\x1b]133;D;17");
+        assert!(events.is_empty());
+
+        let events = scanner.scan(b"\x07");
+        assert!(matches!(
+            events[0],
+            ScanEvent::CommandFinished {
+                exit_code: Some(17)
+            }
+        ));
     }
 }

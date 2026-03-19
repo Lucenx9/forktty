@@ -87,6 +87,9 @@ async fn handle_connection(
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
+    // `BufReader::lines()` buffers the full line before yielding it, so the
+    // 1 MiB check below is post-read. Fixing that requires length-prefixed
+    // framing instead of newline-delimited JSON, which is out of scope here.
     while let Ok(Some(line)) = lines.next_line().await {
         if line.len() > MAX_REQUEST_SIZE {
             let resp = json!({"id": null, "ok": false, "error": {"code": "request_too_large", "message": "Request exceeds 1 MiB"}});
@@ -151,13 +154,81 @@ async fn dispatch(
                 .get("text")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing text")?;
-            if text.len() > MAX_REQUEST_SIZE {
-                return Err("Text exceeds 1 MiB".to_string());
-            }
-            let mgr = pty_manager.lock().map_err(|e| format!("Lock: {e}"))?;
-            mgr.write(pty_id, text.as_bytes())
-                .map_err(|e| e.to_string())?;
+            write_surface_text(pty_manager, pty_id, text)?;
             Ok(json!(true))
+        }
+
+        "worktree.create" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing name")?;
+            let prompt = params
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let cwd = current_dir_string()?;
+            let layout = crate::config::load_config()
+                .ok()
+                .map(|c| c.general.worktree_layout)
+                .filter(|layout| !layout.is_empty())
+                .unwrap_or_else(|| "nested".to_string());
+
+            let info = crate::worktree::create(&cwd, name, &layout).map_err(|e| e.to_string())?;
+            let _ = crate::worktree::run_hook(&info.path, "setup");
+            let info_name = info.name.clone();
+            let info_path = info.path.clone();
+            let info_branch = info.branch.clone();
+
+            let workspace = bridge_to_frontend(
+                app,
+                pending,
+                "workspace.create",
+                json!({
+                    "name": info_name.clone(),
+                    "workingDir": info_path.clone(),
+                    "gitBranch": info_branch.clone(),
+                    "worktreeDir": info_path,
+                    "worktreeName": info_name,
+                    "prompt": prompt.clone(),
+                }),
+            )
+            .await?;
+
+            if let (Some(prompt), Some(pty_id)) = (
+                prompt.as_deref(),
+                workspace.get("pty_id").and_then(|v| v.as_u64()),
+            ) {
+                write_surface_text(pty_manager, pty_id as u32, prompt)?;
+            }
+
+            Ok(json!({
+                "id": workspace.get("id").cloned().unwrap_or(Value::Null),
+                "name": info.name,
+                "path": info.path,
+                "branch": info.branch,
+            }))
+        }
+
+        "worktree.remove" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing name")?;
+            let cwd = current_dir_string()?;
+
+            if let Ok(worktrees) = crate::worktree::list(&cwd) {
+                if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
+                    let _ = crate::worktree::run_hook(&wt.path, "teardown");
+                }
+            }
+
+            crate::worktree::remove(&cwd, name, true).map_err(|e| e.to_string())?;
+            let _ =
+                bridge_to_frontend(app, pending, "workspace.close", json!({ "name": name })).await;
+
+            Ok(json!(format!("Removed '{name}'")))
         }
 
         "worktree.merge" => {
@@ -184,6 +255,25 @@ async fn dispatch(
 
         _ => Err(format!("Unknown method: {method}")),
     }
+}
+
+fn current_dir_string() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+fn write_surface_text(
+    pty_manager: &Arc<Mutex<PtyManager>>,
+    pty_id: u32,
+    text: &str,
+) -> Result<(), String> {
+    if text.len() > MAX_REQUEST_SIZE {
+        return Err("Text exceeds 1 MiB".to_string());
+    }
+    let mgr = pty_manager.lock().map_err(|e| format!("Lock: {e}"))?;
+    mgr.write(pty_id, text.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 /// Forward a request to the frontend via Tauri events, wait for response.

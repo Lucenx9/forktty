@@ -233,11 +233,6 @@ fn worktree_merge(name: String) -> Result<String, String> {
 #[tauri::command]
 fn worktree_status(path: String) -> Result<String, String> {
     let canonical = std::fs::canonicalize(&path).map_err(|e| format!("Invalid path: {e}"))?;
-    if let Some(home) = dirs::home_dir() {
-        if !canonical.starts_with(&home) {
-            return Err("Path must be inside home directory".to_string());
-        }
-    }
     worktree::status(canonical.to_str().unwrap_or("")).map_err(|e| e.to_string())
 }
 
@@ -245,11 +240,6 @@ fn worktree_status(path: String) -> Result<String, String> {
 fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<i32>, String> {
     let canonical =
         std::fs::canonicalize(&worktree_path).map_err(|e| format!("Invalid path: {e}"))?;
-    if let Some(home) = dirs::home_dir() {
-        if !canonical.starts_with(&home) {
-            return Err("Path must be inside home directory".to_string());
-        }
-    }
     worktree::run_hook(canonical.to_str().unwrap_or(""), &hook_name).map_err(|e| e.to_string())
 }
 

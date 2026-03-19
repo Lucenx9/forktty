@@ -11,6 +11,7 @@ import {
   worktreeStatus,
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
+import { useConfigStore } from "../stores/config";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
 
@@ -193,6 +194,9 @@ export default function Sidebar() {
     (s) => s.setWorkspaceWorkingDir,
   );
   const setWorktreeStatus = useWorkspaceStore((s) => s.setWorktreeStatus);
+  const worktreeLayout = useConfigStore(
+    (s) => s.config?.general.worktree_layout ?? "nested",
+  );
 
   // 1-second tick for status dot re-evaluation
   const [now, setNow] = useState(Date.now());
@@ -256,7 +260,7 @@ export default function Sidebar() {
     if (!name || !name.trim()) return;
     const trimmed = name.trim();
 
-    worktreeCreate(trimmed)
+    worktreeCreate(trimmed, worktreeLayout)
       .then((info) => {
         const wsId = createWorktreeWorkspace(
           trimmed,
