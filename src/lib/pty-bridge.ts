@@ -32,10 +32,17 @@ interface ScanEventCommandFinished {
   exit_code: number | null;
 }
 
+interface ScanEventNotification {
+  event_type: "notification";
+  title: string;
+  body: string;
+}
+
 type ScanEventData =
   | ScanEventPrompt
   | ScanEventCommandStarted
-  | ScanEventCommandFinished;
+  | ScanEventCommandFinished
+  | ScanEventNotification;
 
 type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError | PtyEventScan;
 
@@ -302,6 +309,12 @@ export function loadSession(): Promise<SessionData | null> {
 
 export function writeLog(level: string, message: string): Promise<void> {
   return invoke("write_log", { level, message });
+}
+
+// --- Tray commands ---
+
+export function updateTrayTooltip(count: number): Promise<void> {
+  return invoke("update_tray_tooltip", { count });
 }
 
 export type { ScanEventData };

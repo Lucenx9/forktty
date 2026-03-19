@@ -13,7 +13,8 @@ use serde::Serialize;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::tray::TrayIconBuilder;
+use tauri::{Manager, State};
 
 struct AppState {
     pty_manager: Arc<Mutex<PtyManager>>,
@@ -39,6 +40,7 @@ fn pty_spawn(
     surface_id: Option<String>,
 ) -> Result<u32, String> {
     let shell = config::load_config()
+        .inspect_err(|e| eprintln!("Warning: failed to load config, using default shell: {e}"))
         .ok()
         .map(|c| c.general.shell)
         .filter(|s| !s.is_empty())
@@ -75,7 +77,7 @@ fn pty_spawn(
             .map_err(|e| e.to_string())?
     };
 
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         read_pty_output(reader, on_output);
     });
 
@@ -158,9 +160,7 @@ fn get_git_branch(cwd: String) -> Result<String, String> {
 
 #[tauri::command]
 fn get_cwd() -> Result<String, String> {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
+    cwd_string()
 }
 
 #[tauri::command]
@@ -189,31 +189,26 @@ fn send_custom_notification(command: String, title: String, body: String) -> Res
 
 // --- Worktree commands ---
 
+fn cwd_string() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn worktree_create(name: String, layout: Option<String>) -> Result<worktree::WorktreeInfo, String> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string();
     let layout = layout.as_deref().unwrap_or("nested");
-    worktree::create(&cwd, &name, layout).map_err(|e| e.to_string())
+    worktree::create(&cwd_string()?, &name, layout).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn worktree_list() -> Result<Vec<worktree::WorktreeInfo>, String> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string();
-    worktree::list(&cwd).map_err(|e| e.to_string())
+    worktree::list(&cwd_string()?).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn worktree_remove(name: String) -> Result<(), String> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string();
+    let cwd = cwd_string()?;
     let worktrees = worktree::list(&cwd).map_err(|e| e.to_string())?;
     if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
         let _ = worktree::run_hook(&wt.path, "teardown");
@@ -223,40 +218,34 @@ fn worktree_remove(name: String) -> Result<(), String> {
 
 #[tauri::command]
 fn worktree_merge(name: String) -> Result<String, String> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string();
-    worktree::merge(&cwd, &name).map_err(|e| e.to_string())
+    worktree::merge(&cwd_string()?, &name).map_err(|e| e.to_string())
+}
+
+/// Canonicalize a path and verify it is inside a git repository's working directory.
+/// Returns the canonical path string. This is a security boundary — prevents
+/// arbitrary filesystem access or hook execution outside the repo.
+fn verify_repo_path(path: &str) -> Result<String, String> {
+    let canonical = std::fs::canonicalize(path).map_err(|e| format!("Invalid path: {e}"))?;
+    let canonical_str = canonical.to_str().ok_or("Non-UTF-8 path")?;
+    let repo = git2::Repository::discover(canonical_str)
+        .map_err(|_| "Path is not inside a git repository".to_string())?;
+    let workdir = repo.workdir().ok_or("Bare repository")?;
+    if !canonical.starts_with(workdir) {
+        return Err("Path is outside the repository working directory".to_string());
+    }
+    Ok(canonical_str.to_string())
 }
 
 #[tauri::command]
 fn worktree_status(path: String) -> Result<String, String> {
-    let canonical = std::fs::canonicalize(&path).map_err(|e| format!("Invalid path: {e}"))?;
-    let canonical_str = canonical.to_str().ok_or("Non-UTF-8 path")?;
-    // Verify path is inside a git repository to prevent arbitrary filesystem access
-    let repo = git2::Repository::discover(canonical_str)
-        .map_err(|_| "Path is not inside a git repository".to_string())?;
-    let workdir = repo.workdir().ok_or("Bare repository")?;
-    if !canonical.starts_with(workdir) {
-        return Err("Path is outside the repository working directory".to_string());
-    }
-    worktree::status(canonical_str).map_err(|e| e.to_string())
+    let verified = verify_repo_path(&path)?;
+    worktree::status(&verified).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<i32>, String> {
-    let canonical =
-        std::fs::canonicalize(&worktree_path).map_err(|e| format!("Invalid path: {e}"))?;
-    let canonical_str = canonical.to_str().ok_or("Non-UTF-8 path")?;
-    // Verify path is inside a git repository to prevent arbitrary hook execution
-    let repo = git2::Repository::discover(canonical_str)
-        .map_err(|_| "Path is not inside a git repository".to_string())?;
-    let workdir = repo.workdir().ok_or("Bare repository")?;
-    if !canonical.starts_with(workdir) {
-        return Err("Path is outside the repository working directory".to_string());
-    }
-    worktree::run_hook(canonical_str, &hook_name).map_err(|e| e.to_string())
+    let verified = verify_repo_path(&worktree_path)?;
+    worktree::run_hook(&verified, &hook_name).map_err(|e| e.to_string())
 }
 
 // --- Config commands ---
@@ -296,6 +285,21 @@ fn write_log(level: String, message: String) -> Result<(), String> {
     session::write_log(&level, &message).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn update_tray_tooltip(app: tauri::AppHandle, count: u32) -> Result<(), String> {
+    use tauri::tray::TrayIconId;
+    if let Some(tray) = app.tray_by_id(&TrayIconId::new("main-tray")) {
+        let tooltip = if count > 0 {
+            format!("ForkTTY ({count} unread)")
+        } else {
+            "ForkTTY".to_string()
+        };
+        tray.set_tooltip(Some(&tooltip))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = session::write_log("INFO", "ForkTTY starting");
@@ -317,6 +321,24 @@ pub fn run() {
             socket_path,
         })
         .setup(move |app| {
+            // Build system tray icon
+            let _tray = TrayIconBuilder::with_id("main-tray")
+                .tooltip("ForkTTY")
+                .icon(
+                    app.default_window_icon()
+                        .cloned()
+                        .unwrap_or_else(|| tauri::image::Image::new(&[], 0, 0)),
+                )
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             let handle = app.handle().clone();
             // Start socket server in background thread with its own tokio runtime
             std::thread::spawn(move || {
@@ -352,7 +374,8 @@ pub fn run() {
             get_theme,
             save_session,
             load_session,
-            write_log
+            write_log,
+            update_tray_tooltip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

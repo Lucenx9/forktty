@@ -47,7 +47,7 @@ function RenderNode({
     >
       {node.children.map((child, i) => (
         <PanelWithHandle key={child.id} index={i} total={node.children.length}>
-          <Panel id={child.id} defaultSize={node.sizes[i]} minSize={5}>
+          <Panel id={child.id} defaultSize={`${node.sizes[i]}`} minSize="5">
             <RenderNode
               node={child}
               focusedPaneId={focusedPaneId}

@@ -21,6 +21,7 @@ interface Surface {
   id: string;
   ptyId: number | null;
   title: string;
+  hasUnreadNotification: boolean;
 }
 
 // --- Bounding rect for spatial navigation ---
@@ -49,6 +50,7 @@ interface Workspace {
   worktreeName: string;
   worktreeStatus: string;
   unreadCount: number;
+  lastNotificationText: string;
   createdAt: string;
 }
 
@@ -98,12 +100,18 @@ interface WorkspaceState {
   registerSurface: (paneId: string, ptyId: number) => void;
   unregisterSurface: (paneId: string) => void;
 
+  // Surface notification state
+  setSurfaceUnread: (surfaceId: string, unread: boolean) => void;
+
   // Notification actions
   addNotification: (workspaceId: string, title: string, body: string) => void;
   markWorkspaceRead: (workspaceId: string) => void;
   clearNotifications: () => void;
   toggleNotificationPanel: () => void;
   jumpToUnread: () => void;
+
+  // Workspace reorder
+  reorderWorkspaces: (fromIndex: number, toIndex: number) => void;
 
   // Session persistence
   restoreSession: (snapshots: SessionSnapshot[], activeIndex: number) => void;
@@ -132,7 +140,7 @@ function makeLeaf(): PaneLeaf {
 }
 
 function makeSurface(id: string): Surface {
-  return { id, ptyId: null, title: "" };
+  return { id, ptyId: null, title: "", hasUnreadNotification: false };
 }
 
 /** Find and replace a node in the tree by ID (immutable). */
@@ -407,6 +415,7 @@ function makeWorkspace(
     worktreeName: opts?.worktreeName ?? "",
     worktreeStatus: "",
     unreadCount: 0,
+    lastNotificationText: "",
     createdAt: new Date().toISOString(),
   };
 }
@@ -523,6 +532,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   switchWorkspace: (id) => {
     const { workspaces } = get();
     if (!workspaces[id]) return;
+    lastWorkspaceSwitchTime = Date.now();
     set({ activeWorkspaceId: id });
   },
 
@@ -663,10 +673,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const ws = workspaces[activeWorkspaceId];
     if (!ws) return;
 
+    // Clear unread notification on the surface being focused
+    const surface = ws.surfaces[paneId];
+    const updatedSurfaces = surface?.hasUnreadNotification
+      ? {
+          ...ws.surfaces,
+          [paneId]: { ...surface, hasUnreadNotification: false },
+        }
+      : ws.surfaces;
+
     set({
       workspaces: {
         ...workspaces,
-        [activeWorkspaceId]: { ...ws, focusedPaneId: paneId },
+        [activeWorkspaceId]: {
+          ...ws,
+          focusedPaneId: paneId,
+          surfaces: updatedSurfaces,
+        },
       },
     });
   },
@@ -753,10 +776,35 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
   },
 
+  // --- Surface notification state ---
+
+  setSurfaceUnread: (surfaceId, unread) => {
+    const { workspaces } = get();
+    for (const [wsId, ws] of Object.entries(workspaces)) {
+      const surface = ws.surfaces[surfaceId];
+      if (surface) {
+        set({
+          workspaces: {
+            ...workspaces,
+            [wsId]: {
+              ...ws,
+              surfaces: {
+                ...ws.surfaces,
+                [surfaceId]: { ...surface, hasUnreadNotification: unread },
+              },
+            },
+          },
+        });
+        return;
+      }
+    }
+  },
+
   // --- Notification actions ---
 
   addNotification: (workspaceId, title, body) => {
-    const { workspaces, notifications } = get();
+    const { workspaces, notifications, activeWorkspaceId, workspaceOrder } =
+      get();
     const ws = workspaces[workspaceId];
     if (!ws) return;
 
@@ -770,11 +818,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       read: false,
     };
 
+    const previewText = body || title;
+
+    // Auto-reorder: move workspace to top if not active
+    let newOrder = workspaceOrder;
+    if (workspaceId !== activeWorkspaceId) {
+      const idx = workspaceOrder.indexOf(workspaceId);
+      if (idx > 0) {
+        newOrder = [
+          workspaceId,
+          ...workspaceOrder.filter((id) => id !== workspaceId),
+        ];
+      }
+    }
+
     set({
       notifications: [notification, ...notifications].slice(0, 100),
+      workspaceOrder: newOrder,
       workspaces: {
         ...workspaces,
-        [workspaceId]: { ...ws, unreadCount: ws.unreadCount + 1 },
+        [workspaceId]: {
+          ...ws,
+          unreadCount: ws.unreadCount + 1,
+          lastNotificationText: previewText,
+        },
       },
     });
   },
@@ -784,10 +851,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const ws = workspaces[workspaceId];
     if (!ws || ws.unreadCount === 0) return;
 
+    // Clear unread notification on all surfaces in this workspace
+    const clearedSurfaces: Record<string, Surface> = {};
+    for (const [id, surface] of Object.entries(ws.surfaces)) {
+      clearedSurfaces[id] = surface.hasUnreadNotification
+        ? { ...surface, hasUnreadNotification: false }
+        : surface;
+    }
+
     set({
       workspaces: {
         ...workspaces,
-        [workspaceId]: { ...ws, unreadCount: 0 },
+        [workspaceId]: {
+          ...ws,
+          unreadCount: 0,
+          lastNotificationText: "",
+          surfaces: clearedSurfaces,
+        },
       },
       notifications: notifications.map((n) =>
         n.workspaceId === workspaceId ? { ...n, read: true } : n,
@@ -799,7 +879,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const { workspaces } = get();
     const cleared: Record<string, Workspace> = {};
     for (const [id, ws] of Object.entries(workspaces)) {
-      cleared[id] = { ...ws, unreadCount: 0 };
+      cleared[id] = { ...ws, unreadCount: 0, lastNotificationText: "" };
     }
     set({ notifications: [], workspaces: cleared });
   },
@@ -822,6 +902,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  reorderWorkspaces: (fromIndex, toIndex) => {
+    const { workspaceOrder } = get();
+    if (fromIndex < 0 || fromIndex >= workspaceOrder.length) return;
+    if (toIndex < 0 || toIndex >= workspaceOrder.length) return;
+    if (fromIndex === toIndex) return;
+
+    const newOrder = [...workspaceOrder];
+    const [moved] = newOrder.splice(fromIndex, 1);
+    newOrder.splice(toIndex, 0, moved!);
+    set({ workspaceOrder: newOrder });
+  },
+
   restoreSession: (snapshots, activeIndex) => {
     if (snapshots.length === 0) return;
 
@@ -842,6 +934,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         worktreeName: snap.worktreeName,
         worktreeStatus: "",
         unreadCount: 0,
+        lastNotificationText: "",
         createdAt: new Date().toISOString(),
       };
       newWorkspaces[ws.id] = ws;
@@ -889,6 +982,12 @@ export function updateSurfaceActivity(paneId: string): void {
 
 export function getLastActivity(paneId: string): number {
   return surfaceActivityMap.get(paneId) ?? 0;
+}
+
+/** Timestamp of the last workspace switch. Used to suppress spurious prompt notifications. */
+let lastWorkspaceSwitchTime = 0;
+export function getLastWorkspaceSwitchTime(): number {
+  return lastWorkspaceSwitchTime;
 }
 
 export type {

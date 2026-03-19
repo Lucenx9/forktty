@@ -19,19 +19,45 @@ import {
   saveSession,
   loadSession,
   writeLog,
+  updateTrayTooltip,
 } from "./lib/pty-bridge";
+import { readScreen } from "./lib/terminal-registry";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
+function buildSessionPayload(): {
+  workspaces: {
+    name: string;
+    working_dir: string;
+    git_branch: string;
+    worktree_dir: string;
+    worktree_name: string;
+    pane_tree: ReturnType<
+      typeof getSessionData
+    >["workspaces"][number]["paneTree"];
+  }[];
+  active_workspace_index: number;
+} {
+  const { workspaces, activeIndex } = getSessionData();
+  return {
+    workspaces: workspaces.map((ws) => ({
+      name: ws.name,
+      working_dir: ws.workingDir,
+      git_branch: ws.gitBranch,
+      worktree_dir: ws.worktreeDir,
+      worktree_name: ws.worktreeName,
+      pane_tree: ws.paneTree,
+    })),
+    active_workspace_index: activeIndex,
+  };
+}
+
 function getWorkspacePtyId(workspaceId: string): number | null {
   const workspace = useWorkspaceStore.getState().workspaces[workspaceId];
-  if (!workspace) {
-    return null;
-  }
-
+  if (!workspace) return null;
   return (
-    Object.values(workspace.surfaces).find((surface) => surface.ptyId != null)
-      ?.ptyId ?? null
+    Object.values(workspace.surfaces).find((s) => s.ptyId != null)?.ptyId ??
+    null
   );
 }
 
@@ -45,26 +71,17 @@ function waitForWorkspacePty(
   }
 
   return new Promise((resolve, reject) => {
-    let unsubscribe = () => {};
+    let unsubscribeFn: (() => void) | null = null;
     const timeoutId = window.setTimeout(() => {
-      unsubscribe();
+      if (unsubscribeFn) unsubscribeFn();
       reject(new Error("Timed out waiting for workspace PTY"));
     }, timeoutMs);
 
-    unsubscribe = useWorkspaceStore.subscribe((state) => {
-      const workspace = state.workspaces[workspaceId];
-      if (!workspace) {
-        return;
-      }
-
-      const ptyId =
-        Object.values(workspace.surfaces).find(
-          (surface) => surface.ptyId != null,
-        )?.ptyId ?? null;
-
+    unsubscribeFn = useWorkspaceStore.subscribe(() => {
+      const ptyId = getWorkspacePtyId(workspaceId);
       if (ptyId != null) {
         window.clearTimeout(timeoutId);
-        unsubscribe();
+        if (unsubscribeFn) unsubscribeFn();
         resolve(ptyId);
       }
     });
@@ -141,39 +158,15 @@ export default function App() {
   // Auto-save session every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
-      const { workspaces, activeIndex } = getSessionData();
-      saveSession({
-        workspaces: workspaces.map((ws) => ({
-          name: ws.name,
-          working_dir: ws.workingDir,
-          git_branch: ws.gitBranch,
-          worktree_dir: ws.worktreeDir,
-          worktree_name: ws.worktreeName,
-          pane_tree: ws.paneTree,
-        })),
-        active_workspace_index: activeIndex,
-      }).catch(console.error);
+      saveSession(buildSessionPayload()).catch(console.error);
     }, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Save session on window close
+  // Save session on window close (best effort — invoke is async)
   useEffect(() => {
     function handleBeforeUnload() {
-      const { workspaces, activeIndex } = getSessionData();
-      // Use sync-ish approach: navigator.sendBeacon isn't available, but
-      // invoke is async. Best effort save.
-      saveSession({
-        workspaces: workspaces.map((ws) => ({
-          name: ws.name,
-          working_dir: ws.workingDir,
-          git_branch: ws.gitBranch,
-          worktree_dir: ws.worktreeDir,
-          worktree_name: ws.worktreeName,
-          pane_tree: ws.paneTree,
-        })),
-        active_workspace_index: activeIndex,
-      }).catch(console.error);
+      saveSession(buildSessionPayload()).catch(console.error);
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -183,6 +176,15 @@ export default function App() {
   useEffect(() => {
     markWorkspaceRead(activeWorkspaceId);
   }, [activeWorkspaceId, markWorkspaceRead]);
+
+  // Window title badge: show unread count
+  const totalUnread = useWorkspaceStore((s) =>
+    Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
+  );
+  useEffect(() => {
+    document.title = totalUnread > 0 ? `ForkTTY (${totalUnread})` : "ForkTTY";
+    updateTrayTooltip(totalUnread).catch(console.error);
+  }, [totalUnread]);
 
   // Listen for socket API bridge events.
   // Empty deps is intentional: handleSocketRequest reads all state via
@@ -356,6 +358,20 @@ export default function App() {
             result = { result: true };
           } else {
             result = { error: "Missing surface_id or pty_id" };
+          }
+          break;
+        }
+        case "surface.read_screen": {
+          const surfaceId = params.surface_id as string | undefined;
+          const content = readScreen(surfaceId ?? undefined);
+          if (content === null) {
+            result = {
+              error: surfaceId
+                ? `Surface "${surfaceId}" not found`
+                : "No terminals available",
+            };
+          } else {
+            result = { result: content };
           }
           break;
         }
@@ -560,6 +576,8 @@ export default function App() {
     [],
   );
 
+  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+
   const commands: CommandEntry[] = useMemo(
     () => [
       {
@@ -567,6 +585,43 @@ export default function App() {
         label: "New Workspace",
         shortcut: "Ctrl+N",
         action: () => createWorkspace(),
+      },
+      {
+        id: "new-worktree",
+        label: "New Worktree Workspace",
+        shortcut: "Ctrl+Shift+N",
+        action: () => {
+          const name = window.prompt("Worktree name (becomes branch name):");
+          if (!name || !name.trim()) return;
+          const trimmed = name.trim();
+          worktreeCreate(trimmed, worktreeLayout)
+            .then((info) => {
+              createWorktreeWorkspace(
+                trimmed,
+                info.path,
+                info.branch,
+                info.path,
+                info.name,
+              );
+              worktreeRunHook(info.path, "setup").catch(console.error);
+            })
+            .catch((err) => {
+              showToast(`Failed to create worktree: ${err}`, "error");
+            });
+        },
+      },
+      {
+        id: "rename-workspace",
+        label: "Rename Workspace...",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (!ws) return;
+          const name = window.prompt("New workspace name:", ws.name);
+          if (name && name.trim()) {
+            renameWorkspace(state.activeWorkspaceId, name.trim());
+          }
+        },
       },
       {
         id: "close-workspace",
@@ -610,6 +665,36 @@ export default function App() {
         },
       },
       {
+        id: "find-in-terminal",
+        label: "Find in Terminal",
+        shortcut: "Ctrl+F",
+        action: () => {
+          // Dispatch Ctrl+F to the focused terminal pane
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "f",
+              ctrlKey: true,
+              bubbles: true,
+            }),
+          );
+        },
+      },
+      {
+        id: "copy-selection",
+        label: "Copy Selection",
+        shortcut: "Ctrl+Shift+C",
+        action: () => {
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "C",
+              ctrlKey: true,
+              shiftKey: true,
+              bubbles: true,
+            }),
+          );
+        },
+      },
+      {
         id: "notifications",
         label: "Toggle Notifications",
         shortcut: "Ctrl+Shift+I",
@@ -622,10 +707,46 @@ export default function App() {
         action: jumpToUnread,
       },
       {
+        id: "mark-read",
+        label: "Mark Workspace as Read",
+        action: () => markWorkspaceRead(activeWorkspaceId),
+      },
+      {
         id: "settings",
         label: "Open Settings",
         shortcut: "Ctrl+,",
         action: toggleSettings,
+      },
+      {
+        id: "command-palette",
+        label: "Command Palette",
+        shortcut: "Ctrl+Shift+P",
+        action: () => setShowCommandPalette(true),
+      },
+      {
+        id: "next-workspace",
+        label: "Next Workspace",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          const idx = state.workspaceOrder.indexOf(state.activeWorkspaceId);
+          const next =
+            state.workspaceOrder[(idx + 1) % state.workspaceOrder.length];
+          if (next) switchWorkspace(next);
+        },
+      },
+      {
+        id: "prev-workspace",
+        label: "Previous Workspace",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          const idx = state.workspaceOrder.indexOf(state.activeWorkspaceId);
+          const prev =
+            state.workspaceOrder[
+              (idx - 1 + state.workspaceOrder.length) %
+                state.workspaceOrder.length
+            ];
+          if (prev) switchWorkspace(prev);
+        },
       },
       {
         id: "nav-left",
@@ -654,24 +775,30 @@ export default function App() {
     ],
     [
       createWorkspace,
+      createWorktreeWorkspace,
       closeWorkspace,
+      renameWorkspace,
       splitPane,
       closePane,
       toggleNotificationPanel,
       jumpToUnread,
+      markWorkspaceRead,
+      activeWorkspaceId,
       toggleSettings,
+      switchWorkspace,
       moveFocus,
+      worktreeLayout,
     ],
   );
 
   const sidebarPanel = (
-    <Panel id="sidebar" defaultSize={15} minSize={8} maxSize={30}>
+    <Panel id="sidebar" defaultSize="15" minSize="8" maxSize="30">
       <Sidebar />
     </Panel>
   );
 
   const mainPanel = (
-    <Panel id="main" defaultSize={85}>
+    <Panel id="main" defaultSize="85">
       <div className="workspace-container">
         {workspaceOrder.map((id) => (
           <div

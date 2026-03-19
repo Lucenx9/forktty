@@ -90,6 +90,13 @@ enum Commands {
 
     /// Clear all notifications
     ClearNotifications,
+
+    /// Read the terminal screen content
+    ReadScreen {
+        /// Surface ID (reads focused surface if omitted)
+        #[arg(long)]
+        surface_id: Option<String>,
+    },
 }
 
 fn main() {
@@ -148,6 +155,9 @@ fn build_request(command: &Commands) -> (&'static str, Value) {
         Commands::Rm { name } => ("worktree.remove", json!({ "name": name })),
         Commands::Notifications => ("notification.list", json!({})),
         Commands::ClearNotifications => ("notification.clear", json!({})),
+        Commands::ReadScreen { surface_id } => {
+            ("surface.read_screen", json!({ "surface_id": surface_id }))
+        }
     }
 }
 

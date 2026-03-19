@@ -6,13 +6,13 @@
 
 ### Tasks
 
-- [ ] 1.1 — Scaffold Tauri v2 project with React + TypeScript + Vite frontend
-- [ ] 1.2 — Add `portable-pty` to Rust backend, implement `pty_spawn`, `pty_write`, `pty_resize` Tauri commands
-- [ ] 1.3 — Frontend: mount single xterm.js instance, connect to backend via Tauri Channel for output streaming
-- [ ] 1.4 — Wire bidirectional data: keystrokes → invoke('pty_write'), PTY output → Channel.onmessage → xterm.js
-- [ ] 1.5 — Implement terminal resize (FitAddon + ResizeObserver → invoke('pty_resize'))
-- [ ] 1.6 — Load Canvas addon (default), try WebGL with catch-and-fallback (WebKitGTK has known WebGL bugs)
-- [ ] 1.7 — Basic window chrome: titlebar, min/max/close
+- [x] 1.1 — Scaffold Tauri v2 project with React + TypeScript + Vite frontend
+- [x] 1.2 — Add `portable-pty` to Rust backend, implement `pty_spawn`, `pty_write`, `pty_resize` Tauri commands
+- [x] 1.3 — Frontend: mount single xterm.js instance, connect to backend via Tauri Channel for output streaming
+- [x] 1.4 — Wire bidirectional data: keystrokes → invoke('pty_write'), PTY output → Channel.onmessage → xterm.js
+- [x] 1.5 — Implement terminal resize (FitAddon + ResizeObserver → invoke('pty_resize'))
+- [x] 1.6 — Load Canvas addon (default), try WebGL with catch-and-fallback (WebKitGTK has known WebGL bugs)
+- [x] 1.7 — Basic window chrome: titlebar, min/max/close
 
 ### Acceptance
 - Launch app, get a working bash shell in the terminal
@@ -27,13 +27,13 @@
 
 ### Tasks
 
-- [ ] 2.1 — Install react-resizable-panels, implement recursive `PaneTree` component
-- [ ] 2.2 — Tauri commands: `pty_spawn` returns a `surface_id`, manage multiple PTYs
-- [ ] 2.3 — Split right (Ctrl+D): add leaf to current pane's parent as horizontal split
-- [ ] 2.4 — Split down (Ctrl+Shift+D): add leaf as vertical split
-- [ ] 2.5 — Pane focus management: Alt+Arrow to navigate, visual focus indicator (border highlight)
-- [ ] 2.6 — Close pane (Ctrl+W): kill PTY, remove from tree, rebalance layout
-- [ ] 2.7 — Canvas renderer on all panes (WebGL optional/experimental, try-catch per pane)
+- [x] 2.1 — Install react-resizable-panels, implement recursive `PaneTree` component
+- [x] 2.2 — Tauri commands: `pty_spawn` returns a `surface_id`, manage multiple PTYs
+- [x] 2.3 — Split right (Ctrl+D): add leaf to current pane's parent as horizontal split
+- [x] 2.4 — Split down (Ctrl+Shift+D): add leaf as vertical split
+- [x] 2.5 — Pane focus management: Alt+Arrow to navigate, visual focus indicator (border highlight)
+- [x] 2.6 — Close pane (Ctrl+W): kill PTY, remove from tree, rebalance layout
+- [x] 2.7 — Canvas renderer on all panes (WebGL optional/experimental, try-catch per pane)
 
 ### Acceptance
 - Split into 4 panes (2x2), each running independent shell
@@ -49,14 +49,14 @@
 
 ### Tasks
 
-- [ ] 3.1 — Sidebar component: list of workspaces, click to switch
-- [ ] 3.2 — Workspace state management (Zustand): create, switch, close, rename
-- [ ] 3.3 — New workspace (Ctrl+N): spawns fresh pane, user names it
-- [ ] 3.4 — Workspace metadata display: name, current git branch (read via `git rev-parse`), working directory
-- [ ] 3.5 — Workspace status indicator: colored dot (idle=gray, running=green, waiting=yellow, error=red)
-- [ ] 3.6 — Close workspace (Ctrl+Shift+W): kill all PTYs in workspace, confirm if multiple
-- [ ] 3.7 — Ctrl+1..9 to jump to workspace by position
-- [ ] 3.8 — Sidebar resizable (drag handle)
+- [x] 3.1 — Sidebar component: list of workspaces, click to switch
+- [x] 3.2 — Workspace state management (Zustand): create, switch, close, rename
+- [x] 3.3 — New workspace (Ctrl+N): spawns fresh pane, user names it
+- [x] 3.4 — Workspace metadata display: name, current git branch (read via `git rev-parse`), working directory
+- [x] 3.5 — Workspace status indicator: colored dot (idle=gray, running=green, waiting=yellow, error=red)
+- [x] 3.6 — Close workspace (Ctrl+Shift+W): kill all PTYs in workspace, confirm if multiple
+- [x] 3.7 — Ctrl+1..9 to jump to workspace by position
+- [x] 3.8 — Sidebar resizable (drag handle)
 
 ### Acceptance
 - Create 3 workspaces, switch between them, each preserves its own pane layout
@@ -71,14 +71,14 @@
 
 ### Tasks
 
-- [ ] 4.1 — Add `git2` crate to backend, implement worktree create/list/remove
-- [ ] 4.2 — `forktty new <name>`: creates worktree at `.worktrees/<name>`, creates branch, spawns workspace with cwd in worktree
-- [ ] 4.3 — `forktty merge [name]`: merge worktree branch into current branch of main checkout
-- [ ] 4.4 — `forktty rm [name]`: remove worktree + delete branch + close workspace
-- [ ] 4.5 — Setup hook support: if `.forktty/setup` exists in repo, run it after worktree creation
-- [ ] 4.6 — Teardown hook: if `.forktty/teardown` exists, run before worktree removal
-- [ ] 4.7 — Worktree layout config: nested (`.worktrees/`), sibling, outer-nested
-- [ ] 4.8 — Sidebar shows worktree status (clean/dirty/conflicts)
+- [x] 4.1 — Add `git2` crate to backend, implement worktree create/list/remove
+- [x] 4.2 — `forktty new <name>`: creates worktree at `.worktrees/<name>`, creates branch, spawns workspace with cwd in worktree
+- [x] 4.3 — `forktty merge [name]`: merge worktree branch into current branch of main checkout
+- [x] 4.4 — `forktty rm [name]`: remove worktree + delete branch + close workspace
+- [x] 4.5 — Setup hook support: if `.forktty/setup` exists in repo, run it after worktree creation
+- [x] 4.6 — Teardown hook: if `.forktty/teardown` exists, run before worktree removal
+- [x] 4.7 — Worktree layout config: nested (`.worktrees/`), sibling, outer-nested
+- [x] 4.8 — Sidebar shows worktree status (clean/dirty/conflicts)
 
 ### Acceptance
 - `forktty new feature-x` creates worktree and opens workspace inside it
@@ -94,16 +94,16 @@
 
 ### Tasks
 
-- [ ] 5.1 — Output scanner in Rust: intercept PTY output, parse OSC 133 sequences (A/B/C/D)
-- [ ] 5.2 — Pattern matcher: regex scan last terminal line for Claude Code prompt patterns
-- [ ] 5.3 — Idle detector: timer resets on each PTY output, fires after threshold
-- [ ] 5.4 — Notification engine: when trigger fires and workspace is unfocused, create notification
-- [ ] 5.5 — In-app: blue dot on sidebar workspace entry, unread count badge
-- [ ] 5.6 — Desktop notification via notify-rust (XDG/D-Bus)
-- [ ] 5.7 — Notification panel (Ctrl+Shift+I): list of all notifications, click to jump to workspace
-- [ ] 5.8 — Jump to latest unread (Ctrl+Shift+U)
-- [ ] 5.9 — Mark as read when workspace is focused
-- [ ] 5.10 — Custom notification command support (config.toml `notification_command`)
+- [x] 5.1 — Output scanner in Rust: intercept PTY output, parse OSC 133 sequences (A/B/C/D)
+- [x] 5.2 — Pattern matcher: regex scan last terminal line for Claude Code prompt patterns
+- [x] 5.3 — Idle detector: timer resets on each PTY output, fires after threshold
+- [x] 5.4 — Notification engine: when trigger fires and workspace is unfocused, create notification
+- [x] 5.5 — In-app: blue dot on sidebar workspace entry, unread count badge
+- [x] 5.6 — Desktop notification via notify-rust (XDG/D-Bus)
+- [x] 5.7 — Notification panel (Ctrl+Shift+I): list of all notifications, click to jump to workspace
+- [x] 5.8 — Jump to latest unread (Ctrl+Shift+U)
+- [x] 5.9 — Mark as read when workspace is focused
+- [x] 5.10 — Custom notification command support (config.toml `notification_command`)
 
 ### Acceptance
 - Start Claude Code in workspace 1, switch to workspace 2
@@ -119,12 +119,12 @@
 
 ### Tasks
 
-- [ ] 6.1 — Unix domain socket server in Rust (tokio), JSON-RPC protocol
-- [ ] 6.2 — Implement MVP methods: system.ping, workspace.*, surface.*, notification.*
-- [ ] 6.3 — CLI binary (`forktty`): clap-based, connects to socket, sends JSON-RPC
-- [ ] 6.4 — Set env vars in spawned shells: `AGENTMUX_WORKSPACE_ID`, `AGENTMUX_SURFACE_ID`, `AGENTMUX_SOCKET_PATH`
-- [ ] 6.5 — `forktty send <surface> "text"`: send keystrokes to a specific terminal
-- [ ] 6.6 — `forktty read-screen [surface]`: dump current terminal buffer content
+- [x] 6.1 — Unix domain socket server in Rust (tokio), JSON-RPC protocol
+- [x] 6.2 — Implement MVP methods: system.ping, workspace.*, surface.*, notification.*
+- [x] 6.3 — CLI binary (`forktty`): clap-based, connects to socket, sends JSON-RPC
+- [x] 6.4 — Set env vars in spawned shells: `AGENTMUX_WORKSPACE_ID`, `AGENTMUX_SURFACE_ID`, `AGENTMUX_SOCKET_PATH`
+- [x] 6.5 — `forktty send <surface> "text"`: send keystrokes to a specific terminal
+- [x] 6.6 — `forktty read-screen [surface]`: dump current terminal buffer content
 
 ### Acceptance
 - `forktty ls` from another terminal lists workspaces
@@ -140,13 +140,13 @@
 
 ### Tasks
 
-- [ ] 7.1 — Ghostty config parser: read `~/.config/ghostty/config`, extract colors/font/theme
-- [ ] 7.2 — Ghostty theme file parser: read `~/.config/ghostty/themes/<name>`
-- [ ] 7.3 — Map Ghostty palette to xterm.js ITheme
-- [ ] 7.4 — Config file: `~/.config/forktty/config.toml` with TOML parser (toml crate)
-- [ ] 7.5 — Settings UI (Ctrl+,): appearance, notifications, shell, worktree layout
-- [ ] 7.6 — Dark/light mode support, follow system preference
-- [ ] 7.7 — Sidebar theming (respect background/foreground from theme)
+- [x] 7.1 — Ghostty config parser: read `~/.config/ghostty/config`, extract colors/font/theme
+- [x] 7.2 — Ghostty theme file parser: read `~/.config/ghostty/themes/<name>`
+- [x] 7.3 — Map Ghostty palette to xterm.js ITheme
+- [x] 7.4 — Config file: `~/.config/forktty/config.toml` with TOML parser (toml crate)
+- [x] 7.5 — Settings UI (Ctrl+,): appearance, notifications, shell, worktree layout
+- [x] 7.6 — Dark/light mode support, follow system preference
+- [x] 7.7 — Sidebar theming (respect background/foreground from theme)
 
 ### Acceptance
 - User with Ghostty Catppuccin theme installed: ForkTTY automatically picks up same colors
@@ -161,20 +161,44 @@
 
 ### Tasks
 
-- [ ] 8.1 — Session persistence: save workspace layout + restore on restart (no scrollback, just structure)
-- [ ] 8.2 — Command palette (Ctrl+Shift+P): fuzzy search all commands
-- [ ] 8.3 — Find in terminal (Ctrl+F) using xterm.js SearchAddon
-- [ ] 8.4 — Copy mode (Shift+click select, Ctrl+Shift+C to copy)
-- [ ] 8.5 — Proper error handling: PTY spawn failure, git errors, socket errors
-- [ ] 8.6 — Logging: structured logs to `~/.local/share/forktty/logs/`
-- [ ] 8.7 — Package as .deb and AppImage via Tauri bundler
-- [ ] 8.8 — README with install instructions, screenshots, usage guide
+- [x] 8.1 — Session persistence: save workspace layout + restore on restart (no scrollback, just structure)
+- [x] 8.2 — Command palette (Ctrl+Shift+P): fuzzy search all commands
+- [x] 8.3 — Find in terminal (Ctrl+F) using xterm.js SearchAddon
+- [x] 8.4 — Copy mode (Shift+click select, Ctrl+Shift+C to copy)
+- [x] 8.5 — Proper error handling: PTY spawn failure, git errors, socket errors
+- [x] 8.6 — Logging: structured logs to `~/.local/share/forktty/logs/`
+- [x] 8.7 — Package as .deb and AppImage via Tauri bundler
+- [x] 8.8 — README with install instructions, screenshots, usage guide
 - [x] 8.9 — License: switch project to AGPL-3.0
 
 ### Acceptance
 - Install from .deb on Debian 13
 - Use daily for 1 week with Claude Code agents
 - No crashes, no memory leaks, notifications work reliably
+
+---
+
+## Phase 9 — Feature Parity (cmux)
+
+**Goal**: Match cmux functionality with additional notification and UI features.
+
+### Tasks
+
+- [x] 9.1 — OSC 9/99/777 notification parsing in output scanner
+- [x] 9.2 — Notification ring: blue glowing border on panes with unread notifications
+- [x] 9.3 — Sidebar notification preview: latest notification text inline
+- [x] 9.4 — Window title badge: unread count in document.title
+- [x] 9.5 — Auto-reorder: move workspace to top of sidebar on notification
+- [x] 9.6 — `forktty read-screen`: dump terminal buffer via socket API + CLI
+- [x] 9.7 — Focus flash: brief blue flash on pane focus change
+- [x] 9.8 — Workspace drag-and-drop reorder in sidebar
+- [x] 9.9 — System tray icon with unread count tooltip
+
+### Acceptance
+- `echo -e '\033]9;Hello\007'` triggers notification with blue pane ring
+- Drag workspace entries in sidebar to reorder
+- Tray icon shows unread count, click opens window
+- `forktty read-screen` returns terminal content
 
 ---
 

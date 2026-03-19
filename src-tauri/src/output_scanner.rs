@@ -10,6 +10,8 @@ pub enum ScanEvent {
     CommandStarted,
     #[serde(rename = "command_finished")]
     CommandFinished { exit_code: Option<i32> },
+    #[serde(rename = "notification")]
+    Notification { title: String, body: String },
 }
 
 /// Scans PTY output for OSC 133 shell integration sequences and
@@ -35,7 +37,7 @@ impl OutputScanner {
 
         let prompt_patterns = patterns
             .into_iter()
-            .filter_map(|p| Regex::new(p).ok())
+            .map(|p| Regex::new(p).expect("hardcoded prompt pattern must be valid"))
             .collect();
 
         Self {
@@ -50,13 +52,13 @@ impl OutputScanner {
     pub fn scan(&mut self, data: &[u8]) -> Vec<ScanEvent> {
         let mut events = Vec::new();
 
-        // 1. Scan for OSC 133 sequences (avoid allocation in the common case)
+        // 1. Scan for OSC sequences (avoid allocation in the common case)
         if self.osc_buf.is_empty() {
-            self.scan_osc133(data, &mut events);
+            self.scan_osc(data, &mut events);
         } else {
             let mut combined = std::mem::take(&mut self.osc_buf);
             combined.extend_from_slice(data);
-            self.scan_osc133(&combined, &mut events);
+            self.scan_osc(&combined, &mut events);
         }
 
         // 2. Update line buffer and check prompt patterns
@@ -65,23 +67,24 @@ impl OutputScanner {
         events
     }
 
-    /// Scan for OSC 133 sequences: ESC ] 133 ; <cmd> BEL
-    fn scan_osc133(&mut self, data: &[u8], events: &mut Vec<ScanEvent>) {
-        let prefix = b"\x1b]133;";
+    /// Scan for OSC sequences: ESC ] <number> ; <payload> BEL
+    /// Dispatches on OSC number: 133 (shell integration), 9/99/777 (notifications).
+    fn scan_osc(&mut self, data: &[u8], events: &mut Vec<ScanEvent>) {
+        let osc_start_marker = b"\x1b]";
         if data.is_empty() {
             return;
         }
 
         let mut index = 0;
         while index < data.len() {
-            let Some(rel_start) = find_subslice(&data[index..], prefix) else {
+            let Some(rel_start) = find_subslice(&data[index..], osc_start_marker) else {
                 break;
             };
             let start = index + rel_start;
-            let sequence_start = start + prefix.len();
+            let after_esc_bracket = start + osc_start_marker.len();
 
             let Some((terminator_start, terminator_len)) =
-                find_osc_terminator(&data[sequence_start..])
+                find_osc_terminator(&data[after_esc_bracket..])
             else {
                 // Buffer partial sequence; cap at 4KB to prevent memory exhaustion
                 if self.osc_buf.len() + (data.len() - start) <= 4096 {
@@ -92,9 +95,28 @@ impl OutputScanner {
                 return;
             };
 
-            let sequence_end = sequence_start + terminator_start;
-            let sequence = &data[sequence_start..sequence_end];
+            let payload = &data[after_esc_bracket..after_esc_bracket + terminator_start];
+            self.dispatch_osc(payload, events);
+            index = after_esc_bracket + terminator_start + terminator_len;
+        }
 
+        // Check for trailing partial ESC ] in the unprocessed tail only
+        let tail = &data[index..];
+        if let Some(start) = trailing_partial_osc_prefix(tail, osc_start_marker) {
+            let partial = &tail[start..];
+            if self.osc_buf.len() + partial.len() <= 4096 {
+                self.osc_buf.extend_from_slice(partial);
+            } else {
+                self.osc_buf.clear();
+            }
+        }
+    }
+
+    /// Dispatch a complete OSC payload (everything between ESC] and BEL/ST).
+    fn dispatch_osc(&mut self, payload: &[u8], events: &mut Vec<ScanEvent>) {
+        // OSC 133 — shell integration: "133;X..."
+        if payload.starts_with(b"133;") {
+            let sequence = &payload[4..];
             match sequence.first().copied() {
                 Some(b'A') => {
                     if !self.prompt_emitted_for_line {
@@ -113,16 +135,41 @@ impl OutputScanner {
                 }
                 _ => {}
             }
-
-            index = sequence_end + terminator_len;
+            return;
         }
 
-        if let Some(start) = trailing_partial_osc_prefix(data, prefix) {
-            let partial = &data[start..];
-            if self.osc_buf.len() + partial.len() <= 4096 {
-                self.osc_buf.extend_from_slice(partial);
-            } else {
-                self.osc_buf.clear();
+        // OSC 9 — iTerm2/ConEmu simple notification: "9;<text>"
+        if payload.starts_with(b"9;") {
+            if let Ok(text) = std::str::from_utf8(&payload[2..]) {
+                events.push(ScanEvent::Notification {
+                    title: "Terminal".to_string(),
+                    body: text.to_string(),
+                });
+            }
+            return;
+        }
+
+        // OSC 99 — notification with id: "99;<id>;<text>"
+        if payload.starts_with(b"99;") {
+            if let Ok(rest) = std::str::from_utf8(&payload[3..]) {
+                // Skip the id field, take the text after the first semicolon
+                let body = rest.split_once(';').map(|(_, t)| t).unwrap_or(rest);
+                events.push(ScanEvent::Notification {
+                    title: "Terminal".to_string(),
+                    body: body.to_string(),
+                });
+            }
+            return;
+        }
+
+        // OSC 777 — rxvt-unicode notification: "777;notify;<title>;<body>"
+        if payload.starts_with(b"777;notify;") {
+            if let Ok(rest) = std::str::from_utf8(&payload[11..]) {
+                let (title, body) = rest.split_once(';').unwrap_or((rest, ""));
+                events.push(ScanEvent::Notification {
+                    title: title.to_string(),
+                    body: body.to_string(),
+                });
             }
         }
     }
@@ -356,5 +403,118 @@ mod tests {
                 exit_code: Some(17)
             }
         ));
+    }
+
+    #[test]
+    fn test_osc9_notification() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]9;Hello World\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Terminal");
+                assert_eq!(body, "Hello World");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc99_notification() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]99;myid;Task complete\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Terminal");
+                assert_eq!(body, "Task complete");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc777_notification() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]777;notify;Build Status;Build succeeded\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Build Status");
+                assert_eq!(body, "Build succeeded");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc_notification_split_across_chunks() {
+        let mut scanner = OutputScanner::new();
+
+        let events = scanner.scan(b"\x1b]9;Hel");
+        assert!(events.is_empty());
+
+        let events = scanner.scan(b"lo\x07");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Terminal");
+                assert_eq!(body, "Hello");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc133_still_works_after_refactor() {
+        let mut scanner = OutputScanner::new();
+        // Verify all OSC 133 variants still work with the new general scanner
+        let events = scanner.scan(b"\x1b]133;A\x07");
+        assert!(matches!(events[0], ScanEvent::PromptDetected));
+
+        let events = scanner.scan(b"\x1b]133;C\x07");
+        assert!(matches!(events[0], ScanEvent::CommandStarted));
+
+        let events = scanner.scan(b"\x1b]133;D;0\x07");
+        assert!(matches!(
+            events[0],
+            ScanEvent::CommandFinished { exit_code: Some(0) }
+        ));
+    }
+
+    #[test]
+    fn test_osc_with_st_terminator() {
+        let mut scanner = OutputScanner::new();
+        // ST terminator is ESC backslash
+        let data = b"\x1b]9;Hello\x1b\\";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Terminal");
+                assert_eq!(body, "Hello");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_consecutive_st_terminated_osc_sequences() {
+        let mut scanner = OutputScanner::new();
+        // Two OSC 9 notifications with ST terminators back-to-back
+        let data = b"\x1b]9;First\x1b\\\x1b]9;Second\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            ScanEvent::Notification { body, .. } => assert_eq!(body, "First"),
+            _ => panic!("Expected first Notification"),
+        }
+        match &events[1] {
+            ScanEvent::Notification { body, .. } => assert_eq!(body, "Second"),
+            _ => panic!("Expected second Notification"),
+        }
     }
 }
