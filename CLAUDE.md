@@ -7,7 +7,7 @@ Multi-agent terminal for Linux. See SPEC.md for architecture and ROADMAP.md for 
 - **Backend**: Rust (Tauri v2 commands), portable-pty 0.9 for PTY, git2 for worktrees, tokio for async, notify-rust for desktop notifications
 - **Frontend**: React 19 + TypeScript + Vite, @xterm/xterm 6.x with addons (fit, canvas, search, web-links), react-resizable-panels for splits, Zustand 5.x for state
 - **IPC**: Tauri `invoke` for request/response, Tauri `Channel<String>` for PTY output streaming (push-based, ordered)
-- **External API**: Unix domain socket at `/tmp/forktty.sock`, JSON-RPC protocol, CLI client via clap
+- **External API**: Unix domain socket at `$XDG_RUNTIME_DIR/forktty.sock` (fallback `/tmp`), JSON-RPC protocol, CLI client via clap
 - **Alternative terminal renderer**: ghostty-web (Ghostty VT100 WASM, MIT, drop-in xterm.js API) — evaluate during Phase 1
 
 ## Project Structure
@@ -36,12 +36,11 @@ forktty/
 │   │   ├── TerminalPane.tsx   # xterm.js wrapper
 │   │   └── NotificationPanel.tsx
 │   ├── stores/
-│   │   └── workspace.ts       # Zustand store
+│   │   ├── workspace.ts       # Zustand store (workspaces, panes, notifications)
+│   │   └── config.ts          # Config + theme store
 │   └── lib/
 │       ├── pty-bridge.ts      # Tauri invoke wrappers
-│       └── ghostty-theme.ts   # Theme parser
-├── cli/                   # Standalone CLI binary (optional, can be same crate)
-│   └── main.rs
+│       └── ghostty-theme.ts   # Theme → xterm.js ITheme + CSS vars
 └── package.json
 ```
 
@@ -124,6 +123,15 @@ Plans are stored in `plans/`. Each phase can run in a separate session.
 
 - `code-reviewer` — reviews diffs for correctness and convention adherence
 - `senior-engineer` — implements features following SPEC/ROADMAP with tests
+- `security-auditor` — ForkTTY-specific security checks (socket, PTY, hooks, CSP)
+- `requirement-parser` — parses feature requests against SPEC/ROADMAP
+
+### Commands
+
+- `/verify` — run all 5 verification gates
+- `/format-all` — cargo fmt + prettier
+- `/security-audit` — launch security auditor
+- `/check-roadmap` — display ROADMAP completion status
 
 ### Rules
 
@@ -137,3 +145,33 @@ Plans are stored in `plans/`. Each phase can run in a separate session.
 3. Each phase has explicit acceptance criteria — verify against those
 4. Keep phases independent: each phase should produce a working app
 5. Test with real terminal programs (htop, vim, less) not just echo commands
+
+## Security Invariants
+
+These MUST NOT be broken. Run `/security-audit` after any change to these files:
+
+- `socket_api.rs`: socket permissions 0o600, XDG_RUNTIME_DIR default, 1MiB request size limit
+- `notification.rs`: argv splitting only, never `sh -c`
+- `lib.rs`: shell path must be absolute+exist, worktree_run_hook/status must canonicalize + verify git-workdir boundary
+- `worktree.rs`: name validation rejects `/`, `\`, `..`, `\0`
+- `tauri.conf.json`: CSP must never be null
+- `config.rs`: Ghostty theme name must not contain `/` or `..`
+
+## Common Mistakes (learned from Phases 1-8)
+
+- **Don't use `sh -c` for external commands** — always split into argv. Review found command injection via notification_command.
+- **Don't pass frontend paths to backend without canonicalize** — worktree_run_hook accepted arbitrary paths, enabling hook execution outside the repo.
+- **Don't forget `index.write()` before `write_tree()` in git2 merge** — merge commit silently failed without it.
+- **Don't set CSP to null** — Tauri v2 default CSP is protective; null removes all protection.
+- **Don't allocate in hot paths** — output_scanner runs on every PTY read chunk (thousands/sec). Avoid `data.to_vec()` when a reference suffices.
+- **Don't fire Zustand writes on every mouse pixel** — debounce `onLayoutChange` with requestAnimationFrame.
+- **Don't use `console.log` in production** — use `showToast` for user-visible feedback, `writeLog` for structured logging.
+
+## Debugging Tips
+
+- **xterm.js Canvas rendering issues**: Canvas addon is required (WebGL crashes on WebKitGTK). If terminal looks wrong, check that CanvasAddon is loaded before any write.
+- **PTY not receiving input**: Check that `take_writer()` was called exactly once. It's one-shot; calling twice returns an error.
+- **Socket connection refused**: Check `$XDG_RUNTIME_DIR/forktty.sock` exists with `ls -la`. Verify permissions are `srw-------`.
+- **OSC 133 not detected**: Ensure your shell has prompt integration enabled (`bash-preexec` or zsh `precmd`/`preexec` hooks). Test with `echo -e '\033]133;A\007'`.
+- **Worktree operations fail**: Run `git worktree list` to check state. Stale worktrees need `git worktree prune`.
+- **Session restore creates empty workspaces**: The session file at `~/.local/share/forktty/session.json` stores pane layout but not PTY state. Each pane spawns a fresh shell on restore.
