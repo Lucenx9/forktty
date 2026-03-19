@@ -576,8 +576,7 @@ export default function TerminalPane({
         />
       )}
       <div
-        ref={containerRef}
-        className="terminal-pane-surface"
+        className="terminal-pane-shell"
         onClick={() => setFocusedPane(paneId)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -587,9 +586,18 @@ export default function TerminalPane({
         }}
         style={{
           width: "100%",
-          height: "calc(100% - 30px)",
+          height: "calc(100% - 32px)",
         }}
-      />
+      >
+        <div
+          ref={containerRef}
+          className="terminal-pane-surface"
+          style={{
+            width: "100%",
+            height: "100%",
+          }}
+        />
+      </div>
       {paneContextMenu && (
         <PaneContextMenu
           menu={paneContextMenu}

@@ -37,6 +37,11 @@
   --surface-overlay: rgba(24, 24, 37, 0.92);
   --surface-overlay-strong: rgba(17, 17, 27, 0.96);
   --overlay-backdrop: rgba(10, 10, 18, 0.68);
+  --chrome-graphite: #0b0c14;
+  --chrome-graphite-soft: #141623;
+  --pane-shell: rgba(12, 13, 21, 0.86);
+  --pane-shell-border: rgba(166, 173, 200, 0.08);
+  --pane-shell-highlight: rgba(255, 255, 255, 0.04);
 
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -65,7 +70,13 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--theme-bg);
+  background:
+    radial-gradient(
+      circle at 50% -10%,
+      rgba(137, 180, 250, 0.04),
+      transparent 38%
+    ),
+    linear-gradient(180deg, #11121b, #090a11);
 }
 
 body {
@@ -87,6 +98,17 @@ textarea {
   width: 100%;
   height: 100%;
   display: flex;
+  background:
+    radial-gradient(
+      1100px circle at 55% -15%,
+      rgba(137, 180, 250, 0.035),
+      transparent 42%
+    ),
+    linear-gradient(
+      180deg,
+      var(--chrome-graphite-soft) 0%,
+      var(--chrome-graphite) 100%
+    );
 }
 
 /* --- Workspace container --- */
@@ -95,12 +117,28 @@ textarea {
   width: 100%;
   height: 100%;
   display: flex;
+  min-width: 0;
+  min-height: 0;
+  background:
+    linear-gradient(180deg, rgba(13, 14, 22, 0.96), rgba(9, 10, 17, 0.98));
 }
 
 .workspace-pane-area {
   width: 100%;
   height: 100%;
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 12px 12px 10px;
+  background:
+    radial-gradient(
+      900px circle at 50% 0,
+      rgba(137, 180, 250, 0.025),
+      transparent 42%
+    ),
+    linear-gradient(180deg, rgba(16, 17, 26, 0.92), rgba(8, 9, 14, 0.98));
+  box-sizing: border-box;
 }
 
 /* --- react-resizable-panels v4 resize handle --- */
@@ -134,7 +172,7 @@ textarea {
   display: flex;
   flex-direction: column;
   background:
-    linear-gradient(180deg, rgba(24, 24, 37, 0.98), rgba(17, 17, 27, 0.98));
+    linear-gradient(180deg, rgba(23, 24, 36, 0.99), rgba(11, 12, 20, 0.99));
   font-family: var(--ui-font-stack);
   font-size: 13px;
   color: var(--theme-fg);
@@ -143,8 +181,8 @@ textarea {
 }
 
 .sidebar-header {
-  padding: 10px 8px 8px;
-  border-bottom: 1px solid var(--sidebar-border);
+  padding: 12px 10px 9px;
+  border-bottom: 1px solid rgba(166, 173, 200, 0.08);
 }
 
 .sidebar-header-icons {
@@ -175,7 +213,7 @@ textarea {
 }
 
 .sidebar-icon-btn:hover {
-  background: var(--surface-2);
+  background: rgba(205, 214, 244, 0.05);
   color: var(--theme-fg);
   transform: translateY(-1px);
 }
@@ -214,7 +252,7 @@ textarea {
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 10px 8px 10px 10px;
 }
 
 .sidebar-list::-webkit-scrollbar {
@@ -229,10 +267,11 @@ textarea {
 /* --- Sidebar entry --- */
 
 .sidebar-entry {
-  padding: 10px 10px 10px 11px;
-  margin-bottom: 6px;
+  position: relative;
+  padding: 11px 10px 10px 14px;
+  margin-bottom: 2px;
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   cursor: pointer;
   transition:
     background-color var(--transition-med),
@@ -241,39 +280,64 @@ textarea {
     transform var(--transition-fast);
 }
 
+.sidebar-entry::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(137, 180, 250, 0);
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
 .sidebar-entry:hover {
-  background-color: var(--surface-1);
-  border-color: rgba(166, 173, 200, 0.1);
-  transform: translateX(1px);
+  background-color: rgba(205, 214, 244, 0.028);
+  border-color: transparent;
 }
 
 .sidebar-entry-active {
+  background: rgba(205, 214, 244, 0.04);
+  border-color: rgba(166, 173, 200, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.sidebar-entry:hover::before {
+  background: rgba(137, 180, 250, 0.22);
+  opacity: 0.42;
+}
+
+.sidebar-entry-active::before {
   background:
-    linear-gradient(180deg, rgba(36, 39, 58, 0.92), rgba(30, 30, 46, 0.96));
-  border-color: rgba(137, 180, 250, 0.18);
-  box-shadow: inset 2px 0 0 rgba(137, 180, 250, 0.86);
+    linear-gradient(180deg, rgba(137, 180, 250, 0.96), rgba(116, 199, 236, 0.9));
+  opacity: 1;
 }
 
 .sidebar-entry-active:hover {
-  background:
-    linear-gradient(180deg, rgba(49, 50, 68, 0.94), rgba(30, 30, 46, 0.98));
-  border-color: rgba(137, 180, 250, 0.24);
+  background: rgba(205, 214, 244, 0.055);
+  border-color: rgba(166, 173, 200, 0.1);
 }
 
 .sidebar-entry-header {
   display: flex;
   position: relative;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
   padding-right: 24px;
 }
 
 .sidebar-status-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.02);
+  box-shadow:
+    0 0 0 1px rgba(9, 10, 17, 0.82),
+    0 0 12px rgba(137, 180, 250, 0.08);
   flex-shrink: 0;
 }
 
@@ -293,11 +357,11 @@ textarea {
 .sidebar-entry-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  margin-top: 4px;
+  margin-top: 5px;
   padding-left: 15px;
-  font-size: 11px;
+  font-size: 11.25px;
   line-height: 1.4;
   color: var(--muted);
   white-space: nowrap;
@@ -327,9 +391,9 @@ textarea {
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
-  padding: 2px 6px;
+  padding: 3px 6px;
   border-radius: 999px;
-  background: rgba(205, 214, 244, 0.06);
+  background: rgba(205, 214, 244, 0.05);
 }
 
 .sidebar-wt-clean {
@@ -352,7 +416,7 @@ textarea {
 .sidebar-entry-actions {
   display: flex;
   gap: 6px;
-  margin-top: 7px;
+  margin-top: 8px;
   padding-left: 15px;
 }
 
@@ -360,15 +424,15 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(205, 214, 244, 0.04);
-  border: 1px solid rgba(88, 91, 112, 0.65);
+  background: rgba(205, 214, 244, 0.03);
+  border: 1px solid rgba(166, 173, 200, 0.14);
   border-radius: 999px;
   color: var(--muted);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
-  padding: 4px 9px;
+  padding: 5px 10px;
   cursor: pointer;
   transition:
     background-color var(--transition-fast),
@@ -378,9 +442,9 @@ textarea {
 }
 
 .sidebar-action-btn:hover {
-  background-color: rgba(205, 214, 244, 0.08);
+  background-color: rgba(205, 214, 244, 0.07);
   color: var(--theme-fg);
-  transform: translateY(-1px);
+  border-color: rgba(166, 173, 200, 0.22);
 }
 
 .sidebar-action-danger:hover {
@@ -402,9 +466,9 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  background: transparent;
+  width: 20px;
+  height: 20px;
+  background: rgba(17, 17, 27, 0.26);
   border: none;
   color: var(--muted);
   font-size: 13px;
@@ -415,7 +479,7 @@ textarea {
   flex-shrink: 0;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%) scale(0.92);
+  transform: translateY(-50%) scale(0.94);
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast),
@@ -465,8 +529,8 @@ textarea {
 .sidebar-new-btn {
   flex: 1;
   padding: 8px 10px;
-  background: transparent;
-  border: 1px dashed rgba(88, 91, 112, 0.7);
+  background: rgba(205, 214, 244, 0.02);
+  border: 1px dashed rgba(166, 173, 200, 0.18);
   border-radius: var(--radius-md);
   color: var(--muted);
   font-size: 11px;
@@ -501,13 +565,13 @@ textarea {
 
 .sidebar-unread-badge {
   margin-left: auto;
-  background: var(--theme-blue);
-  color: var(--theme-bg);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  background: rgba(137, 180, 250, 0.14);
+  color: #d7e7ff;
+  box-shadow: inset 0 0 0 1px rgba(137, 180, 250, 0.22);
   font-family: var(--mono-font-stack);
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 700;
-  min-width: 18px;
+  min-width: 20px;
   height: 18px;
   line-height: 18px;
   text-align: center;
@@ -524,11 +588,12 @@ textarea {
   right: 0;
   width: 352px;
   height: 100%;
-  background: var(--surface-overlay);
-  border-left: 1px solid rgba(166, 173, 200, 0.14);
-  backdrop-filter: blur(22px) saturate(140%);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  box-shadow: var(--shadow-lg);
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.97), rgba(11, 12, 20, 0.98));
+  border-left: 1px solid rgba(166, 173, 200, 0.1);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), var(--shadow-lg);
   display: flex;
   flex-direction: column;
   z-index: 100;
@@ -620,9 +685,9 @@ textarea {
 .notification-empty {
   margin: 8px;
   padding: 20px 18px;
-  border: 1px dashed rgba(166, 173, 200, 0.14);
+  border: 1px solid rgba(166, 173, 200, 0.08);
   border-radius: var(--radius-lg);
-  background: rgba(205, 214, 244, 0.03);
+  background: rgba(205, 214, 244, 0.025);
   text-align: center;
   color: var(--muted);
   font-size: 12px;
@@ -630,9 +695,9 @@ textarea {
 
 .notification-item {
   padding: 10px 12px;
-  border: 1px solid transparent;
+  border: 1px solid rgba(166, 173, 200, 0.05);
   border-radius: var(--radius-md);
-  background: rgba(205, 214, 244, 0.03);
+  background: rgba(205, 214, 244, 0.025);
   cursor: pointer;
   margin-bottom: 6px;
   transition:
@@ -642,9 +707,8 @@ textarea {
 }
 
 .notification-item:hover {
-  background: var(--surface-2);
-  border-color: rgba(166, 173, 200, 0.1);
-  transform: translateX(2px);
+  background: rgba(205, 214, 244, 0.045);
+  border-color: rgba(166, 173, 200, 0.08);
 }
 
 .notification-read {
@@ -701,11 +765,12 @@ textarea {
   right: 0;
   width: 416px;
   height: 100%;
-  background: var(--surface-overlay);
-  border-left: 1px solid rgba(166, 173, 200, 0.14);
-  backdrop-filter: blur(22px) saturate(140%);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  box-shadow: var(--shadow-lg);
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.97), rgba(11, 12, 20, 0.98));
+  border-left: 1px solid rgba(166, 173, 200, 0.1);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), var(--shadow-lg);
   display: flex;
   flex-direction: column;
   z-index: 200;
@@ -879,8 +944,8 @@ textarea {
   width: 100%;
   height: 100%;
   background: var(--overlay-backdrop);
-  backdrop-filter: blur(10px) saturate(120%);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(6px) saturate(108%);
+  -webkit-backdrop-filter: blur(6px) saturate(108%);
   display: flex;
   justify-content: center;
   padding-top: min(15vh, 120px);
@@ -890,15 +955,16 @@ textarea {
 .command-palette {
   width: min(560px, calc(100% - 32px));
   max-height: min(460px, 70vh);
-  background: var(--surface-overlay-strong);
-  border: 1px solid rgba(166, 173, 200, 0.12);
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.98), rgba(11, 12, 20, 0.98));
+  border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
   font-family: var(--ui-font-stack);
   animation: overlay-in var(--transition-med);
 }
@@ -907,7 +973,7 @@ textarea {
   padding: 16px 18px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid rgba(166, 173, 200, 0.08);
+  border-bottom: 1px solid rgba(166, 173, 200, 0.07);
   color: var(--theme-fg);
   font-size: 15px;
   letter-spacing: -0.01em;
@@ -936,9 +1002,9 @@ textarea {
 .command-palette-empty {
   margin: 8px;
   padding: 18px;
-  border: 1px dashed rgba(166, 173, 200, 0.14);
+  border: 1px solid rgba(166, 173, 200, 0.08);
   border-radius: var(--radius-lg);
-  background: rgba(205, 214, 244, 0.03);
+  background: rgba(205, 214, 244, 0.025);
   text-align: center;
   color: var(--muted);
   font-size: 12.5px;
@@ -962,14 +1028,13 @@ textarea {
 }
 
 .command-palette-item:hover {
-  background: rgba(205, 214, 244, 0.05);
-  border-color: rgba(166, 173, 200, 0.08);
+  background: rgba(205, 214, 244, 0.04);
+  border-color: rgba(166, 173, 200, 0.06);
 }
 
 .command-palette-item-selected {
-  background: rgba(137, 180, 250, 0.14);
-  border-color: rgba(137, 180, 250, 0.18);
-  transform: translateY(-1px);
+  background: rgba(137, 180, 250, 0.12);
+  border-color: rgba(137, 180, 250, 0.15);
 }
 
 .command-palette-label {
@@ -1001,14 +1066,15 @@ textarea {
   z-index: 50;
   display: flex;
   align-items: center;
-  gap: 4px;
-  background: var(--surface-overlay);
-  border: 1px solid rgba(166, 173, 200, 0.14);
+  gap: 5px;
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.94), rgba(11, 12, 20, 0.96));
+  border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: 12px;
   padding: 6px;
-  backdrop-filter: blur(16px) saturate(130%);
-  -webkit-backdrop-filter: blur(16px) saturate(130%);
-  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
   font-family: var(--ui-font-stack);
 }
 
@@ -1079,8 +1145,9 @@ textarea {
 }
 
 .toast {
-  background: var(--surface-overlay);
-  border: 1px solid rgba(166, 173, 200, 0.14);
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.94), rgba(11, 12, 20, 0.96));
+  border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: 12px;
   padding: 12px 14px;
   font-family: var(--ui-font-stack);
@@ -1089,9 +1156,9 @@ textarea {
   color: var(--theme-fg);
   max-width: 360px;
   pointer-events: auto;
-  box-shadow: var(--shadow-md);
-  backdrop-filter: blur(16px) saturate(130%);
-  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
   animation: toast-in var(--transition-med);
 }
 
@@ -1135,13 +1202,13 @@ textarea {
   justify-content: space-between;
   position: relative;
   z-index: 2;
-  height: 30px;
-  padding: 0 10px;
+  height: 32px;
+  padding: 0 12px;
   background:
-    linear-gradient(180deg, rgba(24, 24, 37, 0.96), rgba(17, 17, 27, 0.94));
-  border-bottom: 1px solid rgba(166, 173, 200, 0.08);
+    linear-gradient(180deg, rgba(20, 21, 32, 0.98), rgba(11, 12, 20, 0.98));
+  border-bottom: 1px solid rgba(166, 173, 200, 0.06);
   font-family: var(--ui-font-stack);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--muted);
   letter-spacing: 0.01em;
   user-select: none;
@@ -1150,7 +1217,8 @@ textarea {
 
 .pane-toolbar-focused {
   color: var(--theme-fg);
-  border-bottom-color: rgba(137, 180, 250, 0.18);
+  border-bottom-color: rgba(137, 180, 250, 0.14);
+  box-shadow: inset 0 -1px 0 rgba(137, 180, 250, 0.05);
 }
 
 .pane-toolbar-title {
@@ -1160,7 +1228,8 @@ textarea {
   flex: 1;
   min-width: 0;
   padding-right: 12px;
-  font-weight: 500;
+  font-weight: 550;
+  letter-spacing: 0.005em;
 }
 
 .pane-toolbar-actions {
@@ -1219,45 +1288,83 @@ textarea {
   height: 100%;
   position: relative;
   overflow: hidden;
-  background: var(--surface-0);
-  border: 1px solid transparent;
+  background:
+    linear-gradient(180deg, rgba(19, 20, 31, 0.98), rgba(9, 10, 16, 0.99));
+  border: 1px solid rgba(166, 173, 200, 0.05);
+  border-radius: 16px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
   transition:
     border-color var(--transition-med),
     box-shadow var(--transition-med);
 }
 
+.terminal-pane-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  background: linear-gradient(180deg, rgba(12, 13, 21, 0.58), transparent 62%);
+}
+
+.terminal-pane-shell::before {
+  content: "";
+  position: absolute;
+  inset: 9px 11px 11px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(0, 0, 0, 0.06));
+  border: 1px solid rgba(166, 173, 200, 0.03);
+  pointer-events: none;
+}
+
 .terminal-pane-surface {
   position: relative;
-  z-index: 0;
+  z-index: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--theme-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
   transition:
     filter var(--transition-med),
     opacity var(--transition-med);
 }
 
+.terminal-pane-surface .xterm,
+.terminal-pane-surface .xterm-screen,
+.terminal-pane-surface .xterm-viewport {
+  background: var(--theme-bg);
+}
+
 .terminal-pane-focused {
-  border-color: rgba(137, 180, 250, 0.4);
-  box-shadow: inset 0 0 0 1px rgba(137, 180, 250, 0.16);
+  border-color: rgba(137, 180, 250, 0.2);
+  box-shadow:
+    inset 0 0 0 1px rgba(137, 180, 250, 0.08),
+    0 12px 28px rgba(0, 0, 0, 0.22);
 }
 
 .terminal-pane-inactive {
-  border-color: rgba(166, 173, 200, 0.05);
-  box-shadow: inset 0 0 0 1px rgba(17, 17, 27, 0.42);
+  border-color: rgba(166, 173, 200, 0.04);
+  box-shadow:
+    inset 0 0 0 1px rgba(11, 12, 20, 0.4),
+    0 8px 18px rgba(0, 0, 0, 0.14);
 }
 
 .terminal-pane-inactive::after {
   content: "";
   position: absolute;
-  inset: 30px 0 0;
+  inset: 41px 11px 11px;
   z-index: 1;
   background:
     linear-gradient(
       180deg,
-      rgba(17, 17, 27, 0.02),
-      rgba(17, 17, 27, 0.12)
+      rgba(9, 10, 16, 0.04),
+      rgba(9, 10, 16, 0.18)
     );
+  border-radius: 14px;
   opacity: 0.18;
   pointer-events: none;
   transition: opacity var(--transition-med);
@@ -1281,8 +1388,8 @@ textarea {
 }
 
 .terminal-pane-inactive:hover .terminal-pane-surface {
-  opacity: 0.97;
-  filter: saturate(0.94) brightness(0.97);
+  opacity: 0.96;
+  filter: saturate(0.93) brightness(0.96);
 }
 
 /* --- Notification ring (blue glow on panes with unread notifications) --- */
@@ -1290,17 +1397,17 @@ textarea {
 @keyframes notification-pulse {
   0%,
   100% {
-    border-color: rgba(137, 180, 250, 0.28);
+    border-color: rgba(137, 180, 250, 0.12);
     box-shadow:
-      inset 0 0 0 1px rgba(137, 180, 250, 0.12),
-      0 0 0 1px rgba(137, 180, 250, 0.08);
+      inset 0 0 0 1px rgba(137, 180, 250, 0.06),
+      0 10px 24px rgba(0, 0, 0, 0.18);
   }
   50% {
-    border-color: rgba(137, 180, 250, 0.44);
+    border-color: rgba(137, 180, 250, 0.18);
     box-shadow:
-      inset 0 0 0 1px rgba(137, 180, 250, 0.18),
-      0 0 0 1px rgba(137, 180, 250, 0.14),
-      0 0 18px rgba(137, 180, 250, 0.14);
+      inset 0 0 0 1px rgba(137, 180, 250, 0.08),
+      0 0 0 1px rgba(137, 180, 250, 0.04),
+      0 12px 28px rgba(0, 0, 0, 0.2);
   }
 }
 
@@ -1313,9 +1420,9 @@ textarea {
 @keyframes focus-flash {
   from {
     box-shadow:
-      inset 0 0 0 1px rgba(137, 180, 250, 0.18),
-      0 0 18px rgba(137, 180, 250, 0.22);
-    border-color: rgba(137, 180, 250, 0.5);
+      inset 0 0 0 1px rgba(137, 180, 250, 0.12),
+      0 12px 28px rgba(0, 0, 0, 0.22);
+    border-color: rgba(137, 180, 250, 0.22);
   }
   to {
     box-shadow: none;
@@ -1329,7 +1436,7 @@ textarea {
 /* --- Sidebar metadata (status pills, progress bars, log entries) --- */
 
 .sidebar-meta-view {
-  margin-top: 6px;
+  margin-top: 7px;
   padding-left: 15px;
 }
 
@@ -1341,13 +1448,13 @@ textarea {
 }
 
 .sidebar-meta-pill {
-  background: rgba(205, 214, 244, 0.04);
+  background: rgba(205, 214, 244, 0.035);
   font-size: 10px;
   font-weight: 600;
   line-height: 1.35;
   padding: 2px 6px;
   border-radius: 999px;
-  border: 1px solid rgba(166, 173, 200, 0.18);
+  border: 1px solid rgba(166, 173, 200, 0.12);
   color: var(--theme-fg);
   white-space: nowrap;
   max-width: 100%;
@@ -1373,7 +1480,7 @@ textarea {
 
 .sidebar-progress-bar {
   height: 5px;
-  background: rgba(69, 71, 90, 0.72);
+  background: rgba(69, 71, 90, 0.5);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -1390,7 +1497,7 @@ textarea {
 }
 
 .sidebar-log-entry {
-  font-size: 10px;
+  font-size: 10.25px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1413,12 +1520,12 @@ textarea {
 /* --- Sidebar notification preview --- */
 
 .sidebar-notification-preview {
-  margin-top: 4px;
+  margin-top: 6px;
   padding-left: 15px;
   font-size: 10.5px;
-  font-style: italic;
+  font-style: normal;
   line-height: 1.4;
-  color: var(--theme-blue);
+  color: rgba(180, 210, 255, 0.82);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1444,13 +1551,14 @@ textarea {
   position: fixed;
   z-index: 700;
   min-width: 240px;
-  background: var(--surface-overlay-strong);
-  border: 1px solid rgba(166, 173, 200, 0.12);
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.98), rgba(11, 12, 20, 0.98));
+  border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: var(--radius-lg);
   padding: 6px;
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
   font-family: var(--ui-font-stack);
   font-size: 12.5px;
   animation: overlay-in var(--transition-med);
@@ -1487,8 +1595,7 @@ textarea {
 }
 
 .context-menu-item:hover:not(:disabled) {
-  background: var(--surface-2);
-  transform: translateY(-1px);
+  background: rgba(205, 214, 244, 0.045);
 }
 
 .context-menu-item-danger {
@@ -1526,8 +1633,8 @@ textarea {
 /* --- Help button & shortcuts --- */
 
 .sidebar-footer {
-  padding: 8px;
-  border-top: 1px solid var(--sidebar-border);
+  padding: 9px 10px 10px;
+  border-top: 1px solid rgba(166, 173, 200, 0.08);
 }
 
 .sidebar-help-wrapper {
@@ -1535,12 +1642,11 @@ textarea {
 }
 
 .sidebar-help-menu {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  margin-bottom: 6px;
-  max-height: 70vh;
+  position: fixed;
+  z-index: 820;
+  max-height: min(70vh, calc(100vh - 16px));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sidebar-help-btn {
@@ -1573,8 +1679,8 @@ textarea {
   width: 100%;
   height: 100%;
   background: var(--overlay-backdrop);
-  backdrop-filter: blur(10px) saturate(120%);
-  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(6px) saturate(108%);
+  -webkit-backdrop-filter: blur(6px) saturate(108%);
   display: flex;
   justify-content: center;
   padding-top: min(15vh, 120px);
@@ -1584,15 +1690,16 @@ textarea {
 .branch-picker {
   width: min(560px, calc(100% - 32px));
   max-height: min(460px, 70vh);
-  background: var(--surface-overlay-strong);
-  border: 1px solid rgba(166, 173, 200, 0.12);
+  background:
+    linear-gradient(180deg, rgba(24, 25, 37, 0.98), rgba(11, 12, 20, 0.98));
+  border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(8px) saturate(112%);
+  -webkit-backdrop-filter: blur(8px) saturate(112%);
   font-family: var(--ui-font-stack);
   animation: overlay-in var(--transition-med);
 }
@@ -1650,9 +1757,8 @@ textarea {
 
 .branch-picker-item:hover,
 .branch-picker-item-selected {
-  background: rgba(137, 180, 250, 0.14);
-  border-color: rgba(137, 180, 250, 0.18);
-  transform: translateY(-1px);
+  background: rgba(137, 180, 250, 0.12);
+  border-color: rgba(137, 180, 250, 0.15);
 }
 
 .branch-picker-item-new {
@@ -1695,9 +1801,9 @@ textarea {
 .branch-picker-list > .branch-picker-branch-meta {
   margin: 8px;
   padding: 16px;
-  border: 1px dashed rgba(166, 173, 200, 0.14);
+  border: 1px solid rgba(166, 173, 200, 0.08);
   border-radius: var(--radius-lg);
-  background: rgba(205, 214, 244, 0.03);
+  background: rgba(205, 214, 244, 0.025);
   text-align: center;
   white-space: normal;
 }

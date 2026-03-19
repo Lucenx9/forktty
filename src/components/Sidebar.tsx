@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useWorkspaceStore, getLastActivity } from "../stores/workspace";
 import type { Workspace } from "../stores/workspace";
 import {
@@ -534,11 +535,45 @@ function WorkspaceEntry({
 
 function HelpButton() {
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
+
+    function updateMenuPosition() {
+      const btn = btnRef.current;
+      const menu = menuRef.current;
+      if (!btn || !menu) return;
+
+      const padding = 8;
+      const gap = 8;
+      const btnRect = btn.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const minWidth = Math.max(btnRect.width, 240);
+
+      let left = btnRect.left;
+      if (left + menuRect.width > window.innerWidth - padding) {
+        left = window.innerWidth - menuRect.width - padding;
+      }
+      left = Math.max(padding, left);
+
+      let top = btnRect.top - menuRect.height - gap;
+      if (top < padding) {
+        top = Math.min(
+          btnRect.bottom + gap,
+          window.innerHeight - menuRect.height - padding,
+        );
+      }
+
+      setMenuStyle({
+        left,
+        top,
+        minWidth,
+      });
+    }
+
     function handleClick(e: MouseEvent) {
       if (
         menuRef.current &&
@@ -552,94 +587,106 @@ function HelpButton() {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
     }
+    const rafId = requestAnimationFrame(updateMenuPosition);
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
     return () => {
+      cancelAnimationFrame(rafId);
       document.removeEventListener("mousedown", handleClick);
       document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
     };
   }, [open]);
 
   return (
     <div className="sidebar-help-wrapper">
-      {open && (
-        <div ref={menuRef} className="context-menu sidebar-help-menu">
-          <div className="context-menu-header">ForkTTY</div>
-          <button
-            className="context-menu-item"
-            onClick={() => {
-              setOpen(false);
-              window.dispatchEvent(
-                new KeyboardEvent("keydown", {
-                  key: "P",
-                  ctrlKey: true,
-                  shiftKey: true,
-                  bubbles: true,
-                }),
-              );
-            }}
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="context-menu sidebar-help-menu"
+            style={menuStyle ?? { visibility: "hidden" }}
           >
-            <span>Command Palette</span>
-            <span className="context-menu-shortcut">Ctrl+Shift+P</span>
-          </button>
-          <button
-            className="context-menu-item"
-            onClick={() => {
-              setOpen(false);
-              window.dispatchEvent(
-                new KeyboardEvent("keydown", {
-                  key: ",",
-                  ctrlKey: true,
-                  bubbles: true,
-                }),
-              );
-            }}
-          >
-            <span>Settings</span>
-            <span className="context-menu-shortcut">Ctrl+,</span>
-          </button>
-          <div className="context-menu-separator" />
-          <div className="context-menu-header">Keyboard Shortcuts</div>
-          <div className="help-shortcut-list">
-            <div className="help-shortcut-row">
-              <span>New Workspace</span>
-              <span className="context-menu-shortcut">Ctrl+N</span>
+            <div className="context-menu-header">ForkTTY</div>
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                setOpen(false);
+                window.dispatchEvent(
+                  new KeyboardEvent("keydown", {
+                    key: "P",
+                    ctrlKey: true,
+                    shiftKey: true,
+                    bubbles: true,
+                  }),
+                );
+              }}
+            >
+              <span>Command Palette</span>
+              <span className="context-menu-shortcut">Ctrl+Shift+P</span>
+            </button>
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                setOpen(false);
+                window.dispatchEvent(
+                  new KeyboardEvent("keydown", {
+                    key: ",",
+                    ctrlKey: true,
+                    bubbles: true,
+                  }),
+                );
+              }}
+            >
+              <span>Settings</span>
+              <span className="context-menu-shortcut">Ctrl+,</span>
+            </button>
+            <div className="context-menu-separator" />
+            <div className="context-menu-header">Keyboard Shortcuts</div>
+            <div className="help-shortcut-list">
+              <div className="help-shortcut-row">
+                <span>New Workspace</span>
+                <span className="context-menu-shortcut">Ctrl+N</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Close Workspace</span>
+                <span className="context-menu-shortcut">Ctrl+Shift+W</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Split Right</span>
+                <span className="context-menu-shortcut">Ctrl+D</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Split Down</span>
+                <span className="context-menu-shortcut">Ctrl+Shift+D</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Close Pane</span>
+                <span className="context-menu-shortcut">Ctrl+W</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Navigate Panes</span>
+                <span className="context-menu-shortcut">Alt+Arrow</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Find in Terminal</span>
+                <span className="context-menu-shortcut">Ctrl+F</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Jump to Unread</span>
+                <span className="context-menu-shortcut">Ctrl+Shift+U</span>
+              </div>
+              <div className="help-shortcut-row">
+                <span>Switch Workspace</span>
+                <span className="context-menu-shortcut">Ctrl+1..9</span>
+              </div>
             </div>
-            <div className="help-shortcut-row">
-              <span>Close Workspace</span>
-              <span className="context-menu-shortcut">Ctrl+Shift+W</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Split Right</span>
-              <span className="context-menu-shortcut">Ctrl+D</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Split Down</span>
-              <span className="context-menu-shortcut">Ctrl+Shift+D</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Close Pane</span>
-              <span className="context-menu-shortcut">Ctrl+W</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Navigate Panes</span>
-              <span className="context-menu-shortcut">Alt+Arrow</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Find in Terminal</span>
-              <span className="context-menu-shortcut">Ctrl+F</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Jump to Unread</span>
-              <span className="context-menu-shortcut">Ctrl+Shift+U</span>
-            </div>
-            <div className="help-shortcut-row">
-              <span>Switch Workspace</span>
-              <span className="context-menu-shortcut">Ctrl+1..9</span>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
       <button
         ref={btnRef}
         className="sidebar-icon-btn sidebar-help-btn"
