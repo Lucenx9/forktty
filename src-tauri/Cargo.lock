@@ -509,8 +509,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -1137,7 +1139,9 @@ name = "forktty"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "clap",
+ "dirs",
  "git2",
  "notify-rust",
  "portable-pty",
@@ -1148,6 +1152,7 @@ dependencies = [
  "tauri-build",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.2",
 ]
 
 [[package]]

@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
+import { SearchAddon } from "@xterm/addon-search";
+import FindBar from "./FindBar";
 import {
   spawnPty,
   writePty,
@@ -11,6 +13,7 @@ import {
 } from "../lib/pty-bridge";
 import type { ScanEventData } from "../lib/pty-bridge";
 import { useWorkspaceStore, updateSurfaceActivity } from "../stores/workspace";
+import { useConfigStore } from "../stores/config";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -30,48 +33,72 @@ export default function TerminalPane({
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
+  const [showFind, setShowFind] = useState(false);
   const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
   const registerSurface = useWorkspaceStore((s) => s.registerSurface);
   const unregisterSurface = useWorkspaceStore((s) => s.unregisterSurface);
+  const xtermTheme = useConfigStore((s) => s.xtermTheme);
+  const configTheme = useConfigStore((s) => s.theme);
+
+  const handleFind = useCallback(
+    (term: string, opts: { caseSensitive: boolean }) => {
+      searchAddonRef.current?.findNext(term, {
+        caseSensitive: opts.caseSensitive,
+      });
+    },
+    [],
+  );
+
+  const handleFindNext = useCallback(() => {
+    searchAddonRef.current?.findNext("");
+  }, []);
+
+  const handleFindPrevious = useCallback(() => {
+    searchAddonRef.current?.findPrevious("");
+  }, []);
+
+  const handleFindClose = useCallback(() => {
+    searchAddonRef.current?.clearDecorations();
+    setShowFind(false);
+    termRef.current?.focus();
+  }, []);
 
   // Focus the xterm instance when isFocused changes
   useEffect(() => {
-    if (isFocused && termRef.current) {
+    if (isFocused && termRef.current && !showFind) {
       termRef.current.focus();
     }
-  }, [isFocused]);
+  }, [isFocused, showFind]);
+
+  // Update terminal theme when config changes
+  useEffect(() => {
+    if (termRef.current && xtermTheme) {
+      termRef.current.options.theme = xtermTheme;
+    }
+    if (termRef.current && configTheme) {
+      const fontFamily = configTheme.font_family ?? "JetBrains Mono";
+      const fontSize = configTheme.font_size ?? 14;
+      termRef.current.options.fontFamily = `'${fontFamily}', 'Fira Code', 'Cascadia Code', monospace`;
+      termRef.current.options.fontSize = fontSize;
+      fitAddonRef.current?.fit();
+    }
+  }, [xtermTheme, configTheme]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const cfgStore = useConfigStore.getState();
+    const fontFamily = cfgStore.theme?.font_family ?? "JetBrains Mono";
+    const fontSize = cfgStore.theme?.font_size ?? 14;
+
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      theme: {
-        background: "#1e1e2e",
-        foreground: "#cdd6f4",
-        cursor: "#f5e0dc",
-        selectionBackground: "#585b70",
-        black: "#45475a",
-        red: "#f38ba8",
-        green: "#a6e3a1",
-        yellow: "#f9e2af",
-        blue: "#89b4fa",
-        magenta: "#f5c2e7",
-        cyan: "#94e2d5",
-        white: "#bac2de",
-        brightBlack: "#585b70",
-        brightRed: "#f38ba8",
-        brightGreen: "#a6e3a1",
-        brightYellow: "#f9e2af",
-        brightBlue: "#89b4fa",
-        brightMagenta: "#f5c2e7",
-        brightCyan: "#94e2d5",
-        brightWhite: "#a6adc8",
-      },
+      fontSize,
+      fontFamily: `'${fontFamily}', 'Fira Code', 'Cascadia Code', monospace`,
+      theme: cfgStore.xtermTheme ?? undefined,
     });
 
     termRef.current = term;
@@ -84,6 +111,11 @@ export default function TerminalPane({
 
     // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
     term.loadAddon(new CanvasAddon());
+
+    // Search addon for Ctrl+F
+    const searchAddon = new SearchAddon();
+    searchAddonRef.current = searchAddon;
+    term.loadAddon(searchAddon);
 
     fitAddon.fit();
 
@@ -210,15 +242,51 @@ export default function TerminalPane({
 
   return (
     <div
-      ref={containerRef}
-      onClick={() => setFocusedPane(paneId)}
       style={{
         width: "100%",
         height: "100%",
+        position: "relative",
         overflow: "hidden",
-        border: isFocused ? "2px solid #89b4fa" : "2px solid transparent",
+        border: isFocused
+          ? "2px solid var(--theme-blue, #89b4fa)"
+          : "2px solid transparent",
         boxSizing: "border-box",
       }}
-    />
+      onKeyDown={(e) => {
+        // Ctrl+F: find in terminal
+        if (e.ctrlKey && !e.shiftKey && e.key === "f") {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowFind(true);
+          return;
+        }
+        // Ctrl+Shift+C: copy selection
+        if (e.ctrlKey && e.shiftKey && e.key === "C") {
+          e.preventDefault();
+          e.stopPropagation();
+          const sel = termRef.current?.getSelection();
+          if (sel) {
+            navigator.clipboard.writeText(sel).catch(console.error);
+          }
+        }
+      }}
+    >
+      {showFind && (
+        <FindBar
+          onFind={handleFind}
+          onFindNext={handleFindNext}
+          onFindPrevious={handleFindPrevious}
+          onClose={handleFindClose}
+        />
+      )}
+      <div
+        ref={containerRef}
+        onClick={() => setFocusedPane(paneId)}
+        style={{
+          width: "100%",
+          height: "100%",
+        }}
+      />
+    </div>
   );
 }

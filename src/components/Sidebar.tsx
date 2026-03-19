@@ -72,7 +72,7 @@ function WorkspaceEntry({
         showToast(String(msg), "info");
       })
       .catch((err) => {
-        showToast(String(err), "error");
+        showToast(`Merge failed: ${err}`, "error");
       });
   }
 
@@ -96,7 +96,7 @@ function WorkspaceEntry({
         closeWorkspace(workspace.id);
       })
       .catch((err) => {
-        showToast(String(err), "error");
+        showToast(`Remove failed: ${err}`, "error");
       });
   }
 

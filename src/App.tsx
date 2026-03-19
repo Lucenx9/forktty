@@ -1,21 +1,31 @@
-import { useEffect } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
 import NotificationPanel from "./components/NotificationPanel";
-import { useWorkspaceStore } from "./stores/workspace";
+import SettingsPanel from "./components/SettingsPanel";
+import CommandPalette from "./components/CommandPalette";
+import ErrorToast, { showToast } from "./components/ErrorToast";
+import { useWorkspaceStore, getSessionData } from "./stores/workspace";
+import { useConfigStore } from "./stores/config";
 import type { Direction } from "./stores/workspace";
+import type { CommandEntry } from "./components/CommandPalette";
 import {
   worktreeCreate,
   worktreeRunHook,
   writePty,
   socketRespond,
   sendDesktopNotification,
+  saveSession,
+  loadSession,
+  writeLog,
 } from "./lib/pty-bridge";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 export default function App() {
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
   const splitPane = useWorkspaceStore((s) => s.splitPane);
   const closePane = useWorkspaceStore((s) => s.closePane);
   const moveFocus = useWorkspaceStore((s) => s.moveFocus);
@@ -35,6 +45,88 @@ export default function App() {
   );
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const loadConfig = useConfigStore((s) => s.loadConfig);
+  const toggleSettings = useConfigStore((s) => s.toggleSettings);
+  const showSettings = useConfigStore((s) => s.showSettings);
+  const sidebarPosition = useConfigStore(
+    (s) => s.config?.appearance.sidebar_position ?? "left",
+  );
+
+  const restoreSession = useWorkspaceStore((s) => s.restoreSession);
+
+  // Load config + theme on startup
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+
+  // Restore session on startup
+  useEffect(() => {
+    loadSession()
+      .then((data) => {
+        if (data && data.workspaces.length > 0) {
+          restoreSession(
+            data.workspaces.map((ws) => ({
+              name: ws.name,
+              workingDir: ws.working_dir,
+              gitBranch: ws.git_branch,
+              worktreeDir: ws.worktree_dir,
+              worktreeName: ws.worktree_name,
+              paneTree: ws.pane_tree,
+            })),
+            data.active_workspace_index,
+          );
+          writeLog(
+            "INFO",
+            `Restored session with ${data.workspaces.length} workspaces`,
+          ).catch(console.error);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to restore session:", err);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-save session every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const { workspaces, activeIndex } = getSessionData();
+      saveSession({
+        workspaces: workspaces.map((ws) => ({
+          name: ws.name,
+          working_dir: ws.workingDir,
+          git_branch: ws.gitBranch,
+          worktree_dir: ws.worktreeDir,
+          worktree_name: ws.worktreeName,
+          pane_tree: ws.paneTree,
+        })),
+        active_workspace_index: activeIndex,
+      }).catch(console.error);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Save session on window close
+  useEffect(() => {
+    function handleBeforeUnload() {
+      const { workspaces, activeIndex } = getSessionData();
+      // Use sync-ish approach: navigator.sendBeacon isn't available, but
+      // invoke is async. Best effort save.
+      saveSession({
+        workspaces: workspaces.map((ws) => ({
+          name: ws.name,
+          working_dir: ws.workingDir,
+          git_branch: ws.gitBranch,
+          worktree_dir: ws.worktreeDir,
+          worktree_name: ws.worktreeName,
+          pane_tree: ws.paneTree,
+        })),
+        active_workspace_index: activeIndex,
+      }).catch(console.error);
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   // Mark workspace as read when it becomes active
   useEffect(() => {
@@ -256,8 +348,22 @@ export default function App() {
             worktreeRunHook(info.path, "setup").catch(console.error);
           })
           .catch((err) => {
-            console.error("Failed to create worktree:", err);
+            showToast(`Failed to create worktree: ${err}`, "error");
           });
+        return;
+      }
+
+      // Ctrl+Shift+P: command palette
+      if (e.ctrlKey && e.shiftKey && e.key === "P") {
+        e.preventDefault();
+        setShowCommandPalette((v) => !v);
+        return;
+      }
+
+      // Ctrl+,: toggle settings panel
+      if (e.ctrlKey && !e.shiftKey && e.key === ",") {
+        e.preventDefault();
+        toggleSettings();
         return;
       }
 
@@ -352,32 +458,165 @@ export default function App() {
     createWorktreeWorkspace,
     toggleNotificationPanel,
     jumpToUnread,
+    toggleSettings,
   ]);
+
+  const closeCommandPalette = useCallback(
+    () => setShowCommandPalette(false),
+    [],
+  );
+
+  const commands: CommandEntry[] = useMemo(
+    () => [
+      {
+        id: "new-workspace",
+        label: "New Workspace",
+        shortcut: "Ctrl+N",
+        action: () => createWorkspace(),
+      },
+      {
+        id: "close-workspace",
+        label: "Close Workspace",
+        shortcut: "Ctrl+Shift+W",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          if (state.workspaceOrder.length > 1) {
+            closeWorkspace(state.activeWorkspaceId);
+          }
+        },
+      },
+      {
+        id: "split-right",
+        label: "Split Right",
+        shortcut: "Ctrl+D",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) splitPane(ws.focusedPaneId, "horizontal");
+        },
+      },
+      {
+        id: "split-down",
+        label: "Split Down",
+        shortcut: "Ctrl+Shift+D",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) splitPane(ws.focusedPaneId, "vertical");
+        },
+      },
+      {
+        id: "close-pane",
+        label: "Close Pane",
+        shortcut: "Ctrl+W",
+        action: () => {
+          const state = useWorkspaceStore.getState();
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) closePane(ws.focusedPaneId);
+        },
+      },
+      {
+        id: "notifications",
+        label: "Toggle Notifications",
+        shortcut: "Ctrl+Shift+I",
+        action: toggleNotificationPanel,
+      },
+      {
+        id: "jump-unread",
+        label: "Jump to Unread",
+        shortcut: "Ctrl+Shift+U",
+        action: jumpToUnread,
+      },
+      {
+        id: "settings",
+        label: "Open Settings",
+        shortcut: "Ctrl+,",
+        action: toggleSettings,
+      },
+      {
+        id: "nav-left",
+        label: "Navigate Left",
+        shortcut: "Alt+Left",
+        action: () => moveFocus("left"),
+      },
+      {
+        id: "nav-right",
+        label: "Navigate Right",
+        shortcut: "Alt+Right",
+        action: () => moveFocus("right"),
+      },
+      {
+        id: "nav-up",
+        label: "Navigate Up",
+        shortcut: "Alt+Up",
+        action: () => moveFocus("up"),
+      },
+      {
+        id: "nav-down",
+        label: "Navigate Down",
+        shortcut: "Alt+Down",
+        action: () => moveFocus("down"),
+      },
+    ],
+    [
+      createWorkspace,
+      closeWorkspace,
+      splitPane,
+      closePane,
+      toggleNotificationPanel,
+      jumpToUnread,
+      toggleSettings,
+      moveFocus,
+    ],
+  );
+
+  const sidebarPanel = (
+    <Panel id="sidebar" defaultSize={15} minSize={8} maxSize={30}>
+      <Sidebar />
+    </Panel>
+  );
+
+  const mainPanel = (
+    <Panel id="main" defaultSize={85}>
+      <div className="workspace-container">
+        {workspaceOrder.map((id) => (
+          <div
+            key={id}
+            className="workspace-pane-area"
+            style={{
+              display: id === activeWorkspaceId ? "flex" : "none",
+            }}
+          >
+            <PaneArea workspaceId={id} />
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
 
   return (
     <div className="app">
       <Group orientation="horizontal">
-        <Panel id="sidebar" defaultSize={15} minSize={8} maxSize={30}>
-          <Sidebar />
-        </Panel>
-        <Separator className="resize-handle sidebar-separator" />
-        <Panel id="main" defaultSize={85}>
-          <div className="workspace-container">
-            {workspaceOrder.map((id) => (
-              <div
-                key={id}
-                className="workspace-pane-area"
-                style={{
-                  display: id === activeWorkspaceId ? "flex" : "none",
-                }}
-              >
-                <PaneArea workspaceId={id} />
-              </div>
-            ))}
-          </div>
-        </Panel>
+        {sidebarPosition === "right" ? (
+          <>
+            {mainPanel}
+            <Separator className="resize-handle sidebar-separator" />
+            {sidebarPanel}
+          </>
+        ) : (
+          <>
+            {sidebarPanel}
+            <Separator className="resize-handle sidebar-separator" />
+            {mainPanel}
+          </>
+        )}
       </Group>
       {showNotificationPanel && <NotificationPanel />}
+      {showSettings && <SettingsPanel />}
+      {showCommandPalette && (
+        <CommandPalette commands={commands} onClose={closeCommandPalette} />
+      )}
+      <ErrorToast />
     </div>
   );
 }

@@ -132,7 +132,6 @@ impl PtyManager {
     }
 
     /// Kill a PTY process and remove it.
-    /// Kill a PTY process and remove it.
     pub fn kill(&mut self, id: u32) -> Result<(), PtyError> {
         let handle = self.ptys.remove(&id).ok_or(PtyError::NotFound(id))?;
         if let Ok(mut child) = handle.child.lock() {

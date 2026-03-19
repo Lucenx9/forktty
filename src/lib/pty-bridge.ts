@@ -209,4 +209,99 @@ export function worktreeRunHook(
   });
 }
 
+// --- Config commands ---
+
+export interface AppConfig {
+  general: {
+    theme: string;
+    shell: string;
+    worktree_layout: string;
+    notification_command: string;
+  };
+  appearance: {
+    font_family: string;
+    font_size: number;
+    sidebar_position: string;
+  };
+  notifications: {
+    desktop: boolean;
+    sound: boolean;
+    idle_threshold_ms: number;
+  };
+}
+
+export interface TerminalTheme {
+  background: string | null;
+  foreground: string | null;
+  cursor: string | null;
+  selection_background: string | null;
+  selection_foreground: string | null;
+  black: string | null;
+  red: string | null;
+  green: string | null;
+  yellow: string | null;
+  blue: string | null;
+  magenta: string | null;
+  cyan: string | null;
+  white: string | null;
+  bright_black: string | null;
+  bright_red: string | null;
+  bright_green: string | null;
+  bright_yellow: string | null;
+  bright_blue: string | null;
+  bright_magenta: string | null;
+  bright_cyan: string | null;
+  bright_white: string | null;
+  font_family: string | null;
+  font_size: number | null;
+}
+
+export function getConfig(): Promise<AppConfig> {
+  return invoke<AppConfig>("get_config");
+}
+
+export function saveConfig(configData: AppConfig): Promise<void> {
+  return invoke("save_config", { configData });
+}
+
+export function getTheme(): Promise<TerminalTheme> {
+  return invoke<TerminalTheme>("get_theme");
+}
+
+// --- Session commands ---
+
+export interface PaneTreeSnapshot {
+  type: "leaf" | "horizontal" | "vertical";
+  children?: PaneTreeSnapshot[];
+  sizes?: number[];
+}
+
+export interface WorkspaceSnapshot {
+  name: string;
+  working_dir: string;
+  git_branch: string;
+  worktree_dir: string;
+  worktree_name: string;
+  pane_tree: PaneTreeSnapshot;
+}
+
+export interface SessionData {
+  workspaces: WorkspaceSnapshot[];
+  active_workspace_index: number;
+}
+
+export function saveSession(data: SessionData): Promise<void> {
+  return invoke("save_session", { data });
+}
+
+export function loadSession(): Promise<SessionData | null> {
+  return invoke<SessionData | null>("load_session");
+}
+
+// --- Logging ---
+
+export function writeLog(level: string, message: string): Promise<void> {
+  return invoke("write_log", { level, message });
+}
+
 export type { ScanEventData };

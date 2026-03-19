@@ -4,7 +4,7 @@
 
 **A multi-agent terminal for Linux — split panes, isolated worktrees, smart notifications.**
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
 
 <!-- TODO: Replace with actual screenshot/GIF after first visual test -->
@@ -63,6 +63,13 @@ cargo tauri dev
 | Split down | `Ctrl+Shift+D` |
 | Navigate panes | `Alt+Arrow` |
 | Close pane | `Ctrl+W` |
+| New worktree workspace | `Ctrl+Shift+N` |
+| Notification panel | `Ctrl+Shift+I` |
+| Jump to unread | `Ctrl+Shift+U` |
+| Find in terminal | `Ctrl+F` |
+| Copy selection | `Ctrl+Shift+C` |
+| Command palette | `Ctrl+Shift+P` |
+| Settings | `Ctrl+,` |
 
 ## Why ForkTTY?
 
@@ -94,23 +101,60 @@ Backend (Rust)
 | 1 | Terminal + PTY | Done |
 | 2 | Multi-pane splits | Done |
 | 3 | Sidebar + workspaces | Done |
-| 4 | Git worktree isolation | In progress |
-| 5 | Smart notifications | Planned |
-| 6 | Socket API + CLI | Planned |
-| 7 | Theming + config | Planned |
-| 8 | Polish + packaging | Planned |
+| 4 | Git worktree isolation | Done |
+| 5 | Smart notifications | Done |
+| 6 | Socket API + CLI | Done |
+| 7 | Theming + config | Done |
+| 8 | Polish + packaging | Done |
 
 See [ROADMAP.md](ROADMAP.md) for detailed task lists and acceptance criteria.
 
-## CLI (coming in Phase 6)
+## CLI
+
+Control ForkTTY from scripts or other terminals via the CLI + Unix socket API:
 
 ```bash
-forktty new feature-x           # New workspace + worktree + agent
-forktty ls                      # List workspaces
-forktty merge feature-x         # Merge worktree branch
-forktty rm feature-x            # Cleanup
-forktty notify --title "Done"   # Send notification
+forktty-cli ls                      # List workspaces
+forktty-cli new feature-x           # New workspace
+forktty-cli select feature-x        # Focus workspace
+forktty-cli split right             # Split current pane
+forktty-cli send <surface> "text"   # Send keystrokes
+forktty-cli merge feature-x         # Merge worktree branch
+forktty-cli rm feature-x            # Cleanup worktree
+forktty-cli notify --title "Done"   # Send notification
 ```
+
+## Install
+
+### Build from source
+
+```bash
+cargo tauri build
+# Output: src-tauri/target/release/bundle/deb/ and appimage/
+sudo dpkg -i src-tauri/target/release/bundle/deb/forktty_*.deb
+```
+
+## Configuration
+
+Config file: `~/.config/forktty/config.toml`
+
+```toml
+[general]
+theme = "ghostty"              # "ghostty" auto-detects, or "builtin"
+shell = "/bin/bash"
+worktree_layout = "nested"
+
+[appearance]
+font_family = "JetBrains Mono"
+font_size = 14
+sidebar_position = "left"
+
+[notifications]
+desktop = true
+idle_threshold_ms = 2000
+```
+
+Ghostty theme compatibility: if you have `~/.config/ghostty/config`, ForkTTY reads your colors and fonts automatically.
 
 ## Inspiration
 
@@ -130,4 +174,4 @@ npx prettier --check src # Check formatting
 
 ## License
 
-MIT
+GNU Affero General Public License v3.0 (`AGPL-3.0-only`)

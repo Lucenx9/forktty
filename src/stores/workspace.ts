@@ -103,6 +103,24 @@ interface WorkspaceState {
   clearNotifications: () => void;
   toggleNotificationPanel: () => void;
   jumpToUnread: () => void;
+
+  // Session persistence
+  restoreSession: (snapshots: SessionSnapshot[], activeIndex: number) => void;
+}
+
+interface SessionSnapshot {
+  name: string;
+  workingDir: string;
+  gitBranch: string;
+  worktreeDir: string;
+  worktreeName: string;
+  paneTree: PaneTreeSnap;
+}
+
+interface PaneTreeSnap {
+  type: "leaf" | "horizontal" | "vertical";
+  children?: PaneTreeSnap[];
+  sizes?: number[];
 }
 
 // --- Helper functions ---
@@ -372,6 +390,49 @@ function findWorkspaceIdByPane(
     }
   }
   return null;
+}
+
+/** Rebuild a PaneNode + surfaces from a snapshot. */
+function rebuildPaneTree(snap: PaneTreeSnap): {
+  node: PaneNode;
+  surfaces: Record<string, Surface>;
+} {
+  if (snap.type === "leaf") {
+    const leaf = makeLeaf();
+    return {
+      node: leaf,
+      surfaces: { [leaf.surfaceId]: makeSurface(leaf.surfaceId) },
+    };
+  }
+
+  const children: PaneNode[] = [];
+  const surfaces: Record<string, Surface> = {};
+  for (const child of snap.children ?? []) {
+    const result = rebuildPaneTree(child);
+    children.push(result.node);
+    Object.assign(surfaces, result.surfaces);
+  }
+
+  const node: PaneSplit = {
+    type: snap.type,
+    id: crypto.randomUUID(),
+    children,
+    sizes: snap.sizes ?? children.map(() => 100 / children.length),
+  };
+
+  return { node, surfaces };
+}
+
+/** Serialize a PaneNode to snapshot format (no ids, no surfaces). */
+function snapshotPaneTree(node: PaneNode): PaneTreeSnap {
+  if (node.type === "leaf") {
+    return { type: "leaf" };
+  }
+  return {
+    type: node.type,
+    children: node.children.map(snapshotPaneTree),
+    sizes: node.sizes,
+  };
 }
 
 // --- Initial state ---
@@ -711,7 +772,63 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ activeWorkspaceId: target });
     }
   },
+
+  restoreSession: (snapshots, activeIndex) => {
+    if (snapshots.length === 0) return;
+
+    const newWorkspaces: Record<string, Workspace> = {};
+    const newOrder: string[] = [];
+
+    for (const snap of snapshots) {
+      const { node, surfaces } = rebuildPaneTree(snap.paneTree);
+      const ws: Workspace = {
+        id: crypto.randomUUID(),
+        name: snap.name,
+        root: node,
+        surfaces,
+        focusedPaneId: firstLeafId(node),
+        workingDir: snap.workingDir,
+        gitBranch: snap.gitBranch,
+        worktreeDir: snap.worktreeDir,
+        worktreeName: snap.worktreeName,
+        worktreeStatus: "",
+        unreadCount: 0,
+        createdAt: new Date().toISOString(),
+      };
+      newWorkspaces[ws.id] = ws;
+      newOrder.push(ws.id);
+    }
+
+    const safeIndex = Math.min(activeIndex, newOrder.length - 1);
+    set({
+      workspaces: newWorkspaces,
+      workspaceOrder: newOrder,
+      activeWorkspaceId: newOrder[safeIndex]!,
+    });
+  },
 }));
+
+// --- Session snapshot for persistence ---
+
+export function getSessionData(): {
+  workspaces: SessionSnapshot[];
+  activeIndex: number;
+} {
+  const state = useWorkspaceStore.getState();
+  const workspaces = state.workspaceOrder.map((id) => {
+    const ws = state.workspaces[id]!;
+    return {
+      name: ws.name,
+      workingDir: ws.workingDir,
+      gitBranch: ws.gitBranch,
+      worktreeDir: ws.worktreeDir,
+      worktreeName: ws.worktreeName,
+      paneTree: snapshotPaneTree(ws.root),
+    };
+  });
+  const activeIndex = state.workspaceOrder.indexOf(state.activeWorkspaceId);
+  return { workspaces, activeIndex: Math.max(0, activeIndex) };
+}
 
 // --- Activity tracking (outside Zustand to avoid re-render churn) ---
 

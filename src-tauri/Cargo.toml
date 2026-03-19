@@ -29,6 +29,9 @@ serde_json = "1"
 git2 = "0.19"
 regex = "1"
 notify-rust = "4"
+toml = "0.8"
+dirs = "6"
+chrono = "0.4"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
