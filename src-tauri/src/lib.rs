@@ -248,6 +248,22 @@ fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<
     worktree::run_hook(&verified, &hook_name).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn git_list_branches() -> Result<Vec<worktree::BranchInfo>, String> {
+    let cwd = cwd_string()?;
+    worktree::list_branches(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn worktree_attach(
+    branch_name: String,
+    layout: Option<String>,
+) -> Result<worktree::WorktreeInfo, String> {
+    let cwd = cwd_string()?;
+    let layout = layout.unwrap_or_else(|| "nested".to_string());
+    worktree::attach(&cwd, &branch_name, &layout).map_err(|e| e.to_string())
+}
+
 // --- Config commands ---
 
 #[tauri::command]
@@ -369,6 +385,8 @@ pub fn run() {
             worktree_merge,
             worktree_status,
             worktree_run_hook,
+            git_list_branches,
+            worktree_attach,
             get_config,
             save_config,
             get_theme,

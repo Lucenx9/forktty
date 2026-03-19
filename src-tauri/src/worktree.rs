@@ -32,6 +32,14 @@ pub struct WorktreeInfo {
     pub branch: String,
 }
 
+#[derive(Clone, Serialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_head: bool,
+    pub last_commit_time: i64,
+    pub last_commit_summary: String,
+}
+
 /// Compute the worktree path based on layout config.
 fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> PathBuf {
     match layout {
@@ -302,6 +310,133 @@ pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
     } else {
         Ok("clean".to_string())
     }
+}
+
+/// List all local branches with commit metadata, sorted by most recent commit first.
+/// Returns an empty vec (not an error) if the path is not a git repository.
+pub fn list_branches(repo_path: &str) -> Result<Vec<BranchInfo>, WorktreeError> {
+    let repo = match Repository::discover(repo_path) {
+        Ok(r) => r,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    // Determine what branch HEAD points to, so we can mark is_head.
+    let head_branch_name = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(String::from));
+
+    // Collect branches that are checked out in worktrees so we can mark them too.
+    let mut worktree_branches: Vec<String> = Vec::new();
+    if let Ok(wt_names) = repo.worktrees() {
+        for wt_name in wt_names.iter().flatten() {
+            if let Ok(wt) = repo.find_worktree(wt_name) {
+                let branch = get_worktree_branch(&wt.path().to_string_lossy());
+                if !branch.is_empty() {
+                    worktree_branches.push(branch);
+                }
+            }
+        }
+    }
+
+    let branches = repo.branches(Some(BranchType::Local))?;
+    let mut result = Vec::new();
+
+    for branch_result in branches {
+        let (branch, _branch_type) = branch_result?;
+        let name = match branch.name()? {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        let (commit_time, commit_summary) = match branch.get().peel_to_commit() {
+            Ok(commit) => {
+                let time = commit.committer().when().seconds();
+                let summary = commit.summary().unwrap_or("").to_string();
+                (time, summary)
+            }
+            Err(_) => (0, String::new()),
+        };
+
+        // A branch is "head" if it is the current HEAD or checked out in a worktree.
+        let is_head =
+            head_branch_name.as_deref() == Some(&name) || worktree_branches.contains(&name);
+
+        result.push(BranchInfo {
+            name,
+            is_head,
+            last_commit_time: commit_time,
+            last_commit_summary: commit_summary,
+        });
+    }
+
+    // Sort descending by last_commit_time (most recent first).
+    result.sort_by(|a, b| b.last_commit_time.cmp(&a.last_commit_time));
+
+    Ok(result)
+}
+
+/// Attach an existing local branch as a new worktree (does not create a new branch).
+/// Errors if the branch is already checked out in the main working tree or another worktree.
+pub fn attach(
+    repo_path: &str,
+    branch_name: &str,
+    layout: &str,
+) -> Result<WorktreeInfo, WorktreeError> {
+    validate_worktree_name(branch_name)?;
+
+    let repo = Repository::discover(repo_path)
+        .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
+
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| WorktreeError::Other("Bare repository".to_string()))?;
+
+    // Check that the branch exists.
+    let branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|_| WorktreeError::BranchNotFound(branch_name.to_string()))?;
+
+    // Check if this branch is already checked out as HEAD.
+    if let Ok(head) = repo.head() {
+        if head.shorthand() == Some(branch_name) {
+            return Err(WorktreeError::Other(format!(
+                "Branch '{branch_name}' is already checked out in the main working tree"
+            )));
+        }
+    }
+
+    // Check if this branch is already checked out in an existing worktree.
+    if let Ok(wt_names) = repo.worktrees() {
+        for wt_name in wt_names.iter().flatten() {
+            if let Ok(wt) = repo.find_worktree(wt_name) {
+                let wt_branch = get_worktree_branch(&wt.path().to_string_lossy());
+                if wt_branch == branch_name {
+                    return Err(WorktreeError::Other(format!(
+                        "Branch '{branch_name}' is already checked out in worktree '{wt_name}'"
+                    )));
+                }
+            }
+        }
+    }
+
+    let branch_ref = branch.into_reference();
+    let branch_short = branch_ref.shorthand().unwrap_or(branch_name).to_string();
+
+    let wt_path = worktree_path(workdir, branch_name, layout);
+    if let Some(parent) = wt_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut opts = git2::WorktreeAddOptions::new();
+    opts.reference(Some(&branch_ref));
+    repo.worktree(branch_name, &wt_path, Some(&opts))?;
+
+    Ok(WorktreeInfo {
+        name: branch_name.to_string(),
+        path: wt_path.to_string_lossy().to_string(),
+        branch: branch_short,
+    })
 }
 
 /// Run a hook script (.forktty/setup or .forktty/teardown) in the worktree.

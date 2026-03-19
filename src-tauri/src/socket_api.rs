@@ -297,7 +297,13 @@ async fn dispatch(
         | "surface.read_screen"
         | "notification.create"
         | "notification.list"
-        | "notification.clear" => bridge_to_frontend(app, pending, method, params).await,
+        | "notification.clear"
+        | "metadata.set_status"
+        | "metadata.list_status"
+        | "metadata.clear_status"
+        | "metadata.set_progress"
+        | "metadata.clear_progress"
+        | "metadata.log" => bridge_to_frontend(app, pending, method, params).await,
 
         _ => Err(format!("Unknown method: {method}")),
     }

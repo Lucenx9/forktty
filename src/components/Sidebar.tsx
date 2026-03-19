@@ -4,14 +4,12 @@ import type { Workspace } from "../stores/workspace";
 import {
   getCwd,
   getGitBranch,
-  worktreeCreate,
   worktreeMerge,
   worktreeRemove,
-  worktreeRunHook,
   worktreeStatus,
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
-import { useConfigStore } from "../stores/config";
+import WorkspaceMetadataView from "./WorkspaceMetadataView";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
 
@@ -499,6 +497,7 @@ function WorkspaceEntry({
             </span>
           </div>
         )}
+        <WorkspaceMetadataView workspaceId={workspace.id} isActive={isActive} />
         {!isActive && workspace.lastNotificationText && (
           <div className="sidebar-notification-preview">
             {workspace.lastNotificationText}
@@ -676,9 +675,6 @@ export default function Sidebar() {
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
-  const createWorktreeWorkspace = useWorkspaceStore(
-    (s) => s.createWorktreeWorkspace,
-  );
   const setWorkspaceGitBranch = useWorkspaceStore(
     (s) => s.setWorkspaceGitBranch,
   );
@@ -687,10 +683,6 @@ export default function Sidebar() {
   );
   const setWorktreeStatus = useWorkspaceStore((s) => s.setWorktreeStatus);
   const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
-  const worktreeLayout = useConfigStore(
-    (s) => s.config?.general.worktree_layout ?? "nested",
-  );
-
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -784,26 +776,7 @@ export default function Sidebar() {
   }, [setWorktreeStatus]);
 
   function handleNewWorktree() {
-    const name = window.prompt("Worktree name (becomes branch name):");
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
-
-    worktreeCreate(trimmed, worktreeLayout)
-      .then((info) => {
-        const wsId = createWorktreeWorkspace(
-          trimmed,
-          info.path,
-          info.branch,
-          info.path,
-          info.name,
-        );
-        // Run setup hook
-        worktreeRunHook(info.path, "setup").catch(console.error);
-        return wsId;
-      })
-      .catch((err) => {
-        showToast(`Failed to create worktree: ${err}`, "error");
-      });
+    window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
   }
 
   const splitPane = useWorkspaceStore((s) => s.splitPane);

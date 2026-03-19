@@ -180,6 +180,27 @@ export interface WorktreeInfo {
   branch: string;
 }
 
+export interface BranchInfo {
+  name: string;
+  is_head: boolean;
+  last_commit_time: number;
+  last_commit_summary: string;
+}
+
+export function gitListBranches(): Promise<BranchInfo[]> {
+  return invoke<BranchInfo[]>("git_list_branches");
+}
+
+export function worktreeAttach(
+  branchName: string,
+  layout?: string,
+): Promise<WorktreeInfo> {
+  return invoke<WorktreeInfo>("worktree_attach", {
+    branchName,
+    layout: layout ?? null,
+  });
+}
+
 export function worktreeCreate(
   name: string,
   layout?: string,

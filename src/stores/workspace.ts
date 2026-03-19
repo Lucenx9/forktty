@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useMetadataStore } from "./metadata";
 
 // --- PaneTree types (matches SPEC.md) ---
 
@@ -556,6 +557,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       workspaceOrder: newOrder,
       activeWorkspaceId: newActiveId,
     });
+
+    // Clean up ephemeral metadata for the closed workspace
+    useMetadataStore.getState().pruneWorkspace(id);
   },
 
   renameWorkspace: (id, name) => {

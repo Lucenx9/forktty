@@ -5,13 +5,17 @@ import Sidebar from "./components/Sidebar";
 import NotificationPanel from "./components/NotificationPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import CommandPalette from "./components/CommandPalette";
+import BranchPicker from "./components/BranchPicker";
+import type { BranchPickerResult } from "./components/BranchPicker";
 import ErrorToast, { showToast } from "./components/ErrorToast";
 import { useWorkspaceStore, getSessionData } from "./stores/workspace";
+import { useMetadataStore } from "./stores/metadata";
 import { useConfigStore } from "./stores/config";
 import type { Direction } from "./stores/workspace";
 import type { CommandEntry } from "./components/CommandPalette";
 import {
   worktreeCreate,
+  worktreeAttach,
   worktreeRunHook,
   writePty,
   socketRespond,
@@ -88,8 +92,23 @@ function waitForWorkspacePty(
   });
 }
 
+/** Resolve a workspace ID from an optional name. Falls back to activeWorkspaceId. */
+function resolveWorkspaceId(
+  state: ReturnType<typeof useWorkspaceStore.getState>,
+  workspaceName: string | undefined | null,
+): string | null {
+  if (workspaceName && typeof workspaceName === "string") {
+    const target = state.workspaceOrder.find(
+      (wsId) => state.workspaces[wsId]?.name === workspaceName,
+    );
+    return target ?? null;
+  }
+  return state.activeWorkspaceId;
+}
+
 export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showBranchPicker, setShowBranchPicker] = useState(false);
 
   const splitPane = useWorkspaceStore((s) => s.splitPane);
   const closePane = useWorkspaceStore((s) => s.closePane);
@@ -118,6 +137,34 @@ export default function App() {
   );
   const worktreeLayout = useConfigStore(
     (s) => s.config?.general.worktree_layout ?? "nested",
+  );
+
+  const handleBranchPickerResult = useCallback(
+    (result: BranchPickerResult) => {
+      setShowBranchPicker(false);
+      if (result.kind === "cancel") return;
+
+      const createFn =
+        result.kind === "new-branch"
+          ? worktreeCreate(result.name, worktreeLayout)
+          : worktreeAttach(result.branchName, worktreeLayout);
+
+      createFn
+        .then((info) => {
+          createWorktreeWorkspace(
+            info.name,
+            info.path,
+            info.branch,
+            info.path,
+            info.name,
+          );
+          worktreeRunHook(info.path, "setup").catch(console.error);
+        })
+        .catch((err) => {
+          showToast(`Failed to create worktree: ${err}`, "error");
+        });
+    },
+    [worktreeLayout, createWorktreeWorkspace],
   );
 
   const restoreSession = useWorkspaceStore((s) => s.restoreSession);
@@ -170,6 +217,22 @@ export default function App() {
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
+  // Listen for branch picker open event from Sidebar
+  useEffect(() => {
+    function handleOpenBranchPicker() {
+      setShowBranchPicker(true);
+    }
+    window.addEventListener(
+      "forktty-open-branch-picker",
+      handleOpenBranchPicker,
+    );
+    return () =>
+      window.removeEventListener(
+        "forktty-open-branch-picker",
+        handleOpenBranchPicker,
+      );
   }, []);
 
   // Mark workspace as read when it becomes active
@@ -403,6 +466,106 @@ export default function App() {
           result = { result: true };
           break;
         }
+        case "metadata.set_status": {
+          const wsId = resolveWorkspaceId(
+            state,
+            params.workspace_name as string | undefined,
+          );
+          if (!wsId) {
+            result = { error: "Workspace not found" };
+            break;
+          }
+          useMetadataStore.getState().setStatus(wsId, {
+            key: params.key as string,
+            label: params.label as string,
+            value: params.value as string,
+            color: (params.color as string | undefined) ?? undefined,
+          });
+          result = { result: true };
+          break;
+        }
+        case "metadata.list_status": {
+          const wsId = resolveWorkspaceId(
+            state,
+            params.workspace_name as string | undefined,
+          );
+          if (!wsId) {
+            result = { error: "Workspace not found" };
+            break;
+          }
+          result = { result: useMetadataStore.getState().listStatus(wsId) };
+          break;
+        }
+        case "metadata.clear_status": {
+          const wsId = resolveWorkspaceId(
+            state,
+            params.workspace_name as string | undefined,
+          );
+          if (!wsId) {
+            result = { error: "Workspace not found" };
+            break;
+          }
+          useMetadataStore
+            .getState()
+            .clearStatus(wsId, (params.key as string | undefined) ?? undefined);
+          result = { result: true };
+          break;
+        }
+        case "metadata.set_progress": {
+          const wsId = resolveWorkspaceId(
+            state,
+            params.workspace_name as string | undefined,
+          );
+          if (!wsId) {
+            result = { error: "Workspace not found" };
+            break;
+          }
+          useMetadataStore.getState().setProgress(wsId, {
+            key: params.key as string,
+            label: params.label as string,
+            value: params.value as number,
+            total: (params.total as number | undefined) ?? undefined,
+          });
+          result = { result: true };
+          break;
+        }
+        case "metadata.clear_progress": {
+          const wsId = resolveWorkspaceId(
+            state,
+            params.workspace_name as string | undefined,
+          );
+          if (!wsId) {
+            result = { error: "Workspace not found" };
+            break;
+          }
+          useMetadataStore
+            .getState()
+            .clearProgress(
+              wsId,
+              (params.key as string | undefined) ?? undefined,
+            );
+          result = { result: true };
+          break;
+        }
+        case "metadata.log": {
+          const wsId = resolveWorkspaceId(
+            state,
+            params.workspace_name as string | undefined,
+          );
+          if (!wsId) {
+            result = { error: "Workspace not found" };
+            break;
+          }
+          useMetadataStore.getState().appendLog(wsId, {
+            level: ((params.level as string) || "info") as
+              | "info"
+              | "warn"
+              | "error",
+            message: params.message as string,
+          });
+          result = { result: true };
+          break;
+        }
         default:
           result = { error: `Unknown method: ${method}` };
       }
@@ -439,26 +602,10 @@ export default function App() {
         return;
       }
 
-      // Ctrl+Shift+N: new worktree workspace
+      // Ctrl+Shift+N: new worktree workspace (open branch picker)
       if (e.ctrlKey && e.shiftKey && e.key === "N") {
         e.preventDefault();
-        const name = window.prompt("Worktree name (becomes branch name):");
-        if (!name || !name.trim()) return;
-        const trimmed = name.trim();
-        worktreeCreate(trimmed, worktreeLayout)
-          .then((info) => {
-            createWorktreeWorkspace(
-              trimmed,
-              info.path,
-              info.branch,
-              info.path,
-              info.name,
-            );
-            worktreeRunHook(info.path, "setup").catch(console.error);
-          })
-          .catch((err) => {
-            showToast(`Failed to create worktree: ${err}`, "error");
-          });
+        setShowBranchPicker(true);
         return;
       }
 
@@ -590,25 +737,7 @@ export default function App() {
         id: "new-worktree",
         label: "New Worktree Workspace",
         shortcut: "Ctrl+Shift+N",
-        action: () => {
-          const name = window.prompt("Worktree name (becomes branch name):");
-          if (!name || !name.trim()) return;
-          const trimmed = name.trim();
-          worktreeCreate(trimmed, worktreeLayout)
-            .then((info) => {
-              createWorktreeWorkspace(
-                trimmed,
-                info.path,
-                info.branch,
-                info.path,
-                info.name,
-              );
-              worktreeRunHook(info.path, "setup").catch(console.error);
-            })
-            .catch((err) => {
-              showToast(`Failed to create worktree: ${err}`, "error");
-            });
-        },
+        action: () => setShowBranchPicker(true),
       },
       {
         id: "rename-workspace",
@@ -837,6 +966,7 @@ export default function App() {
       {showCommandPalette && (
         <CommandPalette commands={commands} onClose={closeCommandPalette} />
       )}
+      {showBranchPicker && <BranchPicker onResult={handleBranchPickerResult} />}
       <ErrorToast />
     </div>
   );

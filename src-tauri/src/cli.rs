@@ -97,6 +97,81 @@ enum Commands {
         #[arg(long)]
         surface_id: Option<String>,
     },
+
+    /// Workspace metadata commands (status pills, progress bars, logs)
+    Metadata {
+        #[command(subcommand)]
+        command: MetadataCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MetadataCommands {
+    /// Set a status pill on a workspace
+    SetStatus {
+        /// Status key (used for upsert)
+        key: String,
+        /// Display label
+        label: String,
+        /// Display value
+        value: String,
+        /// Optional color (green, yellow, red, blue, muted, or raw CSS)
+        #[arg(long)]
+        color: Option<String>,
+        /// Workspace name (defaults to active)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// List status pills on a workspace
+    ListStatus {
+        /// Workspace name (defaults to active)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Clear status pills on a workspace
+    ClearStatus {
+        /// Clear only this key (clears all if omitted)
+        #[arg(long)]
+        key: Option<String>,
+        /// Workspace name (defaults to active)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Set a progress bar on a workspace
+    SetProgress {
+        /// Progress key (used for upsert)
+        key: String,
+        /// Display label
+        label: String,
+        /// Current value
+        value: f64,
+        /// Total value (defaults to 100)
+        #[arg(long)]
+        total: Option<f64>,
+        /// Workspace name (defaults to active)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Clear progress bars on a workspace
+    ClearProgress {
+        /// Clear only this key (clears all if omitted)
+        #[arg(long)]
+        key: Option<String>,
+        /// Workspace name (defaults to active)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Append a log entry to a workspace
+    Log {
+        /// Log message
+        message: String,
+        /// Log level: info, warn, or error
+        #[arg(long, default_value = "info")]
+        level: String,
+        /// Workspace name (defaults to active)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
 }
 
 fn main() {
@@ -158,6 +233,68 @@ fn build_request(command: &Commands) -> (&'static str, Value) {
         Commands::ReadScreen { surface_id } => {
             ("surface.read_screen", json!({ "surface_id": surface_id }))
         }
+        Commands::Metadata { command } => build_metadata_request(command),
+    }
+}
+
+fn build_metadata_request(command: &MetadataCommands) -> (&'static str, Value) {
+    match command {
+        MetadataCommands::SetStatus {
+            key,
+            label,
+            value,
+            color,
+            workspace,
+        } => (
+            "metadata.set_status",
+            json!({
+                "key": key,
+                "label": label,
+                "value": value,
+                "color": color,
+                "workspace_name": workspace,
+            }),
+        ),
+        MetadataCommands::ListStatus { workspace } => (
+            "metadata.list_status",
+            json!({ "workspace_name": workspace }),
+        ),
+        MetadataCommands::ClearStatus { key, workspace } => (
+            "metadata.clear_status",
+            json!({ "key": key, "workspace_name": workspace }),
+        ),
+        MetadataCommands::SetProgress {
+            key,
+            label,
+            value,
+            total,
+            workspace,
+        } => (
+            "metadata.set_progress",
+            json!({
+                "key": key,
+                "label": label,
+                "value": value,
+                "total": total,
+                "workspace_name": workspace,
+            }),
+        ),
+        MetadataCommands::ClearProgress { key, workspace } => (
+            "metadata.clear_progress",
+            json!({ "key": key, "workspace_name": workspace }),
+        ),
+        MetadataCommands::Log {
+            message,
+            level,
+            workspace,
+        } => (
+            "metadata.log",
+            json!({
+                "message": message,
+                "level": level,
+                "workspace_name": workspace,
+            }),
+        ),
     }
 }
 
@@ -220,5 +357,118 @@ mod tests {
 
         assert_eq!(method, "worktree.remove");
         assert_eq!(params["name"], "feature-x");
+    }
+
+    #[test]
+    fn metadata_set_status_builds_correct_request() {
+        let cmd = MetadataCommands::SetStatus {
+            key: "build".to_string(),
+            label: "Build".to_string(),
+            value: "passing".to_string(),
+            color: Some("green".to_string()),
+            workspace: Some("my-ws".to_string()),
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.set_status");
+        assert_eq!(params["key"], "build");
+        assert_eq!(params["label"], "Build");
+        assert_eq!(params["value"], "passing");
+        assert_eq!(params["color"], "green");
+        assert_eq!(params["workspace_name"], "my-ws");
+    }
+
+    #[test]
+    fn metadata_set_status_without_optional_fields() {
+        let cmd = MetadataCommands::SetStatus {
+            key: "ci".to_string(),
+            label: "CI".to_string(),
+            value: "running".to_string(),
+            color: None,
+            workspace: None,
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.set_status");
+        assert_eq!(params["key"], "ci");
+        assert!(params["color"].is_null());
+        assert!(params["workspace_name"].is_null());
+    }
+
+    #[test]
+    fn metadata_list_status_builds_correct_request() {
+        let cmd = MetadataCommands::ListStatus {
+            workspace: Some("ws1".to_string()),
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.list_status");
+        assert_eq!(params["workspace_name"], "ws1");
+    }
+
+    #[test]
+    fn metadata_clear_status_with_key() {
+        let cmd = MetadataCommands::ClearStatus {
+            key: Some("build".to_string()),
+            workspace: None,
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.clear_status");
+        assert_eq!(params["key"], "build");
+        assert!(params["workspace_name"].is_null());
+    }
+
+    #[test]
+    fn metadata_set_progress_builds_correct_request() {
+        let cmd = MetadataCommands::SetProgress {
+            key: "download".to_string(),
+            label: "Downloading".to_string(),
+            value: 42.0,
+            total: Some(100.0),
+            workspace: None,
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.set_progress");
+        assert_eq!(params["key"], "download");
+        assert_eq!(params["label"], "Downloading");
+        assert_eq!(params["value"], 42.0);
+        assert_eq!(params["total"], 100.0);
+    }
+
+    #[test]
+    fn metadata_clear_progress_builds_correct_request() {
+        let cmd = MetadataCommands::ClearProgress {
+            key: None,
+            workspace: Some("ws2".to_string()),
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.clear_progress");
+        assert!(params["key"].is_null());
+        assert_eq!(params["workspace_name"], "ws2");
+    }
+
+    #[test]
+    fn metadata_log_builds_correct_request() {
+        let cmd = MetadataCommands::Log {
+            message: "Build succeeded".to_string(),
+            level: "info".to_string(),
+            workspace: None,
+        };
+        let (method, params) = build_metadata_request(&cmd);
+        assert_eq!(method, "metadata.log");
+        assert_eq!(params["message"], "Build succeeded");
+        assert_eq!(params["level"], "info");
+    }
+
+    #[test]
+    fn metadata_via_build_request() {
+        let cmd = Commands::Metadata {
+            command: MetadataCommands::Log {
+                message: "test".to_string(),
+                level: "warn".to_string(),
+                workspace: None,
+            },
+        };
+        let (method, params) = build_request(&cmd);
+        assert_eq!(method, "metadata.log");
+        assert_eq!(params["message"], "test");
+        assert_eq!(params["level"], "warn");
     }
 }
