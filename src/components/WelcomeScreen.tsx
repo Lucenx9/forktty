@@ -6,9 +6,11 @@ export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
   return (
     <div className="welcome-overlay" onClick={onDismiss}>
       <div className="welcome-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="welcome-title">Welcome to ForkTTY</div>
-        <div className="welcome-subtitle">
-          Multi-agent terminal with isolated worktrees
+        <div className="welcome-header">
+          <div className="welcome-title">Welcome to ForkTTY</div>
+          <div className="welcome-subtitle">
+            Multi-agent terminal with isolated worktrees
+          </div>
         </div>
 
         <div className="welcome-actions">
@@ -34,12 +36,13 @@ export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
           </div>
         </div>
 
-        <button className="welcome-dismiss" onClick={onDismiss}>
-          Start working
-        </button>
-
-        <div className="welcome-hint">
-          Press ? in the sidebar for all shortcuts
+        <div className="welcome-footer">
+          <div className="welcome-hint">
+            Press ? in the sidebar for all shortcuts
+          </div>
+          <button className="welcome-dismiss" onClick={onDismiss}>
+            Start working
+          </button>
         </div>
       </div>
     </div>

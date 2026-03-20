@@ -127,14 +127,71 @@ textarea {
 /* --- react-resizable-panels v4 resize handle --- */
 
 .resize-handle {
-  flex: 0 0 4px;
+  flex: 0 0 6px;
+  position: relative;
   background: transparent;
   transition: background-color var(--transition-fast);
 }
 
+.resize-handle::before {
+  content: "";
+  position: absolute;
+  background: rgba(166, 173, 200, 0.18);
+  opacity: 0.7;
+  transition:
+    background-color var(--transition-fast),
+    opacity var(--transition-fast),
+    width var(--transition-fast),
+    height var(--transition-fast);
+}
+
+.resize-handle[aria-orientation="vertical"]::before {
+  top: 10px;
+  bottom: 10px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.resize-handle[aria-orientation="horizontal"]::before {
+  top: 50%;
+  right: 10px;
+  left: 10px;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
 .resize-handle:hover,
-.resize-handle[data-separator="active"] {
-  background: rgba(137, 180, 250, 0.2);
+.resize-handle:focus-visible,
+.resize-handle[data-separator]:not([data-separator="inactive"]):not(
+    [data-separator="disabled"]
+  ) {
+  background: rgba(137, 180, 250, 0.05);
+}
+
+.resize-handle:hover::before,
+.resize-handle:focus-visible::before,
+.resize-handle[data-separator]:not([data-separator="inactive"]):not(
+    [data-separator="disabled"]
+  )::before {
+  background: rgba(137, 180, 250, 0.42);
+  opacity: 1;
+}
+
+.resize-handle[aria-orientation="vertical"]:hover::before,
+.resize-handle[aria-orientation="vertical"]:focus-visible::before,
+.resize-handle[aria-orientation="vertical"][data-separator]:not(
+    [data-separator="inactive"]
+  ):not([data-separator="disabled"])::before {
+  width: 2px;
+}
+
+.resize-handle[aria-orientation="horizontal"]:hover::before,
+.resize-handle[aria-orientation="horizontal"]:focus-visible::before,
+.resize-handle[aria-orientation="horizontal"][data-separator]:not(
+    [data-separator="inactive"]
+  ):not([data-separator="disabled"])::before {
+  height: 2px;
 }
 
 .sidebar-separator {
@@ -1335,6 +1392,7 @@ textarea {
   left: 0;
   width: 100%;
   height: 100%;
+  padding: 16px;
   background: var(--overlay-backdrop);
   display: flex;
   align-items: center;
@@ -1346,33 +1404,42 @@ textarea {
   background: var(--sidebar-bg);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-md);
-  padding: 28px 32px;
-  min-width: 380px;
+  width: 100%;
   max-width: 460px;
-  text-align: center;
+  padding: 24px;
+  text-align: left;
   font-family: var(--mono-font-stack);
   animation: overlay-in var(--transition-med);
+}
+
+.welcome-header {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(166, 173, 200, 0.08);
 }
 
 .welcome-title {
   font-size: 20px;
   font-weight: 700;
   color: var(--theme-fg);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
 }
 
 .welcome-subtitle {
   font-size: 13px;
   color: var(--muted);
-  margin-bottom: 24px;
+  line-height: 1.5;
 }
 
 .welcome-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 22px;
-  text-align: left;
+  margin-bottom: 0;
+  background: var(--surface-0);
+  border: 1px solid rgba(166, 173, 200, 0.08);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
 }
 
 .welcome-action {
@@ -1381,29 +1448,42 @@ textarea {
   gap: 12px;
   font-size: 12px;
   color: var(--theme-fg);
-  padding: 7px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  border-top: 1px solid rgba(166, 173, 200, 0.08);
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast);
 }
 
+.welcome-action:first-child {
+  border-top: none;
+}
+
 .welcome-action:hover {
-  background: rgba(205, 214, 244, 0.04);
-  border-color: rgba(166, 173, 200, 0.1);
+  background: rgba(205, 214, 244, 0.03);
 }
 
 .welcome-shortcut {
   background: var(--theme-bg);
-  border: 1px solid var(--theme-black);
+  border: 1px solid rgba(166, 173, 200, 0.12);
   border-radius: var(--radius-xs);
-  padding: 2px 8px;
+  padding: 2px 9px;
   font-size: 11px;
   color: var(--theme-blue);
   min-width: 116px;
   text-align: center;
   flex-shrink: 0;
+  letter-spacing: 0.01em;
+}
+
+.welcome-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(166, 173, 200, 0.08);
 }
 
 .welcome-dismiss {
@@ -1414,10 +1494,10 @@ textarea {
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  padding: 8px 24px;
+  padding: 8px 16px;
   cursor: pointer;
   transition: opacity var(--transition-fast);
-  margin-bottom: 12px;
+  white-space: nowrap;
 }
 
 .welcome-dismiss:hover {
@@ -1427,6 +1507,7 @@ textarea {
 .welcome-hint {
   font-size: 11px;
   color: var(--muted);
+  line-height: 1.5;
 }
 
 /* --- Shortcut bar --- */
@@ -1481,10 +1562,21 @@ textarea {
   font-size: 12px;
   color: var(--muted);
   flex-shrink: 0;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
 }
 
 .pane-toolbar-focused {
-  color: var(--theme-bright-white);
+  color: var(--theme-fg);
+  background: rgba(137, 180, 250, 0.06);
+  border-bottom-color: rgba(137, 180, 250, 0.18);
+}
+
+.pane-toolbar-focused .pane-toolbar-title {
+  color: var(--theme-fg);
 }
 
 .pane-toolbar-title {
@@ -1584,27 +1676,79 @@ textarea {
 }
 
 .terminal-pane-focused {
-  border-color: rgba(137, 180, 250, 0.5);
+  border-color: rgba(137, 180, 250, 0.58);
 }
 
 .terminal-pane-inactive {
-  border-color: var(--border-subtle);
+  border-color: rgba(166, 173, 200, 0.1);
 }
 
 .terminal-pane-inactive .pane-toolbar {
-  opacity: 0.65;
+  opacity: 0.58;
+}
+
+.terminal-pane-inactive .pane-toolbar-title {
+  color: rgba(166, 173, 200, 0.78);
 }
 
 .terminal-pane-inactive .terminal-pane-surface {
-  opacity: 0.88;
+  opacity: 0.84;
 }
 
 .terminal-pane-inactive:hover {
-  border-color: var(--border-visible);
+  border-color: rgba(166, 173, 200, 0.18);
+}
+
+.terminal-pane-inactive:hover .pane-toolbar {
+  opacity: 0.72;
 }
 
 .terminal-pane-inactive:hover .terminal-pane-surface {
-  opacity: 1;
+  opacity: 0.94;
+}
+
+.terminal-pane-surface::-webkit-scrollbar,
+.terminal-pane-surface .xterm-viewport::-webkit-scrollbar {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+}
+
+.terminal-pane-surface::-webkit-scrollbar-track,
+.terminal-pane-surface .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-pane-surface:hover::-webkit-scrollbar-track,
+.terminal-pane-surface .xterm-viewport:hover::-webkit-scrollbar-track,
+.terminal-pane-focused
+  .terminal-pane-surface
+  .xterm-viewport::-webkit-scrollbar-track {
+  background: rgba(166, 173, 200, 0.04);
+}
+
+.terminal-pane-surface::-webkit-scrollbar-thumb,
+.terminal-pane-surface .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(166, 173, 200, 0.14);
+  border: 3px solid var(--theme-bg);
+  border-radius: var(--radius-sm);
+  background-clip: padding-box;
+}
+
+.terminal-pane:hover .terminal-pane-surface::-webkit-scrollbar-thumb,
+.terminal-pane:hover
+  .terminal-pane-surface
+  .xterm-viewport::-webkit-scrollbar-thumb,
+.terminal-pane-focused .terminal-pane-surface::-webkit-scrollbar-thumb,
+.terminal-pane-focused
+  .terminal-pane-surface
+  .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(166, 173, 200, 0.24);
+}
+
+.terminal-pane-surface::-webkit-scrollbar-corner,
+.terminal-pane-surface .xterm-viewport::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* --- Notification ring --- */
@@ -1631,10 +1775,10 @@ textarea {
 
 @keyframes focus-flash {
   from {
-    border-color: rgba(137, 180, 250, 0.5);
+    border-color: rgba(137, 180, 250, 0.74);
   }
   to {
-    border-color: rgba(137, 180, 250, 0.35);
+    border-color: rgba(137, 180, 250, 0.58);
   }
 }
 
@@ -2101,6 +2245,7 @@ body.pane-dragging * {
   .sidebar-action-btn,
   .sidebar-drag-handle,
   .sidebar-close-btn,
+  .resize-handle,
   .notification-item,
   .notification-clear-btn,
   .notification-close-btn,
@@ -2110,6 +2255,9 @@ body.pane-dragging * {
   .command-palette-item,
   .find-bar-btn,
   .toast,
+  .welcome-dialog,
+  .welcome-action,
+  .welcome-dismiss,
   .pane-toolbar-actions,
   .pane-toolbar-btn,
   .terminal-pane,
@@ -2164,6 +2312,21 @@ body.pane-dragging * {
 
   .terminal-pane-inactive .terminal-pane-surface {
     opacity: 0.97;
+  }
+}
+
+@media (max-width: 640px) {
+  .welcome-dialog {
+    padding: 20px;
+  }
+
+  .welcome-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .welcome-dismiss {
+    width: 100%;
   }
 }
 
