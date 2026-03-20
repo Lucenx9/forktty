@@ -13,8 +13,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    name: Rust (clippy, fmt, test)
+  check:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -31,8 +31,14 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Build frontend (required by tauri::generate_context!)
-        run: npm ci && npm run build
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prettier check
+        run: npx prettier --check src/
+
+      - name: Frontend build (also required by tauri::generate_context!)
+        run: npm run build
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -52,63 +58,6 @@ jobs:
 
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml
-
-  frontend:
-    name: Frontend (build, prettier)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Prettier check
-        run: npx prettier --check src/
-
-      - name: TypeScript build
-        run: npm run build
-
-  security:
-    name: Security audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: npm audit
-        run: npm audit --audit-level=high
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: cargo audit
-        run: cd src-tauri && cargo audit --ignore RUSTSEC-2024-0370
-        # RUSTSEC-2024-0370: proc-macro-error unmaintained — transitive dep of Tauri GTK3 bindings, no fix available
 
   dependency-review:
     name: Dependency review
