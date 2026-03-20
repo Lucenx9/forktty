@@ -311,7 +311,11 @@ const TerminalPane = memo(function TerminalPane({
       const fontSize = (configTheme.font_size ?? 14) + fontSizeOffset;
       termRef.current.options.fontFamily = `'${fontFamily}', monospace`;
       termRef.current.options.fontSize = fontSize;
-      fitAddonRef.current?.fit();
+      // Only fit if container is visible (non-zero dimensions)
+      const el = containerRef.current;
+      if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+        fitAddonRef.current?.fit();
+      }
     }
   }, [xtermTheme, configTheme, fontSizeOffset]);
 
