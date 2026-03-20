@@ -17,6 +17,9 @@ const CommandPalette = lazy(() => import("./components/CommandPalette"));
 const BranchPicker = lazy(() => import("./components/BranchPicker"));
 import type { BranchPickerResult } from "./components/BranchPicker";
 import ErrorToast, { showToast } from "./components/ErrorToast";
+import { ConfirmModal, PromptModal } from "./components/InlineModal";
+import ShortcutBar from "./components/ShortcutBar";
+const WelcomeScreen = lazy(() => import("./components/WelcomeScreen"));
 import { useWorkspaceStore } from "./stores/workspace";
 import { useConfigStore } from "./stores/config";
 import type { Direction } from "./stores/workspace";
@@ -59,6 +62,16 @@ class LazyErrorBoundary extends Component<
 export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
+  const [pendingCloseWs, setPendingCloseWs] = useState<{
+    id: string;
+    name: string;
+    paneCount: number;
+  } | null>(null);
+  const [pendingRename, setPendingRename] = useState<{
+    id: string;
+    currentName: string;
+  } | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const splitPane = useWorkspaceStore((s) => s.splitPane);
   const closePane = useWorkspaceStore((s) => s.closePane);
@@ -124,7 +137,7 @@ export default function App() {
     loadConfig();
   }, [loadConfig]);
 
-  // Restore session on startup
+  // Restore session on startup; show welcome if no session exists
   useEffect(() => {
     loadSession()
       .then((data) => {
@@ -144,6 +157,8 @@ export default function App() {
             "INFO",
             `Restored session with ${data.workspaces.length} workspaces`,
           ).catch(logError);
+        } else {
+          setShowWelcome(true);
         }
       })
       .catch((err) => {
@@ -227,13 +242,12 @@ export default function App() {
         if (!ws) return;
         const paneCount = Object.keys(ws.surfaces).length;
         if (paneCount > 1) {
-          if (
-            !window.confirm(
-              `Close workspace "${ws.name}" with ${paneCount} panes?`,
-            )
-          ) {
-            return;
-          }
+          setPendingCloseWs({
+            id: state.activeWorkspaceId,
+            name: ws.name,
+            paneCount,
+          });
+          return;
         }
         closeWorkspace(state.activeWorkspaceId);
         return;
@@ -383,10 +397,10 @@ export default function App() {
           const state = useWorkspaceStore.getState();
           const ws = state.workspaces[state.activeWorkspaceId];
           if (!ws) return;
-          const name = window.prompt("New workspace name:", ws.name);
-          if (name && name.trim()) {
-            renameWorkspace(state.activeWorkspaceId, name.trim());
-          }
+          setPendingRename({
+            id: state.activeWorkspaceId,
+            currentName: ws.name,
+          });
         },
       },
       {
@@ -583,21 +597,24 @@ export default function App() {
 
   return (
     <div className="app">
-      <Group orientation="horizontal">
-        {sidebarPosition === "right" ? (
-          <>
-            {mainPanel}
-            <Separator className="resize-handle sidebar-separator" />
-            {sidebarPanel}
-          </>
-        ) : (
-          <>
-            {sidebarPanel}
-            <Separator className="resize-handle sidebar-separator" />
-            {mainPanel}
-          </>
-        )}
-      </Group>
+      <div className="app-main">
+        <Group orientation="horizontal">
+          {sidebarPosition === "right" ? (
+            <>
+              {mainPanel}
+              <Separator className="resize-handle sidebar-separator" />
+              {sidebarPanel}
+            </>
+          ) : (
+            <>
+              {sidebarPanel}
+              <Separator className="resize-handle sidebar-separator" />
+              {mainPanel}
+            </>
+          )}
+        </Group>
+      </div>
+      <ShortcutBar />
       {showNotificationPanel && <NotificationPanel />}
       <LazyErrorBoundary>
         <Suspense fallback={null}>
@@ -608,8 +625,37 @@ export default function App() {
           {showBranchPicker && (
             <BranchPicker onResult={handleBranchPickerResult} />
           )}
+          {showWelcome && (
+            <WelcomeScreen onDismiss={() => setShowWelcome(false)} />
+          )}
         </Suspense>
       </LazyErrorBoundary>
+      {pendingCloseWs && (
+        <ConfirmModal
+          title="Close Workspace"
+          message={`Close "${pendingCloseWs.name}" with ${pendingCloseWs.paneCount} panes? All terminals will be killed.`}
+          confirmLabel="Close"
+          danger
+          onConfirm={() => {
+            closeWorkspace(pendingCloseWs.id);
+            setPendingCloseWs(null);
+          }}
+          onCancel={() => setPendingCloseWs(null)}
+        />
+      )}
+      {pendingRename && (
+        <PromptModal
+          title="Rename Workspace"
+          defaultValue={pendingRename.currentName}
+          placeholder="Workspace name"
+          confirmLabel="Rename"
+          onConfirm={(name) => {
+            renameWorkspace(pendingRename.id, name);
+            setPendingRename(null);
+          }}
+          onCancel={() => setPendingRename(null)}
+        />
+      )}
       <ErrorToast />
     </div>
   );

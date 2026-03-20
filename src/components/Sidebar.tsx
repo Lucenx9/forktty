@@ -12,6 +12,7 @@ import {
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
 import { CloseIcon, GripIcon, MergeIcon, TrashIcon } from "./Icons";
+import { ConfirmModal } from "./InlineModal";
 import WorkspaceMetadataView from "./WorkspaceMetadataView";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
@@ -50,6 +51,9 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   const splitPane = useWorkspaceStore((s) => s.splitPane);
   const markWorkspaceRead = useWorkspaceStore((s) => s.markWorkspaceRead);
   const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
+
+  const [pendingClose, setPendingClose] = useState(false);
+  const [pendingRemoveWorktree, setPendingRemoveWorktree] = useState(false);
 
   const ws = workspaces[menu.workspaceId];
   const wsIndex = workspaceOrder.indexOf(menu.workspaceId);
@@ -106,14 +110,8 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   function handleClose() {
     const paneCount = Object.keys(ws!.surfaces).length;
     if (paneCount > 1) {
-      if (
-        !window.confirm(
-          `Close workspace "${ws!.name}" with ${paneCount} panes?`,
-        )
-      ) {
-        onClose();
-        return;
-      }
+      setPendingClose(true);
+      return;
     }
     closeWorkspace(menu.workspaceId);
     onClose();
@@ -182,19 +180,7 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }
 
   function handleRemoveWorktree() {
-    const warning = worktreeStatusWarning(ws!.worktreeStatus);
-    if (
-      !window.confirm(
-        `Remove worktree "${ws!.worktreeName}" and delete branch?${warning}`,
-      )
-    ) {
-      onClose();
-      return;
-    }
-    worktreeRemove(ws!.worktreeName)
-      .then(() => closeWorkspace(menu.workspaceId))
-      .catch((err) => showToast(`Remove failed: ${err}`, "error"));
-    onClose();
+    setPendingRemoveWorktree(true);
   }
 
   return (
@@ -303,6 +289,46 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           <span>Mark as Read</span>
         </button>
       )}
+      {pendingClose &&
+        createPortal(
+          <ConfirmModal
+            title="Close Workspace"
+            message={`Close workspace "${ws.name}" with ${Object.keys(ws.surfaces).length} panes?`}
+            confirmLabel="Close"
+            danger={true}
+            onConfirm={() => {
+              setPendingClose(false);
+              closeWorkspace(menu.workspaceId);
+              onClose();
+            }}
+            onCancel={() => {
+              setPendingClose(false);
+              onClose();
+            }}
+          />,
+          document.body,
+        )}
+      {pendingRemoveWorktree &&
+        createPortal(
+          <ConfirmModal
+            title="Remove Worktree"
+            message={`Remove worktree "${ws.worktreeName}" and delete branch?${worktreeStatusWarning(ws.worktreeStatus)}`}
+            confirmLabel="Remove"
+            danger={true}
+            onConfirm={() => {
+              setPendingRemoveWorktree(false);
+              worktreeRemove(ws.worktreeName)
+                .then(() => closeWorkspace(menu.workspaceId))
+                .catch((err) => showToast(`Remove failed: ${err}`, "error"));
+              onClose();
+            }}
+            onCancel={() => {
+              setPendingRemoveWorktree(false);
+              onClose();
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }
@@ -340,6 +366,8 @@ function WorkspaceEntry({
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(workspace.name);
+  const [pendingRemove, setPendingRemove] = useState(false);
+  const [pendingClose, setPendingClose] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const canClose = workspaceOrder.length > 1;
 
@@ -407,34 +435,15 @@ function WorkspaceEntry({
 
   function handleRemove(e: React.MouseEvent) {
     e.stopPropagation();
-    const warning = worktreeStatusWarning(workspace.worktreeStatus);
-    if (
-      !window.confirm(
-        `Remove worktree "${workspace.worktreeName}" and delete branch?${warning}`,
-      )
-    ) {
-      return;
-    }
-    worktreeRemove(workspace.worktreeName)
-      .then(() => {
-        closeWorkspace(workspace.id);
-      })
-      .catch((err) => {
-        showToast(`Remove failed: ${err}`, "error");
-      });
+    setPendingRemove(true);
   }
 
   function handleClose(e: React.MouseEvent) {
     e.stopPropagation();
     const paneCount = Object.keys(workspace.surfaces).length;
     if (paneCount > 1) {
-      if (
-        !window.confirm(
-          `Close workspace "${workspace.name}" with ${paneCount} panes?`,
-        )
-      ) {
-        return;
-      }
+      setPendingClose(true);
+      return;
     }
     closeWorkspace(workspace.id);
   }
@@ -569,6 +578,38 @@ function WorkspaceEntry({
           </div>
         )}
       </div>
+      {pendingRemove &&
+        createPortal(
+          <ConfirmModal
+            title="Remove Worktree"
+            message={`Remove worktree "${workspace.worktreeName}" and delete branch?${worktreeStatusWarning(workspace.worktreeStatus)}`}
+            confirmLabel="Remove"
+            danger={true}
+            onConfirm={() => {
+              setPendingRemove(false);
+              worktreeRemove(workspace.worktreeName)
+                .then(() => closeWorkspace(workspace.id))
+                .catch((err) => showToast(`Remove failed: ${err}`, "error"));
+            }}
+            onCancel={() => setPendingRemove(false)}
+          />,
+          document.body,
+        )}
+      {pendingClose &&
+        createPortal(
+          <ConfirmModal
+            title="Close Workspace"
+            message={`Close workspace "${workspace.name}" with ${Object.keys(workspace.surfaces).length} panes?`}
+            confirmLabel="Close"
+            danger={true}
+            onConfirm={() => {
+              setPendingClose(false);
+              closeWorkspace(workspace.id);
+            }}
+            onCancel={() => setPendingClose(false)}
+          />,
+          document.body,
+        )}
     </>
   );
 }

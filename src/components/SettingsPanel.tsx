@@ -192,34 +192,7 @@ export default function SettingsPanel() {
             <span className="settings-label">Desktop notifications</span>
           </label>
 
-          <label className="settings-field settings-checkbox-field">
-            <input
-              type="checkbox"
-              checked={draft.notifications.sound}
-              onChange={(e) => updateNotifications("sound", e.target.checked)}
-            />
-            <span className="settings-label">Notification sound</span>
-          </label>
-          {/* Sound notifications are stored in config, but playback support has not landed yet. */}
-
-          <label className="settings-field">
-            <span className="settings-label">Idle threshold (ms)</span>
-            <input
-              className="settings-input"
-              type="number"
-              min={500}
-              max={30000}
-              step={100}
-              value={draft.notifications.idle_threshold_ms}
-              onChange={(e) =>
-                updateNotifications(
-                  "idle_threshold_ms",
-                  parseInt(e.target.value, 10) || 2000,
-                )
-              }
-            />
-          </label>
-          {/* Idle detection will use this threshold in a future Phase 5 notification pass. */}
+          {/* Sound and idle threshold controls hidden until backend support lands */}
         </div>
       </div>
     </div>
