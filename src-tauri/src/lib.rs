@@ -110,6 +110,14 @@ fn read_pty_output(mut reader: Box<dyn Read + Send>, channel: Channel<PtyEvent>)
                     }
                 }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                continue; // Retry on EINTR
+            }
+            Err(e) if e.raw_os_error() == Some(5) => {
+                // EIO is normal on Linux when child exits — treat as EOF
+                let _ = channel.send(PtyEvent::Eof);
+                break;
+            }
             Err(e) => {
                 let _ = channel.send(PtyEvent::Error(e.to_string()));
                 break;
@@ -399,4 +407,10 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    // Cleanup: remove socket file on exit
+    let socket_cleanup =
+        std::env::var("FORKTTY_SOCKET_PATH").unwrap_or_else(|_| socket_api::default_socket_path());
+    let _ = std::fs::remove_file(&socket_cleanup);
+    let _ = session::write_log("INFO", "ForkTTY shutdown complete");
 }

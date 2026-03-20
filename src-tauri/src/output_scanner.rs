@@ -138,26 +138,44 @@ impl OutputScanner {
             return;
         }
 
-        // OSC 9 — iTerm2/ConEmu simple notification: "9;<text>"
+        // OSC 9 — iTerm2 notification: "9;<text>"
+        // Skip ConEmu extensions: "9;N;..." where N is a digit (e.g., progress reporting)
         if payload.starts_with(b"9;") {
-            if let Ok(text) = std::str::from_utf8(&payload[2..]) {
-                events.push(ScanEvent::Notification {
-                    title: "Terminal".to_string(),
-                    body: text.to_string(),
-                });
+            let content = &payload[2..];
+            let is_conemu = content.len() >= 2 && content[0].is_ascii_digit() && content[1] == b';';
+            if !is_conemu {
+                if let Ok(text) = std::str::from_utf8(content) {
+                    let stripped = strip_ansi(text.as_bytes());
+                    let clean = String::from_utf8_lossy(&stripped).into_owned();
+                    events.push(ScanEvent::Notification {
+                        title: "Terminal".to_string(),
+                        body: clean,
+                    });
+                }
             }
             return;
         }
 
-        // OSC 99 — notification with id: "99;<id>;<text>"
+        // OSC 99 — kitty notification protocol: "99;key=val:key=val;payload"
         if payload.starts_with(b"99;") {
             if let Ok(rest) = std::str::from_utf8(&payload[3..]) {
-                // Skip the id field, take the text after the first semicolon
-                let body = rest.split_once(';').map(|(_, t)| t).unwrap_or(rest);
-                events.push(ScanEvent::Notification {
-                    title: "Terminal".to_string(),
-                    body: body.to_string(),
-                });
+                // Split metadata (key=val:key=val) from payload at first unescaped semicolon
+                let (metadata, body) = rest.split_once(';').unwrap_or((rest, ""));
+                // Parse title from metadata if present (p=title means the body IS the title)
+                let mut title = "Terminal".to_string();
+                let mut payload_type = "body";
+                for param in metadata.split(':') {
+                    if let Some(val) = param.strip_prefix("p=") {
+                        payload_type = if val == "title" { "title" } else { "body" };
+                    }
+                }
+                let clean = String::from_utf8_lossy(&strip_ansi(body.as_bytes())).into_owned();
+                if payload_type == "title" {
+                    title = clean.clone();
+                }
+                if !clean.is_empty() {
+                    events.push(ScanEvent::Notification { title, body: clean });
+                }
             }
             return;
         }
@@ -166,9 +184,12 @@ impl OutputScanner {
         if payload.starts_with(b"777;notify;") {
             if let Ok(rest) = std::str::from_utf8(&payload[11..]) {
                 let (title, body) = rest.split_once(';').unwrap_or((rest, ""));
+                let clean_title =
+                    String::from_utf8_lossy(&strip_ansi(title.as_bytes())).into_owned();
+                let clean_body = String::from_utf8_lossy(&strip_ansi(body.as_bytes())).into_owned();
                 events.push(ScanEvent::Notification {
-                    title: title.to_string(),
-                    body: body.to_string(),
+                    title: clean_title,
+                    body: clean_body,
                 });
             }
         }
@@ -423,13 +444,57 @@ mod tests {
     #[test]
     fn test_osc99_notification() {
         let mut scanner = OutputScanner::new();
-        let data = b"\x1b]99;myid;Task complete\x07";
+        // kitty format: "99;key=val:key=val;payload"
+        let data = b"\x1b]99;i=myid;Task complete\x07";
         let events = scanner.scan(data);
         assert_eq!(events.len(), 1);
         match &events[0] {
             ScanEvent::Notification { title, body } => {
                 assert_eq!(title, "Terminal");
                 assert_eq!(body, "Task complete");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc99_title_payload() {
+        let mut scanner = OutputScanner::new();
+        // When p=title, the payload IS the title
+        let data = b"\x1b]99;p=title;My Title\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "My Title");
+                assert_eq!(body, "My Title");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc9_conemu_skipped() {
+        let mut scanner = OutputScanner::new();
+        // ConEmu progress: "9;4;50" — should be skipped
+        let data = b"\x1b]9;4;50\x07";
+        let events = scanner.scan(data);
+        assert!(
+            events.is_empty(),
+            "ConEmu progress should not emit notification"
+        );
+    }
+
+    #[test]
+    fn test_osc777_strips_ansi() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]777;notify;\x1b[1mBold Title\x1b[0m;\x1b[32mGreen body\x1b[0m\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Bold Title");
+                assert_eq!(body, "Green body");
             }
             _ => panic!("Expected Notification event"),
         }

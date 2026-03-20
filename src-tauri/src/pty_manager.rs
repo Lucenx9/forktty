@@ -140,8 +140,26 @@ impl PtyManager {
         let handle = self.ptys.remove(&id).ok_or(PtyError::NotFound(id))?;
         if let Ok(mut child) = handle.child.lock() {
             let _ = child.kill();
+            // Reap the process to prevent zombies
+            let _ = child.wait();
         }
         Ok(())
+    }
+
+    /// Kill and reap all PTY processes (used on shutdown).
+    pub fn kill_all(&mut self) {
+        for (_id, handle) in self.ptys.drain() {
+            if let Ok(mut child) = handle.child.lock() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+impl Drop for PtyManager {
+    fn drop(&mut self) {
+        self.kill_all();
     }
 }
 
