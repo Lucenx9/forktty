@@ -511,4 +511,55 @@ mod tests {
     fn test_validate_worktree_name_rejects_empty() {
         assert!(validate_worktree_name("").is_err());
     }
+
+    // --- Test 4: worktree_path layout modes ---
+
+    #[test]
+    fn worktree_path_nested_layout() {
+        let repo = Path::new("/home/user/myrepo");
+        let result = worktree_path(repo, "feature-x", "nested").unwrap();
+        assert_eq!(result, PathBuf::from("/home/user/myrepo/.worktrees/feature-x"));
+    }
+
+    #[test]
+    fn worktree_path_sibling_layout() {
+        let repo = Path::new("/home/user/myrepo");
+        let result = worktree_path(repo, "feature-x", "sibling").unwrap();
+        assert_eq!(result, PathBuf::from("/home/user/myrepo-feature-x"));
+    }
+
+    #[test]
+    fn worktree_path_outer_nested_layout() {
+        let repo = Path::new("/home/user/myrepo");
+        let result = worktree_path(repo, "feature-x", "outer-nested").unwrap();
+        assert_eq!(result, PathBuf::from("/home/user/.worktrees/feature-x"));
+    }
+
+    #[test]
+    fn worktree_path_root_sibling_returns_err() {
+        // "/" has no parent, so sibling layout should fail
+        let result = worktree_path(Path::new("/"), "feature-x", "sibling");
+        assert!(
+            result.is_err(),
+            "sibling layout with root path should return Err"
+        );
+    }
+
+    #[test]
+    fn worktree_path_root_outer_nested_returns_err() {
+        // "/" has no parent, so outer-nested layout should fail
+        let result = worktree_path(Path::new("/"), "feature-x", "outer-nested");
+        assert!(
+            result.is_err(),
+            "outer-nested layout with root path should return Err"
+        );
+    }
+
+    #[test]
+    fn worktree_path_unknown_layout_falls_back_to_nested() {
+        // Any unrecognized layout falls through to the default "nested" case
+        let repo = Path::new("/home/user/myrepo");
+        let result = worktree_path(repo, "feature-x", "unknown-layout").unwrap();
+        assert_eq!(result, PathBuf::from("/home/user/myrepo/.worktrees/feature-x"));
+    }
 }

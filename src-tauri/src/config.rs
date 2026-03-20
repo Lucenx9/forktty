@@ -238,6 +238,13 @@ fn parse_palette_from_content(content: &str) -> HashMap<u8, String> {
     palette
 }
 
+/// Validate a Ghostty theme name: only alphanumeric, dash, underscore, space allowed.
+/// Rejects path traversal characters (/, ..) and null bytes.
+fn is_valid_theme_name(name: &str) -> bool {
+    name.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
+}
+
 /// Load Ghostty theme from config and optional theme file.
 fn load_ghostty_theme() -> TerminalTheme {
     let ghostty_dir = dirs::config_dir()
@@ -249,10 +256,7 @@ fn load_ghostty_theme() -> TerminalTheme {
 
     // If a theme is referenced, load the theme file first as base
     let mut theme = if let Some(theme_name) = map.get("theme") {
-        if !theme_name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
-        {
+        if !is_valid_theme_name(theme_name) {
             return TerminalTheme::default();
         }
         let theme_file = ghostty_dir.join("themes").join(theme_name);
@@ -458,5 +462,46 @@ mod tests {
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.general.theme, config.general.theme);
         assert_eq!(parsed.appearance.font_size, config.appearance.font_size);
+    }
+
+    // --- Test 2: Ghostty theme name validation ---
+
+    #[test]
+    fn theme_name_with_slash_is_rejected() {
+        assert!(!is_valid_theme_name("../../etc/passwd"));
+        assert!(!is_valid_theme_name("some/path"));
+    }
+
+    #[test]
+    fn theme_name_with_dotdot_is_rejected() {
+        // ".." contains dots; dots are not alphanumeric/dash/underscore/space
+        assert!(!is_valid_theme_name(".."));
+        assert!(!is_valid_theme_name("..secret"));
+    }
+
+    #[test]
+    fn theme_name_with_null_byte_is_rejected() {
+        assert!(!is_valid_theme_name("theme\0name"));
+    }
+
+    #[test]
+    fn valid_theme_name_catppuccin_mocha_passes() {
+        assert!(is_valid_theme_name("catppuccin-mocha"));
+    }
+
+    #[test]
+    fn theme_name_with_space_passes() {
+        assert!(is_valid_theme_name("My Theme"));
+    }
+
+    #[test]
+    fn theme_name_with_underscore_passes() {
+        assert!(is_valid_theme_name("dracula_pro"));
+    }
+
+    #[test]
+    fn empty_theme_name_passes_validation() {
+        // Empty string has no invalid chars; the file lookup will simply fail
+        assert!(is_valid_theme_name(""));
     }
 }

@@ -160,4 +160,94 @@ mod tests {
         assert_eq!(parsed.workspaces.len(), 1);
         assert_eq!(parsed.workspaces[0].name, "Test");
     }
+
+    // --- Test 3: prune_old_logs date comparison ---
+
+    /// Helper: run the same pruning logic as `prune_old_logs` but against a custom directory.
+    /// This avoids coupling to `log_dir()` which depends on `dirs::data_local_dir()`.
+    fn prune_logs_in_dir(dir: &std::path::Path, max_age_days: u32) {
+        let cutoff = chrono::Local::now() - chrono::Duration::days(i64::from(max_age_days));
+        let cutoff_str = cutoff.format("forktty-%Y-%m-%d.log").to_string();
+
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("forktty-") && name_str.ends_with(".log") && *name_str < *cutoff_str
+            {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    #[test]
+    fn prune_deletes_old_logs_and_keeps_recent_and_future() {
+        let tmp = std::env::temp_dir().join(format!("forktty-prune-test-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        // Use today's date to compute a "recent" file that won't be pruned
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let old_file = tmp.join("forktty-2020-01-01.log");
+        let recent_file = tmp.join(format!("forktty-{today}.log"));
+        let future_file = tmp.join("forktty-9999-12-31.log");
+        let non_matching = tmp.join("other.txt");
+
+        for f in [&old_file, &recent_file, &future_file, &non_matching] {
+            fs::write(f, "test content").unwrap();
+        }
+
+        // Prune with 30 day retention (2020-01-01 is definitely old)
+        prune_logs_in_dir(&tmp, 30);
+
+        // Old file should be deleted
+        assert!(
+            !old_file.exists(),
+            "forktty-2020-01-01.log should have been pruned"
+        );
+        // Today's file and future file should remain
+        assert!(
+            recent_file.exists(),
+            "Today's log file should NOT have been pruned"
+        );
+        assert!(
+            future_file.exists(),
+            "forktty-9999-12-31.log should NOT have been pruned"
+        );
+        // Non-matching file should not be touched
+        assert!(
+            non_matching.exists(),
+            "other.txt should NOT have been deleted"
+        );
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn prune_does_not_delete_non_matching_files() {
+        let tmp = std::env::temp_dir().join(format!("forktty-prune-nomatch-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let files = [
+            "other.txt",
+            "forktty.log",           // missing date
+            "forktty-abc.log",       // non-date pattern
+            "readme.md",
+        ];
+        for name in &files {
+            fs::write(tmp.join(name), "content").unwrap();
+        }
+
+        prune_logs_in_dir(&tmp, 0); // max_age_days=0 means prune everything matching
+
+        // None of these should be deleted because they don't match the pattern
+        for name in &files {
+            assert!(
+                tmp.join(name).exists(),
+                "{name} should NOT have been deleted"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }
