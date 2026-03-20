@@ -5,6 +5,10 @@ import {
   writePty,
   socketRespond,
   sendDesktopNotification,
+  worktreeCreate,
+  worktreeMerge,
+  worktreeRemove,
+  worktreeRunHook,
   logError,
 } from "./pty-bridge";
 import { readScreen } from "./terminal-registry";
@@ -352,6 +356,54 @@ export async function handleSocketRequest(
           message: params.message as string,
         });
         result = { result: true };
+        break;
+      }
+      case "system.ping": {
+        result = { result: "pong" };
+        break;
+      }
+      case "worktree.create": {
+        const name = params.name as string;
+        const layout = (params.layout as string) || undefined;
+        try {
+          const info = await worktreeCreate(name, layout);
+          const wsId = state.createWorktreeWorkspace(
+            info.name,
+            info.path,
+            info.branch,
+            info.path,
+            info.name,
+          );
+          worktreeRunHook(info.path, "setup").catch(logError);
+          result = { result: { id: wsId, ...info } };
+        } catch (err) {
+          result = { error: String(err) };
+        }
+        break;
+      }
+      case "worktree.merge": {
+        const name = params.name as string;
+        try {
+          const msg = await worktreeMerge(name);
+          result = { result: msg };
+        } catch (err) {
+          result = { error: String(err) };
+        }
+        break;
+      }
+      case "worktree.remove": {
+        const name = params.name as string;
+        try {
+          await worktreeRemove(name);
+          // Close the workspace associated with this worktree
+          const target = state.workspaceOrder.find(
+            (wsId) => state.workspaces[wsId]?.worktreeName === name,
+          );
+          if (target) state.closeWorkspace(target);
+          result = { result: true };
+        } catch (err) {
+          result = { error: String(err) };
+        }
         break;
       }
       default:
