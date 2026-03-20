@@ -5,7 +5,7 @@ Multi-agent terminal for Linux. See SPEC.md for architecture and ROADMAP.md for 
 ## Stack
 
 - **Backend**: Rust (Tauri v2 commands), portable-pty 0.9 for PTY, git2 for worktrees, tokio for async, notify-rust for desktop notifications
-- **Frontend**: React 19 + TypeScript + Vite, @xterm/xterm 6.x with addons (fit, canvas, search, web-links), react-resizable-panels for splits, Zustand 5.x for state
+- **Frontend**: React 19 + TypeScript + Vite, @xterm/xterm 5.x with addons (fit, canvas, search, web-links), react-resizable-panels for splits, Zustand 5.x for state
 - **IPC**: Tauri `invoke` for request/response, Tauri `Channel<String>` for PTY output streaming (push-based, ordered)
 - **External API**: Unix domain socket at `$XDG_RUNTIME_DIR/forktty.sock` (fallback `/tmp`), JSON-RPC protocol, CLI client via clap
 - **Alternative terminal renderer**: ghostty-web (Ghostty VT100 WASM, MIT, drop-in xterm.js API) — evaluate during Phase 1

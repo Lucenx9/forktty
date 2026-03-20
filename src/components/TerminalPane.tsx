@@ -34,6 +34,15 @@ interface TerminalPaneProps {
 const NOTIFICATION_DEDUPE_MS = 15000;
 const recentNotificationMap = new Map<string, number>();
 
+function pruneNotificationMap() {
+  const now = Date.now();
+  for (const [key, time] of recentNotificationMap) {
+    if (now - time >= NOTIFICATION_DEDUPE_MS) {
+      recentNotificationMap.delete(key);
+    }
+  }
+}
+
 interface PaneContextMenuState {
   x: number;
   y: number;
@@ -293,6 +302,7 @@ export default function TerminalPane({
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
@@ -397,14 +407,19 @@ export default function TerminalPane({
     registerTerminal(paneId, term);
 
     // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
-    term.loadAddon(new CanvasAddon());
+    const canvasAddon = new CanvasAddon();
+    canvasAddonRef.current = canvasAddon;
+    term.loadAddon(canvasAddon);
 
     // Search addon for Ctrl+F
     const searchAddon = new SearchAddon();
     searchAddonRef.current = searchAddon;
     term.loadAddon(searchAddon);
 
-    fitAddon.fit();
+    // Guard against zero-dimension container (not yet laid out)
+    if (container.clientWidth > 0 && container.clientHeight > 0) {
+      fitAddon.fit();
+    }
 
     // Spawn PTY and wire data flow
     let disposed = false;
@@ -425,6 +440,7 @@ export default function TerminalPane({
         return;
       }
       recentNotificationMap.set(dedupeKey, now);
+      pruneNotificationMap();
 
       state.addNotification(wsId, title, body);
       state.setSurfaceUnread(paneId, true);
@@ -551,11 +567,17 @@ export default function TerminalPane({
     });
     resizeObserver.observe(container);
 
+    // Debounce PTY resize IPC to reduce SIGWINCH storms during panel drag
+    let resizeTimeout: number | null = null;
     const resizeDisposable = term.onResize(({ cols, rows }) => {
-      const id = ptyIdRef.current;
-      if (id !== null) {
-        resizePty(id, cols, rows).catch(logError);
-      }
+      if (resizeTimeout !== null) clearTimeout(resizeTimeout);
+      resizeTimeout = window.setTimeout(() => {
+        resizeTimeout = null;
+        const id = ptyIdRef.current;
+        if (id !== null) {
+          resizePty(id, cols, rows).catch(logError);
+        }
+      }, 150);
     });
 
     return () => {
@@ -563,10 +585,15 @@ export default function TerminalPane({
       if (resizeRaf !== null) {
         cancelAnimationFrame(resizeRaf);
       }
+      if (resizeTimeout !== null) {
+        clearTimeout(resizeTimeout);
+      }
       resizeObserver.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
       unregisterTerminal(paneId);
+      canvasAddonRef.current?.dispose();
+      canvasAddonRef.current = null;
       term.dispose();
 
       // Kill PTY process on cleanup

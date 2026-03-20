@@ -65,9 +65,15 @@ export function spawnPty(opts: {
 
   onOutputChannel.onmessage = (event: PtyEvent) => {
     switch (event.kind) {
-      case "Output":
-        opts.onOutput(atob(event.data));
+      case "Output": {
+        const binary = atob(event.data);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        opts.onOutput(bytes);
         break;
+      }
       case "Eof":
         opts.onExit();
         break;

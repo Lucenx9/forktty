@@ -293,6 +293,19 @@ function findLeaf(node: PaneNode, id: string): PaneLeaf | null {
   return null;
 }
 
+const MAX_SPLIT_DEPTH = 5;
+
+/** Get the depth of a node within the tree (0 = root). Returns -1 if not found. */
+function getNodeDepth(root: PaneNode, targetId: string, depth = 0): number {
+  if (root.id === targetId) return depth;
+  if (root.type === "leaf") return -1;
+  for (const child of root.children) {
+    const d = getNodeDepth(child, targetId, depth + 1);
+    if (d >= 0) return d;
+  }
+  return -1;
+}
+
 /** Build bounding rectangles for all leaves based on tree structure. */
 function buildLayoutRects(
   node: PaneNode,
@@ -614,6 +627,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const existingLeaf = findLeaf(ws.root, paneId);
     if (!existingLeaf) return;
+
+    // Prevent excessively deep nesting
+    const depth = getNodeDepth(ws.root, paneId);
+    if (depth >= MAX_SPLIT_DEPTH) return;
 
     const newLeaf = makeLeaf();
 
