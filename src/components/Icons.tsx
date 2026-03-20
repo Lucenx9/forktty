@@ -104,20 +104,8 @@ export function MergeIcon({ size = 12, className }: IconProps) {
       fill="none"
     >
       <circle cx="3" cy="3" r="1.25" stroke="currentColor" strokeWidth="1.1" />
-      <circle
-        cx="9"
-        cy="3"
-        r="1.25"
-        stroke="currentColor"
-        strokeWidth="1.1"
-      />
-      <circle
-        cx="6"
-        cy="9"
-        r="1.25"
-        stroke="currentColor"
-        strokeWidth="1.1"
-      />
+      <circle cx="9" cy="3" r="1.25" stroke="currentColor" strokeWidth="1.1" />
+      <circle cx="6" cy="9" r="1.25" stroke="currentColor" strokeWidth="1.1" />
       <path
         d="M3.95 3.8 5.55 7.6M8.05 3.8 6.45 7.6"
         stroke="currentColor"

@@ -54,7 +54,7 @@ type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError | PtyEventScan;
  * Optional cwd sets the working directory for the shell.
  */
 export function spawnPty(opts: {
-  onOutput: (data: Uint8Array) => void;
+  onOutput: (data: string | Uint8Array) => void;
   onExit: () => void;
   cwd?: string;
   workspaceId?: string;
@@ -65,17 +65,14 @@ export function spawnPty(opts: {
 
   onOutputChannel.onmessage = (event: PtyEvent) => {
     switch (event.kind) {
-      case "Output": {
-        const binary = atob(event.data);
-        const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-        opts.onOutput(bytes);
+      case "Output":
+        opts.onOutput(atob(event.data));
         break;
-      }
       case "Eof":
         opts.onExit();
         break;
       case "Error":
-        console.error("PTY error:", event.data);
+        writeLog("ERROR", `PTY error: ${event.data}`).catch(() => {});
         opts.onExit();
         break;
       case "Scan":
@@ -330,6 +327,11 @@ export function loadSession(): Promise<SessionData | null> {
 
 export function writeLog(level: string, message: string): Promise<void> {
   return invoke("write_log", { level, message });
+}
+
+/** Drop-in replacement for console.error in .catch() chains */
+export function logError(err: unknown): void {
+  writeLog("ERROR", String(err)).catch(() => {});
 }
 
 // --- Tray commands ---

@@ -76,13 +76,15 @@ export default function CommandPalette({
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Type a command..."
         />
-        <div className="command-palette-list">
+        <div className="command-palette-list" role="listbox">
           {filtered.length === 0 && (
             <div className="command-palette-empty">No matching commands</div>
           )}
           {filtered.map((cmd, i) => (
             <div
               key={cmd.id}
+              role="option"
+              aria-selected={i === selectedIndex}
               className={`command-palette-item ${i === selectedIndex ? "command-palette-item-selected" : ""}`}
               onClick={() => {
                 onClose();

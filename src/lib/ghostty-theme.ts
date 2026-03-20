@@ -53,6 +53,12 @@ export function applyThemeCssVars(theme: TerminalTheme): void {
   set("--theme-cyan", theme.cyan);
   set("--theme-white", theme.white);
   set("--theme-bright-black", theme.bright_black);
+  set("--theme-bright-red", theme.bright_red);
+  set("--theme-bright-green", theme.bright_green);
+  set("--theme-bright-yellow", theme.bright_yellow);
+  set("--theme-bright-blue", theme.bright_blue);
+  set("--theme-bright-magenta", theme.bright_magenta);
+  set("--theme-bright-cyan", theme.bright_cyan);
   set("--theme-bright-white", theme.bright_white);
 
   // Derived sidebar colors
@@ -90,6 +96,15 @@ function lighten(hex: string, amount: number): string {
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  // Handle 3-digit shorthand (#abc -> #aabbcc)
+  const short = /^#?([a-f\d])([a-f\d])([a-f\d])$/i.exec(hex);
+  if (short) {
+    return {
+      r: parseInt(short[1]! + short[1]!, 16),
+      g: parseInt(short[2]! + short[2]!, 16),
+      b: parseInt(short[3]! + short[3]!, 16),
+    };
+  }
   const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (!match) return null;
   return {

@@ -23,6 +23,7 @@ import {
   saveSession,
   loadSession,
   writeLog,
+  logError,
   updateTrayTooltip,
 } from "./lib/pty-bridge";
 import { readScreen } from "./lib/terminal-registry";
@@ -158,7 +159,7 @@ export default function App() {
             info.path,
             info.name,
           );
-          worktreeRunHook(info.path, "setup").catch(console.error);
+          worktreeRunHook(info.path, "setup").catch(logError);
         })
         .catch((err) => {
           showToast(`Failed to create worktree: ${err}`, "error");
@@ -193,11 +194,11 @@ export default function App() {
           writeLog(
             "INFO",
             `Restored session with ${data.workspaces.length} workspaces`,
-          ).catch(console.error);
+          ).catch(logError);
         }
       })
       .catch((err) => {
-        console.error("Failed to restore session:", err);
+        logError(err);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -205,7 +206,7 @@ export default function App() {
   // Auto-save session every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
-      saveSession(buildSessionPayload()).catch(console.error);
+      saveSession(buildSessionPayload()).catch(logError);
     }, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -213,7 +214,7 @@ export default function App() {
   // Save session on window close (best effort — invoke is async)
   useEffect(() => {
     function handleBeforeUnload() {
-      saveSession(buildSessionPayload()).catch(console.error);
+      saveSession(buildSessionPayload()).catch(logError);
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -246,7 +247,7 @@ export default function App() {
   );
   useEffect(() => {
     document.title = totalUnread > 0 ? `ForkTTY (${totalUnread})` : "ForkTTY";
-    updateTrayTooltip(totalUnread).catch(console.error);
+    updateTrayTooltip(totalUnread).catch(logError);
   }, [totalUnread]);
 
   // Listen for socket API bridge events.
@@ -410,7 +411,7 @@ export default function App() {
             for (const ws of Object.values(state.workspaces)) {
               const surface = ws.surfaces[surfaceId];
               if (surface?.ptyId != null) {
-                writePty(surface.ptyId, text).catch(console.error);
+                writePty(surface.ptyId, text).catch(logError);
                 result = { result: true };
                 break;
               }
@@ -443,7 +444,7 @@ export default function App() {
           const body = (params.body as string) || "";
           state.addNotification(state.activeWorkspaceId, title, body);
           if (config?.notifications.desktop ?? true) {
-            sendDesktopNotification(title, body).catch(console.error);
+            sendDesktopNotification(title, body).catch(logError);
           }
           result = { result: true };
           break;
@@ -573,7 +574,7 @@ export default function App() {
       result = { error: String(err) };
     }
 
-    socketRespond(id, result).catch(console.error);
+    socketRespond(id, result).catch(logError);
   }
 
   useEffect(() => {

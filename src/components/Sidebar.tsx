@@ -8,6 +8,7 @@ import {
   worktreeMerge,
   worktreeRemove,
   worktreeStatus,
+  logError,
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
 import { CloseIcon, GripIcon, MergeIcon, TrashIcon } from "./Icons";
@@ -315,6 +316,7 @@ function WorkspaceEntry({
   onDrop,
   onDragEnd,
   isDragOver,
+  isDragging,
   onContextMenu,
 }: {
   workspace: Workspace;
@@ -326,6 +328,7 @@ function WorkspaceEntry({
   onDrop: (e: React.DragEvent, index: number) => void;
   onDragEnd: () => void;
   isDragOver: boolean;
+  isDragging: boolean;
   onContextMenu: (e: React.MouseEvent, workspaceId: string) => void;
 }) {
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
@@ -363,7 +366,9 @@ function WorkspaceEntry({
     return activity > 0 && now - activity < ACTIVITY_THRESHOLD_MS;
   });
 
-  const statusColor = hasActivity ? "#a6e3a1" : "#585b70";
+  const statusColor = hasActivity
+    ? "var(--theme-green)"
+    : "var(--theme-bright-black)";
 
   function handleMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
@@ -437,12 +442,20 @@ function WorkspaceEntry({
     <>
       {isDragOver && <div className="sidebar-drop-indicator" />}
       <div
-        className={`sidebar-entry ${isActive ? "sidebar-entry-active" : ""}`}
+        className={`sidebar-entry ${isActive ? "sidebar-entry-active" : ""} ${isDragging ? "sidebar-entry-dragging" : ""}`}
+        role="button"
+        tabIndex={0}
         onDragEnter={(e) => onDragOver(e, index)}
         onDragOver={(e) => onDragOver(e, index)}
         onDrop={(e) => onDrop(e, index)}
         onDragEnd={onDragEnd}
         onMouseDown={handleMouseDown}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            switchWorkspace(workspace.id);
+          }
+        }}
         onContextMenu={(e) => onContextMenu(e, workspace.id)}
       >
         <div className="sidebar-entry-header">
@@ -826,7 +839,7 @@ export default function Sidebar() {
               setWorkspaceGitBranch(id, branch);
             }
           })
-          .catch(console.error);
+          .catch(logError);
       }
     }
   }, [workspaceOrder, setWorkspaceWorkingDir, setWorkspaceGitBranch]);
@@ -839,7 +852,7 @@ export default function Sidebar() {
         .then((branch) => {
           setWorkspaceGitBranch(activeWorkspaceId, branch);
         })
-        .catch(console.error);
+        .catch(logError);
     }
   }, [activeWorkspaceId, setWorkspaceGitBranch]);
 
@@ -1054,6 +1067,7 @@ export default function Sidebar() {
               onDrop={handleDrop}
               onDragEnd={handleDragEnd}
               isDragOver={dragOverIndex === index && dragFromIndex !== index}
+              isDragging={dragFromIndex === index}
               onContextMenu={handleContextMenu}
             />
           );
@@ -1062,9 +1076,14 @@ export default function Sidebar() {
       <div className="sidebar-footer">
         <HelpButton />
       </div>
-      {contextMenu && (
-        <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
-      )}
+      {contextMenu &&
+        createPortal(
+          <ContextMenu
+            menu={contextMenu}
+            onClose={() => setContextMenu(null)}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

@@ -52,8 +52,7 @@
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.34);
   --shadow-lg: 0 22px 64px rgba(0, 0, 0, 0.48);
   --focus-ring:
-    0 0 0 1px rgba(137, 180, 250, 0.55),
-    0 0 0 4px rgba(137, 180, 250, 0.14);
+    0 0 0 1px rgba(137, 180, 250, 0.55), 0 0 0 4px rgba(137, 180, 250, 0.14);
   --transition-fast: 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
   --transition-med: 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -70,13 +69,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(
-      circle at 50% -10%,
-      rgba(137, 180, 250, 0.04),
-      transparent 38%
-    ),
-    linear-gradient(180deg, #11121b, #090a11);
+  background: var(--chrome-graphite);
 }
 
 body {
@@ -119,8 +112,11 @@ textarea {
   display: flex;
   min-width: 0;
   min-height: 0;
-  background:
-    linear-gradient(180deg, rgba(13, 14, 22, 0.96), rgba(9, 10, 17, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(13, 14, 22, 0.96),
+    rgba(9, 10, 17, 0.98)
+  );
 }
 
 .workspace-pane-area {
@@ -151,13 +147,12 @@ textarea {
 
 .resize-handle:hover,
 .resize-handle[data-separator="active"] {
-  background:
-    linear-gradient(
-      180deg,
-      transparent,
-      rgba(137, 180, 250, 0.34),
-      transparent
-    );
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(137, 180, 250, 0.34),
+    transparent
+  );
 }
 
 .sidebar-separator {
@@ -171,8 +166,11 @@ textarea {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, rgba(23, 24, 36, 0.99), rgba(11, 12, 20, 0.99));
+  background: linear-gradient(
+    180deg,
+    rgba(23, 24, 36, 0.99),
+    rgba(11, 12, 20, 0.99)
+  );
   font-family: var(--ui-font-stack);
   font-size: 13px;
   color: var(--theme-fg);
@@ -312,8 +310,11 @@ textarea {
 }
 
 .sidebar-entry-active::before {
-  background:
-    linear-gradient(180deg, rgba(137, 180, 250, 0.96), rgba(116, 199, 236, 0.9));
+  background: linear-gradient(
+    180deg,
+    rgba(137, 180, 250, 0.96),
+    rgba(116, 199, 236, 0.9)
+  );
   opacity: 1;
 }
 
@@ -368,7 +369,7 @@ textarea {
   min-width: 0;
   margin-top: 5px;
   padding-left: 15px;
-  font-size: 11.25px;
+  font-size: 11px;
   line-height: 1.4;
   color: var(--muted);
   white-space: nowrap;
@@ -435,7 +436,7 @@ textarea {
   border: 1px solid rgba(166, 173, 200, 0.14);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -638,12 +639,17 @@ textarea {
   right: 0;
   width: 352px;
   height: 100%;
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.97), rgba(11, 12, 20, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.97),
+    rgba(11, 12, 20, 0.98)
+  );
   border-left: 1px solid rgba(166, 173, 200, 0.1);
   backdrop-filter: blur(8px) saturate(112%);
   -webkit-backdrop-filter: blur(8px) saturate(112%);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), var(--shadow-lg);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02),
+    var(--shadow-lg);
   display: flex;
   flex-direction: column;
   z-index: 100;
@@ -815,12 +821,17 @@ textarea {
   right: 0;
   width: 416px;
   height: 100%;
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.97), rgba(11, 12, 20, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.97),
+    rgba(11, 12, 20, 0.98)
+  );
   border-left: 1px solid rgba(166, 173, 200, 0.1);
   backdrop-filter: blur(8px) saturate(112%);
   -webkit-backdrop-filter: blur(8px) saturate(112%);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02), var(--shadow-lg);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02),
+    var(--shadow-lg);
   display: flex;
   flex-direction: column;
   z-index: 200;
@@ -951,7 +962,7 @@ textarea {
 }
 
 .settings-label {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--theme-bright-white);
 }
 
@@ -1005,8 +1016,11 @@ textarea {
 .command-palette {
   width: min(560px, calc(100% - 32px));
   max-height: min(460px, 70vh);
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.98), rgba(11, 12, 20, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.98),
+    rgba(11, 12, 20, 0.98)
+  );
   border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: var(--radius-xl);
   display: flex;
@@ -1057,7 +1071,7 @@ textarea {
   background: rgba(205, 214, 244, 0.025);
   text-align: center;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .command-palette-item {
@@ -1101,7 +1115,7 @@ textarea {
   border-radius: 999px;
   color: var(--theme-bright-white);
   font-family: var(--mono-font-stack);
-  font-size: 10.5px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   margin-left: 16px;
   white-space: nowrap;
@@ -1117,8 +1131,11 @@ textarea {
   display: flex;
   align-items: center;
   gap: 5px;
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.94), rgba(11, 12, 20, 0.96));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.94),
+    rgba(11, 12, 20, 0.96)
+  );
   border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: 12px;
   padding: 6px;
@@ -1195,8 +1212,11 @@ textarea {
 }
 
 .toast {
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.94), rgba(11, 12, 20, 0.96));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.94),
+    rgba(11, 12, 20, 0.96)
+  );
   border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: 12px;
   padding: 12px 14px;
@@ -1254,11 +1274,14 @@ textarea {
   z-index: 2;
   height: 32px;
   padding: 0 12px;
-  background:
-    linear-gradient(180deg, rgba(20, 21, 32, 0.98), rgba(11, 12, 20, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(20, 21, 32, 0.98),
+    rgba(11, 12, 20, 0.98)
+  );
   border-bottom: 1px solid rgba(166, 173, 200, 0.06);
   font-family: var(--ui-font-stack);
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--muted);
   letter-spacing: 0.01em;
   user-select: none;
@@ -1338,8 +1361,11 @@ textarea {
   height: 100%;
   position: relative;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(19, 20, 31, 0.98), rgba(9, 10, 16, 0.99));
+  background: linear-gradient(
+    180deg,
+    rgba(19, 20, 31, 0.98),
+    rgba(9, 10, 16, 0.99)
+  );
   border: 1px solid rgba(166, 173, 200, 0.05);
   border-radius: 16px;
   box-sizing: border-box;
@@ -1364,8 +1390,11 @@ textarea {
   position: absolute;
   inset: 9px 11px 11px;
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(0, 0, 0, 0.06));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.018),
+    rgba(0, 0, 0, 0.06)
+  );
   border: 1px solid rgba(166, 173, 200, 0.03);
   pointer-events: none;
 }
@@ -1408,12 +1437,11 @@ textarea {
   position: absolute;
   inset: 41px 11px 11px;
   z-index: 1;
-  background:
-    linear-gradient(
-      180deg,
-      rgba(9, 10, 16, 0.04),
-      rgba(9, 10, 16, 0.18)
-    );
+  background: linear-gradient(
+    180deg,
+    rgba(9, 10, 16, 0.04),
+    rgba(9, 10, 16, 0.18)
+  );
   border-radius: 14px;
   opacity: 0.18;
   pointer-events: none;
@@ -1547,7 +1575,7 @@ textarea {
 }
 
 .sidebar-log-entry {
-  font-size: 10.25px;
+  font-size: 10px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1572,7 +1600,7 @@ textarea {
 .sidebar-notification-preview {
   margin-top: 6px;
   padding-left: 15px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-style: normal;
   line-height: 1.4;
   color: rgba(180, 210, 255, 0.82);
@@ -1601,8 +1629,11 @@ textarea {
   position: fixed;
   z-index: 700;
   min-width: 240px;
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.98), rgba(11, 12, 20, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.98),
+    rgba(11, 12, 20, 0.98)
+  );
   border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: var(--radius-lg);
   padding: 6px;
@@ -1610,7 +1641,7 @@ textarea {
   backdrop-filter: blur(8px) saturate(112%);
   -webkit-backdrop-filter: blur(8px) saturate(112%);
   font-family: var(--ui-font-stack);
-  font-size: 12.5px;
+  font-size: 12px;
   animation: overlay-in var(--transition-med);
 }
 
@@ -1634,7 +1665,7 @@ textarea {
   border: none;
   border-radius: var(--radius-sm);
   color: var(--theme-fg);
-  font-size: 12.5px;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
   gap: 16px;
@@ -1668,7 +1699,7 @@ textarea {
   border-radius: 999px;
   color: var(--theme-bright-white);
   font-family: var(--mono-font-stack);
-  font-size: 10.5px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
@@ -1715,7 +1746,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--theme-bright-white);
   gap: 12px;
 }
@@ -1740,8 +1771,11 @@ textarea {
 .branch-picker {
   width: min(560px, calc(100% - 32px));
   max-height: min(460px, 70vh);
-  background:
-    linear-gradient(180deg, rgba(24, 25, 37, 0.98), rgba(11, 12, 20, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 37, 0.98),
+    rgba(11, 12, 20, 0.98)
+  );
   border: 1px solid rgba(166, 173, 200, 0.1);
   border-radius: var(--radius-xl);
   display: flex;
@@ -1885,7 +1919,7 @@ textarea {
   border: none;
   border-radius: var(--radius-md);
   color: var(--theme-bg);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   padding: 10px 16px;
   cursor: pointer;
@@ -1997,7 +2031,12 @@ textarea {
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    /* Light mode defaults — only applied if no theme is loaded yet.
-       Once the app loads config and calls applyThemeCssVars(), these are overridden. */
+    /* Minimal light fallback — only shown in the brief window before
+       loadConfig() applies the real theme via applyThemeCssVars(). */
+    --theme-bg: #eff1f5;
+    --theme-fg: #4c4f69;
+    --chrome-graphite: #dce0e8;
+    --chrome-graphite-soft: #e6e9ef;
+    color-scheme: light;
   }
 }

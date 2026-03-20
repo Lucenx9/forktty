@@ -163,6 +163,7 @@ fn get_worktree_branch(worktree_path: &str) -> String {
 
 /// Remove a worktree and optionally delete its branch.
 pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), WorktreeError> {
+    validate_worktree_name(name)?;
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
 
@@ -196,6 +197,7 @@ pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), Wo
 
 /// Merge a worktree's branch into the main checkout's current branch.
 pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError> {
+    validate_worktree_name(branch_name)?;
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
 
@@ -454,8 +456,18 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
         return Ok(None); // No hook to run
     }
 
-    let status = std::process::Command::new("sh")
-        .arg(&hook_path)
+    // Security: canonicalize both paths and verify the hook is inside the worktree
+    let canonical_hook = std::fs::canonicalize(&hook_path)
+        .map_err(|e| WorktreeError::Other(format!("Cannot resolve hook path: {e}")))?;
+    let canonical_wt = std::fs::canonicalize(worktree_path)
+        .map_err(|e| WorktreeError::Other(format!("Cannot resolve worktree path: {e}")))?;
+    if !canonical_hook.starts_with(&canonical_wt) {
+        return Err(WorktreeError::Other(
+            "Hook path escapes worktree boundary".to_string(),
+        ));
+    }
+
+    let status = std::process::Command::new(&canonical_hook)
         .current_dir(worktree_path)
         .status()?;
 

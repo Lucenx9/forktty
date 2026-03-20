@@ -211,7 +211,9 @@ fn worktree_remove(name: String) -> Result<(), String> {
     let cwd = cwd_string()?;
     let worktrees = worktree::list(&cwd).map_err(|e| e.to_string())?;
     if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
-        let _ = worktree::run_hook(&wt.path, "teardown");
+        if let Ok(verified) = verify_repo_path(&wt.path) {
+            let _ = worktree::run_hook(&verified, "teardown");
+        }
     }
     worktree::remove(&cwd, &name, true).map_err(|e| e.to_string())
 }
@@ -224,7 +226,7 @@ fn worktree_merge(name: String) -> Result<String, String> {
 /// Canonicalize a path and verify it is inside a git repository's working directory.
 /// Returns the canonical path string. This is a security boundary — prevents
 /// arbitrary filesystem access or hook execution outside the repo.
-fn verify_repo_path(path: &str) -> Result<String, String> {
+pub(crate) fn verify_repo_path(path: &str) -> Result<String, String> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("Invalid path: {e}"))?;
     let canonical_str = canonical.to_str().ok_or("Non-UTF-8 path")?;
     let repo = git2::Repository::discover(canonical_str)

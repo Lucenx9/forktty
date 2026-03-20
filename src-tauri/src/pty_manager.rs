@@ -64,6 +64,10 @@ impl PtyManager {
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
         if let Some(dir) = cwd {
+            let path = std::path::Path::new(dir);
+            if !path.is_absolute() || !path.exists() {
+                return Err(PtyError::Creation(format!("Invalid cwd: {dir}")));
+            }
             cmd.cwd(dir);
         }
         if let Some(vars) = env_vars {

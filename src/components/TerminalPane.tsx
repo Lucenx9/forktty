@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
@@ -11,6 +12,7 @@ import {
   killPty,
   sendDesktopNotification,
   sendCustomNotification,
+  logError,
 } from "../lib/pty-bridge";
 import { registerTerminal, unregisterTerminal } from "../lib/terminal-registry";
 import type { ScanEventData } from "../lib/pty-bridge";
@@ -90,14 +92,14 @@ function PaneContextMenu({
           termRef.current.paste(text);
         }
       })
-      .catch(console.error);
+      .catch(logError);
     onClose();
   }
 
   function handleCopy() {
     const sel = termRef.current?.getSelection();
     if (sel) {
-      navigator.clipboard.writeText(sel).catch(console.error);
+      navigator.clipboard.writeText(sel).catch(logError);
     }
     onClose();
   }
@@ -149,9 +151,11 @@ function PaneContextMenu({
 function PaneToolbar({
   paneId,
   isFocused,
+  onToggleFind,
 }: {
   paneId: string;
   isFocused: boolean;
+  onToggleFind: () => void;
 }) {
   const splitPane = useWorkspaceStore((s) => s.splitPane);
   const closePane = useWorkspaceStore((s) => s.closePane);
@@ -174,6 +178,7 @@ function PaneToolbar({
           className="pane-toolbar-btn"
           onClick={() => splitPane(paneId, "horizontal")}
           title="Split Right (Ctrl+D)"
+          aria-label="Split Right"
         >
           <svg width="12" height="12" viewBox="0 0 12 12">
             <rect
@@ -200,6 +205,7 @@ function PaneToolbar({
           className="pane-toolbar-btn"
           onClick={() => splitPane(paneId, "vertical")}
           title="Split Down (Ctrl+Shift+D)"
+          aria-label="Split Down"
         >
           <svg width="12" height="12" viewBox="0 0 12 12">
             <rect
@@ -223,9 +229,35 @@ function PaneToolbar({
           </svg>
         </button>
         <button
+          className="pane-toolbar-btn"
+          onClick={onToggleFind}
+          title="Find (Ctrl+F)"
+          aria-label="Find in Terminal"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <circle
+              cx="5"
+              cy="5"
+              r="3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+            />
+            <line
+              x1="7.5"
+              y1="7.5"
+              x2="11"
+              y2="11"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          </svg>
+        </button>
+        <button
           className="pane-toolbar-btn pane-toolbar-btn-close"
           onClick={() => closePane(paneId)}
           title="Close Pane (Ctrl+W)"
+          aria-label="Close Pane"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line
@@ -397,11 +429,11 @@ export default function TerminalPane({
       state.addNotification(wsId, title, body);
       state.setSurfaceUnread(paneId, true);
       if (config?.notifications.desktop ?? true) {
-        sendDesktopNotification(title, body).catch(console.error);
+        sendDesktopNotification(title, body).catch(logError);
       }
       if (notificationCommand) {
         sendCustomNotification(notificationCommand, title, body).catch(
-          console.error,
+          logError,
         );
       }
     }
@@ -480,7 +512,7 @@ export default function TerminalPane({
       .then((id) => {
         if (disposed) {
           // React StrictMode double-mount: kill the orphaned PTY
-          killPty(id).catch(console.error);
+          killPty(id).catch(logError);
           return;
         }
         ptyIdRef.current = id;
@@ -488,10 +520,10 @@ export default function TerminalPane({
 
         // Send initial resize based on actual terminal dimensions
         const { cols, rows } = term;
-        resizePty(id, cols, rows).catch(console.error);
+        resizePty(id, cols, rows).catch(logError);
       })
       .catch((err) => {
-        console.error("Failed to spawn PTY:", err);
+        logError(err);
         term.write(`\r\n\x1b[31mFailed to spawn PTY: ${err}\x1b[0m\r\n`);
       });
 
@@ -499,7 +531,7 @@ export default function TerminalPane({
     const dataDisposable = term.onData((data) => {
       const id = ptyIdRef.current;
       if (id !== null) {
-        writePty(id, data).catch(console.error);
+        writePty(id, data).catch(logError);
       }
     });
 
@@ -522,7 +554,7 @@ export default function TerminalPane({
     const resizeDisposable = term.onResize(({ cols, rows }) => {
       const id = ptyIdRef.current;
       if (id !== null) {
-        resizePty(id, cols, rows).catch(console.error);
+        resizePty(id, cols, rows).catch(logError);
       }
     });
 
@@ -540,7 +572,7 @@ export default function TerminalPane({
       // Kill PTY process on cleanup
       const id = ptyIdRef.current;
       if (id !== null) {
-        killPty(id).catch(console.error);
+        killPty(id).catch(logError);
         ptyIdRef.current = null;
       }
       unregisterSurface(paneId);
@@ -576,12 +608,16 @@ export default function TerminalPane({
           e.stopPropagation();
           const sel = termRef.current?.getSelection();
           if (sel) {
-            navigator.clipboard.writeText(sel).catch(console.error);
+            navigator.clipboard.writeText(sel).catch(logError);
           }
         }
       }}
     >
-      <PaneToolbar paneId={paneId} isFocused={isFocused} />
+      <PaneToolbar
+        paneId={paneId}
+        isFocused={isFocused}
+        onToggleFind={() => setShowFind((v) => !v)}
+      />
       {showFind && (
         <FindBar
           onFind={handleFind}
@@ -601,7 +637,8 @@ export default function TerminalPane({
         }}
         style={{
           width: "100%",
-          height: "calc(100% - 32px)",
+          flex: 1,
+          minHeight: 0,
         }}
       >
         <div
@@ -613,14 +650,16 @@ export default function TerminalPane({
           }}
         />
       </div>
-      {paneContextMenu && (
-        <PaneContextMenu
-          menu={paneContextMenu}
-          paneId={paneId}
-          onClose={() => setPaneContextMenu(null)}
-          termRef={termRef}
-        />
-      )}
+      {paneContextMenu &&
+        createPortal(
+          <PaneContextMenu
+            menu={paneContextMenu}
+            paneId={paneId}
+            onClose={() => setPaneContextMenu(null)}
+            termRef={termRef}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

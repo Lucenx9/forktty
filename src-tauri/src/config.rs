@@ -249,7 +249,10 @@ fn load_ghostty_theme() -> TerminalTheme {
 
     // If a theme is referenced, load the theme file first as base
     let mut theme = if let Some(theme_name) = map.get("theme") {
-        if theme_name.contains('/') || theme_name.contains("..") {
+        if !theme_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
+        {
             return TerminalTheme::default();
         }
         let theme_file = ghostty_dir.join("themes").join(theme_name);

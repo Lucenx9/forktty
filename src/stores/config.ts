@@ -4,9 +4,11 @@ import {
   getConfig,
   saveConfig as saveConfigApi,
   getTheme,
+  writeLog,
 } from "../lib/pty-bridge";
 import type { ITheme } from "@xterm/xterm";
 import { toXtermTheme, applyThemeCssVars } from "../lib/ghostty-theme";
+import { showToast } from "../components/ErrorToast";
 
 interface ConfigState {
   config: AppConfig | null;
@@ -34,7 +36,7 @@ const useConfigStore = create<ConfigState>((set, get) => ({
       applyThemeCssVars(theme);
       set({ config, theme, xtermTheme, loaded: true });
     } catch (err) {
-      console.error("Failed to load config:", err);
+      writeLog("ERROR", `Failed to load config: ${err}`).catch(() => {});
       set({ loaded: true });
     }
   },
@@ -48,7 +50,7 @@ const useConfigStore = create<ConfigState>((set, get) => ({
       applyThemeCssVars(theme);
       set({ config, theme, xtermTheme });
     } catch (err) {
-      console.error("Failed to save config:", err);
+      showToast(`Failed to save config: ${err}`, "error");
     }
   },
 

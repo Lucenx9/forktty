@@ -164,11 +164,11 @@ async fn read_limited_line(
             break;
         }
         let len = available.len();
-        buf.extend_from_slice(available);
-        reader.consume(len);
-        if buf.len() > max_size {
+        if buf.len() + len > max_size {
             return Some(Err(()));
         }
+        buf.extend_from_slice(available);
+        reader.consume(len);
     }
     if buf.len() > max_size {
         return Some(Err(()));
@@ -223,7 +223,9 @@ async fn dispatch(
 
             let info = crate::worktree::create(&cwd, name, &layout).map_err(|e| e.to_string())?;
             // Intentional: setup hook failure is advisory and should not block worktree creation
-            let _ = crate::worktree::run_hook(&info.path, "setup");
+            if let Ok(verified) = crate::verify_repo_path(&info.path) {
+                let _ = crate::worktree::run_hook(&verified, "setup");
+            }
 
             let workspace = bridge_to_frontend(
                 app,
@@ -265,7 +267,9 @@ async fn dispatch(
             if let Ok(worktrees) = crate::worktree::list(&cwd) {
                 if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
                     // Intentional: teardown hook failure is advisory and should not block removal
-                    let _ = crate::worktree::run_hook(&wt.path, "teardown");
+                    if let Ok(verified) = crate::verify_repo_path(&wt.path) {
+                        let _ = crate::worktree::run_hook(&verified, "teardown");
+                    }
                 }
             }
 
