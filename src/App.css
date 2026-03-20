@@ -55,6 +55,8 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 html,
@@ -81,13 +83,18 @@ textarea {
   font: inherit;
 }
 
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .app {
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--surface-0);
-  user-select: none;
 }
 
 .app-main {
@@ -148,7 +155,6 @@ textarea {
   font-family: var(--ui-font-stack);
   font-size: 13px;
   color: var(--theme-fg);
-  user-select: none;
 }
 
 .sidebar-header {
@@ -1384,7 +1390,6 @@ textarea {
   font-family: var(--ui-font-stack);
   font-size: 12px;
   color: var(--muted);
-  user-select: none;
   flex-shrink: 0;
 }
 
@@ -1474,6 +1479,8 @@ textarea {
   min-height: 0;
   overflow: hidden;
   background: var(--theme-bg);
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .terminal-pane-surface .xterm,
