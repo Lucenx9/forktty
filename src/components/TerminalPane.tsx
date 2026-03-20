@@ -403,6 +403,13 @@ const TerminalPane = memo(function TerminalPane({
       term.open(wrapper);
       registerTerminal(paneId, term);
 
+      // Let Ctrl+F and Ctrl+Shift+C bubble up to React (find bar, copy)
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.ctrlKey && !e.shiftKey && e.key === "f") return false;
+        if (e.ctrlKey && e.shiftKey && e.key === "C") return false;
+        return true;
+      });
+
       // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
       const canvasAddon = new CanvasAddon();
       canvasAddonRef.current = canvasAddon;

@@ -185,6 +185,7 @@ export default function SettingsPanel() {
 
           <label className="settings-field settings-checkbox-field">
             <input
+              className="settings-checkbox"
               type="checkbox"
               checked={draft.notifications.desktop}
               onChange={(e) => updateNotifications("desktop", e.target.checked)}
