@@ -17,12 +17,13 @@
   --theme-bright-black: #585b70;
   --theme-bright-white: #a6adc8;
 
-  --sidebar-bg: #14141f;
+  --sidebar-bg: #11111b;
   --sidebar-border: #313244;
 
   --muted: #7f849c;
-  --border-subtle: rgba(166, 173, 200, 0.12);
-  --hover-bg: rgba(205, 214, 244, 0.08);
+  --border-subtle: rgba(166, 173, 200, 0.1);
+  --border-visible: rgba(166, 173, 200, 0.18);
+  --hover-bg: rgba(205, 214, 244, 0.07);
   --active-bg: rgba(137, 180, 250, 0.12);
 
   --ui-font-stack:
@@ -31,12 +32,13 @@
     "JetBrainsMono Nerd Font Mono", "JetBrains Mono", "Fira Code",
     "Cascadia Code", ui-monospace, monospace;
 
-  --surface-0: #11111b;
+  /* Surface hierarchy: sidebar (darkest) → pane area → terminal (theme-bg) */
+  --surface-0: #181825;
   --surface-1: #1e1e2e;
   --surface-2: #313244;
   --surface-3: #45475a;
-  --surface-overlay: rgba(24, 24, 37, 0.95);
-  --overlay-backdrop: rgba(10, 10, 18, 0.6);
+  --surface-overlay: #1e1e2e;
+  --overlay-backdrop: rgba(0, 0, 0, 0.55);
 
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -111,7 +113,7 @@ textarea {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 4px;
+  padding: 6px;
   box-sizing: border-box;
   contain: layout style paint;
 }
@@ -131,7 +133,7 @@ textarea {
 
 .sidebar-separator {
   flex: 0 0 1px;
-  background: var(--border-subtle);
+  background: var(--border-visible);
 }
 
 /* --- Sidebar --- */
@@ -250,6 +252,10 @@ textarea {
 .sidebar-entry-active {
   background: var(--active-bg);
   border-left-color: var(--theme-blue);
+}
+
+.sidebar-entry-active .sidebar-entry-name-text {
+  color: var(--theme-fg);
 }
 
 .sidebar-entry-active:hover {
@@ -1372,7 +1378,7 @@ textarea {
   z-index: 2;
   height: 32px;
   padding: 0 10px;
-  background: var(--surface-1);
+  background: var(--theme-bg);
   border-bottom: 1px solid var(--border-subtle);
   font-family: var(--ui-font-stack);
   font-size: 11px;
@@ -1382,8 +1388,7 @@ textarea {
 }
 
 .pane-toolbar-focused {
-  color: var(--theme-fg);
-  border-bottom-color: rgba(137, 180, 250, 0.25);
+  color: var(--theme-bright-white);
 }
 
 .pane-toolbar-title {
@@ -1446,9 +1451,9 @@ textarea {
   height: 100%;
   position: relative;
   overflow: hidden;
-  background: var(--surface-0);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  background: var(--theme-bg);
+  border: 1px solid var(--border-visible);
+  border-radius: var(--radius-sm);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -1459,7 +1464,7 @@ textarea {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 4px;
+  padding: 0 4px 4px;
 }
 
 .terminal-pane-surface {
@@ -1467,7 +1472,6 @@ textarea {
   z-index: 1;
   min-height: 0;
   overflow: hidden;
-  border-radius: 4px;
   background: var(--theme-bg);
 }
 
@@ -1478,7 +1482,7 @@ textarea {
 }
 
 .terminal-pane-focused {
-  border-color: rgba(137, 180, 250, 0.45);
+  border-color: rgba(137, 180, 250, 0.5);
 }
 
 .terminal-pane-inactive {
@@ -1486,11 +1490,15 @@ textarea {
 }
 
 .terminal-pane-inactive .pane-toolbar {
-  opacity: 0.8;
+  opacity: 0.65;
 }
 
 .terminal-pane-inactive .terminal-pane-surface {
-  opacity: 0.95;
+  opacity: 0.88;
+}
+
+.terminal-pane-inactive:hover {
+  border-color: var(--border-visible);
 }
 
 .terminal-pane-inactive:hover .terminal-pane-surface {
