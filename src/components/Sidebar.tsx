@@ -11,8 +11,19 @@ import {
   logError,
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
-import { CloseIcon, GripIcon, MergeIcon, TrashIcon } from "./Icons";
 import { ConfirmModal } from "./InlineModal";
+import {
+  Plus,
+  GitBranch,
+  Columns2,
+  Rows2,
+  Bell,
+  CircleHelp,
+  X,
+  GripVertical,
+  GitMerge,
+  Trash2,
+} from "lucide-react";
 import WorkspaceMetadataView from "./WorkspaceMetadataView";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
@@ -519,7 +530,7 @@ function WorkspaceEntry({
             title="Reorder workspaces"
             aria-label={`Reorder ${workspace.name}`}
           >
-            <GripIcon size={11} />
+            <GripVertical size={11} />
           </button>
           {canClose && (
             <button
@@ -528,7 +539,7 @@ function WorkspaceEntry({
               title="Close workspace"
               aria-label={`Close ${workspace.name}`}
             >
-              <CloseIcon size={10} />
+              <X size={10} />
             </button>
           )}
         </div>
@@ -564,7 +575,7 @@ function WorkspaceEntry({
               onClick={handleMerge}
               title="Merge branch into main"
             >
-              <MergeIcon />
+              <GitMerge size={12} />
               <span>Merge</span>
             </button>
             <button
@@ -572,7 +583,7 @@ function WorkspaceEntry({
               onClick={handleRemove}
               title="Remove worktree and delete branch"
             >
-              <TrashIcon />
+              <Trash2 size={12} />
               <span>Remove</span>
             </button>
           </div>
@@ -776,27 +787,7 @@ function HelpButton() {
         onClick={() => setOpen((v) => !v)}
         title="Help & Shortcuts"
       >
-        <svg width="14" height="14" viewBox="0 0 14 14">
-          <circle
-            cx="7"
-            cy="7"
-            r="6"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1"
-          />
-          <text
-            x="7"
-            y="10.5"
-            textAnchor="middle"
-            fill="currentColor"
-            fontSize="9"
-            fontWeight="600"
-            fontFamily="inherit"
-          >
-            ?
-          </text>
-        </svg>
+        <CircleHelp size={14} />
       </button>
     </div>
   );
@@ -950,145 +941,35 @@ export default function Sidebar() {
             onClick={() => createWorkspace()}
             title="New workspace (Ctrl+N)"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <line
-                x1="7"
-                y1="2"
-                x2="7"
-                y2="12"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <line
-                x1="2"
-                y1="7"
-                x2="12"
-                y2="7"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-            </svg>
+            <Plus size={14} />
           </button>
           <button
             className="sidebar-icon-btn sidebar-icon-btn-worktree"
             onClick={handleNewWorktree}
             title="New worktree (Ctrl+Shift+N)"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <circle
-                cx="7"
-                cy="3"
-                r="1.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-              <circle
-                cx="3"
-                cy="11"
-                r="1.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-              <circle
-                cx="11"
-                cy="11"
-                r="1.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-              <line
-                x1="7"
-                y1="4.5"
-                x2="3"
-                y2="9.5"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-              <line
-                x1="7"
-                y1="4.5"
-                x2="11"
-                y2="9.5"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-            </svg>
+            <GitBranch size={14} />
           </button>
           <button
             className="sidebar-icon-btn"
             onClick={handleSplitRight}
             title="Split Right (Ctrl+D)"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <rect
-                x="1"
-                y="1"
-                width="12"
-                height="12"
-                rx="1.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-              <line
-                x1="7"
-                y1="1"
-                x2="7"
-                y2="13"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-            </svg>
+            <Columns2 size={14} />
           </button>
           <button
             className="sidebar-icon-btn"
             onClick={handleSplitDown}
             title="Split Down (Ctrl+Shift+D)"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <rect
-                x="1"
-                y="1"
-                width="12"
-                height="12"
-                rx="1.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-              <line
-                x1="1"
-                y1="7"
-                x2="13"
-                y2="7"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-            </svg>
+            <Rows2 size={14} />
           </button>
           <button
             className={`sidebar-icon-btn ${totalUnread > 0 ? "sidebar-icon-btn-unread" : ""}`}
             onClick={toggleNotificationPanel}
             title="Notifications (Ctrl+Shift+I)"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <path
-                d="M7 1C4.8 1 3 2.8 3 5v2.5L1.5 9.5v1h11v-1L11 7.5V5c0-2.2-1.8-4-4-4z"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M5.5 11.5c0 .8.7 1.5 1.5 1.5s1.5-.7 1.5-1.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
-            </svg>
+            <Bell size={14} />
             {totalUnread > 0 && (
               <span className="sidebar-icon-badge">{totalUnread}</span>
             )}

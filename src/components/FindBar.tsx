@@ -1,10 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CloseIcon,
-  MatchCaseIcon,
-} from "./Icons";
+import { ChevronDown, ChevronUp, X, CaseSensitive } from "lucide-react";
 
 interface FindBarProps {
   onFind: (term: string, options: { caseSensitive: boolean }) => void;
@@ -66,7 +61,7 @@ export default function FindBar({
         aria-label="Toggle case sensitive search"
         aria-pressed={caseSensitive}
       >
-        <MatchCaseIcon />
+        <CaseSensitive size={14} />
       </button>
       <button
         className="find-bar-btn"
@@ -74,7 +69,7 @@ export default function FindBar({
         title="Previous (Shift+Enter)"
         aria-label="Find previous match"
       >
-        <ChevronUpIcon />
+        <ChevronUp size={14} />
       </button>
       <button
         className="find-bar-btn"
@@ -82,7 +77,7 @@ export default function FindBar({
         title="Next (Enter)"
         aria-label="Find next match"
       >
-        <ChevronDownIcon />
+        <ChevronDown size={14} />
       </button>
       <button
         className="find-bar-btn"
@@ -90,7 +85,7 @@ export default function FindBar({
         title="Close (Esc)"
         aria-label="Close find bar"
       >
-        <CloseIcon />
+        <X size={14} />
       </button>
     </div>
   );

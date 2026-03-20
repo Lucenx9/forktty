@@ -1,5 +1,5 @@
 import { useWorkspaceStore } from "../stores/workspace";
-import { CloseIcon } from "./Icons";
+import { X } from "lucide-react";
 
 function formatTime(timestamp: number): string {
   const diff = Math.floor((Date.now() - timestamp) / 1000);
@@ -41,7 +41,7 @@ export default function NotificationPanel() {
             onClick={toggleNotificationPanel}
             aria-label="Close notifications"
           >
-            <CloseIcon />
+            <X size={14} />
           </button>
         </div>
       </div>

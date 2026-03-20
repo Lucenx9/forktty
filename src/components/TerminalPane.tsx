@@ -22,6 +22,7 @@ import {
   getLastWorkspaceSwitchTime,
 } from "../stores/workspace";
 import { useConfigStore } from "../stores/config";
+import { Columns2, Rows2, Search, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -192,26 +193,7 @@ function PaneToolbar({
           title="Split Right (Ctrl+D)"
           aria-label="Split Right"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect
-              x="0.5"
-              y="0.5"
-              width="11"
-              height="11"
-              rx="1"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-            <line
-              x1="6"
-              y1="1"
-              x2="6"
-              y2="11"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-          </svg>
+          <Columns2 size={12} />
         </button>
         <button
           className="pane-toolbar-btn"
@@ -219,26 +201,7 @@ function PaneToolbar({
           title="Split Down (Ctrl+Shift+D)"
           aria-label="Split Down"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect
-              x="0.5"
-              y="0.5"
-              width="11"
-              height="11"
-              rx="1"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-            <line
-              x1="1"
-              y1="6"
-              x2="11"
-              y2="6"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-          </svg>
+          <Rows2 size={12} />
         </button>
         <button
           className="pane-toolbar-btn"
@@ -246,24 +209,7 @@ function PaneToolbar({
           title="Find (Ctrl+F)"
           aria-label="Find in Terminal"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <circle
-              cx="5"
-              cy="5"
-              r="3.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-            <line
-              x1="7.5"
-              y1="7.5"
-              x2="11"
-              y2="11"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-          </svg>
+          <Search size={12} />
         </button>
         <button
           className="pane-toolbar-btn pane-toolbar-btn-close"
@@ -271,24 +217,7 @@ function PaneToolbar({
           title="Close Pane (Ctrl+W)"
           aria-label="Close Pane"
         >
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <line
-              x1="1"
-              y1="1"
-              x2="9"
-              y2="9"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-            <line
-              x1="9"
-              y1="1"
-              x2="1"
-              y2="9"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-          </svg>
+          <X size={12} />
         </button>
       </div>
     </div>
