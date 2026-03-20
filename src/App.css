@@ -87,6 +87,7 @@ textarea {
   display: flex;
   flex-direction: column;
   background: var(--surface-0);
+  user-select: none;
 }
 
 .app-main {
@@ -294,7 +295,7 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: text;
+  cursor: default;
   vertical-align: top;
 }
 
