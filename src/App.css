@@ -17,11 +17,13 @@
   --theme-bright-black: #585b70;
   --theme-bright-white: #a6adc8;
 
-  --sidebar-bg: #181825;
+  --sidebar-bg: #14141f;
   --sidebar-border: #313244;
 
   --muted: #7f849c;
-  --border-subtle: rgba(166, 173, 200, 0.08);
+  --border-subtle: rgba(166, 173, 200, 0.12);
+  --hover-bg: rgba(205, 214, 244, 0.08);
+  --active-bg: rgba(137, 180, 250, 0.12);
 
   --ui-font-stack:
     "Inter", "SF Pro Text", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -178,7 +180,7 @@ textarea {
 }
 
 .sidebar-icon-btn:hover {
-  background: rgba(205, 214, 244, 0.06);
+  background: var(--hover-bg);
   color: var(--theme-fg);
 }
 
@@ -201,7 +203,6 @@ textarea {
   background: var(--theme-blue);
   color: var(--theme-bg);
   border: 1px solid var(--sidebar-bg);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.16);
   font-family: var(--mono-font-stack);
   font-size: 9px;
   font-weight: 700;
@@ -209,7 +210,7 @@ textarea {
   height: 14px;
   line-height: 14px;
   text-align: center;
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   padding: 0 3px;
 }
 
@@ -225,7 +226,7 @@ textarea {
 
 .sidebar-list::-webkit-scrollbar-thumb {
   background: rgba(88, 91, 112, 0.8);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
 }
 
 /* --- Sidebar entry --- */
@@ -234,21 +235,25 @@ textarea {
   position: relative;
   padding: 9px 10px 8px 12px;
   margin-bottom: 1px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
   cursor: default;
-  transition: background-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .sidebar-entry:hover {
-  background-color: rgba(205, 214, 244, 0.04);
+  background-color: var(--hover-bg);
 }
 
 .sidebar-entry-active {
-  background: rgba(137, 180, 250, 0.08);
+  background: var(--active-bg);
+  border-left-color: var(--theme-blue);
 }
 
 .sidebar-entry-active:hover {
-  background: rgba(137, 180, 250, 0.1);
+  background: rgba(137, 180, 250, 0.15);
 }
 
 .sidebar-entry-header {
@@ -325,7 +330,7 @@ textarea {
   font-weight: 700;
   line-height: 1;
   padding: 3px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   background: rgba(205, 214, 244, 0.05);
 }
 
@@ -359,7 +364,7 @@ textarea {
   gap: 6px;
   background: rgba(205, 214, 244, 0.03);
   border: 1px solid rgba(166, 173, 200, 0.14);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   color: var(--muted);
   font-size: 10px;
   font-weight: 600;
@@ -370,12 +375,11 @@ textarea {
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast),
-    border-color var(--transition-fast),
-    transform var(--transition-fast);
+    border-color var(--transition-fast);
 }
 
 .sidebar-action-btn:hover {
-  background-color: rgba(205, 214, 244, 0.07);
+  background-color: var(--hover-bg);
   color: var(--theme-fg);
   border-color: rgba(166, 173, 200, 0.22);
 }
@@ -519,7 +523,7 @@ textarea {
 }
 
 .sidebar-new-btn:hover {
-  background-color: rgba(205, 214, 244, 0.04);
+  background-color: var(--hover-bg);
   color: var(--theme-fg);
   border-color: rgba(166, 173, 200, 0.3);
 }
@@ -605,7 +609,7 @@ textarea {
 }
 
 .notification-clear-btn:hover {
-  background: rgba(205, 214, 244, 0.06);
+  background: var(--hover-bg);
   color: var(--theme-fg);
 }
 
@@ -628,7 +632,7 @@ textarea {
 }
 
 .notification-close-btn:hover {
-  background: rgba(205, 214, 244, 0.06);
+  background: var(--hover-bg);
   color: var(--theme-fg);
 }
 
@@ -648,7 +652,7 @@ textarea {
 
 .notification-list::-webkit-scrollbar-thumb {
   background: rgba(88, 91, 112, 0.8);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
 }
 
 .notification-empty {
@@ -669,7 +673,7 @@ textarea {
 }
 
 .notification-item:hover {
-  background: rgba(205, 214, 244, 0.04);
+  background: var(--hover-bg);
 }
 
 .notification-read {
@@ -766,15 +770,11 @@ textarea {
   font-weight: 600;
   padding: 6px 12px;
   cursor: pointer;
-  box-shadow: 0 8px 20px rgba(137, 180, 250, 0.16);
-  transition:
-    opacity var(--transition-fast),
-    transform var(--transition-fast);
+  transition: opacity var(--transition-fast);
 }
 
 .settings-save-btn:hover {
   opacity: 0.85;
-  transform: translateY(-1px);
 }
 
 .settings-save-btn:disabled {
@@ -801,7 +801,7 @@ textarea {
 }
 
 .settings-close-btn:hover {
-  background: rgba(205, 214, 244, 0.06);
+  background: var(--hover-bg);
   color: var(--theme-fg);
 }
 
@@ -821,7 +821,7 @@ textarea {
 
 .settings-content::-webkit-scrollbar-thumb {
   background: rgba(88, 91, 112, 0.8);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
 }
 
 .settings-section {
@@ -948,7 +948,7 @@ textarea {
 
 .command-palette-list::-webkit-scrollbar-thumb {
   background: rgba(88, 91, 112, 0.8);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
 }
 
 .command-palette-empty {
@@ -980,7 +980,7 @@ textarea {
 }
 
 .command-palette-item:hover {
-  background: rgba(205, 214, 244, 0.04);
+  background: var(--hover-bg);
   border-color: rgba(166, 173, 200, 0.06);
 }
 
@@ -1000,7 +1000,7 @@ textarea {
 .command-palette-shortcut {
   padding: 2px 6px;
   background: rgba(205, 214, 244, 0.06);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   color: var(--theme-bright-white);
   font-family: var(--mono-font-stack);
   font-size: 10px;
@@ -1060,14 +1060,12 @@ textarea {
   border-radius: var(--radius-sm);
   transition:
     background-color var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
+    color var(--transition-fast);
 }
 
 .find-bar-btn:hover {
-  background: rgba(205, 214, 244, 0.08);
+  background: var(--hover-bg);
   color: var(--theme-fg);
-  transform: translateY(-1px);
 }
 
 .find-bar-btn-active {
@@ -1372,7 +1370,7 @@ textarea {
   justify-content: space-between;
   position: relative;
   z-index: 2;
-  height: 30px;
+  height: 32px;
   padding: 0 10px;
   background: var(--surface-1);
   border-bottom: 1px solid var(--border-subtle);
@@ -1385,7 +1383,7 @@ textarea {
 
 .pane-toolbar-focused {
   color: var(--theme-fg);
-  border-bottom-color: rgba(137, 180, 250, 0.18);
+  border-bottom-color: rgba(137, 180, 250, 0.25);
 }
 
 .pane-toolbar-title {
@@ -1432,7 +1430,7 @@ textarea {
 }
 
 .pane-toolbar-btn:hover {
-  background: rgba(205, 214, 244, 0.08);
+  background: var(--hover-bg);
   color: var(--theme-fg);
 }
 
@@ -1461,7 +1459,7 @@ textarea {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 2px;
+  padding: 4px;
 }
 
 .terminal-pane-surface {
@@ -1480,7 +1478,7 @@ textarea {
 }
 
 .terminal-pane-focused {
-  border-color: rgba(137, 180, 250, 0.35);
+  border-color: rgba(137, 180, 250, 0.45);
 }
 
 .terminal-pane-inactive {
@@ -1488,11 +1486,11 @@ textarea {
 }
 
 .terminal-pane-inactive .pane-toolbar {
-  opacity: 0.7;
+  opacity: 0.8;
 }
 
 .terminal-pane-inactive .terminal-pane-surface {
-  opacity: 0.92;
+  opacity: 0.95;
 }
 
 .terminal-pane-inactive:hover .terminal-pane-surface {
@@ -1550,7 +1548,7 @@ textarea {
   font-weight: 600;
   line-height: 1.35;
   padding: 2px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   border: 1px solid rgba(166, 173, 200, 0.12);
   color: var(--theme-fg);
   white-space: nowrap;
@@ -1576,16 +1574,16 @@ textarea {
 }
 
 .sidebar-progress-bar {
-  height: 5px;
+  height: 4px;
   background: rgba(69, 71, 90, 0.5);
-  border-radius: 999px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .sidebar-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--theme-blue), var(--theme-cyan));
-  border-radius: 999px;
+  background: var(--theme-blue);
+  border-radius: 2px;
   transition: width var(--transition-med);
 }
 
@@ -1635,11 +1633,10 @@ textarea {
 }
 
 .sidebar-drop-indicator {
-  height: 3px;
+  height: 2px;
   background: var(--theme-blue);
   margin: 0 8px;
-  border-radius: 999px;
-  box-shadow: 0 0 12px rgba(137, 180, 250, 0.24);
+  border-radius: 1px;
 }
 
 /* --- Context menu --- */
@@ -1708,7 +1705,7 @@ textarea {
 .context-menu-shortcut {
   padding: 2px 6px;
   background: rgba(205, 214, 244, 0.06);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   color: var(--theme-bright-white);
   font-family: var(--mono-font-stack);
   font-size: 10px;
@@ -1826,7 +1823,7 @@ textarea {
 
 .branch-picker-list::-webkit-scrollbar-thumb {
   background: rgba(88, 91, 112, 0.8);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
 }
 
 .branch-picker-item {
@@ -1867,7 +1864,7 @@ textarea {
   margin-left: 6px;
   padding: 2px 6px;
   background: rgba(137, 180, 250, 0.1);
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   font-family: var(--mono-font-stack);
   font-size: 10px;
   font-weight: 600;
@@ -1926,15 +1923,11 @@ textarea {
   font-weight: 600;
   padding: 10px 16px;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(166, 227, 161, 0.12);
-  transition:
-    opacity var(--transition-fast),
-    transform var(--transition-fast);
+  transition: opacity var(--transition-fast);
 }
 
 .branch-picker-confirm-btn:hover {
   opacity: 0.85;
-  transform: translateY(-1px);
 }
 
 .branch-picker-confirm-btn:disabled {
@@ -1947,11 +1940,9 @@ textarea {
 @keyframes overlay-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
   }
 }
 
