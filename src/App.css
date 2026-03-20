@@ -206,11 +206,11 @@ textarea {
   color: var(--theme-bg);
   border: 1px solid var(--sidebar-bg);
   font-family: var(--mono-font-stack);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  min-width: 14px;
-  height: 14px;
-  line-height: 14px;
+  min-width: 15px;
+  height: 15px;
+  line-height: 15px;
   text-align: center;
   border-radius: var(--radius-xs);
   padding: 0 3px;
@@ -305,7 +305,7 @@ textarea {
   min-width: 0;
   margin-top: 5px;
   padding-left: 15px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
   white-space: nowrap;
@@ -332,7 +332,7 @@ textarea {
 
 .sidebar-wt-status {
   margin-left: 2px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   padding: 3px 6px;
@@ -372,7 +372,7 @@ textarea {
   border: 1px solid rgba(166, 173, 200, 0.14);
   border-radius: var(--radius-xs);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -518,7 +518,7 @@ textarea {
   border: 1px dashed rgba(166, 173, 200, 0.15);
   border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
   cursor: pointer;
@@ -606,7 +606,7 @@ textarea {
   border: none;
   border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   padding: 5px 8px;
   cursor: pointer;
   transition:
@@ -722,7 +722,7 @@ textarea {
 .notification-body {
   margin-top: 4px;
   padding-left: 12px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--theme-bright-white);
   overflow-wrap: anywhere;
@@ -772,7 +772,7 @@ textarea {
   border: none;
   border-radius: var(--radius-sm);
   color: var(--theme-bg);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   padding: 6px 12px;
   cursor: pointer;
@@ -865,7 +865,7 @@ textarea {
 }
 
 .settings-label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--theme-bright-white);
 }
 
@@ -1060,7 +1060,7 @@ textarea {
   background: transparent;
   border: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   padding: 0 8px;
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -1275,7 +1275,7 @@ textarea {
 }
 
 .welcome-subtitle {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   margin-bottom: 24px;
 }
@@ -1333,7 +1333,7 @@ textarea {
 }
 
 .welcome-hint {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -1348,7 +1348,7 @@ textarea {
   background: var(--sidebar-bg);
   border-top: 1px solid var(--sidebar-border);
   font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   flex-shrink: 0;
 }
@@ -1364,7 +1364,7 @@ textarea {
   border: 1px solid var(--theme-black);
   border-radius: 2px;
   padding: 0 4px;
-  font-size: 9px;
+  font-size: 10px;
   color: var(--theme-bright-white);
 }
 
@@ -1381,7 +1381,7 @@ textarea {
   background: var(--theme-bg);
   border-bottom: 1px solid var(--border-subtle);
   font-family: var(--ui-font-stack);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   user-select: none;
   flex-shrink: 0;
@@ -1552,7 +1552,7 @@ textarea {
 
 .sidebar-meta-pill {
   background: rgba(205, 214, 244, 0.035);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
   padding: 2px 6px;
@@ -1574,7 +1574,7 @@ textarea {
 }
 
 .sidebar-meta-progress-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   display: block;
   line-height: 1.4;
@@ -1600,7 +1600,7 @@ textarea {
 }
 
 .sidebar-log-entry {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1625,7 +1625,7 @@ textarea {
 .sidebar-notification-preview {
   margin-top: 6px;
   padding-left: 15px;
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   line-height: 1.4;
   color: rgba(180, 210, 255, 0.82);
@@ -1763,7 +1763,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--theme-bright-white);
   gap: 12px;
 }
@@ -1880,7 +1880,7 @@ textarea {
 }
 
 .branch-picker-branch-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   line-height: 1.4;
   margin-top: 4px;
