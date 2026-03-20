@@ -10,7 +10,7 @@ import {
   worktreeStatus,
 } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
-import { CloseIcon, MergeIcon, TrashIcon } from "./Icons";
+import { CloseIcon, GripIcon, MergeIcon, TrashIcon } from "./Icons";
 import WorkspaceMetadataView from "./WorkspaceMetadataView";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
@@ -321,9 +321,9 @@ function WorkspaceEntry({
   isActive: boolean;
   now: number;
   index: number;
-  onDragStart: (index: number) => void;
+  onDragStart: (e: React.DragEvent, index: number) => void;
   onDragOver: (e: React.DragEvent, index: number) => void;
-  onDrop: (index: number) => void;
+  onDrop: (e: React.DragEvent, index: number) => void;
   onDragEnd: () => void;
   isDragOver: boolean;
   onContextMenu: (e: React.MouseEvent, workspaceId: string) => void;
@@ -364,6 +364,13 @@ function WorkspaceEntry({
   });
 
   const statusColor = hasActivity ? "#a6e3a1" : "#585b70";
+
+  function handleMouseDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input")) return;
+    switchWorkspace(workspace.id);
+  }
 
   function handleDoubleClick(e: React.MouseEvent) {
     e.stopPropagation();
@@ -431,12 +438,11 @@ function WorkspaceEntry({
       {isDragOver && <div className="sidebar-drop-indicator" />}
       <div
         className={`sidebar-entry ${isActive ? "sidebar-entry-active" : ""}`}
-        draggable
-        onDragStart={() => onDragStart(index)}
+        onDragEnter={(e) => onDragOver(e, index)}
         onDragOver={(e) => onDragOver(e, index)}
-        onDrop={() => onDrop(index)}
+        onDrop={(e) => onDrop(e, index)}
         onDragEnd={onDragEnd}
-        onClick={() => switchWorkspace(workspace.id)}
+        onMouseDown={handleMouseDown}
         onContextMenu={(e) => onContextMenu(e, workspace.id)}
       >
         <div className="sidebar-entry-header">
@@ -458,11 +464,13 @@ function WorkspaceEntry({
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span
-              className="sidebar-entry-name"
-              onDoubleClick={handleDoubleClick}
-            >
-              {workspace.name}
+            <span className="sidebar-entry-name">
+              <span
+                className="sidebar-entry-name-text"
+                onDoubleClick={handleDoubleClick}
+              >
+                {workspace.name}
+              </span>
             </span>
           )}
           {workspace.unreadCount > 0 && (
@@ -470,6 +478,24 @@ function WorkspaceEntry({
               {workspace.unreadCount}
             </span>
           )}
+          <button
+            className="sidebar-drag-handle"
+            draggable
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.preventDefault()}
+            onDragStart={(e) => {
+              e.stopPropagation();
+              onDragStart(e, index);
+            }}
+            onDragEnd={(e) => {
+              e.stopPropagation();
+              onDragEnd();
+            }}
+            title="Reorder workspaces"
+            aria-label={`Reorder ${workspace.name}`}
+          >
+            <GripIcon size={11} />
+          </button>
           {canClose && (
             <button
               className="sidebar-close-btn"
@@ -747,16 +773,24 @@ export default function Sidebar() {
   const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  function handleDragStart(index: number) {
+  function handleDragStart(e: React.DragEvent, index: number) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.dropEffect = "move";
+    e.dataTransfer.setData("text/plain", String(index));
     setDragFromIndex(index);
+    setDragOverIndex(index);
   }
 
   function handleDragOver(e: React.DragEvent, index: number) {
     e.preventDefault();
-    setDragOverIndex(index);
+    e.dataTransfer.dropEffect = "move";
+    if (dragFromIndex !== null && dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
   }
 
-  function handleDrop(toIndex: number) {
+  function handleDrop(e: React.DragEvent, toIndex: number) {
+    e.preventDefault();
     if (dragFromIndex !== null && dragFromIndex !== toIndex) {
       reorderWorkspaces(dragFromIndex, toIndex);
     }

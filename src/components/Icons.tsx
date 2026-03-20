@@ -148,3 +148,23 @@ export function TrashIcon({ size = 12, className }: IconProps) {
     </svg>
   );
 }
+
+export function GripIcon({ size = 12, className }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 12 12"
+      fill="none"
+    >
+      <circle cx="4" cy="3" r="0.75" fill="currentColor" />
+      <circle cx="8" cy="3" r="0.75" fill="currentColor" />
+      <circle cx="4" cy="6" r="0.75" fill="currentColor" />
+      <circle cx="8" cy="6" r="0.75" fill="currentColor" />
+      <circle cx="4" cy="9" r="0.75" fill="currentColor" />
+      <circle cx="8" cy="9" r="0.75" fill="currentColor" />
+    </svg>
+  );
+}

@@ -272,7 +272,7 @@ textarea {
   margin-bottom: 2px;
   border: 1px solid transparent;
   border-radius: 12px;
-  cursor: pointer;
+  cursor: default;
   transition:
     background-color var(--transition-med),
     border-color var(--transition-med),
@@ -328,7 +328,7 @@ textarea {
   align-items: center;
   gap: 9px;
   min-width: 0;
-  padding-right: 24px;
+  padding-right: 46px;
 }
 
 .sidebar-status-dot {
@@ -344,6 +344,12 @@ textarea {
 .sidebar-entry-name {
   flex: 1;
   min-width: 0;
+  cursor: default;
+}
+
+.sidebar-entry-name-text {
+  display: inline-block;
+  max-width: 100%;
   font-weight: 600;
   font-size: 13px;
   letter-spacing: -0.01em;
@@ -352,6 +358,7 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: text;
+  vertical-align: top;
 }
 
 .sidebar-entry-meta {
@@ -459,6 +466,43 @@ textarea {
 
 /* --- Sidebar close button (visible on hover) --- */
 
+.sidebar-drag-handle {
+  position: absolute;
+  top: 50%;
+  right: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  color: rgba(147, 153, 178, 0.72);
+  padding: 0;
+  border-radius: var(--radius-xs);
+  cursor: grab;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.sidebar-drag-handle:hover {
+  background: rgba(205, 214, 244, 0.05);
+  color: var(--theme-fg);
+}
+
+.sidebar-drag-handle:active {
+  cursor: grabbing;
+}
+
+.sidebar-drag-handle svg {
+  flex-shrink: 0;
+}
+
 .sidebar-close-btn {
   position: absolute;
   top: 50%;
@@ -496,10 +540,16 @@ textarea {
   flex-shrink: 0;
 }
 
+.sidebar-entry:hover .sidebar-drag-handle,
+.sidebar-entry-active .sidebar-drag-handle,
 .sidebar-entry:hover .sidebar-close-btn,
 .sidebar-entry-active .sidebar-close-btn {
   opacity: 1;
   pointer-events: auto;
+}
+
+.sidebar-entry:hover .sidebar-close-btn,
+.sidebar-entry-active .sidebar-close-btn {
   transform: translateY(-50%) scale(1);
 }
 
@@ -1872,6 +1922,7 @@ textarea {
   .sidebar-entry,
   .sidebar-icon-btn,
   .sidebar-action-btn,
+  .sidebar-drag-handle,
   .sidebar-close-btn,
   .notification-item,
   .notification-clear-btn,

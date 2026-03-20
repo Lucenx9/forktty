@@ -29,6 +29,9 @@ interface TerminalPaneProps {
   workspaceId: string;
 }
 
+const NOTIFICATION_DEDUPE_MS = 15000;
+const recentNotificationMap = new Map<string, number>();
+
 interface PaneContextMenuState {
   x: number;
   y: number;
@@ -382,6 +385,14 @@ export default function TerminalPane({
       const config = useConfigStore.getState().config;
       const notificationCommand =
         config?.general.notification_command.trim() ?? "";
+      const dedupeKey = `${wsId}:${title}:${body}`;
+      const now = Date.now();
+      const lastSeen = recentNotificationMap.get(dedupeKey) ?? 0;
+
+      if (now - lastSeen < NOTIFICATION_DEDUPE_MS) {
+        return;
+      }
+      recentNotificationMap.set(dedupeKey, now);
 
       state.addNotification(wsId, title, body);
       state.setSurfaceUnread(paneId, true);
@@ -427,15 +438,19 @@ export default function TerminalPane({
       // Suppress spurious prompt_detected events caused by terminal resize
       // during workspace switch (shell redraws prompt → OSC 133 → false positive)
       const now = Date.now();
-      if (now - getLastWorkspaceSwitchTime() < 2000) return;
+      if (now - getLastWorkspaceSwitchTime() < 4000) return;
 
       // Debounce
       if (now - lastNotifyTime < 5000) return;
-      lastNotifyTime = now;
-
       const ws = state.workspaces[wsId];
+      if (!ws) return;
+      if (ws.unreadCount > 0 || ws.surfaces[paneId]?.hasUnreadNotification) {
+        return;
+      }
+
+      lastNotifyTime = now;
       const title = "Prompt waiting";
-      const body = `${ws?.name ?? "Workspace"} needs attention`;
+      const body = `${ws.name} needs attention`;
       fireNotification(wsId, title, body);
     }
 
