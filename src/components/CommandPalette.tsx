@@ -32,7 +32,7 @@ export default function CommandPalette({
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [filtered.length]);
+  }, [query]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {

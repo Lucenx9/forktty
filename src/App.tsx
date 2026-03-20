@@ -5,7 +5,9 @@ import {
   useMemo,
   lazy,
   Suspense,
+  Component,
 } from "react";
+import type { ReactNode, ErrorInfo } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
@@ -33,6 +35,26 @@ import { handleSocketRequest } from "./lib/socket-handler";
 import { buildSessionPayload } from "./lib/session-persistence";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+
+/** Error boundary for lazy-loaded panels. Catches chunk load failures gracefully. */
+class LazyErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    logError(
+      `LazyErrorBoundary caught: ${error.message} ${info.componentStack}`,
+    );
+  }
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -577,15 +599,17 @@ export default function App() {
         )}
       </Group>
       {showNotificationPanel && <NotificationPanel />}
-      <Suspense fallback={null}>
-        {showSettings && <SettingsPanel />}
-        {showCommandPalette && (
-          <CommandPalette commands={commands} onClose={closeCommandPalette} />
-        )}
-        {showBranchPicker && (
-          <BranchPicker onResult={handleBranchPickerResult} />
-        )}
-      </Suspense>
+      <LazyErrorBoundary>
+        <Suspense fallback={null}>
+          {showSettings && <SettingsPanel />}
+          {showCommandPalette && (
+            <CommandPalette commands={commands} onClose={closeCommandPalette} />
+          )}
+          {showBranchPicker && (
+            <BranchPicker onResult={handleBranchPickerResult} />
+          )}
+        </Suspense>
+      </LazyErrorBoundary>
       <ErrorToast />
     </div>
   );

@@ -62,10 +62,10 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
     return branches.filter((b) => b.name.toLowerCase().includes(lower));
   }, [query, branches]);
 
-  // Reset selection when filter changes.
+  // Reset selection when filter query changes.
   useEffect(() => {
     setSelectedIndex(0);
-  }, [filtered.length]);
+  }, [query]);
 
   const handleCancel = useCallback(() => {
     onResult({ kind: "cancel" });

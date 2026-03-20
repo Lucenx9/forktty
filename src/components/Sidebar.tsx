@@ -76,17 +76,20 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
-  // Clamp menu position so it doesn't overflow the viewport
+  // Clamp menu position so it doesn't overflow the viewport (wait for paint)
   useEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    const el = menuRef.current;
-    if (rect.right > window.innerWidth) {
-      el.style.left = `${window.innerWidth - rect.width - 4}px`;
-    }
-    if (rect.bottom > window.innerHeight) {
-      el.style.top = `${window.innerHeight - rect.height - 4}px`;
-    }
+    const rafId = requestAnimationFrame(() => {
+      if (!menuRef.current) return;
+      const rect = menuRef.current.getBoundingClientRect();
+      const el = menuRef.current;
+      if (rect.right > window.innerWidth) {
+        el.style.left = `${window.innerWidth - rect.width - 4}px`;
+      }
+      if (rect.bottom > window.innerHeight) {
+        el.style.top = `${window.innerHeight - rect.height - 4}px`;
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
   }, []);
 
   if (!ws) return null;

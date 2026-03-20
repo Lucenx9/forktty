@@ -213,6 +213,7 @@ export async function handleSocketRequest(
           }
           if (!result) result = { error: "Surface not found" };
         } else if (params.pty_id != null) {
+          await writePty(params.pty_id as number, text);
           result = { result: true };
         } else {
           result = { error: "Missing surface_id or pty_id" };

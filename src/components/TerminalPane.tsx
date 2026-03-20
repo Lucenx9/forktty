@@ -79,17 +79,20 @@ function PaneContextMenu({
     };
   }, [onClose]);
 
-  // Clamp position to viewport
+  // Clamp position to viewport (wait for paint so getBoundingClientRect is valid)
   useEffect(() => {
-    if (!menuRef.current) return;
-    const rect = menuRef.current.getBoundingClientRect();
-    const el = menuRef.current;
-    if (rect.right > window.innerWidth) {
-      el.style.left = `${window.innerWidth - rect.width - 4}px`;
-    }
-    if (rect.bottom > window.innerHeight) {
-      el.style.top = `${window.innerHeight - rect.height - 4}px`;
-    }
+    const rafId = requestAnimationFrame(() => {
+      if (!menuRef.current) return;
+      const rect = menuRef.current.getBoundingClientRect();
+      const el = menuRef.current;
+      if (rect.right > window.innerWidth) {
+        el.style.left = `${window.innerWidth - rect.width - 4}px`;
+      }
+      if (rect.bottom > window.innerHeight) {
+        el.style.top = `${window.innerHeight - rect.height - 4}px`;
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
   }, []);
 
   function handlePaste() {
