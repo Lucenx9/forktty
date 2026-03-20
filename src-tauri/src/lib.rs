@@ -334,6 +334,20 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    // WebKitGTK routes localhost through http_proxy, causing blank window in dev.
+    // Ensure localhost is excluded from proxy.
+    if std::env::var_os("http_proxy").is_some() || std::env::var_os("https_proxy").is_some() {
+        let no_proxy = std::env::var("no_proxy").unwrap_or_default();
+        if !no_proxy.contains("localhost") {
+            let new_val = if no_proxy.is_empty() {
+                "localhost,127.0.0.1".to_string()
+            } else {
+                format!("{no_proxy},localhost,127.0.0.1")
+            };
+            std::env::set_var("no_proxy", &new_val);
+        }
+    }
+
     let _ = session::prune_old_logs(30);
     let _ = session::write_log("INFO", "ForkTTY starting");
 
