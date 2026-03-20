@@ -334,7 +334,7 @@ const TerminalPane = memo(function TerminalPane({
     if (termRef.current && configTheme) {
       const fontFamily = configTheme.font_family ?? "monospace";
       const fontSize = (configTheme.font_size ?? 14) + fontSizeOffset;
-      termRef.current.options.fontFamily = `'${fontFamily}', monospace`;
+      termRef.current.options.fontFamily = `'${fontFamily}', 'Symbols Nerd Font Mono', monospace`;
       termRef.current.options.fontSize = fontSize;
       // Only fit if container is visible (non-zero dimensions)
       const el = containerRef.current;
@@ -385,7 +385,7 @@ const TerminalPane = memo(function TerminalPane({
       term = new Terminal({
         cursorBlink: true,
         fontSize,
-        fontFamily: `'${fontFamily}', monospace`,
+        fontFamily: `'${fontFamily}', 'Symbols Nerd Font Mono', monospace`,
         theme: cfgStore.xtermTheme ?? undefined,
       });
 

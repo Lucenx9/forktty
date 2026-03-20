@@ -198,9 +198,17 @@ fn send_custom_notification(command: String, title: String, body: String) -> Res
 // --- Worktree commands ---
 
 fn cwd_string() -> Result<String, String> {
-    std::env::current_dir()
+    let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // AppImage mounts at /tmp/.mount_*, which is not a useful CWD.
+    // Fall back to $HOME when we detect this.
+    if cwd.starts_with("/tmp/.mount_") {
+        return std::env::var("HOME").map_err(|e| format!("No HOME: {e}"));
+    }
+
+    Ok(cwd)
 }
 
 #[tauri::command]

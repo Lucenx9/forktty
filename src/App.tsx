@@ -132,6 +132,16 @@ export default function App() {
 
   const restoreSession = useWorkspaceStore((s) => s.restoreSession);
 
+  // Disable WebKitGTK default context menu (Back/Forward/Stop/Reload)
+  useEffect(() => {
+    function preventContextMenu(e: MouseEvent) {
+      e.preventDefault();
+    }
+    document.addEventListener("contextmenu", preventContextMenu);
+    return () =>
+      document.removeEventListener("contextmenu", preventContextMenu);
+  }, []);
+
   // Load config + theme on startup
   useEffect(() => {
     loadConfig();
@@ -167,21 +177,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-save session every 30 seconds
+  // Save session on any workspace state change (debounced 2s)
   useEffect(() => {
-    const interval = setInterval(() => {
-      saveSession(buildSessionPayload()).catch(logError);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Save session on window close (best effort — invoke is async)
-  useEffect(() => {
-    function handleBeforeUnload() {
-      saveSession(buildSessionPayload()).catch(logError);
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = useWorkspaceStore.subscribe(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        saveSession(buildSessionPayload()).catch(logError);
+      }, 2000);
+    });
+    return () => {
+      unsub();
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Listen for branch picker open event from Sidebar

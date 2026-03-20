@@ -64,11 +64,17 @@ impl PtyManager {
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
         if let Some(dir) = cwd {
-            let path = std::path::Path::new(dir);
+            // AppImage mounts at /tmp/.mount_*, which is not a valid shell CWD
+            let effective_dir = if dir.starts_with("/tmp/.mount_") {
+                std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+            } else {
+                dir.to_string()
+            };
+            let path = std::path::Path::new(&effective_dir);
             if !path.is_absolute() || !path.exists() {
-                return Err(PtyError::Creation(format!("Invalid cwd: {dir}")));
+                return Err(PtyError::Creation(format!("Invalid cwd: {effective_dir}")));
             }
-            cmd.cwd(dir);
+            cmd.cwd(&effective_dir);
         }
         if let Some(vars) = env_vars {
             for (key, val) in vars {

@@ -10,7 +10,7 @@ export function toXtermTheme(theme: TerminalTheme): ITheme {
     background: theme.background ?? "#1e1e2e",
     foreground: theme.foreground ?? "#cdd6f4",
     cursor: theme.cursor ?? "#f5e0dc",
-    selectionBackground: theme.selection_background ?? "#585b70",
+    selectionBackground: addAlpha(theme.selection_background ?? "#585b70", 0.5),
     selectionForeground: theme.selection_foreground ?? undefined,
     black: theme.black ?? "#45475a",
     red: theme.red ?? "#f38ba8",
@@ -93,6 +93,18 @@ function lighten(hex: string, amount: number): string {
     Math.min(255, Math.round(rgb.g + (255 - rgb.g) * amount)),
     Math.min(255, Math.round(rgb.b + (255 - rgb.b) * amount)),
   );
+}
+
+/** Convert a hex color to #RRGGBBAA format with the given alpha (0..1). */
+function addAlpha(hex: string, alpha: number): string {
+  // Already has alpha channel — return as-is
+  if (/^#[a-f\d]{8}$/i.test(hex)) return hex;
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const a = Math.round(alpha * 255)
+    .toString(16)
+    .padStart(2, "0");
+  return `${rgbToHex(rgb.r, rgb.g, rgb.b)}${a}`;
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {

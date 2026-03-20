@@ -70,7 +70,7 @@ fn default_worktree_layout() -> String {
     "nested".to_string()
 }
 fn default_font_family() -> String {
-    "JetBrains Mono".to_string()
+    String::new()
 }
 fn default_font_size() -> u16 {
     14
