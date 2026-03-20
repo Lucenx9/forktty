@@ -346,6 +346,9 @@ async fn bridge_to_frontend(
 
     {
         let mut map = pending.lock().map_err(|e| format!("Lock: {e}"))?;
+        if map.len() >= 100 {
+            return Err("Too many pending bridge requests".to_string());
+        }
         map.insert(req_id.clone(), tx);
     }
 

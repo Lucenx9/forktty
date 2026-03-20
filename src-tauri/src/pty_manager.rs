@@ -95,7 +95,10 @@ impl PtyManager {
             .map_err(|e| PtyError::Creation(e.to_string()))?;
 
         let id = self.next_id;
-        self.next_id += 1;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or(PtyError::Creation("PTY ID overflow".to_string()))?;
 
         self.ptys.insert(
             id,

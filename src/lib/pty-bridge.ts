@@ -78,7 +78,7 @@ export function spawnPty(opts: {
         opts.onExit();
         break;
       case "Error":
-        writeLog("ERROR", `PTY error: ${event.data}`).catch(() => {});
+        writeLog("ERROR", `PTY error: ${event.data}`).catch(logError);
         opts.onExit();
         break;
       case "Scan":

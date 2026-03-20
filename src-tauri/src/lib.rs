@@ -113,7 +113,7 @@ fn read_pty_output(mut reader: Box<dyn Read + Send>, channel: Channel<PtyEvent>)
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
                 continue; // Retry on EINTR
             }
-            Err(e) if e.raw_os_error() == Some(5) => {
+            Err(e) if e.raw_os_error() == Some(libc::EIO) => {
                 // EIO is normal on Linux when child exits — treat as EOF
                 let _ = channel.send(PtyEvent::Eof);
                 break;
@@ -270,8 +270,8 @@ fn worktree_attach(
     layout: Option<String>,
 ) -> Result<worktree::WorktreeInfo, String> {
     let cwd = cwd_string()?;
-    let layout = layout.unwrap_or_else(|| "nested".to_string());
-    worktree::attach(&cwd, &branch_name, &layout).map_err(|e| e.to_string())
+    let layout_str = layout.as_deref().unwrap_or("nested");
+    worktree::attach(&cwd, &branch_name, layout_str).map_err(|e| e.to_string())
 }
 
 // --- Config commands ---
@@ -328,6 +328,7 @@ fn update_tray_tooltip(app: tauri::AppHandle, count: u32) -> Result<(), String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = session::prune_old_logs(30);
     let _ = session::write_log("INFO", "ForkTTY starting");
 
     let socket_path =

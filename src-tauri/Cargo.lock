@@ -1143,6 +1143,7 @@ dependencies = [
  "clap",
  "dirs",
  "git2",
+ "libc",
  "notify-rust",
  "portable-pty",
  "regex",

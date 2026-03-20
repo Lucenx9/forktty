@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { gitListBranches } from "../lib/pty-bridge";
 import type { BranchInfo } from "../lib/pty-bridge";
+import { showToast } from "./ErrorToast";
 
 type BranchPickerResult =
   | { kind: "new-branch"; name: string }
@@ -37,10 +38,11 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
           setLoading(false);
         }
       })
-      .catch(() => {
+      .catch((err) => {
         if (isMounted.current) {
           setBranches([]);
           setLoading(false);
+          showToast(`Failed to load branches: ${err}`, "error");
         }
       });
   }, []);

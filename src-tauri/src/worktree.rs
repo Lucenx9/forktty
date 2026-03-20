@@ -41,25 +41,26 @@ pub struct BranchInfo {
 }
 
 /// Compute the worktree path based on layout config.
-fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> PathBuf {
+fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> Result<PathBuf, WorktreeError> {
     match layout {
         "sibling" => {
             let repo_name = repo_workdir
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("repo");
-            repo_workdir
+            let parent = repo_workdir
                 .parent()
-                .unwrap_or(repo_workdir)
-                .join(format!("{repo_name}-{name}"))
+                .ok_or_else(|| WorktreeError::Other("Repository is at filesystem root".to_string()))?;
+            Ok(parent.join(format!("{repo_name}-{name}")))
         }
-        "outer-nested" => repo_workdir
-            .parent()
-            .unwrap_or(repo_workdir)
-            .join(".worktrees")
-            .join(name),
+        "outer-nested" => {
+            let parent = repo_workdir
+                .parent()
+                .ok_or_else(|| WorktreeError::Other("Repository is at filesystem root".to_string()))?;
+            Ok(parent.join(".worktrees").join(name))
+        }
         // "nested" is the default
-        _ => repo_workdir.join(".worktrees").join(name),
+        _ => Ok(repo_workdir.join(".worktrees").join(name)),
     }
 }
 
@@ -110,7 +111,7 @@ pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo,
     let branch_name = branch_ref.shorthand().unwrap_or(name).to_string();
 
     // Compute path and ensure parent directory exists
-    let wt_path = worktree_path(workdir, name, layout);
+    let wt_path = worktree_path(workdir, name, layout)?;
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -425,7 +426,7 @@ pub fn attach(
     let branch_ref = branch.into_reference();
     let branch_short = branch_ref.shorthand().unwrap_or(branch_name).to_string();
 
-    let wt_path = worktree_path(workdir, branch_name, layout);
+    let wt_path = worktree_path(workdir, branch_name, layout)?;
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

@@ -5,6 +5,7 @@ import {
   saveConfig as saveConfigApi,
   getTheme,
   writeLog,
+  logError,
 } from "../lib/pty-bridge";
 import type { ITheme } from "@xterm/xterm";
 import { toXtermTheme, applyThemeCssVars } from "../lib/ghostty-theme";
@@ -36,7 +37,7 @@ const useConfigStore = create<ConfigState>((set, get) => ({
       applyThemeCssVars(theme);
       set({ config, theme, xtermTheme, loaded: true });
     } catch (err) {
-      writeLog("ERROR", `Failed to load config: ${err}`).catch(() => {});
+      writeLog("ERROR", `Failed to load config: ${err}`).catch(logError);
       set({ loaded: true });
     }
   },

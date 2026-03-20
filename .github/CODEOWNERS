@@ -1,0 +1,11 @@
+# Default owner
+* @Lucenx9
+
+# Security-critical paths
+/.github/ @Lucenx9
+/src-tauri/src/socket_api.rs @Lucenx9
+/src-tauri/src/notification.rs @Lucenx9
+/src-tauri/src/worktree.rs @Lucenx9
+/src-tauri/src/lib.rs @Lucenx9
+/src-tauri/tauri.conf.json @Lucenx9
+/SECURITY.md @Lucenx9

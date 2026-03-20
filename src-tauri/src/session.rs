@@ -98,6 +98,27 @@ pub fn log_path() -> Result<PathBuf, SessionError> {
     Ok(dir.join(format!("forktty-{date}.log")))
 }
 
+/// Delete log files older than `max_age_days`. Called on startup.
+pub fn prune_old_logs(max_age_days: u32) -> Result<(), SessionError> {
+    let dir = log_dir()?;
+    if !dir.exists() {
+        return Ok(());
+    }
+    let cutoff = chrono::Local::now() - chrono::Duration::days(i64::from(max_age_days));
+    let cutoff_str = cutoff.format("forktty-%Y-%m-%d.log").to_string();
+
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("forktty-") && name_str.ends_with(".log") && *name_str < *cutoff_str
+        {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
 pub fn write_log(level: &str, message: &str) -> Result<(), SessionError> {
     let path = log_path()?;
     let timestamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");

@@ -49,8 +49,11 @@ export default function SettingsPanel() {
   async function handleSave() {
     if (!draft) return;
     setSaving(true);
-    await saveConfig(draft);
-    setSaving(false);
+    try {
+      await saveConfig(draft);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
