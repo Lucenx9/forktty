@@ -17,10 +17,14 @@ interface ConfigState {
   xtermTheme: ITheme | null;
   showSettings: boolean;
   loaded: boolean;
+  fontSizeOffset: number;
 
   loadConfig: () => Promise<void>;
   saveConfig: (config: AppConfig) => Promise<void>;
   toggleSettings: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
 }
 
 const useConfigStore = create<ConfigState>((set, get) => ({
@@ -29,6 +33,7 @@ const useConfigStore = create<ConfigState>((set, get) => ({
   xtermTheme: null,
   showSettings: false,
   loaded: false,
+  fontSizeOffset: 0,
 
   loadConfig: async () => {
     try {
@@ -57,6 +62,22 @@ const useConfigStore = create<ConfigState>((set, get) => ({
 
   toggleSettings: () => {
     set({ showSettings: !get().showSettings });
+  },
+
+  zoomIn: () => {
+    const { fontSizeOffset, theme } = get();
+    const base = theme?.font_size ?? 14;
+    if (base + fontSizeOffset < 32) set({ fontSizeOffset: fontSizeOffset + 1 });
+  },
+
+  zoomOut: () => {
+    const { fontSizeOffset, theme } = get();
+    const base = theme?.font_size ?? 14;
+    if (base + fontSizeOffset > 8) set({ fontSizeOffset: fontSizeOffset - 1 });
+  },
+
+  zoomReset: () => {
+    set({ fontSizeOffset: 0 });
   },
 }));
 

@@ -253,6 +253,7 @@ const TerminalPane = memo(function TerminalPane({
   });
   const xtermTheme = useConfigStore((s) => s.xtermTheme);
   const configTheme = useConfigStore((s) => s.theme);
+  const fontSizeOffset = useConfigStore((s) => s.fontSizeOffset);
 
   const lastFindTermRef = useRef("");
 
@@ -307,12 +308,12 @@ const TerminalPane = memo(function TerminalPane({
     }
     if (termRef.current && configTheme) {
       const fontFamily = configTheme.font_family ?? "monospace";
-      const fontSize = configTheme.font_size ?? 14;
+      const fontSize = (configTheme.font_size ?? 14) + fontSizeOffset;
       termRef.current.options.fontFamily = `'${fontFamily}', monospace`;
       termRef.current.options.fontSize = fontSize;
       fitAddonRef.current?.fit();
     }
-  }, [xtermTheme, configTheme]);
+  }, [xtermTheme, configTheme, fontSizeOffset]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -320,7 +321,8 @@ const TerminalPane = memo(function TerminalPane({
 
     const cfgStore = useConfigStore.getState();
     const fontFamily = cfgStore.theme?.font_family ?? "monospace";
-    const fontSize = cfgStore.theme?.font_size ?? 14;
+    const fontSize =
+      (cfgStore.theme?.font_size ?? 14) + cfgStore.fontSizeOffset;
 
     const term = new Terminal({
       cursorBlink: true,

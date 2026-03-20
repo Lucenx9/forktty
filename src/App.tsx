@@ -322,6 +322,27 @@ export default function App() {
         return;
       }
 
+      // Ctrl+=: zoom in terminal font
+      if (e.ctrlKey && !e.shiftKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        useConfigStore.getState().zoomIn();
+        return;
+      }
+
+      // Ctrl+-: zoom out terminal font
+      if (e.ctrlKey && !e.shiftKey && e.key === "-") {
+        e.preventDefault();
+        useConfigStore.getState().zoomOut();
+        return;
+      }
+
+      // Ctrl+0: reset terminal font zoom
+      if (e.ctrlKey && !e.shiftKey && e.key === "0") {
+        e.preventDefault();
+        useConfigStore.getState().zoomReset();
+        return;
+      }
+
       // Ctrl+1..9: jump to workspace by position
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
         const digit = parseInt(e.key, 10);
@@ -490,6 +511,24 @@ export default function App() {
         id: "mark-read",
         label: "Mark Workspace as Read",
         action: () => markWorkspaceRead(activeWorkspaceId),
+      },
+      {
+        id: "zoom-in",
+        label: "Zoom In",
+        shortcut: "Ctrl+=",
+        action: () => useConfigStore.getState().zoomIn(),
+      },
+      {
+        id: "zoom-out",
+        label: "Zoom Out",
+        shortcut: "Ctrl+-",
+        action: () => useConfigStore.getState().zoomOut(),
+      },
+      {
+        id: "zoom-reset",
+        label: "Reset Zoom",
+        shortcut: "Ctrl+0",
+        action: () => useConfigStore.getState().zoomReset(),
       },
       {
         id: "settings",
