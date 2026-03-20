@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/simone/forktty && ([ -f src-tauri/Cargo.toml ] && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>/dev/null || true) && ([ -f package.json ] && npx prettier --write --log-level silent src/ 2>/dev/null || true)"
+            "command": "([ -f src-tauri/Cargo.toml ] && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>/dev/null || true) && ([ -f package.json ] && npx prettier --write --log-level silent src/ 2>/dev/null || true)"
           }
         ]
       }
