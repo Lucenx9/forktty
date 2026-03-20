@@ -1549,12 +1549,17 @@ textarea {
   outline-offset: -2px;
 }
 
-.pane-toolbar[draggable="true"] {
+.pane-toolbar {
   cursor: grab;
 }
 
-.pane-toolbar[draggable="true"]:active {
-  cursor: grabbing;
+body.pane-dragging {
+  cursor: grabbing !important;
+}
+
+body.pane-dragging * {
+  cursor: grabbing !important;
+  pointer-events: auto;
 }
 
 /* --- Sidebar metadata (status pills, progress bars, log entries) --- */

@@ -328,6 +328,12 @@ fn update_tray_tooltip(app: tauri::AppHandle, count: u32) -> Result<(), String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK DMA-BUF renderer causes "Error 71 (Protocol error)" on Wayland.
+    // Disable it before GTK initializes. Users can override via env.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     let _ = session::prune_old_logs(30);
     let _ = session::write_log("INFO", "ForkTTY starting");
 
@@ -348,8 +354,8 @@ pub fn run() {
             socket_path,
         })
         .setup(move |app| {
-            // Build system tray icon
-            let _tray = TrayIconBuilder::with_id("main-tray")
+            // Build system tray icon (best-effort: may fail on Wayland without appindicator)
+            match TrayIconBuilder::with_id("main-tray")
                 .tooltip("ForkTTY")
                 .icon(
                     app.default_window_icon()
@@ -364,7 +370,11 @@ pub fn run() {
                         }
                     }
                 })
-                .build(app)?;
+                .build(app)
+            {
+                Ok(_tray) => {}
+                Err(e) => eprintln!("Tray icon unavailable (Wayland?): {e}"),
+            }
 
             let handle = app.handle().clone();
             // Start socket server in background thread with its own tokio runtime

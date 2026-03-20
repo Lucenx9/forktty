@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  useCallback,
-  memo,
-  DragEvent,
-} from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -44,6 +37,13 @@ interface TerminalPaneProps {
   cwd: string;
   workspaceId: string;
 }
+
+// Custom pane drag state (HTML5 DnD crashes WebKitGTK on Wayland)
+const paneDragState = { sourceId: null as string | null };
+window.addEventListener("mouseup", () => {
+  paneDragState.sourceId = null;
+  document.body.classList.remove("pane-dragging");
+});
 
 const NOTIFICATION_DEDUPE_MS = 15000;
 const recentNotificationMap = new Map<string, number>();
@@ -196,16 +196,16 @@ function PaneToolbar({
   return (
     <div
       className={`pane-toolbar ${isFocused ? "pane-toolbar-focused" : ""}`}
-      draggable
-      onDragStart={(e: DragEvent) => {
-        e.dataTransfer.setData("text/x-pane-id", paneId);
-        e.dataTransfer.effectAllowed = "move";
-      }}
       onMouseDown={(e) => {
-        // Prevent focus steal, but not on the toolbar itself (allow drag)
+        // Buttons handle their own clicks; only start drag from the toolbar itself
         if ((e.target as HTMLElement).closest("button")) {
           e.preventDefault();
+          return;
         }
+        // Custom drag (HTML5 DnD crashes WebKitGTK on Wayland)
+        e.preventDefault();
+        paneDragState.sourceId = paneId;
+        document.body.classList.add("pane-dragging");
       }}
     >
       <span className="pane-toolbar-title">{surfaceTitle}</span>
@@ -644,20 +644,17 @@ const TerminalPane = memo(function TerminalPane({
   return (
     <div
       className={paneClasses}
-      onDragOver={(e: DragEvent<HTMLDivElement>) => {
-        if (e.dataTransfer.types.includes("text/x-pane-id")) {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
+      onMouseEnter={() => {
+        if (paneDragState.sourceId && paneDragState.sourceId !== paneId) {
           setDragOver(true);
         }
       }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e: DragEvent<HTMLDivElement>) => {
-        setDragOver(false);
-        const sourceId = e.dataTransfer.getData("text/x-pane-id");
-        if (sourceId && sourceId !== paneId) {
-          swapPanes(sourceId, paneId);
+      onMouseLeave={() => setDragOver(false)}
+      onMouseUp={() => {
+        if (paneDragState.sourceId && paneDragState.sourceId !== paneId) {
+          swapPanes(paneDragState.sourceId, paneId);
         }
+        setDragOver(false);
       }}
       onKeyDown={(e) => {
         // Ctrl+F: find in terminal
