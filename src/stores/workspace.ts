@@ -19,6 +19,7 @@ import {
   findWorkspaceIdByPane,
   rebuildPaneTree,
   snapshotPaneTree,
+  swapLeaves,
 } from "./pane-tree";
 import type {
   PaneNode,
@@ -105,6 +106,7 @@ interface WorkspaceState {
   // Pane actions (scoped to active workspace)
   splitPane: (paneId: string, direction: "horizontal" | "vertical") => void;
   closePane: (paneId: string) => void;
+  swapPanes: (idA: string, idB: string) => void;
   setFocusedPane: (paneId: string) => void;
   moveFocus: (direction: Direction) => void;
   updatePaneSizes: (splitId: string, sizes: number[]) => void;
@@ -353,6 +355,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           surfaces: newSurfaces,
           focusedPaneId: result.focusId ?? firstLeafId(result.tree),
         },
+      },
+    });
+  },
+
+  swapPanes: (idA, idB) => {
+    if (idA === idB) return;
+    const { workspaces, activeWorkspaceId } = get();
+    const ws = workspaces[activeWorkspaceId];
+    if (!ws) return;
+
+    const newRoot = swapLeaves(ws.root, idA, idB);
+    if (newRoot === ws.root) return;
+
+    set({
+      workspaces: {
+        ...workspaces,
+        [activeWorkspaceId]: { ...ws, root: newRoot },
       },
     });
   },

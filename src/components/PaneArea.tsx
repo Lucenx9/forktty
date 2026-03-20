@@ -32,6 +32,33 @@ function RenderNode({
     );
   }
 
+  // Flatten panels and separators as direct siblings with stable keys.
+  // This lets React reorder Panel DOM nodes on swap without remounting
+  // (PanelWithHandle fragments caused remounts when index changed).
+  const elements: React.ReactNode[] = [];
+  for (let i = 0; i < node.children.length; i++) {
+    if (i > 0) {
+      elements.push(<Separator key={`sep-${i}`} className="resize-handle" />);
+    }
+    const child = node.children[i]!;
+    elements.push(
+      <Panel
+        key={child.id}
+        id={child.id}
+        defaultSize={`${node.sizes[i]}`}
+        minSize="5"
+      >
+        <RenderNode
+          node={child}
+          focusedPaneId={focusedPaneId}
+          cwd={cwd}
+          workspaceId={workspaceId}
+          onPaneLayout={onPaneLayout}
+        />
+      </Panel>,
+    );
+  }
+
   return (
     <Group
       orientation={node.type}
@@ -45,42 +72,8 @@ function RenderNode({
         )
       }
     >
-      {node.children.map((child, i) => (
-        <PanelWithHandle key={child.id} index={i} total={node.children.length}>
-          <Panel id={child.id} defaultSize={`${node.sizes[i]}`} minSize="5">
-            <RenderNode
-              node={child}
-              focusedPaneId={focusedPaneId}
-              cwd={cwd}
-              workspaceId={workspaceId}
-              onPaneLayout={onPaneLayout}
-            />
-          </Panel>
-        </PanelWithHandle>
-      ))}
+      {elements}
     </Group>
-  );
-}
-
-/** Wraps a Panel with a resize handle before it (except the first child). */
-function PanelWithHandle({
-  children,
-  index,
-  total,
-}: {
-  children: React.ReactNode;
-  index: number;
-  total: number;
-}) {
-  if (total <= 1 || index === 0) {
-    return <>{children}</>;
-  }
-
-  return (
-    <>
-      <Separator className="resize-handle" />
-      {children}
-    </>
   );
 }
 

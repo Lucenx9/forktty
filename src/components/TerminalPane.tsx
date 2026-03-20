@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, useCallback, memo } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  memo,
+  DragEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -14,7 +21,13 @@ import {
   sendCustomNotification,
   logError,
 } from "../lib/pty-bridge";
-import { registerTerminal, unregisterTerminal } from "../lib/terminal-registry";
+import {
+  registerTerminal,
+  unregisterTerminal,
+  getSavedInstance,
+  saveInstance,
+  removeSavedInstance,
+} from "../lib/terminal-registry";
 import type { ScanEventData } from "../lib/pty-bridge";
 import {
   useWorkspaceStore,
@@ -183,7 +196,17 @@ function PaneToolbar({
   return (
     <div
       className={`pane-toolbar ${isFocused ? "pane-toolbar-focused" : ""}`}
-      onMouseDown={(e) => e.preventDefault()}
+      draggable
+      onDragStart={(e: DragEvent) => {
+        e.dataTransfer.setData("text/x-pane-id", paneId);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onMouseDown={(e) => {
+        // Prevent focus steal, but not on the toolbar itself (allow drag)
+        if ((e.target as HTMLElement).closest("button")) {
+          e.preventDefault();
+        }
+      }}
     >
       <span className="pane-toolbar-title">{surfaceTitle}</span>
       <div className="pane-toolbar-actions">
@@ -239,9 +262,11 @@ const TerminalPane = memo(function TerminalPane({
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
   const [flashBorder, setFlashBorder] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [paneContextMenu, setPaneContextMenu] =
     useState<PaneContextMenuState | null>(null);
   const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
+  const swapPanes = useWorkspaceStore((s) => s.swapPanes);
   const registerSurface = useWorkspaceStore((s) => s.registerSurface);
   const unregisterSurface = useWorkspaceStore((s) => s.unregisterSurface);
   const hasUnreadNotification = useWorkspaceStore((s) => {
@@ -323,163 +348,202 @@ const TerminalPane = memo(function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
 
-    const cfgStore = useConfigStore.getState();
-    const fontFamily = cfgStore.theme?.font_family ?? "monospace";
-    const fontSize =
-      (cfgStore.theme?.font_size ?? 14) + cfgStore.fontSizeOffset;
+    // Check if a saved instance exists (re-adoption after swap/split)
+    const saved = getSavedInstance(paneId);
 
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize,
-      fontFamily: `'${fontFamily}', monospace`,
-      theme: cfgStore.xtermTheme ?? undefined,
-    });
+    let term: Terminal;
+    let wrapper: HTMLDivElement;
+    let isNewInstance: boolean;
 
-    termRef.current = term;
+    if (saved) {
+      // Re-adopt: reuse existing terminal, wrapper, PTY — no spawn needed
+      term = saved.terminal;
+      wrapper = saved.wrapper;
+      termRef.current = term;
+      ptyIdRef.current = saved.ptyId;
+      fitAddonRef.current = saved.fitAddon;
+      canvasAddonRef.current = saved.canvasAddon;
+      searchAddonRef.current = saved.searchAddon;
+      container.appendChild(wrapper);
+      registerTerminal(paneId, term);
+      removeSavedInstance(paneId);
+      isNewInstance = false;
 
-    const fitAddon = new FitAddon();
-    fitAddonRef.current = fitAddon;
-    term.loadAddon(fitAddon);
+      // Re-fit after reattaching to new container
+      requestAnimationFrame(() => {
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          saved.fitAddon.fit();
+        }
+      });
+    } else {
+      // Fresh terminal: create everything from scratch
+      const cfgStore = useConfigStore.getState();
+      const fontFamily = cfgStore.theme?.font_family ?? "monospace";
+      const fontSize =
+        (cfgStore.theme?.font_size ?? 14) + cfgStore.fontSizeOffset;
 
-    term.open(container);
-    registerTerminal(paneId, term);
+      term = new Terminal({
+        cursorBlink: true,
+        fontSize,
+        fontFamily: `'${fontFamily}', monospace`,
+        theme: cfgStore.xtermTheme ?? undefined,
+      });
 
-    // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
-    const canvasAddon = new CanvasAddon();
-    canvasAddonRef.current = canvasAddon;
-    term.loadAddon(canvasAddon);
+      termRef.current = term;
 
-    // Search addon for Ctrl+F
-    const searchAddon = new SearchAddon();
-    searchAddonRef.current = searchAddon;
-    term.loadAddon(searchAddon);
+      const fitAddon = new FitAddon();
+      fitAddonRef.current = fitAddon;
+      term.loadAddon(fitAddon);
 
-    // Guard against zero-dimension container (not yet laid out)
-    if (container.clientWidth > 0 && container.clientHeight > 0) {
-      fitAddon.fit();
+      // Use an intermediary wrapper so xterm DOM survives React unmount
+      wrapper = document.createElement("div");
+      wrapper.style.width = "100%";
+      wrapper.style.height = "100%";
+      container.appendChild(wrapper);
+      term.open(wrapper);
+      registerTerminal(paneId, term);
+
+      // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
+      const canvasAddon = new CanvasAddon();
+      canvasAddonRef.current = canvasAddon;
+      term.loadAddon(canvasAddon);
+
+      // Search addon for Ctrl+F
+      const searchAddon = new SearchAddon();
+      searchAddonRef.current = searchAddon;
+      term.loadAddon(searchAddon);
+
+      // Guard against zero-dimension container (not yet laid out)
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        fitAddon.fit();
+      }
+
+      isNewInstance = true;
     }
 
-    // Spawn PTY and wire data flow
+    // Spawn PTY only for new instances (re-adopted instances keep their PTY)
     let disposed = false;
 
-    // Debounce notifications: at most one per 5 seconds per pane
-    let lastNotifyTime = 0;
+    if (isNewInstance) {
+      // Debounce notifications: at most one per 5 seconds per pane
+      let lastNotifyTime = 0;
 
-    function fireNotification(wsId: string, title: string, body: string) {
-      const state = useWorkspaceStore.getState();
-      const config = useConfigStore.getState().config;
-      const notificationCommand =
-        config?.general.notification_command.trim() ?? "";
-      const dedupeKey = `${wsId}:${title}:${body}`;
-      const now = Date.now();
-      const lastSeen = recentNotificationMap.get(dedupeKey) ?? 0;
+      function fireNotification(wsId: string, title: string, body: string) {
+        const state = useWorkspaceStore.getState();
+        const config = useConfigStore.getState().config;
+        const notificationCommand =
+          config?.general.notification_command.trim() ?? "";
+        const dedupeKey = `${wsId}:${title}:${body}`;
+        const now = Date.now();
+        const lastSeen = recentNotificationMap.get(dedupeKey) ?? 0;
 
-      if (now - lastSeen < NOTIFICATION_DEDUPE_MS) {
-        return;
+        if (now - lastSeen < NOTIFICATION_DEDUPE_MS) {
+          return;
+        }
+        recentNotificationMap.set(dedupeKey, now);
+        pruneNotificationMap();
+
+        state.addNotification(wsId, title, body);
+        state.setSurfaceUnread(paneId, true);
+        if (config?.notifications.desktop ?? true) {
+          sendDesktopNotification(title, body).catch(logError);
+        }
+        if (notificationCommand) {
+          sendCustomNotification(notificationCommand, title, body).catch(
+            logError,
+          );
+        }
       }
-      recentNotificationMap.set(dedupeKey, now);
-      pruneNotificationMap();
 
-      state.addNotification(wsId, title, body);
-      state.setSurfaceUnread(paneId, true);
-      if (config?.notifications.desktop ?? true) {
-        sendDesktopNotification(title, body).catch(logError);
-      }
-      if (notificationCommand) {
-        sendCustomNotification(notificationCommand, title, body).catch(
-          logError,
-        );
-      }
-    }
+      function handleScanEvent(event: ScanEventData) {
+        if (disposed) return;
 
-    function handleScanEvent(event: ScanEventData) {
-      if (disposed) return;
+        // Handle OSC 9/99/777 notification events
+        if (event.event_type === "notification") {
+          const state = useWorkspaceStore.getState();
+          const wsId = Object.entries(state.workspaces).find(([, ws]) =>
+            Object.prototype.hasOwnProperty.call(ws.surfaces, paneId),
+          )?.[0];
+          if (!wsId) return;
 
-      // Handle OSC 9/99/777 notification events
-      if (event.event_type === "notification") {
+          // Debounce
+          const now = Date.now();
+          if (now - lastNotifyTime < 5000) return;
+          lastNotifyTime = now;
+
+          fireNotification(wsId, event.title, event.body);
+          return;
+        }
+
+        if (event.event_type !== "prompt_detected") return;
+
+        // Check if workspace containing this pane is unfocused
         const state = useWorkspaceStore.getState();
         const wsId = Object.entries(state.workspaces).find(([, ws]) =>
           Object.prototype.hasOwnProperty.call(ws.surfaces, paneId),
         )?.[0];
-        if (!wsId) return;
+        if (!wsId || wsId === state.activeWorkspaceId) return;
+
+        // Suppress spurious prompt_detected events caused by terminal resize
+        // during workspace switch (shell redraws prompt → OSC 133 → false positive)
+        const now = Date.now();
+        if (now - getLastWorkspaceSwitchTime() < 4000) return;
 
         // Debounce
-        const now = Date.now();
         if (now - lastNotifyTime < 5000) return;
-        lastNotifyTime = now;
-
-        fireNotification(wsId, event.title, event.body);
-        return;
-      }
-
-      if (event.event_type !== "prompt_detected") return;
-
-      // Check if workspace containing this pane is unfocused
-      const state = useWorkspaceStore.getState();
-      const wsId = Object.entries(state.workspaces).find(([, ws]) =>
-        Object.prototype.hasOwnProperty.call(ws.surfaces, paneId),
-      )?.[0];
-      if (!wsId || wsId === state.activeWorkspaceId) return;
-
-      // Suppress spurious prompt_detected events caused by terminal resize
-      // during workspace switch (shell redraws prompt → OSC 133 → false positive)
-      const now = Date.now();
-      if (now - getLastWorkspaceSwitchTime() < 4000) return;
-
-      // Debounce
-      if (now - lastNotifyTime < 5000) return;
-      const ws = state.workspaces[wsId];
-      if (!ws) return;
-      if (ws.unreadCount > 0 || ws.surfaces[paneId]?.hasUnreadNotification) {
-        return;
-      }
-
-      lastNotifyTime = now;
-      const title = "Prompt waiting";
-      const body = `${ws.name} needs attention`;
-      fireNotification(wsId, title, body);
-    }
-
-    spawnPty({
-      onOutput: (data) => {
-        if (!disposed) {
-          term.write(data);
-
-          // Throttled activity tracking (at most once per second)
-          const now = Date.now();
-          if (now - lastActivityCallRef.current > 1000) {
-            lastActivityCallRef.current = now;
-            updateSurfaceActivity(paneId);
-          }
-        }
-      },
-      onExit: () => {
-        if (!disposed) {
-          term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
-        }
-      },
-      cwd: cwd || undefined,
-      workspaceId,
-      surfaceId: paneId,
-      onScanEvent: handleScanEvent,
-    })
-      .then((id) => {
-        if (disposed) {
-          // React StrictMode double-mount: kill the orphaned PTY
-          killPty(id).catch(logError);
+        const ws = state.workspaces[wsId];
+        if (!ws) return;
+        if (ws.unreadCount > 0 || ws.surfaces[paneId]?.hasUnreadNotification) {
           return;
         }
-        ptyIdRef.current = id;
-        registerSurface(paneId, id);
 
-        // Send initial resize based on actual terminal dimensions
-        const { cols, rows } = term;
-        resizePty(id, cols, rows).catch(logError);
+        lastNotifyTime = now;
+        const title = "Prompt waiting";
+        const body = `${ws.name} needs attention`;
+        fireNotification(wsId, title, body);
+      }
+
+      spawnPty({
+        onOutput: (data) => {
+          if (!disposed) {
+            term.write(data);
+
+            // Throttled activity tracking (at most once per second)
+            const now = Date.now();
+            if (now - lastActivityCallRef.current > 1000) {
+              lastActivityCallRef.current = now;
+              updateSurfaceActivity(paneId);
+            }
+          }
+        },
+        onExit: () => {
+          if (!disposed) {
+            term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
+          }
+        },
+        cwd: cwd || undefined,
+        workspaceId,
+        surfaceId: paneId,
+        onScanEvent: handleScanEvent,
       })
-      .catch((err) => {
-        logError(err);
-        term.write(`\r\n\x1b[31mFailed to spawn PTY: ${err}\x1b[0m\r\n`);
-      });
+        .then((id) => {
+          if (disposed) {
+            // React StrictMode double-mount: kill the orphaned PTY
+            killPty(id).catch(logError);
+            return;
+          }
+          ptyIdRef.current = id;
+          registerSurface(paneId, id);
+
+          // Send initial resize based on actual terminal dimensions
+          const { cols, rows } = term;
+          resizePty(id, cols, rows).catch(logError);
+        })
+        .catch((err) => {
+          logError(err);
+          term.write(`\r\n\x1b[31mFailed to spawn PTY: ${err}\x1b[0m\r\n`);
+        });
+    }
 
     // Wire keyboard input to PTY
     const dataDisposable = term.onData((data) => {
@@ -519,7 +583,6 @@ const TerminalPane = memo(function TerminalPane({
     });
 
     return () => {
-      disposed = true;
       if (resizeRaf !== null) {
         cancelAnimationFrame(resizeRaf);
       }
@@ -530,17 +593,38 @@ const TerminalPane = memo(function TerminalPane({
       dataDisposable.dispose();
       resizeDisposable.dispose();
       unregisterTerminal(paneId);
-      canvasAddonRef.current?.dispose();
-      canvasAddonRef.current = null;
-      term.dispose();
 
-      // Kill PTY process on cleanup
-      const id = ptyIdRef.current;
-      if (id !== null) {
-        killPty(id).catch(logError);
-        ptyIdRef.current = null;
+      // Check if surface still exists (swap/split) vs removed (close)
+      const state = useWorkspaceStore.getState();
+      const surfaceStillExists = Object.values(state.workspaces).some(
+        (ws) => ws.surfaces[paneId],
+      );
+
+      if (surfaceStillExists) {
+        // SWAP/SPLIT: preserve terminal instance for re-adoption
+        wrapper.remove(); // detach from React container, keep in memory
+        saveInstance(paneId, {
+          terminal: term,
+          wrapper,
+          ptyId: ptyIdRef.current,
+          fitAddon: fitAddonRef.current!,
+          canvasAddon: canvasAddonRef.current,
+          searchAddon: searchAddonRef.current!,
+        });
+      } else {
+        // CLOSE: destroy everything
+        disposed = true;
+        canvasAddonRef.current?.dispose();
+        canvasAddonRef.current = null;
+        term.dispose();
+
+        const id = ptyIdRef.current;
+        if (id !== null) {
+          killPty(id).catch(logError);
+          ptyIdRef.current = null;
+        }
+        unregisterSurface(paneId);
       }
-      unregisterSurface(paneId);
     };
     // paneId is stable for the lifetime of this component
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -552,6 +636,7 @@ const TerminalPane = memo(function TerminalPane({
     !isFocused ? "terminal-pane-inactive" : "",
     !isFocused && hasUnreadNotification ? "pane-notification-ring" : "",
     flashBorder ? "pane-focus-flash" : "",
+    dragOver ? "pane-drag-over" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -559,6 +644,21 @@ const TerminalPane = memo(function TerminalPane({
   return (
     <div
       className={paneClasses}
+      onDragOver={(e: DragEvent<HTMLDivElement>) => {
+        if (e.dataTransfer.types.includes("text/x-pane-id")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e: DragEvent<HTMLDivElement>) => {
+        setDragOver(false);
+        const sourceId = e.dataTransfer.getData("text/x-pane-id");
+        if (sourceId && sourceId !== paneId) {
+          swapPanes(sourceId, paneId);
+        }
+      }}
       onKeyDown={(e) => {
         // Ctrl+F: find in terminal
         if (e.ctrlKey && !e.shiftKey && e.key === "f") {

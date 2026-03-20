@@ -1544,6 +1544,19 @@ textarea {
   }
 }
 
+.pane-drag-over {
+  outline: 2px solid var(--theme-blue);
+  outline-offset: -2px;
+}
+
+.pane-toolbar[draggable="true"] {
+  cursor: grab;
+}
+
+.pane-toolbar[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 /* --- Sidebar metadata (status pills, progress bars, log entries) --- */
 
 .sidebar-meta-view {

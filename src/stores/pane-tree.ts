@@ -380,6 +380,32 @@ export function makeWorkspace(
   };
 }
 
+/** Swap two leaf nodes in the tree (positions swap, identities preserved). */
+export function swapLeaves(node: PaneNode, idA: string, idB: string): PaneNode {
+  if (idA === idB) return node;
+  const leafA = findLeaf(node, idA);
+  const leafB = findLeaf(node, idB);
+  if (!leafA || !leafB) return node;
+
+  // Single-pass: replace A's position with B and B's position with A
+  function swap(n: PaneNode): PaneNode {
+    if (n.type === "leaf") {
+      if (n.id === leafA!.id) return leafB!;
+      if (n.id === leafB!.id) return leafA!;
+      return n;
+    }
+    let changed = false;
+    const children = n.children.map((child) => {
+      const result = swap(child);
+      if (result !== child) changed = true;
+      return result;
+    });
+    return changed ? { ...n, children } : n;
+  }
+
+  return swap(node);
+}
+
 /** Find workspace ID that contains the given pane. */
 export function findWorkspaceIdByPane(
   workspaces: Record<string, Workspace>,

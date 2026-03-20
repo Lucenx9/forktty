@@ -1,4 +1,9 @@
 import type { Terminal } from "@xterm/xterm";
+import type { FitAddon } from "@xterm/addon-fit";
+import type { CanvasAddon } from "@xterm/addon-canvas";
+import type { SearchAddon } from "@xterm/addon-search";
+
+// --- Active terminal map (for readScreen / socket API) ---
 
 const terminalMap = new Map<string, Terminal>();
 
@@ -11,7 +16,6 @@ export function unregisterTerminal(paneId: string): void {
 }
 
 export function readScreen(paneId?: string): string | null {
-  // If paneId specified, read that terminal; otherwise read the first one found
   const terminal = paneId
     ? terminalMap.get(paneId)
     : terminalMap.values().next().value;
@@ -26,10 +30,39 @@ export function readScreen(paneId?: string): string | null {
     }
   }
 
-  // Trim trailing empty lines
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") {
     lines.pop();
   }
 
   return lines.join("\n");
+}
+
+// --- Saved terminal instances (survive React unmount during swap/split) ---
+
+export interface SavedTerminalInstance {
+  terminal: Terminal;
+  wrapper: HTMLDivElement;
+  ptyId: number | null;
+  fitAddon: FitAddon;
+  canvasAddon: CanvasAddon | null;
+  searchAddon: SearchAddon;
+}
+
+const savedInstances = new Map<string, SavedTerminalInstance>();
+
+export function saveInstance(
+  surfaceId: string,
+  instance: SavedTerminalInstance,
+): void {
+  savedInstances.set(surfaceId, instance);
+}
+
+export function getSavedInstance(
+  surfaceId: string,
+): SavedTerminalInstance | undefined {
+  return savedInstances.get(surfaceId);
+}
+
+export function removeSavedInstance(surfaceId: string): void {
+  savedInstances.delete(surfaceId);
 }
