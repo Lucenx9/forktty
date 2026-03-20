@@ -377,9 +377,9 @@ const TerminalPane = memo(function TerminalPane({
       termRef.current.options.theme = xtermTheme;
     }
     if (termRef.current && configTheme) {
-      const fontFamily = configTheme.font_family ?? "JetBrains Mono";
+      const fontFamily = configTheme.font_family ?? "monospace";
       const fontSize = configTheme.font_size ?? 14;
-      termRef.current.options.fontFamily = `'${fontFamily}', 'Fira Code', 'Cascadia Code', monospace`;
+      termRef.current.options.fontFamily = `'${fontFamily}', monospace`;
       termRef.current.options.fontSize = fontSize;
       fitAddonRef.current?.fit();
     }
@@ -390,13 +390,13 @@ const TerminalPane = memo(function TerminalPane({
     if (!container) return;
 
     const cfgStore = useConfigStore.getState();
-    const fontFamily = cfgStore.theme?.font_family ?? "JetBrains Mono";
+    const fontFamily = cfgStore.theme?.font_family ?? "monospace";
     const fontSize = cfgStore.theme?.font_size ?? 14;
 
     const term = new Terminal({
       cursorBlink: true,
       fontSize,
-      fontFamily: `'${fontFamily}', 'Fira Code', 'Cascadia Code', monospace`,
+      fontFamily: `'${fontFamily}', monospace`,
       theme: cfgStore.xtermTheme ?? undefined,
     });
 
