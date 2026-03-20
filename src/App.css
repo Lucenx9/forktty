@@ -127,14 +127,9 @@ textarea {
   min-height: 0;
   overflow: hidden;
   padding: 10px 12px 12px 10px;
-  background:
-    radial-gradient(
-      900px circle at 50% 0,
-      rgba(137, 180, 250, 0.025),
-      transparent 42%
-    ),
-    linear-gradient(180deg, rgba(16, 17, 26, 0.92), rgba(8, 9, 14, 0.98));
+  background: rgba(12, 13, 20, 0.96);
   box-sizing: border-box;
+  contain: layout style paint;
 }
 
 /* --- react-resizable-panels v4 resize handle --- */

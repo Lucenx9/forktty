@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -292,7 +292,7 @@ function PaneToolbar({
   );
 }
 
-export default function TerminalPane({
+const TerminalPane = memo(function TerminalPane({
   paneId,
   isFocused,
   cwd,
@@ -689,4 +689,6 @@ export default function TerminalPane({
         )}
     </div>
   );
-}
+});
+
+export default TerminalPane;

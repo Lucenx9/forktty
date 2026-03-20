@@ -544,10 +544,38 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   switchWorkspace: (id) => {
-    const { workspaces } = get();
-    if (!workspaces[id]) return;
+    const { workspaces, notifications } = get();
+    const ws = workspaces[id];
+    if (!ws) return;
     lastWorkspaceSwitchTime = Date.now();
-    set({ activeWorkspaceId: id });
+
+    // Merge activeWorkspaceId + markWorkspaceRead into a single state update
+    // to avoid a double render on every workspace switch.
+    if (ws.unreadCount > 0) {
+      const clearedSurfaces: Record<string, Surface> = {};
+      for (const [sid, surface] of Object.entries(ws.surfaces)) {
+        clearedSurfaces[sid] = surface.hasUnreadNotification
+          ? { ...surface, hasUnreadNotification: false }
+          : surface;
+      }
+      set({
+        activeWorkspaceId: id,
+        workspaces: {
+          ...workspaces,
+          [id]: {
+            ...ws,
+            unreadCount: 0,
+            lastNotificationText: "",
+            surfaces: clearedSurfaces,
+          },
+        },
+        notifications: notifications.map((n) =>
+          n.workspaceId === id ? { ...n, read: true } : n,
+        ),
+      });
+    } else {
+      set({ activeWorkspaceId: id });
+    }
   },
 
   closeWorkspace: (id) => {

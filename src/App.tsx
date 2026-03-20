@@ -236,11 +236,6 @@ export default function App() {
       );
   }, []);
 
-  // Mark workspace as read when it becomes active
-  useEffect(() => {
-    markWorkspaceRead(activeWorkspaceId);
-  }, [activeWorkspaceId, markWorkspaceRead]);
-
   // Window title badge: show unread count
   const totalUnread = useWorkspaceStore((s) =>
     Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
