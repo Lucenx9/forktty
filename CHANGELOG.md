@@ -2,6 +2,24 @@
 
 All notable changes to ForkTTY are documented here.
 
+## [Unreleased] - 2026-03-20
+
+### UI Polish
+- Refined sidebar, pane chrome, command palette, branch picker, notifications, settings, menus, and find bar with a more consistent dark desktop visual language
+- Split UI typography from terminal typography: proportional font for chrome, monospace for terminal content, shortcuts, and badges
+- Added explicit inactive-pane dimming and more restrained focus/unread states
+- Added extra breathing room around terminal surfaces without changing PTY behavior
+- Replaced placeholder text controls with shared SVG iconography
+- Added `prefers-contrast` and `prefers-reduced-motion` polish for dark-theme accessibility
+
+### Interaction Fixes
+- Help & Shortcuts menu now renders above the sidebar correctly instead of appearing behind other UI
+- Workspace switching from the sidebar triggers earlier and feels more immediate
+- Workspace name hover now shows the text cursor only over the actual name, not across the full row
+- Workspace reordering now uses a dedicated drag handle instead of making the whole row draggable
+- Reduced duplicate prompt notifications with stronger switch-time suppression and short-window deduplication
+- Avoid repeated `Prompt waiting` notifications while a workspace is already unread
+
 ## [0.1.0] - 2026-03-19
 
 ### Phase 1 — MVP Terminal
@@ -49,9 +67,9 @@ All notable changes to ForkTTY are documented here.
 
 ### Phase 8 — Polish + Release
 - Session persistence (auto-save every 30s, restore on startup)
-- Command palette (Ctrl+Shift+P) with fuzzy search
+- Command palette (Ctrl+Shift+P) with keyboard navigation and inline filtering
 - Find in terminal (Ctrl+F) via xterm.js SearchAddon
-- Copy mode (Ctrl+Shift+C copies selection)
+- Copy selection (Ctrl+Shift+C)
 - ErrorToast component for user-visible error feedback
 - Structured logging to ~/.local/share/forktty/logs/
 - .deb and AppImage bundle targets

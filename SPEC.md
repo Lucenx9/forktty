@@ -1,6 +1,6 @@
 # ForkTTY — Multi-Agent Terminal for Linux
 
-A lightweight, GPU-accelerated terminal designed for running multiple AI coding agents in parallel. Each agent gets its own isolated git worktree and terminal pane with smart notifications when attention is needed.
+A lightweight Linux terminal multiplexer designed for running multiple AI coding agents in parallel. Each agent gets its own workspace and terminal panes, with optional git worktree isolation and smart notifications when attention is needed.
 
 **Inspired by** [manaflow-ai/cmux](https://github.com/manaflow-ai/cmux) (macOS-only, Swift/AppKit). ForkTTY is a from-scratch Linux implementation using Tauri v2 + React + xterm.js.
 
@@ -10,43 +10,42 @@ See `docs/assets/cmux-reference.png` for the visual target (screenshot of manafl
 
 ### Layout
 
-```
-┌──────────────┬─────────────────────────────────────────────┐
-│              │  Tab strip (surface tabs within workspace)   │
-│   SIDEBAR    ├─────────────────────┬───────────────────────┤
-│              │                     │                       │
-│  ┌────────┐  │   Terminal pane 1   │   Terminal pane 3     │
-│  │▸ ws-1  │  │   (Claude Code)     │   (Claude Code)       │
-│  │  main  │  │                     │                       │
-│  │  ~/proj│  ├─────────────────────┤                       │
-│  └────────┘  │                     │                       │
-│  ┌────────┐  │   Terminal pane 2   │                       │
-│  │  ws-2  │  │   (Claude Code)     │                       │
-│  │  feat-x│  │                     │                       │
-│  │  ~/..  │  │                     │                       │
-│  └────────┘  │                     │                       │
-│              │                     │                       │
-│  [+ New]     │                     │                       │
-└──────────────┴─────────────────────┴───────────────────────┘
+``` 
+┌──────────────────┬──────────────────────────────────────────┐
+│                  │  Pane toolbar                            │
+│   SIDEBAR        ├──────────────────────┬───────────────────┤
+│                  │                      │                   │
+│  Workspace 1     │   Terminal pane 1    │   Terminal pane 3 │
+│  main            │                      │                   │
+│  ~/project       ├──────────────────────┤                   │
+│                  │   Terminal pane 2    │                   │
+│  Workspace 2     │                      │                   │
+│  feature-x       │                      │                   │
+│  ~/project/.wt   │                      │                   │
+│                  │                      │                   │
+│  Help / Shortcuts│                      │                   │
+└──────────────────┴──────────────────────┴───────────────────┘
 ```
 
 ### Sidebar Workspace Entry
 
 Each entry in the sidebar displays:
-- **Workspace name** (bold, highlighted if selected with teal/blue background)
+- **Workspace name** (bold, highlighted when selected)
 - **Git branch** name below the title
 - **Working directory** path (truncated)
-- **Status badge**: colored dot (idle=gray, running=green, waiting=amber, error=red)
-- **Unread notification indicator**: blue dot + count when agent needs attention
-- **Compact preview**: last few chars of latest agent output (optional)
+- **Worktree status badge** when the workspace is backed by a git worktree
+- **Unread notification indicator**: badge/count when agent needs attention
+- **Compact preview** of the latest notification text for inactive workspaces
+- **Workspace metadata**: optional status pills, progress rows, and recent log snippets
+- **Reorder grip + close affordance** revealed on hover/active state
 
 ### Visual Style
-- Dark theme by default (Ghostty-compatible colors)
+- Dark theme by default with Ghostty-compatible colors and Catppuccin Mocha fallback
 - Dense information layout, IDE-like feel
-- Monospace font throughout (JetBrains Mono / Ghostty config)
-- Focused pane has subtle highlighted border
-- Sidebar entries have rounded corners, subtle hover states
-- Minimal chrome: no unnecessary borders or decorations
+- UI chrome uses a proportional UI font; terminal content remains monospace
+- Focused panes use restrained borders and tonal shifts; inactive panes are slightly dimmed
+- Sidebar entries use an active rail, subtle hover states, and low-noise controls
+- Minimal chrome: overlays and menus share one elevated desktop material instead of heavy decorative effects
 
 ## Architecture
 
@@ -55,15 +54,17 @@ Each entry in the sidebar displays:
 │  Frontend (React 19 + TypeScript + Vite)            │
 │                                                     │
 │  ┌─────────┐  ┌─────────────────────────────────┐   │
-│  │ Sidebar  │  │  Pane Area (Allotment splits)   │   │
-│  │          │  │  ┌──────────┐ ┌──────────┐      │   │
-│  │ workspace│  │  │ xterm.js │ │ xterm.js │      │   │
-│  │ list     │  │  │ (WebGL)  │ │ (canvas) │      │   │
-│  │          │  │  └──────────┘ └──────────┘      │   │
-│  │ + status │  │  ┌──────────┐                   │   │
-│  │ + branch │  │  │ xterm.js │                   │   │
-│  │ + notifs │  │  │ (canvas) │                   │   │
-│  └─────────┘  │  └──────────┘                   │   │
+│  │ Sidebar │  │ Pane Area (react-resizable-     │   │
+│  │         │  │ panels recursive splits)        │   │
+│  │ ws list │  │  ┌──────────┐ ┌──────────┐      │   │
+│  │ + meta  │  │  │ xterm.js │ │ xterm.js │      │   │
+│  │ + badge │  │  │ (canvas) │ │ (canvas) │      │   │
+│  │ + help  │  │  └──────────┘ └──────────┘      │   │
+│  └─────────┘  │  ┌──────────┐                   │   │
+│               │  │ overlays │                   │   │
+│               │  │ palette  │                   │   │
+│               │  │ settings │                   │   │
+│               │  └──────────┘                   │   │
 │               └─────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────┤
 │  Tauri IPC Bridge                                   │
@@ -85,8 +86,7 @@ Each entry in the sidebar displays:
 |-------|-----------|-----|
 | Shell | Tauri v2 | ~30MB RAM, native Linux packaging, Rust backend |
 | Frontend | React 19 + TypeScript + Vite | Fast iteration, huge ecosystem |
-| Terminal | @xterm/xterm 6.x + addons (fit, canvas, search, web-links) | Industry standard, used by VS Code |
-| Terminal (alt) | ghostty-web (evaluate) | Ghostty VT100 parser as WASM, MIT, drop-in xterm.js API, ~400KB |
+| Terminal | @xterm/xterm 5.x + addons (fit, canvas, search) | Industry-standard terminal component with a stable canvas renderer |
 | Split panes | react-resizable-panels | 2M+ downloads/week, React 19 native, used by shadcn/ui |
 | PTY | portable-pty 0.9 (Rust) | Battle-tested (powers WezTerm), sync API via spawn_blocking |
 | PTY→Frontend | Tauri v2 Channels (`Channel<String>`) | Push-based streaming, ordered delivery, built for this use case |
@@ -98,19 +98,10 @@ Each entry in the sidebar displays:
 
 ### Renderer Strategy
 
-WebGL inside WebKitGTK has **known upstream bugs** (context lost, freezes — Tauri issues #6559, #8498).
+WebGL inside WebKitGTK has **known upstream bugs** (context lost, freezes — Tauri issues #6559, #8498), so the current build standardizes on canvas rendering.
 
-- **Default**: Canvas renderer (`@xterm/addon-canvas`) — reliable on WebKitGTK, 2-3x faster than DOM
-- **Experimental**: WebGL renderer — try on startup, catch failure, auto-fallback to canvas
-- **Fallback**: DOM renderer — built-in, always works, slowest
-
-```typescript
-try {
-  term.loadAddon(new WebglAddon());
-} catch {
-  term.loadAddon(new CanvasAddon()); // safe default
-}
-```
+- **Default**: Canvas renderer (`@xterm/addon-canvas`) — reliable on WebKitGTK and faster than DOM
+- **Fallback**: DOM renderer — built-in and available if needed in the future
 
 ### PTY Data Flow
 
@@ -143,7 +134,7 @@ Resize: `FitAddon + ResizeObserver → invoke('pty_resize') → master.resize()`
 ```
 App
   └── Window (OS window)
-        └── Workspace (sidebar entry, 1:1 with git worktree)
+        └── Workspace (sidebar entry, optionally worktree-backed)
               └── Pane (split region)
                     └── Surface (terminal instance)
 ```
@@ -152,15 +143,19 @@ App
 
 ```typescript
 interface Workspace {
-  id: string;              // UUID
-  name: string;            // User-editable label
-  gitBranch: string;       // Current branch name
-  workingDir: string;      // Worktree path
-  worktreeDir: string;     // .worktrees/<name> path
-  status: 'idle' | 'running' | 'waiting' | 'error';
-  unreadNotifications: number;
-  panes: PaneTree;         // Recursive split tree
-  createdAt: string;       // ISO timestamp
+  id: string;                   // UUID
+  name: string;                 // User-editable label
+  root: PaneTree;               // Recursive split tree
+  surfaces: Record<string, Surface>;
+  focusedPaneId: string;
+  workingDir: string;           // Current cwd for the workspace
+  gitBranch: string;            // Current branch name
+  worktreeDir: string;          // Empty string for plain workspaces
+  worktreeName: string;         // Empty string for plain workspaces
+  worktreeStatus: string;       // clean / dirty / conflicts / error
+  unreadCount: number;
+  lastNotificationText: string;
+  createdAt: string;            // ISO timestamp
 }
 ```
 
@@ -178,12 +173,13 @@ type PaneTree =
 ```typescript
 interface Surface {
   id: string;              // UUID
-  ptyId: number;           // Backend PTY handle
+  ptyId: number | null;    // Backend PTY handle
   title: string;           // From OSC 0/2 or shell
-  shellState: 'idle' | 'typing' | 'executing';  // OSC 133
-  lastActivity: string;    // ISO timestamp
+  hasUnreadNotification: boolean;
 }
 ```
+
+Workspace activity timestamps are tracked outside Zustand to avoid re-render churn in the main UI store.
 
 ## Environment Variables
 
@@ -198,9 +194,9 @@ Set in every spawned shell:
 
 ## Notification System
 
-Three complementary detection methods, all running in the Rust backend:
+Notification signals come from the Rust backend scanner and are surfaced in the frontend workspace store.
 
-### 1. OSC 133 Shell Integration (primary)
+### 1. Prompt detection (OSC 133 + prompt patterns)
 
 The shell emits escape sequences at prompt lifecycle boundaries:
 - `OSC 133 ; A` — Prompt displayed (shell waiting for input)
@@ -208,11 +204,7 @@ The shell emits escape sequences at prompt lifecycle boundaries:
 - `OSC 133 ; C` — Command executed (Enter pressed)
 - `OSC 133 ; D ; <exit_code>` — Command finished
 
-When `A` fires and the workspace is not focused → notify.
-
-### 2. Pattern Matching (Claude Code specific)
-
-Scan last terminal line for known prompt patterns:
+The backend also scans terminal output for known Claude-style prompt patterns:
 ```
 /^>\s*$/                     — Claude Code ">" prompt
 /^❯\s*$/                    — Unicode prompt variant
@@ -221,15 +213,27 @@ Scan last terminal line for known prompt patterns:
 /Do you want to proceed/    — Permission prompt
 ```
 
-### 3. Idle Detection (fallback)
+When a prompt is detected and the workspace is not focused, the frontend creates a `Prompt waiting` notification.
 
-If no output for 2 seconds and workspace is unfocused → check if prompt is visible → notify.
+### 2. Explicit OSC notifications
+
+The backend also forwards explicit terminal notification sequences:
+- `OSC 9`
+- `OSC 99`
+- `OSC 777;notify;...`
 
 ### Notification Delivery
 
-1. **In-app**: Blue dot on sidebar workspace entry, notification panel (Ctrl+Shift+I)
-2. **Desktop**: XDG notification via D-Bus (notify-rust)
-3. **Custom command**: User-configurable shell command with env vars `$FORKTTY_NOTIFICATION_TITLE`, `$FORKTTY_NOTIFICATION_BODY`
+1. **In-app**: unread badge on the sidebar workspace entry, inline preview text, notification panel (`Ctrl+Shift+I`), unread pane ring
+2. **Desktop**: XDG notification via D-Bus (notify-rust), when enabled
+3. **Custom command**: user-configurable external command via `notification_command`
+
+### Noise Control
+
+- Switching to a workspace marks it read
+- Prompt notifications are suppressed briefly after a workspace switch to avoid resize/redraw false positives
+- Identical notifications are deduplicated for a short window
+- Repeated prompt notifications are skipped while a workspace is already unread
 
 ## Socket API (JSON-RPC over Unix Domain Socket)
 
@@ -254,29 +258,42 @@ Protocol: newline-delimited JSON
 |----------|--------|-------------|
 | System | `system.ping` | Health check |
 | Workspace | `workspace.list` | List all workspaces |
-| Workspace | `workspace.create` | New workspace + worktree |
+| Workspace | `workspace.create` | Create a plain workspace, or a worktree-backed one when worktree fields are provided |
 | Workspace | `workspace.select` | Focus a workspace |
-| Workspace | `workspace.close` | Close + optionally remove worktree |
+| Workspace | `workspace.close` | Close a workspace |
 | Surface | `surface.list` | List surfaces in workspace |
 | Surface | `surface.split` | Split pane horizontally or vertically |
-| Surface | `surface.send_text` | Send text to a terminal |
+| Surface | `surface.send_text` | Send text to a terminal or PTY |
+| Surface | `surface.read_screen` | Read terminal screen contents |
 | Surface | `surface.close` | Close a surface |
 | Notification | `notification.create` | Create notification for a workspace |
 | Notification | `notification.list` | List pending notifications |
 | Notification | `notification.clear` | Clear notifications |
+| Worktree | `worktree.create` | Create a git worktree and matching workspace |
+| Worktree | `worktree.merge` | Merge a worktree branch |
+| Worktree | `worktree.remove` | Remove a worktree and close its workspace |
+| Metadata | `metadata.set_status` | Add/update a sidebar status pill |
+| Metadata | `metadata.list_status` | List status pills |
+| Metadata | `metadata.clear_status` | Clear one or all status pills |
+| Metadata | `metadata.set_progress` | Add/update a sidebar progress row |
+| Metadata | `metadata.clear_progress` | Clear one or all progress rows |
+| Metadata | `metadata.log` | Append a sidebar log entry |
 
 ## CLI
 
 ```bash
-forktty new <name>              # New workspace + worktree + launch agent
-forktty ls                      # List workspaces
-forktty select <name>           # Focus workspace
-forktty split [right|down]      # Split current pane
-forktty send <surface> "text"   # Send text to surface
-forktty notify --title "X"      # Send notification
-forktty merge [name]            # Merge worktree branch
-forktty rm [name]               # Remove workspace + worktree
-forktty config                  # View/set config
+forktty-cli new                 # New plain workspace
+forktty-cli new feature-x       # New worktree-backed workspace
+forktty-cli ls                  # List workspaces
+forktty-cli select <name>       # Focus workspace
+forktty-cli split [right|down]  # Split current pane
+forktty-cli send <pty_id> "x"   # Send text to PTY
+forktty-cli notify --title "X"  # Send notification
+forktty-cli notifications       # List notifications
+forktty-cli clear-notifications # Clear notifications
+forktty-cli read-screen         # Read focused screen
+forktty-cli merge feature-x     # Merge worktree branch
+forktty-cli rm feature-x        # Remove worktree + close workspace
 ```
 
 The CLI is a thin JSON-RPC client that connects to the socket.
@@ -302,25 +319,26 @@ font-size = 14           →  terminal.options.fontSize
 | Action | Shortcut |
 |--------|----------|
 | New workspace | Ctrl+N |
+| New worktree workspace | Ctrl+Shift+N |
 | Close workspace | Ctrl+Shift+W |
 | Jump to workspace 1-9 | Ctrl+1..9 |
 | Split right | Ctrl+D |
 | Split down | Ctrl+Shift+D |
 | Navigate panes | Alt+Arrow |
-| New surface (tab) | Ctrl+T |
-| Close surface | Ctrl+W |
+| Close pane | Ctrl+W |
 | Notification panel | Ctrl+Shift+I |
 | Jump to unread | Ctrl+Shift+U |
 | Find in terminal | Ctrl+F |
+| Copy selection | Ctrl+Shift+C |
 | Command palette | Ctrl+Shift+P |
 | Settings | Ctrl+, |
 
 ## Performance Guidelines
 
-- **WebGL renderer** only on the focused terminal pane; canvas renderer on visible-but-unfocused panes. Browser limit: ~8-16 WebGL contexts.
+- **Canvas renderer** is the default for all terminal panes in the current build.
 - **ResizeObserver** on each terminal container → `fitAddon.fit()`
 - **Output scanning** happens in Rust backend before forwarding to frontend — zero overhead on the render thread.
-- **Flow control**: Watermark-based backpressure when PTY output exceeds threshold (prevents UI freeze on `cat /dev/urandom`).
+- **Inactive workspaces stay mounted but hidden** so PTYs and terminal buffers remain alive across workspace switches.
 
 ## Configuration
 
@@ -336,11 +354,10 @@ notification_command = ""            # Custom command, empty = disabled
 [appearance]
 font_family = "JetBrains Mono"      # Override, or read from Ghostty
 font_size = 14
-sidebar_width = 250
 sidebar_position = "left"            # "left" or "right"
 
 [notifications]
 desktop = true                       # XDG desktop notifications
 sound = true                         # Notification sound
-idle_threshold_ms = 2000             # Idle detection timeout
+idle_threshold_ms = 2000             # Reserved for notification heuristics
 ```
