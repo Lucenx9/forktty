@@ -48,15 +48,15 @@ fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> Result<PathBu
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("repo");
-            let parent = repo_workdir
-                .parent()
-                .ok_or_else(|| WorktreeError::Other("Repository is at filesystem root".to_string()))?;
+            let parent = repo_workdir.parent().ok_or_else(|| {
+                WorktreeError::Other("Repository is at filesystem root".to_string())
+            })?;
             Ok(parent.join(format!("{repo_name}-{name}")))
         }
         "outer-nested" => {
-            let parent = repo_workdir
-                .parent()
-                .ok_or_else(|| WorktreeError::Other("Repository is at filesystem root".to_string()))?;
+            let parent = repo_workdir.parent().ok_or_else(|| {
+                WorktreeError::Other("Repository is at filesystem root".to_string())
+            })?;
             Ok(parent.join(".worktrees").join(name))
         }
         // "nested" is the default
