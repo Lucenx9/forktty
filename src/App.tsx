@@ -137,26 +137,23 @@ export default function App() {
     [closeWorkspace],
   );
 
-  const dispatchFocusedPaneAction = useCallback(
-    (action: "copy" | "find") => {
-      const state = useWorkspaceStore.getState();
-      const ws = state.workspaces[state.activeWorkspaceId];
-      if (!ws) return;
+  const dispatchFocusedPaneAction = useCallback((action: "copy" | "find") => {
+    const state = useWorkspaceStore.getState();
+    const ws = state.workspaces[state.activeWorkspaceId];
+    if (!ws) return;
 
-      window.dispatchEvent(
-        new CustomEvent<{
-          action: "copy" | "find";
-          paneId: string;
-        }>("forktty-terminal-action", {
-          detail: {
-            action,
-            paneId: ws.focusedPaneId,
-          },
-        }),
-      );
-    },
-    [],
-  );
+    window.dispatchEvent(
+      new CustomEvent<{
+        action: "copy" | "find";
+        paneId: string;
+      }>("forktty-terminal-action", {
+        detail: {
+          action,
+          paneId: ws.focusedPaneId,
+        },
+      }),
+    );
+  }, []);
 
   const handleBranchPickerResult = useCallback(
     (result: BranchPickerResult) => {
