@@ -587,7 +587,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const { workspaces } = get();
     const cleared: Record<string, Workspace> = {};
     for (const [id, ws] of Object.entries(workspaces)) {
-      cleared[id] = { ...ws, unreadCount: 0, lastNotificationText: "" };
+      const clearedSurfaces: Record<string, Surface> = {};
+      for (const [surfaceId, surface] of Object.entries(ws.surfaces)) {
+        clearedSurfaces[surfaceId] = surface.hasUnreadNotification
+          ? { ...surface, hasUnreadNotification: false }
+          : surface;
+      }
+      cleared[id] = {
+        ...ws,
+        unreadCount: 0,
+        lastNotificationText: "",
+        surfaces: clearedSurfaces,
+      };
     }
     set({ notifications: [], workspaces: cleared });
   },
@@ -606,7 +617,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         workspaces[id]!.unreadCount > 0,
     );
     if (target) {
-      set({ activeWorkspaceId: target });
+      get().switchWorkspace(target);
     }
   },
 

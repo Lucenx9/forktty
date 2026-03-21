@@ -38,6 +38,11 @@ interface TerminalPaneProps {
   workspaceId: string;
 }
 
+interface TerminalActionEventDetail {
+  action: "copy" | "find";
+  paneId: string;
+}
+
 // Custom pane drag state (HTML5 DnD crashes WebKitGTK on Wayland)
 const paneDragState = { sourceId: null as string | null };
 window.addEventListener("mouseup", () => {
@@ -309,6 +314,37 @@ const TerminalPane = memo(function TerminalPane({
     setShowFind(false);
     termRef.current?.focus();
   }, []);
+
+  const handleCopySelection = useCallback(() => {
+    const sel = termRef.current?.getSelection();
+    if (sel) {
+      navigator.clipboard.writeText(sel).catch(logError);
+    }
+  }, []);
+
+  useEffect(() => {
+    function handleTerminalAction(event: Event) {
+      const detail = (event as CustomEvent<TerminalActionEventDetail>).detail;
+      if (!detail || detail.paneId !== paneId) return;
+
+      if (detail.action === "find") {
+        setShowFind(true);
+        return;
+      }
+
+      handleCopySelection();
+    }
+
+    window.addEventListener(
+      "forktty-terminal-action",
+      handleTerminalAction as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "forktty-terminal-action",
+        handleTerminalAction as EventListener,
+      );
+  }, [handleCopySelection, paneId]);
 
   // Focus the xterm instance when isFocused changes
   useEffect(() => {
@@ -675,10 +711,7 @@ const TerminalPane = memo(function TerminalPane({
         if (e.ctrlKey && e.shiftKey && e.key === "C") {
           e.preventDefault();
           e.stopPropagation();
-          const sel = termRef.current?.getSelection();
-          if (sel) {
-            navigator.clipboard.writeText(sel).catch(logError);
-          }
+          handleCopySelection();
         }
       }}
     >

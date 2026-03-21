@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspaceStore, getLastActivity } from "../stores/workspace";
+import { useConfigStore } from "../stores/config";
 import type { Workspace } from "../stores/workspace";
 import {
   getCwd,
@@ -632,6 +633,7 @@ function HelpButton() {
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const toggleSettings = useConfigStore((s) => s.toggleSettings);
 
   useEffect(() => {
     if (!open) return;
@@ -710,12 +712,7 @@ function HelpButton() {
               onClick={() => {
                 setOpen(false);
                 window.dispatchEvent(
-                  new KeyboardEvent("keydown", {
-                    key: "P",
-                    ctrlKey: true,
-                    shiftKey: true,
-                    bubbles: true,
-                  }),
+                  new CustomEvent("forktty-open-command-palette"),
                 );
               }}
             >
@@ -726,13 +723,7 @@ function HelpButton() {
               className="context-menu-item"
               onClick={() => {
                 setOpen(false);
-                window.dispatchEvent(
-                  new KeyboardEvent("keydown", {
-                    key: ",",
-                    ctrlKey: true,
-                    bubbles: true,
-                  }),
-                );
+                toggleSettings();
               }}
             >
               <span>Settings</span>

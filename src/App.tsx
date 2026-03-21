@@ -59,6 +59,17 @@ class LazyErrorBoundary extends Component<
   }
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT"
+  );
+}
+
 export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
@@ -100,6 +111,51 @@ export default function App() {
   );
   const worktreeLayout = useConfigStore(
     (s) => s.config?.general.worktree_layout ?? "nested",
+  );
+  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+
+  const requestCloseWorkspace = useCallback(
+    (workspaceId: string) => {
+      const state = useWorkspaceStore.getState();
+      if (state.workspaceOrder.length <= 1) return;
+
+      const ws = state.workspaces[workspaceId];
+      if (!ws) return;
+
+      const paneCount = Object.keys(ws.surfaces).length;
+      if (paneCount > 1) {
+        setPendingCloseWs({
+          id: workspaceId,
+          name: ws.name,
+          paneCount,
+        });
+        return;
+      }
+
+      closeWorkspace(workspaceId);
+    },
+    [closeWorkspace],
+  );
+
+  const dispatchFocusedPaneAction = useCallback(
+    (action: "copy" | "find") => {
+      const state = useWorkspaceStore.getState();
+      const ws = state.workspaces[state.activeWorkspaceId];
+      if (!ws) return;
+
+      window.dispatchEvent(
+        new CustomEvent<{
+          action: "copy" | "find";
+          paneId: string;
+        }>("forktty-terminal-action", {
+          detail: {
+            action,
+            paneId: ws.focusedPaneId,
+          },
+        }),
+      );
+    },
+    [],
   );
 
   const handleBranchPickerResult = useCallback(
@@ -197,15 +253,27 @@ export default function App() {
     function handleOpenBranchPicker() {
       setShowBranchPicker(true);
     }
+    function handleOpenCommandPalette() {
+      setShowCommandPalette(true);
+    }
     window.addEventListener(
       "forktty-open-branch-picker",
       handleOpenBranchPicker,
     );
-    return () =>
+    window.addEventListener(
+      "forktty-open-command-palette",
+      handleOpenCommandPalette,
+    );
+    return () => {
       window.removeEventListener(
         "forktty-open-branch-picker",
         handleOpenBranchPicker,
       );
+      window.removeEventListener(
+        "forktty-open-command-palette",
+        handleOpenCommandPalette,
+      );
+    };
   }, []);
 
   // Window title badge: show unread count
@@ -238,29 +306,37 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Don't fire shortcuts when a modal overlay is open
-      if (document.querySelector(".modal-overlay")) return;
+      const editableTarget = isEditableTarget(e.target);
+      const modalOrBranchPickerOpen =
+        document.querySelector(".modal-overlay, .branch-picker-overlay") !==
+        null;
+      const commandPaletteOpen =
+        document.querySelector(".command-palette-overlay") !== null;
+      const blockingOverlayOpen = modalOrBranchPickerOpen || commandPaletteOpen;
 
       // NOTE: These shortcuts override terminal keys (Ctrl+D = EOF, Ctrl+W = delete word,
       // Ctrl+N = next history). This matches SPEC.md. Users can still exit shells via `exit`.
+
+      // Ctrl+Shift+P: command palette
+      if (e.ctrlKey && e.shiftKey && e.key === "P") {
+        if (modalOrBranchPickerOpen) {
+          return;
+        }
+        if (!commandPaletteOpen && editableTarget) {
+          return;
+        }
+        e.preventDefault();
+        setShowCommandPalette((v) => !v);
+        return;
+      }
+
+      if (blockingOverlayOpen || editableTarget) return;
 
       // Ctrl+Shift+W: close workspace
       if (e.ctrlKey && e.shiftKey && e.key === "W") {
         e.preventDefault();
         const state = useWorkspaceStore.getState();
-        if (state.workspaceOrder.length <= 1) return;
-        const ws = state.workspaces[state.activeWorkspaceId];
-        if (!ws) return;
-        const paneCount = Object.keys(ws.surfaces).length;
-        if (paneCount > 1) {
-          setPendingCloseWs({
-            id: state.activeWorkspaceId,
-            name: ws.name,
-            paneCount,
-          });
-          return;
-        }
-        closeWorkspace(state.activeWorkspaceId);
+        requestCloseWorkspace(state.activeWorkspaceId);
         return;
       }
 
@@ -268,13 +344,6 @@ export default function App() {
       if (e.ctrlKey && e.shiftKey && e.key === "N") {
         e.preventDefault();
         setShowBranchPicker(true);
-        return;
-      }
-
-      // Ctrl+Shift+P: command palette
-      if (e.ctrlKey && e.shiftKey && e.key === "P") {
-        e.preventDefault();
-        setShowCommandPalette((v) => !v);
         return;
       }
 
@@ -392,21 +461,17 @@ export default function App() {
     closePane,
     moveFocus,
     createWorkspace,
-    closeWorkspace,
+    requestCloseWorkspace,
     switchWorkspace,
-    createWorktreeWorkspace,
     toggleNotificationPanel,
     jumpToUnread,
     toggleSettings,
-    worktreeLayout,
   ]);
 
   const closeCommandPalette = useCallback(
     () => setShowCommandPalette(false),
     [],
   );
-
-  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 
   const commands: CommandEntry[] = useMemo(
     () => [
@@ -442,7 +507,7 @@ export default function App() {
         action: () => {
           const state = useWorkspaceStore.getState();
           if (state.workspaceOrder.length > 1) {
-            closeWorkspace(state.activeWorkspaceId);
+            requestCloseWorkspace(state.activeWorkspaceId);
           }
         },
       },
@@ -480,31 +545,13 @@ export default function App() {
         id: "find-in-terminal",
         label: "Find in Terminal",
         shortcut: "Ctrl+F",
-        action: () => {
-          // Dispatch Ctrl+F to the focused terminal pane
-          window.dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key: "f",
-              ctrlKey: true,
-              bubbles: true,
-            }),
-          );
-        },
+        action: () => dispatchFocusedPaneAction("find"),
       },
       {
         id: "copy-selection",
         label: "Copy Selection",
         shortcut: "Ctrl+Shift+C",
-        action: () => {
-          window.dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key: "C",
-              ctrlKey: true,
-              shiftKey: true,
-              bubbles: true,
-            }),
-          );
-        },
+        action: () => dispatchFocusedPaneAction("copy"),
       },
       {
         id: "notifications",
@@ -605,11 +652,10 @@ export default function App() {
     ],
     [
       createWorkspace,
-      createWorktreeWorkspace,
-      closeWorkspace,
-      renameWorkspace,
+      requestCloseWorkspace,
       splitPane,
       closePane,
+      dispatchFocusedPaneAction,
       toggleNotificationPanel,
       jumpToUnread,
       markWorkspaceRead,
@@ -617,7 +663,6 @@ export default function App() {
       toggleSettings,
       switchWorkspace,
       moveFocus,
-      worktreeLayout,
     ],
   );
 
