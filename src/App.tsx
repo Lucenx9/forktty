@@ -238,6 +238,9 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Don't fire shortcuts when a modal overlay is open
+      if (document.querySelector(".modal-overlay")) return;
+
       // NOTE: These shortcuts override terminal keys (Ctrl+D = EOF, Ctrl+W = delete word,
       // Ctrl+N = next history). This matches SPEC.md. Users can still exit shells via `exit`.
 

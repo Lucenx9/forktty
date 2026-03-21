@@ -19,14 +19,15 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  // Only handle Escape at document level. Enter is handled by the autoFocus button's
+  // native click-on-Enter behavior, avoiding double-trigger when both fire.
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") onCancel();
-      if (e.key === "Enter") onConfirm();
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [onConfirm, onCancel]);
+  }, [onCancel]);
 
   return (
     <div className="modal-overlay" onClick={onCancel}>

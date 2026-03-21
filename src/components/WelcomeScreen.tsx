@@ -1,8 +1,18 @@
+import { useEffect } from "react";
+
 interface WelcomeScreenProps {
   onDismiss: () => void;
 }
 
 export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onDismiss();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onDismiss]);
+
   return (
     <div className="welcome-overlay" onClick={onDismiss}>
       <div className="welcome-dialog" onClick={(e) => e.stopPropagation()}>

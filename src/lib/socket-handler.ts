@@ -365,7 +365,10 @@ export async function handleSocketRequest(
       }
       case "worktree.create": {
         const name = params.name as string;
-        const layout = (params.layout as string) || undefined;
+        const layout =
+          (params.layout as string) ||
+          config?.general.worktree_layout ||
+          undefined;
         try {
           const info = await worktreeCreate(name, layout);
           const wsId = state.createWorktreeWorkspace(
