@@ -13,18 +13,84 @@ import {
 } from "./pty-bridge";
 import { readScreen } from "./terminal-registry";
 
-/** Resolve a workspace ID from an optional name. Falls back to activeWorkspaceId. */
-function resolveWorkspaceId(
-  state: ReturnType<typeof useWorkspaceStore.getState>,
-  workspaceName: string | undefined | null,
+type WorkspaceStoreState = ReturnType<typeof useWorkspaceStore.getState>;
+
+interface WorkspaceSelector {
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  worktreeName?: string | null;
+  fallbackActive?: boolean;
+}
+
+function getStringParam(
+  params: Record<string, unknown>,
+  ...keys: string[]
 ): string | null {
-  if (workspaceName && typeof workspaceName === "string") {
-    const target = state.workspaceOrder.find(
+  for (const key of keys) {
+    const value = params[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/** Resolve a workspace selector, preferring stable IDs over renameable labels. */
+function resolveWorkspaceId(
+  state: WorkspaceStoreState,
+  {
+    workspaceId,
+    workspaceName,
+    worktreeName,
+    fallbackActive = false,
+  }: WorkspaceSelector,
+): { workspaceId: string | null; error?: string } {
+  if (workspaceId) {
+    if (state.workspaces[workspaceId]) {
+      return { workspaceId };
+    }
+    return { workspaceId: null, error: `Workspace "${workspaceId}" not found` };
+  }
+
+  if (worktreeName) {
+    const matches = state.workspaceOrder.filter(
+      (wsId) => state.workspaces[wsId]?.worktreeName === worktreeName,
+    );
+    if (matches.length === 1) {
+      return { workspaceId: matches[0]! };
+    }
+    if (matches.length > 1) {
+      return {
+        workspaceId: null,
+        error: `Worktree "${worktreeName}" is ambiguous`,
+      };
+    }
+  }
+
+  if (workspaceName) {
+    const matches = state.workspaceOrder.filter(
       (wsId) => state.workspaces[wsId]?.name === workspaceName,
     );
-    return target ?? null;
+    if (matches.length === 1) {
+      return { workspaceId: matches[0]! };
+    }
+    if (matches.length > 1) {
+      return {
+        workspaceId: null,
+        error: `Workspace name "${workspaceName}" is ambiguous`,
+      };
+    }
+    return {
+      workspaceId: null,
+      error: `Workspace "${workspaceName}" not found`,
+    };
   }
-  return state.activeWorkspaceId;
+
+  if (fallbackActive) {
+    return { workspaceId: state.activeWorkspaceId };
+  }
+
+  return { workspaceId: null, error: "Workspace not found" };
 }
 
 function getWorkspacePtyId(workspaceId: string): number | null {
@@ -137,28 +203,30 @@ export async function handleSocketRequest(
         break;
       }
       case "workspace.select": {
-        const name = params.name as string;
-        const target = state.workspaceOrder.find(
-          (wsId) => state.workspaces[wsId]?.name === name,
-        );
-        if (target) {
-          state.switchWorkspace(target);
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "id", "workspaceId"),
+          workspaceName: getStringParam(params, "name"),
+          worktreeName: getStringParam(params, "worktreeName", "worktree_name"),
+        });
+        if (target.workspaceId) {
+          state.switchWorkspace(target.workspaceId);
           result = { result: true };
         } else {
-          result = { error: `Workspace "${name}" not found` };
+          result = { error: target.error ?? "Workspace not found" };
         }
         break;
       }
       case "workspace.close": {
-        const name = params.name as string;
-        const target = state.workspaceOrder.find(
-          (wsId) => state.workspaces[wsId]?.name === name,
-        );
-        if (target) {
-          state.closeWorkspace(target);
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "id", "workspaceId"),
+          workspaceName: getStringParam(params, "name"),
+          worktreeName: getStringParam(params, "worktreeName", "worktree_name"),
+        });
+        if (target.workspaceId) {
+          state.closeWorkspace(target.workspaceId);
           result = { result: true };
         } else {
-          result = { error: `Workspace "${name}" not found` };
+          result = { error: target.error ?? "Workspace not found" };
         }
         break;
       }
@@ -263,15 +331,16 @@ export async function handleSocketRequest(
         break;
       }
       case "metadata.set_status": {
-        const wsId = resolveWorkspaceId(
-          state,
-          params.workspace_name as string | undefined,
-        );
-        if (!wsId) {
-          result = { error: "Workspace not found" };
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          fallbackActive: true,
+        });
+        if (!target.workspaceId) {
+          result = { error: target.error ?? "Workspace not found" };
           break;
         }
-        useMetadataStore.getState().setStatus(wsId, {
+        useMetadataStore.getState().setStatus(target.workspaceId, {
           key: params.key as string,
           label: params.label as string,
           value: params.value as string,
@@ -281,42 +350,50 @@ export async function handleSocketRequest(
         break;
       }
       case "metadata.list_status": {
-        const wsId = resolveWorkspaceId(
-          state,
-          params.workspace_name as string | undefined,
-        );
-        if (!wsId) {
-          result = { error: "Workspace not found" };
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          fallbackActive: true,
+        });
+        if (!target.workspaceId) {
+          result = { error: target.error ?? "Workspace not found" };
           break;
         }
-        result = { result: useMetadataStore.getState().listStatus(wsId) };
+        result = {
+          result: useMetadataStore.getState().listStatus(target.workspaceId),
+        };
         break;
       }
       case "metadata.clear_status": {
-        const wsId = resolveWorkspaceId(
-          state,
-          params.workspace_name as string | undefined,
-        );
-        if (!wsId) {
-          result = { error: "Workspace not found" };
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          fallbackActive: true,
+        });
+        if (!target.workspaceId) {
+          result = { error: target.error ?? "Workspace not found" };
           break;
         }
         useMetadataStore
           .getState()
-          .clearStatus(wsId, (params.key as string | undefined) ?? undefined);
+          .clearStatus(
+            target.workspaceId,
+            (params.key as string | undefined) ?? undefined,
+          );
         result = { result: true };
         break;
       }
       case "metadata.set_progress": {
-        const wsId = resolveWorkspaceId(
-          state,
-          params.workspace_name as string | undefined,
-        );
-        if (!wsId) {
-          result = { error: "Workspace not found" };
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          fallbackActive: true,
+        });
+        if (!target.workspaceId) {
+          result = { error: target.error ?? "Workspace not found" };
           break;
         }
-        useMetadataStore.getState().setProgress(wsId, {
+        useMetadataStore.getState().setProgress(target.workspaceId, {
           key: params.key as string,
           label: params.label as string,
           value: params.value as number,
@@ -326,30 +403,35 @@ export async function handleSocketRequest(
         break;
       }
       case "metadata.clear_progress": {
-        const wsId = resolveWorkspaceId(
-          state,
-          params.workspace_name as string | undefined,
-        );
-        if (!wsId) {
-          result = { error: "Workspace not found" };
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          fallbackActive: true,
+        });
+        if (!target.workspaceId) {
+          result = { error: target.error ?? "Workspace not found" };
           break;
         }
         useMetadataStore
           .getState()
-          .clearProgress(wsId, (params.key as string | undefined) ?? undefined);
+          .clearProgress(
+            target.workspaceId,
+            (params.key as string | undefined) ?? undefined,
+          );
         result = { result: true };
         break;
       }
       case "metadata.log": {
-        const wsId = resolveWorkspaceId(
-          state,
-          params.workspace_name as string | undefined,
-        );
-        if (!wsId) {
-          result = { error: "Workspace not found" };
+        const target = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          fallbackActive: true,
+        });
+        if (!target.workspaceId) {
+          result = { error: target.error ?? "Workspace not found" };
           break;
         }
-        useMetadataStore.getState().appendLog(wsId, {
+        useMetadataStore.getState().appendLog(target.workspaceId, {
           level: ((params.level as string) || "info") as
             | "info"
             | "warn"

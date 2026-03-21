@@ -474,6 +474,7 @@ const TerminalPane = memo(function TerminalPane({
       function fireNotification(wsId: string, title: string, body: string) {
         const state = useWorkspaceStore.getState();
         const config = useConfigStore.getState().config;
+        const workspace = state.workspaces[wsId];
         const notificationCommand =
           config?.general.notification_command.trim() ?? "";
         const dedupeKey = `${wsId}:${title}:${body}`;
@@ -487,7 +488,12 @@ const TerminalPane = memo(function TerminalPane({
         pruneNotificationMap();
 
         state.addNotification(wsId, title, body);
-        state.setSurfaceUnread(paneId, true);
+        if (
+          wsId !== state.activeWorkspaceId ||
+          workspace?.focusedPaneId !== paneId
+        ) {
+          state.setSurfaceUnread(paneId, true);
+        }
         if (config?.notifications.desktop ?? true) {
           sendDesktopNotification(title, body).catch(logError);
         }

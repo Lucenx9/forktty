@@ -274,8 +274,13 @@ async fn dispatch(
             }
 
             crate::worktree::remove(&cwd, name, true).map_err(|e| e.to_string())?;
-            let _ =
-                bridge_to_frontend(app, pending, "workspace.close", json!({ "name": name })).await;
+            let _ = bridge_to_frontend(
+                app,
+                pending,
+                "workspace.close",
+                json!({ "worktreeName": name }),
+            )
+            .await;
 
             Ok(json!(format!("Removed '{name}'")))
         }

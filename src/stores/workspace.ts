@@ -221,12 +221,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   closeWorkspace: (id) => {
-    const { workspaces, workspaceOrder, activeWorkspaceId } = get();
+    const { workspaces, workspaceOrder, activeWorkspaceId, notifications } =
+      get();
     if (workspaceOrder.length <= 1) return; // Can't close last workspace
 
     const newWorkspaces = { ...workspaces };
     delete newWorkspaces[id];
     const newOrder = workspaceOrder.filter((wId) => wId !== id);
+    const newNotifications = notifications.filter((n) => n.workspaceId !== id);
 
     let newActiveId = activeWorkspaceId;
     if (activeWorkspaceId === id) {
@@ -239,6 +241,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       workspaces: newWorkspaces,
       workspaceOrder: newOrder,
       activeWorkspaceId: newActiveId,
+      notifications: newNotifications,
     });
 
     // Clean up ephemeral metadata for the closed workspace
@@ -515,6 +518,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       get();
     const ws = workspaces[workspaceId];
     if (!ws) return;
+    const isActiveWorkspace = workspaceId === activeWorkspaceId;
 
     const notification: AppNotification = {
       id: crypto.randomUUID(),
@@ -523,14 +527,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       title,
       body,
       timestamp: Date.now(),
-      read: false,
+      read: isActiveWorkspace,
     };
 
     const previewText = body || title;
 
     // Auto-reorder: move workspace to top if not active
     let newOrder = workspaceOrder;
-    if (workspaceId !== activeWorkspaceId) {
+    if (!isActiveWorkspace) {
       const idx = workspaceOrder.indexOf(workspaceId);
       if (idx > 0) {
         newOrder = [
@@ -547,8 +551,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ...workspaces,
         [workspaceId]: {
           ...ws,
-          unreadCount: ws.unreadCount + 1,
-          lastNotificationText: previewText,
+          unreadCount: isActiveWorkspace ? ws.unreadCount : ws.unreadCount + 1,
+          lastNotificationText: isActiveWorkspace
+            ? ws.lastNotificationText
+            : previewText,
         },
       },
     });
