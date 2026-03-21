@@ -665,13 +665,19 @@ export default function App() {
   );
 
   const sidebarPanel = (
-    <Panel id="sidebar" defaultSize="15" minSize="8" maxSize="30">
+    <Panel
+      id="sidebar"
+      defaultSize="280px"
+      minSize="220px"
+      maxSize="420px"
+      groupResizeBehavior="preserve-pixel-size"
+    >
       <Sidebar />
     </Panel>
   );
 
   const mainPanel = (
-    <Panel id="main" defaultSize="85">
+    <Panel id="main">
       <div className="workspace-container">
         {workspaceOrder.map((id) => (
           <div
