@@ -61,6 +61,7 @@ class LazyErrorBoundary extends Component<
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  if (target.classList.contains("xterm-helper-textarea")) return false;
   const tagName = target.tagName;
   return (
     target.isContentEditable ||
