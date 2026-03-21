@@ -518,7 +518,10 @@ mod tests {
     fn worktree_path_nested_layout() {
         let repo = Path::new("/home/user/myrepo");
         let result = worktree_path(repo, "feature-x", "nested").unwrap();
-        assert_eq!(result, PathBuf::from("/home/user/myrepo/.worktrees/feature-x"));
+        assert_eq!(
+            result,
+            PathBuf::from("/home/user/myrepo/.worktrees/feature-x")
+        );
     }
 
     #[test]
@@ -560,6 +563,9 @@ mod tests {
         // Any unrecognized layout falls through to the default "nested" case
         let repo = Path::new("/home/user/myrepo");
         let result = worktree_path(repo, "feature-x", "unknown-layout").unwrap();
-        assert_eq!(result, PathBuf::from("/home/user/myrepo/.worktrees/feature-x"));
+        assert_eq!(
+            result,
+            PathBuf::from("/home/user/myrepo/.worktrees/feature-x")
+        );
     }
 }

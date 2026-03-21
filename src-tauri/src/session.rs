@@ -173,7 +173,9 @@ mod tests {
             let entry = entry.unwrap();
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if name_str.starts_with("forktty-") && name_str.ends_with(".log") && *name_str < *cutoff_str
+            if name_str.starts_with("forktty-")
+                && name_str.ends_with(".log")
+                && *name_str < *cutoff_str
             {
                 let _ = fs::remove_file(entry.path());
             }
@@ -225,13 +227,14 @@ mod tests {
 
     #[test]
     fn prune_does_not_delete_non_matching_files() {
-        let tmp = std::env::temp_dir().join(format!("forktty-prune-nomatch-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("forktty-prune-nomatch-{}", std::process::id()));
         fs::create_dir_all(&tmp).unwrap();
 
         let files = [
             "other.txt",
-            "forktty.log",           // missing date
-            "forktty-abc.log",       // non-date pattern
+            "forktty.log",     // missing date
+            "forktty-abc.log", // non-date pattern
             "readme.md",
         ];
         for name in &files {
