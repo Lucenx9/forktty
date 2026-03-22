@@ -68,6 +68,8 @@ fn pty_spawn(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
+    let pty_manager_for_reader = state.pty_manager.clone();
+
     let (id, reader) = {
         let mut mgr = state
             .pty_manager
@@ -78,21 +80,28 @@ fn pty_spawn(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        read_pty_output(reader, on_output);
+        read_pty_output(id, reader, on_output, pty_manager_for_reader);
     });
 
     Ok(id)
 }
 
-fn read_pty_output(mut reader: Box<dyn Read + Send>, channel: Channel<PtyEvent>) {
+fn read_pty_output(
+    id: u32,
+    mut reader: Box<dyn Read + Send>,
+    channel: Channel<PtyEvent>,
+    pty_manager: Arc<Mutex<PtyManager>>,
+) {
     let mut buf = [0u8; 4096];
     let engine = base64::engine::general_purpose::STANDARD;
     let mut scanner = OutputScanner::new();
+    let mut should_reap = false;
 
     loop {
         match reader.read(&mut buf) {
             Ok(0) => {
                 let _ = channel.send(PtyEvent::Eof);
+                should_reap = true;
                 break;
             }
             Ok(n) => {
@@ -116,12 +125,19 @@ fn read_pty_output(mut reader: Box<dyn Read + Send>, channel: Channel<PtyEvent>)
             Err(e) if e.raw_os_error() == Some(libc::EIO) => {
                 // EIO is normal on Linux when child exits — treat as EOF
                 let _ = channel.send(PtyEvent::Eof);
+                should_reap = true;
                 break;
             }
             Err(e) => {
                 let _ = channel.send(PtyEvent::Error(e.to_string()));
                 break;
             }
+        }
+    }
+
+    if should_reap {
+        if let Ok(mut mgr) = pty_manager.lock() {
+            mgr.reap(id);
         }
     }
 }

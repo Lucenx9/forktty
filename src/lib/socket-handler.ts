@@ -1,4 +1,7 @@
-import { useWorkspaceStore } from "../stores/workspace";
+import {
+  useWorkspaceStore,
+  closeWorkspaceEnsuringOneRemains,
+} from "../stores/workspace";
 import { useMetadataStore } from "../stores/metadata";
 import { useConfigStore } from "../stores/config";
 import {
@@ -223,7 +226,16 @@ export async function handleSocketRequest(
           worktreeName: getStringParam(params, "worktreeName", "worktree_name"),
         });
         if (target.workspaceId) {
-          state.closeWorkspace(target.workspaceId);
+          const latestState = useWorkspaceStore.getState();
+          const targetWorkspace = latestState.workspaces[target.workspaceId];
+          if (
+            latestState.workspaceOrder.length <= 1 &&
+            targetWorkspace?.worktreeName
+          ) {
+            closeWorkspaceEnsuringOneRemains(target.workspaceId);
+          } else {
+            latestState.closeWorkspace(target.workspaceId);
+          }
           result = { result: true };
         } else {
           result = { error: target.error ?? "Workspace not found" };
@@ -290,12 +302,17 @@ export async function handleSocketRequest(
       }
       case "surface.read_screen": {
         const surfaceId = params.surface_id as string | undefined;
-        const content = readScreen(surfaceId ?? undefined);
+        const activeSurfaceId =
+          state.workspaces[state.activeWorkspaceId]?.focusedPaneId ?? null;
+        const targetSurfaceId = surfaceId ?? activeSurfaceId;
+        const content = readScreen(targetSurfaceId);
         if (content === null) {
           result = {
             error: surfaceId
               ? `Surface "${surfaceId}" not found`
-              : "No terminals available",
+              : activeSurfaceId
+                ? `Surface "${activeSurfaceId}" not found`
+                : "No terminals available",
           };
         } else {
           result = { result: content };
@@ -482,10 +499,11 @@ export async function handleSocketRequest(
         try {
           await worktreeRemove(name);
           // Close the workspace associated with this worktree
-          const target = state.workspaceOrder.find(
-            (wsId) => state.workspaces[wsId]?.worktreeName === name,
+          const latestState = useWorkspaceStore.getState();
+          const target = latestState.workspaceOrder.find(
+            (wsId) => latestState.workspaces[wsId]?.worktreeName === name,
           );
-          if (target) state.closeWorkspace(target);
+          if (target) closeWorkspaceEnsuringOneRemains(target);
           result = { result: true };
         } catch (err) {
           result = { error: String(err) };

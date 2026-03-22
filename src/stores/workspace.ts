@@ -715,4 +715,15 @@ export function getLastWorkspaceSwitchTime(): number {
   return lastWorkspaceSwitchTime;
 }
 
+export function closeWorkspaceEnsuringOneRemains(id: string): void {
+  const state = useWorkspaceStore.getState();
+  if (!state.workspaces[id]) return;
+
+  if (state.workspaceOrder.length <= 1) {
+    state.createWorkspace();
+  }
+
+  useWorkspaceStore.getState().closeWorkspace(id);
+}
+
 export type { WorkspaceState, AppNotification };

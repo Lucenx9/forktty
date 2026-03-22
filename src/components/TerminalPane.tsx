@@ -260,7 +260,6 @@ const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const ptyIdRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
@@ -390,13 +389,13 @@ const TerminalPane = memo(function TerminalPane({
     let term: Terminal;
     let wrapper: HTMLDivElement;
     let isNewInstance: boolean;
+    const runtime = saved?.runtime ?? { ptyId: null };
 
     if (saved) {
       // Re-adopt: reuse existing terminal, wrapper, PTY — no spawn needed
       term = saved.terminal;
       wrapper = saved.wrapper;
       termRef.current = term;
-      ptyIdRef.current = saved.ptyId;
       fitAddonRef.current = saved.fitAddon;
       canvasAddonRef.current = saved.canvasAddon;
       searchAddonRef.current = saved.searchAddon;
@@ -466,6 +465,7 @@ const TerminalPane = memo(function TerminalPane({
 
     // Spawn PTY only for new instances (re-adopted instances keep their PTY)
     let disposed = false;
+    let hasExited = false;
 
     if (isNewInstance) {
       // Debounce notifications: at most one per 5 seconds per pane
@@ -567,6 +567,9 @@ const TerminalPane = memo(function TerminalPane({
         },
         onExit: () => {
           if (!disposed) {
+            hasExited = true;
+            runtime.ptyId = null;
+            unregisterSurface(paneId);
             term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
           }
         },
@@ -577,11 +580,14 @@ const TerminalPane = memo(function TerminalPane({
       })
         .then((id) => {
           if (disposed) {
-            // React StrictMode double-mount: kill the orphaned PTY
+            // Pane was closed before spawn resolved; kill the orphaned PTY.
             killPty(id).catch(logError);
             return;
           }
-          ptyIdRef.current = id;
+          if (hasExited) {
+            return;
+          }
+          runtime.ptyId = id;
           registerSurface(paneId, id);
 
           // Send initial resize based on actual terminal dimensions
@@ -596,7 +602,7 @@ const TerminalPane = memo(function TerminalPane({
 
     // Wire keyboard input to PTY
     const dataDisposable = term.onData((data) => {
-      const id = ptyIdRef.current;
+      const id = runtime.ptyId;
       if (id !== null) {
         writePty(id, data).catch(logError);
       }
@@ -624,7 +630,7 @@ const TerminalPane = memo(function TerminalPane({
       if (resizeTimeout !== null) clearTimeout(resizeTimeout);
       resizeTimeout = window.setTimeout(() => {
         resizeTimeout = null;
-        const id = ptyIdRef.current;
+        const id = runtime.ptyId;
         if (id !== null) {
           resizePty(id, cols, rows).catch(logError);
         }
@@ -655,7 +661,7 @@ const TerminalPane = memo(function TerminalPane({
         saveInstance(paneId, {
           terminal: term,
           wrapper,
-          ptyId: ptyIdRef.current,
+          runtime,
           fitAddon: fitAddonRef.current!,
           canvasAddon: canvasAddonRef.current,
           searchAddon: searchAddonRef.current!,
@@ -667,10 +673,10 @@ const TerminalPane = memo(function TerminalPane({
         canvasAddonRef.current = null;
         term.dispose();
 
-        const id = ptyIdRef.current;
+        const id = runtime.ptyId;
+        runtime.ptyId = null;
         if (id !== null) {
           killPty(id).catch(logError);
-          ptyIdRef.current = null;
         }
         unregisterSurface(paneId);
       }

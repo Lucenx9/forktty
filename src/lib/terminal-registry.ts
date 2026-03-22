@@ -15,10 +15,10 @@ export function unregisterTerminal(paneId: string): void {
   terminalMap.delete(paneId);
 }
 
-export function readScreen(paneId?: string): string | null {
-  const terminal = paneId
-    ? terminalMap.get(paneId)
-    : terminalMap.values().next().value;
+export function readScreen(paneId?: string | null): string | null {
+  if (!paneId) return null;
+
+  const terminal = terminalMap.get(paneId);
   if (!terminal) return null;
 
   const buffer = terminal.buffer.active;
@@ -39,10 +39,14 @@ export function readScreen(paneId?: string): string | null {
 
 // --- Saved terminal instances (survive React unmount during swap/split) ---
 
+export interface SavedTerminalRuntime {
+  ptyId: number | null;
+}
+
 export interface SavedTerminalInstance {
   terminal: Terminal;
   wrapper: HTMLDivElement;
-  ptyId: number | null;
+  runtime: SavedTerminalRuntime;
   fitAddon: FitAddon;
   canvasAddon: CanvasAddon | null;
   searchAddon: SearchAddon;

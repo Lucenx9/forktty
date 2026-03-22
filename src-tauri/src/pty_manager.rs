@@ -155,6 +155,15 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Reap a PTY after the child exits and remove it from the manager.
+    pub fn reap(&mut self, id: u32) {
+        if let Some(handle) = self.ptys.remove(&id) {
+            if let Ok(mut child) = handle.child.lock() {
+                let _ = child.wait();
+            }
+        }
+    }
+
     /// Kill and reap all PTY processes (used on shutdown).
     pub fn kill_all(&mut self) {
         for (_id, handle) in self.ptys.drain() {

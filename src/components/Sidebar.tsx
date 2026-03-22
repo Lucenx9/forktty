@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useWorkspaceStore, getLastActivity } from "../stores/workspace";
+import {
+  useWorkspaceStore,
+  getLastActivity,
+  closeWorkspaceEnsuringOneRemains,
+} from "../stores/workspace";
 import { useConfigStore } from "../stores/config";
 import type { Workspace } from "../stores/workspace";
 import {
@@ -330,7 +334,7 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
             onConfirm={() => {
               setPendingRemoveWorktree(false);
               worktreeRemove(ws.worktreeName)
-                .then(() => closeWorkspace(menu.workspaceId))
+                .then(() => closeWorkspaceEnsuringOneRemains(menu.workspaceId))
                 .catch((err) => showToast(`Remove failed: ${err}`, "error"));
               onClose();
             }}
@@ -600,7 +604,7 @@ function WorkspaceEntry({
             onConfirm={() => {
               setPendingRemove(false);
               worktreeRemove(workspace.worktreeName)
-                .then(() => closeWorkspace(workspace.id))
+                .then(() => closeWorkspaceEnsuringOneRemains(workspace.id))
                 .catch((err) => showToast(`Remove failed: ${err}`, "error"));
             }}
             onCancel={() => setPendingRemove(false)}
