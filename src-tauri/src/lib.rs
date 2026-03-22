@@ -170,6 +170,15 @@ fn pty_kill(state: State<'_, AppState>, id: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn pty_get_cwd(state: State<'_, AppState>, id: u32) -> Result<String, String> {
+    let mgr = state
+        .pty_manager
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    mgr.cwd(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_git_branch(cwd: String) -> Result<String, String> {
     let repo = match git2::Repository::discover(&cwd) {
         Ok(r) => r,
@@ -432,6 +441,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            pty_get_cwd,
             get_git_branch,
             get_cwd,
             get_socket_path,

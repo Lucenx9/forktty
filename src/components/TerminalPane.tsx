@@ -28,6 +28,10 @@ import {
   getLastWorkspaceSwitchTime,
 } from "../stores/workspace";
 import { useConfigStore } from "../stores/config";
+import {
+  resolveWorkspaceSpawnCwd,
+  splitPaneWithInheritedCwd,
+} from "../lib/workspace-launch";
 import { Columns2, Rows2, Search, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
@@ -79,7 +83,6 @@ function PaneContextMenu({
   termRef: React.RefObject<Terminal | null>;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const splitPane = useWorkspaceStore((s) => s.splitPane);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -158,7 +161,7 @@ function PaneContextMenu({
       <button
         className="context-menu-item"
         onClick={() => {
-          splitPane(paneId, "horizontal");
+          splitPaneWithInheritedCwd(paneId, "horizontal").catch(logError);
           onClose();
         }}
       >
@@ -168,7 +171,7 @@ function PaneContextMenu({
       <button
         className="context-menu-item"
         onClick={() => {
-          splitPane(paneId, "vertical");
+          splitPaneWithInheritedCwd(paneId, "vertical").catch(logError);
           onClose();
         }}
       >
@@ -188,7 +191,6 @@ function PaneToolbar({
   isFocused: boolean;
   onToggleFind: () => void;
 }) {
-  const splitPane = useWorkspaceStore((s) => s.splitPane);
   const closePane = useWorkspaceStore((s) => s.closePane);
   const surfaceTitle = useWorkspaceStore((s) => {
     for (const ws of Object.values(s.workspaces)) {
@@ -217,7 +219,9 @@ function PaneToolbar({
       <div className="pane-toolbar-actions">
         <button
           className="pane-toolbar-btn"
-          onClick={() => splitPane(paneId, "horizontal")}
+          onClick={() =>
+            splitPaneWithInheritedCwd(paneId, "horizontal").catch(logError)
+          }
           title="Split Right (Ctrl+D)"
           aria-label="Split Right"
         >
@@ -225,7 +229,9 @@ function PaneToolbar({
         </button>
         <button
           className="pane-toolbar-btn"
-          onClick={() => splitPane(paneId, "vertical")}
+          onClick={() =>
+            splitPaneWithInheritedCwd(paneId, "vertical").catch(logError)
+          }
           title="Split Down (Ctrl+Shift+D)"
           aria-label="Split Down"
         >
@@ -552,33 +558,39 @@ const TerminalPane = memo(function TerminalPane({
         fireNotification(wsId, title, body);
       }
 
-      spawnPty({
-        onOutput: (data) => {
-          if (!disposed) {
-            term.write(data);
+      resolveWorkspaceSpawnCwd(workspaceId, cwd)
+        .then((spawnCwd) => {
+          if (disposed) return null;
 
-            // Throttled activity tracking (at most once per second)
-            const now = Date.now();
-            if (now - lastActivityCallRef.current > 1000) {
-              lastActivityCallRef.current = now;
-              updateSurfaceActivity(paneId);
-            }
-          }
-        },
-        onExit: () => {
-          if (!disposed) {
-            hasExited = true;
-            runtime.ptyId = null;
-            unregisterSurface(paneId);
-            term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
-          }
-        },
-        cwd: cwd || undefined,
-        workspaceId,
-        surfaceId: paneId,
-        onScanEvent: handleScanEvent,
-      })
+          return spawnPty({
+            onOutput: (data) => {
+              if (!disposed) {
+                term.write(data);
+
+                // Throttled activity tracking (at most once per second)
+                const now = Date.now();
+                if (now - lastActivityCallRef.current > 1000) {
+                  lastActivityCallRef.current = now;
+                  updateSurfaceActivity(paneId);
+                }
+              }
+            },
+            onExit: () => {
+              if (!disposed) {
+                hasExited = true;
+                runtime.ptyId = null;
+                unregisterSurface(paneId);
+                term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
+              }
+            },
+            cwd: spawnCwd || undefined,
+            workspaceId,
+            surfaceId: paneId,
+            onScanEvent: handleScanEvent,
+          });
+        })
         .then((id) => {
+          if (id === null) return;
           if (disposed) {
             // Pane was closed before spawn resolved; kill the orphaned PTY.
             killPty(id).catch(logError);
@@ -724,6 +736,12 @@ const TerminalPane = memo(function TerminalPane({
           e.preventDefault();
           e.stopPropagation();
           handleCopySelection();
+          return;
+        }
+        // Prevent Tab from navigating focus away from the terminal
+        // (WebKitGTK webview captures Tab for focus traversal by default)
+        if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          e.preventDefault();
         }
       }}
     >

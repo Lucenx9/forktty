@@ -88,7 +88,7 @@ interface WorkspaceState {
   showNotificationPanel: boolean;
 
   // Workspace actions
-  createWorkspace: (name?: string) => string;
+  createWorkspace: (name?: string, workingDir?: string) => string;
   createWorktreeWorkspace: (
     name: string,
     workingDir: string,
@@ -104,7 +104,11 @@ interface WorkspaceState {
   setWorktreeStatus: (id: string, status: string) => void;
 
   // Pane actions (scoped to active workspace)
-  splitPane: (paneId: string, direction: "horizontal" | "vertical") => void;
+  splitPane: (
+    paneId: string,
+    direction: "horizontal" | "vertical",
+    cwdOverride?: string,
+  ) => void;
   closePane: (paneId: string) => void;
   swapPanes: (idA: string, idB: string) => void;
   setFocusedPane: (paneId: string) => void;
@@ -147,10 +151,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   // --- Workspace actions ---
 
-  createWorkspace: (name?) => {
+  createWorkspace: (name?, workingDir?) => {
     const { workspaces, workspaceOrder } = get();
     const wsName = name ?? generateWorkspaceName(workspaces);
-    const ws = makeWorkspace(wsName);
+    const ws = makeWorkspace(wsName, {
+      workingDir: workingDir?.trim() ?? "",
+    });
 
     set({
       workspaces: { ...workspaces, [ws.id]: ws },
@@ -293,9 +299,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   // --- Pane actions (scoped to active workspace) ---
 
-  splitPane: (paneId, direction) => {
+  splitPane: (paneId, direction, cwdOverride) => {
     const { workspaces, activeWorkspaceId } = get();
-    const ws = workspaces[activeWorkspaceId];
+    const workspaceId =
+      findWorkspaceIdByPane(workspaces, paneId) ?? activeWorkspaceId;
+    const ws = workspaces[workspaceId];
     if (!ws) return;
 
     const existingLeaf = findLeaf(ws.root, paneId);
@@ -320,9 +328,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({
       workspaces: {
         ...workspaces,
-        [activeWorkspaceId]: {
+        [workspaceId]: {
           ...ws,
           root: newRoot,
+          workingDir: cwdOverride?.trim() || ws.workingDir,
           surfaces: {
             ...ws.surfaces,
             [newLeaf.surfaceId]: makeSurface(newLeaf.surfaceId),
@@ -717,10 +726,11 @@ export function getLastWorkspaceSwitchTime(): number {
 
 export function closeWorkspaceEnsuringOneRemains(id: string): void {
   const state = useWorkspaceStore.getState();
-  if (!state.workspaces[id]) return;
+  const workspace = state.workspaces[id];
+  if (!workspace) return;
 
   if (state.workspaceOrder.length <= 1) {
-    state.createWorkspace();
+    state.createWorkspace(undefined, workspace.workingDir);
   }
 
   useWorkspaceStore.getState().closeWorkspace(id);

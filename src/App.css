@@ -163,6 +163,7 @@ textarea {
   overflow: hidden;
   padding: 6px;
   box-sizing: border-box;
+  background: var(--theme-bg);
   contain: layout style paint;
 }
 
@@ -1748,12 +1749,14 @@ textarea {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 0 4px 4px;
+  padding: 0;
 }
 
 .terminal-pane-surface {
   position: relative;
   z-index: 1;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--theme-bg);
@@ -1761,7 +1764,12 @@ textarea {
   user-select: text;
 }
 
-.terminal-pane-surface .xterm,
+.terminal-pane-surface .xterm {
+  width: 100%;
+  height: 100%;
+  background: var(--theme-bg);
+}
+
 .terminal-pane-surface .xterm-screen,
 .terminal-pane-surface .xterm-viewport {
   background: var(--theme-bg);

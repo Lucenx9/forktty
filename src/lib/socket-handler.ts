@@ -14,6 +14,11 @@ import {
   worktreeRunHook,
   logError,
 } from "./pty-bridge";
+import {
+  createWorkspaceWithCwd,
+  createWorkspaceWithInheritedCwd,
+  splitPaneWithInheritedCwd,
+} from "./workspace-launch";
 import { readScreen } from "./terminal-registry";
 
 type WorkspaceStoreState = ReturnType<typeof useWorkspaceStore.getState>;
@@ -174,10 +179,11 @@ export async function handleSocketRequest(
           typeof params.worktreeDir === "string" ? params.worktreeDir : "";
         const worktreeName =
           typeof params.worktreeName === "string" ? params.worktreeName : "";
-        const workingDir =
-          typeof params.workingDir === "string"
+        const requestedWorkingDir =
+          typeof params.workingDir === "string" && params.workingDir.length > 0
             ? params.workingDir
-            : worktreeDir;
+            : undefined;
+        const workingDir = requestedWorkingDir ?? worktreeDir;
         const gitBranch =
           typeof params.gitBranch === "string" ? params.gitBranch : "";
         const isWorktree = worktreeDir.length > 0;
@@ -190,7 +196,12 @@ export async function handleSocketRequest(
               worktreeDir,
               worktreeName || name || "",
             )
-          : state.createWorkspace(name ?? undefined);
+          : requestedWorkingDir
+            ? await createWorkspaceWithCwd(
+                name ?? undefined,
+                requestedWorkingDir,
+              )
+            : await createWorkspaceWithInheritedCwd(name ?? undefined);
 
         const response: Record<string, unknown> = { id: wsId };
         if (prompt) {
@@ -262,7 +273,10 @@ export async function handleSocketRequest(
         if (ws) {
           const dir =
             (params.direction as string) === "down" ? "vertical" : "horizontal";
-          state.splitPane(ws.focusedPaneId, dir as "horizontal" | "vertical");
+          await splitPaneWithInheritedCwd(
+            ws.focusedPaneId,
+            dir as "horizontal" | "vertical",
+          );
           result = { result: true };
         } else {
           result = { error: "No active workspace" };
@@ -350,7 +364,11 @@ export async function handleSocketRequest(
       case "metadata.set_status": {
         const target = resolveWorkspaceId(state, {
           workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
-          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          workspaceName: getStringParam(
+            params,
+            "workspace_name",
+            "workspaceName",
+          ),
           fallbackActive: true,
         });
         if (!target.workspaceId) {
@@ -369,7 +387,11 @@ export async function handleSocketRequest(
       case "metadata.list_status": {
         const target = resolveWorkspaceId(state, {
           workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
-          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          workspaceName: getStringParam(
+            params,
+            "workspace_name",
+            "workspaceName",
+          ),
           fallbackActive: true,
         });
         if (!target.workspaceId) {
@@ -384,7 +406,11 @@ export async function handleSocketRequest(
       case "metadata.clear_status": {
         const target = resolveWorkspaceId(state, {
           workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
-          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          workspaceName: getStringParam(
+            params,
+            "workspace_name",
+            "workspaceName",
+          ),
           fallbackActive: true,
         });
         if (!target.workspaceId) {
@@ -403,7 +429,11 @@ export async function handleSocketRequest(
       case "metadata.set_progress": {
         const target = resolveWorkspaceId(state, {
           workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
-          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          workspaceName: getStringParam(
+            params,
+            "workspace_name",
+            "workspaceName",
+          ),
           fallbackActive: true,
         });
         if (!target.workspaceId) {
@@ -422,7 +452,11 @@ export async function handleSocketRequest(
       case "metadata.clear_progress": {
         const target = resolveWorkspaceId(state, {
           workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
-          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          workspaceName: getStringParam(
+            params,
+            "workspace_name",
+            "workspaceName",
+          ),
           fallbackActive: true,
         });
         if (!target.workspaceId) {
@@ -441,7 +475,11 @@ export async function handleSocketRequest(
       case "metadata.log": {
         const target = resolveWorkspaceId(state, {
           workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
-          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          workspaceName: getStringParam(
+            params,
+            "workspace_name",
+            "workspaceName",
+          ),
           fallbackActive: true,
         });
         if (!target.workspaceId) {

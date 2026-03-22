@@ -138,6 +138,13 @@ export function killPty(id: number): Promise<void> {
 }
 
 /**
+ * Get the current working directory of a PTY shell process.
+ */
+export function getPtyCwd(id: number): Promise<string> {
+  return invoke<string>("pty_get_cwd", { id });
+}
+
+/**
  * Get the current git branch for a directory.
  */
 export function getGitBranch(cwd: string): Promise<string> {

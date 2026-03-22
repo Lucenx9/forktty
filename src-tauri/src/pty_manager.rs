@@ -10,6 +10,8 @@ pub enum PtyError {
     Creation(String),
     #[error("PTY spawn failed: {0}")]
     Spawn(String),
+    #[error("PTY cwd lookup failed: {0}")]
+    Cwd(String),
     #[error("PTY not found: {0}")]
     NotFound(u32),
     #[error("PTY write failed: {0}")]
@@ -142,6 +144,32 @@ impl PtyManager {
             })
             .map_err(|e| PtyError::Resize(e.to_string()))?;
         Ok(())
+    }
+
+    /// Return the current working directory of the PTY's shell process.
+    pub fn cwd(&self, id: u32) -> Result<String, PtyError> {
+        let handle = self.ptys.get(&id).ok_or(PtyError::NotFound(id))?;
+        let child = handle.child.lock().map_err(|_| PtyError::LockPoisoned)?;
+        let pid = child
+            .process_id()
+            .ok_or_else(|| PtyError::Cwd("Child process has no PID".to_string()))?;
+        drop(child);
+
+        #[cfg(target_os = "linux")]
+        {
+            let path = std::fs::read_link(format!("/proc/{pid}/cwd"))
+                .map_err(|e| PtyError::Cwd(e.to_string()))?;
+            let cwd = path.to_string_lossy().to_string();
+            if cwd.starts_with("/tmp/.mount_") {
+                return std::env::var("HOME").map_err(|e| PtyError::Cwd(format!("No HOME: {e}")));
+            }
+            return Ok(cwd);
+        }
+
+        #[allow(unreachable_code)]
+        Err(PtyError::Cwd(
+            "PTY cwd lookup is only supported on Linux".to_string(),
+        ))
     }
 
     /// Kill a PTY process and remove it.

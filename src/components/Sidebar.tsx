@@ -15,6 +15,10 @@ import {
   worktreeStatus,
   logError,
 } from "../lib/pty-bridge";
+import {
+  createWorkspaceWithInheritedCwd,
+  splitPaneWithInheritedCwd,
+} from "../lib/workspace-launch";
 import { showToast } from "./ErrorToast";
 import { ConfirmModal } from "./InlineModal";
 import {
@@ -64,7 +68,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
-  const splitPane = useWorkspaceStore((s) => s.splitPane);
   const markWorkspaceRead = useWorkspaceStore((s) => s.markWorkspaceRead);
   const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
 
@@ -174,12 +177,12 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }
 
   function handleSplitRight() {
-    splitPane(ws!.focusedPaneId, "horizontal");
+    splitPaneWithInheritedCwd(ws!.focusedPaneId, "horizontal").catch(logError);
     onClose();
   }
 
   function handleSplitDown() {
-    splitPane(ws!.focusedPaneId, "vertical");
+    splitPaneWithInheritedCwd(ws!.focusedPaneId, "vertical").catch(logError);
     onClose();
   }
 
@@ -794,7 +797,6 @@ export default function Sidebar() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const setWorkspaceGitBranch = useWorkspaceStore(
     (s) => s.setWorkspaceGitBranch,
   );
@@ -858,16 +860,20 @@ export default function Sidebar() {
     const { workspaces: current } = useWorkspaceStore.getState();
     for (const id of workspaceOrder) {
       const ws = current[id];
-      if (ws && !ws.workingDir) {
-        getCwd()
-          .then((cwd) => {
+      if (!ws) continue;
+
+      const cwdPromise = ws.workingDir
+        ? Promise.resolve(ws.workingDir)
+        : getCwd().then((cwd) => {
             setWorkspaceWorkingDir(id, cwd);
-            return getGitBranch(cwd);
-          })
+            return cwd;
+          });
+
+      if (!ws.workingDir || !ws.gitBranch) {
+        cwdPromise
+          .then((cwd) => getGitBranch(cwd))
           .then((branch) => {
-            if (branch) {
-              setWorkspaceGitBranch(id, branch);
-            }
+            setWorkspaceGitBranch(id, branch);
           })
           .catch(logError);
       }
@@ -907,7 +913,6 @@ export default function Sidebar() {
     window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
   }
 
-  const splitPane = useWorkspaceStore((s) => s.splitPane);
   const toggleNotificationPanel = useWorkspaceStore(
     (s) => s.toggleNotificationPanel,
   );
@@ -918,13 +923,17 @@ export default function Sidebar() {
   function handleSplitRight() {
     const state = useWorkspaceStore.getState();
     const ws = state.workspaces[state.activeWorkspaceId];
-    if (ws) splitPane(ws.focusedPaneId, "horizontal");
+    if (ws) {
+      splitPaneWithInheritedCwd(ws.focusedPaneId, "horizontal").catch(logError);
+    }
   }
 
   function handleSplitDown() {
     const state = useWorkspaceStore.getState();
     const ws = state.workspaces[state.activeWorkspaceId];
-    if (ws) splitPane(ws.focusedPaneId, "vertical");
+    if (ws) {
+      splitPaneWithInheritedCwd(ws.focusedPaneId, "vertical").catch(logError);
+    }
   }
 
   return (
@@ -933,7 +942,7 @@ export default function Sidebar() {
         <div className="sidebar-header-icons">
           <button
             className="sidebar-icon-btn"
-            onClick={() => createWorkspace()}
+            onClick={() => createWorkspaceWithInheritedCwd().catch(logError)}
             title="New workspace (Ctrl+N)"
           >
             <Plus size={14} />

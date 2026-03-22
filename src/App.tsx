@@ -36,6 +36,10 @@ import {
   hasTauriRuntime,
 } from "./lib/pty-bridge";
 import { handleSocketRequest } from "./lib/socket-handler";
+import {
+  createWorkspaceWithInheritedCwd,
+  splitPaneWithInheritedCwd,
+} from "./lib/workspace-launch";
 import { buildSessionPayload } from "./lib/session-persistence";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -86,10 +90,8 @@ export default function App() {
   } | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
 
-  const splitPane = useWorkspaceStore((s) => s.splitPane);
   const closePane = useWorkspaceStore((s) => s.closePane);
   const moveFocus = useWorkspaceStore((s) => s.moveFocus);
-  const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
   const createWorktreeWorkspace = useWorkspaceStore(
@@ -115,6 +117,20 @@ export default function App() {
     (s) => s.config?.general.worktree_layout ?? "nested",
   );
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+
+  const handleCreateWorkspace = useCallback(() => {
+    createWorkspaceWithInheritedCwd().catch(logError);
+  }, []);
+
+  const handleSplitFocusedPane = useCallback(
+    (direction: "horizontal" | "vertical") => {
+      const state = useWorkspaceStore.getState();
+      const ws = state.workspaces[state.activeWorkspaceId];
+      if (!ws) return;
+      splitPaneWithInheritedCwd(ws.focusedPaneId, direction).catch(logError);
+    },
+    [],
+  );
 
   const requestCloseWorkspace = useCallback(
     (workspaceId: string) => {
@@ -380,25 +396,21 @@ export default function App() {
       // Ctrl+Shift+D: split down (vertical)
       if (e.ctrlKey && e.shiftKey && e.key === "D") {
         e.preventDefault();
-        const state = useWorkspaceStore.getState();
-        const ws = state.workspaces[state.activeWorkspaceId];
-        if (ws) splitPane(ws.focusedPaneId, "vertical");
+        handleSplitFocusedPane("vertical");
         return;
       }
 
       // Ctrl+N: new workspace
       if (e.ctrlKey && !e.shiftKey && e.key === "n") {
         e.preventDefault();
-        createWorkspace();
+        handleCreateWorkspace();
         return;
       }
 
       // Ctrl+D: split right (horizontal)
       if (e.ctrlKey && !e.shiftKey && e.key === "d") {
         e.preventDefault();
-        const state = useWorkspaceStore.getState();
-        const ws = state.workspaces[state.activeWorkspaceId];
-        if (ws) splitPane(ws.focusedPaneId, "horizontal");
+        handleSplitFocusedPane("horizontal");
         return;
       }
 
@@ -466,10 +478,10 @@ export default function App() {
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [
-    splitPane,
     closePane,
+    handleCreateWorkspace,
+    handleSplitFocusedPane,
     moveFocus,
-    createWorkspace,
     requestCloseWorkspace,
     switchWorkspace,
     toggleNotificationPanel,
@@ -488,7 +500,7 @@ export default function App() {
         id: "new-workspace",
         label: "New Workspace",
         shortcut: "Ctrl+N",
-        action: () => createWorkspace(),
+        action: handleCreateWorkspace,
       },
       {
         id: "new-worktree",
@@ -524,21 +536,13 @@ export default function App() {
         id: "split-right",
         label: "Split Right",
         shortcut: "Ctrl+D",
-        action: () => {
-          const state = useWorkspaceStore.getState();
-          const ws = state.workspaces[state.activeWorkspaceId];
-          if (ws) splitPane(ws.focusedPaneId, "horizontal");
-        },
+        action: () => handleSplitFocusedPane("horizontal"),
       },
       {
         id: "split-down",
         label: "Split Down",
         shortcut: "Ctrl+Shift+D",
-        action: () => {
-          const state = useWorkspaceStore.getState();
-          const ws = state.workspaces[state.activeWorkspaceId];
-          if (ws) splitPane(ws.focusedPaneId, "vertical");
-        },
+        action: () => handleSplitFocusedPane("vertical"),
       },
       {
         id: "close-pane",
@@ -660,9 +664,9 @@ export default function App() {
       },
     ],
     [
-      createWorkspace,
+      handleCreateWorkspace,
+      handleSplitFocusedPane,
       requestCloseWorkspace,
-      splitPane,
       closePane,
       dispatchFocusedPaneAction,
       toggleNotificationPanel,
