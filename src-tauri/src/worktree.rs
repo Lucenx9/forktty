@@ -19,6 +19,8 @@ pub enum WorktreeError {
     MergeConflicts,
     #[error("Already up to date")]
     UpToDate,
+    #[error("Current checkout has uncommitted changes or conflicts; commit, stash, or resolve them before merging")]
+    TargetDirty,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -196,11 +198,28 @@ pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), Wo
     Ok(())
 }
 
+fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+
+    let statuses = repo.statuses(Some(&mut opts))?;
+    if statuses
+        .iter()
+        .any(|entry| entry.status().is_conflicted() || !entry.status().is_empty())
+    {
+        return Err(WorktreeError::TargetDirty);
+    }
+
+    Ok(())
+}
+
 /// Merge a worktree's branch into the main checkout's current branch.
 pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError> {
     validate_worktree_name(branch_name)?;
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
+    ensure_clean_checkout(&repo)?;
 
     // Find the source branch
     let source_branch = repo
@@ -235,7 +254,9 @@ pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError
             &format!("Fast-forward merge of '{branch_name}'"),
         )?;
         repo.set_head(&head_ref_name)?;
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_head(Some(&mut checkout))?;
 
         return Ok(format!("Fast-forward merged '{branch_name}'"));
     }
@@ -270,7 +291,9 @@ pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError
         )?;
 
         // Update working tree to match the merge commit
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_head(Some(&mut checkout))?;
         repo.cleanup_state()?;
 
         return Ok(format!("Merged '{branch_name}' into HEAD"));
@@ -478,6 +501,54 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_repo(name: &str) -> (PathBuf, Repository, String) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_path = std::env::temp_dir().join(format!(
+            "forktty-worktree-test-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&repo_path).unwrap();
+
+        let repo = Repository::init(&repo_path).unwrap();
+        fs::write(repo_path.join("note.txt"), "base\n").unwrap();
+        commit_all(&repo, "initial");
+
+        let main_ref = {
+            let head = repo.head().unwrap();
+            let main_ref = head.name().unwrap().to_string();
+            let main_commit = head.peel_to_commit().unwrap();
+            repo.branch("feature", &main_commit, false).unwrap();
+            main_ref
+        };
+
+        (repo_path, repo, main_ref)
+    }
+
+    fn commit_all(repo: &Repository, message: &str) -> git2::Oid {
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+
+        let parents = match repo.head() {
+            Ok(head) => vec![head.peel_to_commit().unwrap()],
+            Err(_) => Vec::new(),
+        };
+        let parent_refs: Vec<&git2::Commit<'_>> = parents.iter().collect();
+
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs)
+            .unwrap()
+    }
 
     #[test]
     fn test_validate_worktree_name_valid() {
@@ -567,5 +638,29 @@ mod tests {
             result,
             PathBuf::from("/home/user/myrepo/.worktrees/feature-x")
         );
+    }
+
+    #[test]
+    fn merge_rejects_dirty_target_checkout() {
+        let (repo_path, repo, main_ref) = make_temp_repo("merge-dirty-target");
+
+        repo.set_head("refs/heads/feature").unwrap();
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.force();
+        repo.checkout_head(Some(&mut checkout)).unwrap();
+        fs::write(repo_path.join("note.txt"), "feature change\n").unwrap();
+        commit_all(&repo, "feature change");
+
+        repo.set_head(&main_ref).unwrap();
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.force();
+        repo.checkout_head(Some(&mut checkout)).unwrap();
+
+        fs::write(repo_path.join("note.txt"), "local dirty change\n").unwrap();
+
+        let result = merge(repo_path.to_str().unwrap(), "feature");
+        assert!(matches!(result, Err(WorktreeError::TargetDirty)));
+
+        let _ = fs::remove_dir_all(&repo_path);
     }
 }
