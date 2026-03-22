@@ -21,6 +21,8 @@ pub enum WorktreeError {
     UpToDate,
     #[error("Current checkout has uncommitted changes or conflicts; commit, stash, or resolve them before merging")]
     TargetDirty,
+    #[error("Worktree '{0}' has uncommitted changes or conflicts; commit, stash, or resolve them before removing")]
+    WorktreeDirty(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -177,6 +179,12 @@ pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), Wo
     // Get the worktree path before pruning
     let wt_path = wt.path().to_path_buf();
 
+    let wt_repo = Repository::open(&wt_path)
+        .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
+    if has_uncommitted_changes(&wt_repo)? {
+        return Err(WorktreeError::WorktreeDirty(name.to_string()));
+    }
+
     // Prune the worktree (removes git reference)
     let mut prune_opts = git2::WorktreePruneOptions::new();
     prune_opts.valid(true);
@@ -199,19 +207,22 @@ pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), Wo
 }
 
 fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {
+    if has_uncommitted_changes(repo)? {
+        return Err(WorktreeError::TargetDirty);
+    }
+
+    Ok(())
+}
+
+fn has_uncommitted_changes(repo: &Repository) -> Result<bool, WorktreeError> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true);
     opts.recurse_untracked_dirs(true);
 
     let statuses = repo.statuses(Some(&mut opts))?;
-    if statuses
+    Ok(statuses
         .iter()
-        .any(|entry| entry.status().is_conflicted() || !entry.status().is_empty())
-    {
-        return Err(WorktreeError::TargetDirty);
-    }
-
-    Ok(())
+        .any(|entry| entry.status().is_conflicted() || !entry.status().is_empty()))
 }
 
 /// Merge a worktree's branch into the main checkout's current branch.
@@ -660,6 +671,22 @@ mod tests {
 
         let result = merge(repo_path.to_str().unwrap(), "feature");
         assert!(matches!(result, Err(WorktreeError::TargetDirty)));
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn remove_rejects_dirty_worktree() {
+        let (repo_path, _repo, _main_ref) = make_temp_repo("remove-dirty-worktree");
+        let info = create(repo_path.to_str().unwrap(), "remove-guard", "nested").unwrap();
+
+        fs::write(Path::new(&info.path).join("note.txt"), "dirty change\n").unwrap();
+
+        let result = remove(repo_path.to_str().unwrap(), "remove-guard", true);
+        assert!(matches!(
+            result,
+            Err(WorktreeError::WorktreeDirty(name)) if name == "remove-guard"
+        ));
 
         let _ = fs::remove_dir_all(&repo_path);
     }
