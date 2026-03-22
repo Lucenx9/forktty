@@ -33,6 +33,7 @@ import {
   writeLog,
   logError,
   updateTrayTooltip,
+  hasTauriRuntime,
 } from "./lib/pty-bridge";
 import { handleSocketRequest } from "./lib/socket-handler";
 import { buildSessionPayload } from "./lib/session-persistence";
@@ -203,6 +204,11 @@ export default function App() {
 
   // Restore session on startup; show welcome if no session exists
   useEffect(() => {
+    if (!hasTauriRuntime()) {
+      setShowWelcome(true);
+      return;
+    }
+
     loadSession()
       .then((data) => {
         if (data && data.workspaces.length > 0) {
@@ -280,6 +286,7 @@ export default function App() {
   );
   useEffect(() => {
     document.title = totalUnread > 0 ? `ForkTTY (${totalUnread})` : "ForkTTY";
+    if (!hasTauriRuntime()) return;
     updateTrayTooltip(totalUnread).catch(logError);
   }, [totalUnread]);
 
@@ -289,6 +296,10 @@ export default function App() {
   // so the closure never goes stale. Do NOT add handleSocketRequest to deps
   // without wrapping it in useCallback first.
   useEffect(() => {
+    if (!hasTauriRuntime()) {
+      return;
+    }
+
     const unlisten = listen<{
       id: string;
       method: string;

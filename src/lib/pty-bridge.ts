@@ -46,6 +46,15 @@ type ScanEventData =
 
 type PtyEvent = PtyEventOutput | PtyEventEof | PtyEventError | PtyEventScan;
 
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: unknown;
+};
+
+export function hasTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return typeof (window as TauriWindow).__TAURI_INTERNALS__ !== "undefined";
+}
+
 /**
  * Spawn a new PTY and start streaming output.
  * Returns the PTY id. Calls onOutput with decoded binary data from the PTY.
@@ -61,6 +70,12 @@ export function spawnPty(opts: {
   surfaceId?: string;
   onScanEvent?: (event: ScanEventData) => void;
 }): Promise<number> {
+  if (!hasTauriRuntime()) {
+    return Promise.reject(
+      new Error("PTY spawn is only available inside the Tauri app"),
+    );
+  }
+
   const onOutputChannel = new Channel<PtyEvent>();
 
   onOutputChannel.onmessage = (event: PtyEvent) => {
