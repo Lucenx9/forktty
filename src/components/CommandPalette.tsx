@@ -90,7 +90,7 @@ export default function CommandPalette({
                 onClose();
                 cmd.action();
               }}
-              onMouseEnter={() => setSelectedIndex(i)}
+              onMouseMove={() => setSelectedIndex(i)}
             >
               <span className="command-palette-label">{cmd.label}</span>
               {cmd.shortcut && (

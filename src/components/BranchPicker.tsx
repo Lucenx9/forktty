@@ -199,7 +199,7 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
               <div
                 className={`branch-picker-item branch-picker-item-new ${selectedIndex === 0 ? "branch-picker-item-selected" : ""}`}
                 onClick={() => handleSelect(0)}
-                onMouseEnter={() => setSelectedIndex(0)}
+                onMouseMove={() => setSelectedIndex(0)}
               >
                 <span className="branch-picker-branch-name">
                   + New branch from HEAD...
@@ -220,7 +220,7 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
                     key={branch.name}
                     className={`branch-picker-item ${isSelected ? "branch-picker-item-selected" : ""} ${branch.is_head ? "branch-picker-item-active" : ""}`}
                     onClick={() => handleSelect(itemIndex)}
-                    onMouseEnter={() => setSelectedIndex(itemIndex)}
+                    onMouseMove={() => setSelectedIndex(itemIndex)}
                   >
                     <div>
                       <span className="branch-picker-branch-name">
