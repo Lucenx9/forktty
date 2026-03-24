@@ -55,6 +55,11 @@ export function hasTauriRuntime(): boolean {
   return typeof (window as TauriWindow).__TAURI_INTERNALS__ !== "undefined";
 }
 
+function browserFallbackCwd(): string {
+  if (typeof window === "undefined") return "/";
+  return window.location.pathname || "/";
+}
+
 /**
  * Spawn a new PTY and start streaming output.
  * Returns the PTY id. Calls onOutput with decoded binary data from the PTY.
@@ -148,6 +153,9 @@ export function getPtyCwd(id: number): Promise<string> {
  * Get the current git branch for a directory.
  */
 export function getGitBranch(cwd: string): Promise<string> {
+  if (!hasTauriRuntime()) {
+    return Promise.resolve("");
+  }
   return invoke<string>("get_git_branch", { cwd });
 }
 
@@ -155,6 +163,9 @@ export function getGitBranch(cwd: string): Promise<string> {
  * Get the app's current working directory.
  */
 export function getCwd(): Promise<string> {
+  if (!hasTauriRuntime()) {
+    return Promise.resolve(browserFallbackCwd());
+  }
   return invoke<string>("get_cwd");
 }
 
@@ -344,16 +355,31 @@ export interface SessionData {
 }
 
 export function saveSession(data: SessionData): Promise<void> {
+  if (!hasTauriRuntime()) {
+    return Promise.resolve();
+  }
   return invoke("save_session", { data });
 }
 
 export function loadSession(): Promise<SessionData | null> {
+  if (!hasTauriRuntime()) {
+    return Promise.resolve(null);
+  }
   return invoke<SessionData | null>("load_session");
 }
 
 // --- Logging ---
 
 export function writeLog(level: string, message: string): Promise<void> {
+  if (!hasTauriRuntime()) {
+    const prefix = `[ForkTTY/${level}]`;
+    if (level === "ERROR") {
+      console.error(prefix, message);
+    } else {
+      console.log(prefix, message);
+    }
+    return Promise.resolve();
+  }
   return invoke("write_log", { level, message });
 }
 

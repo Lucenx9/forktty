@@ -359,6 +359,46 @@ fn update_tray_tooltip(app: tauri::AppHandle, count: u32) -> Result<(), String> 
     Ok(())
 }
 
+const LOCALHOST_NO_PROXY_ENTRIES: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+
+fn append_no_proxy_hosts(existing: &str) -> String {
+    let mut values: Vec<String> = existing
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    for host in LOCALHOST_NO_PROXY_ENTRIES {
+        if !values.iter().any(|entry| entry.eq_ignore_ascii_case(host)) {
+            values.push(host.to_string());
+        }
+    }
+
+    values.join(",")
+}
+
+fn ensure_localhost_no_proxy_env() {
+    let proxy_vars = ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"];
+    if !proxy_vars.iter().any(|key| std::env::var_os(key).is_some()) {
+        return;
+    }
+
+    let current = std::env::var("no_proxy")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("NO_PROXY")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_default();
+
+    let updated = append_no_proxy_hosts(&current);
+    std::env::set_var("no_proxy", &updated);
+    std::env::set_var("NO_PROXY", &updated);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTK DMA-BUF renderer causes "Error 71 (Protocol error)" on Wayland.
@@ -369,17 +409,7 @@ pub fn run() {
 
     // WebKitGTK routes localhost through http_proxy, causing blank window in dev.
     // Ensure localhost is excluded from proxy.
-    if std::env::var_os("http_proxy").is_some() || std::env::var_os("https_proxy").is_some() {
-        let no_proxy = std::env::var("no_proxy").unwrap_or_default();
-        if !no_proxy.contains("localhost") {
-            let new_val = if no_proxy.is_empty() {
-                "localhost,127.0.0.1".to_string()
-            } else {
-                format!("{no_proxy},localhost,127.0.0.1")
-            };
-            std::env::set_var("no_proxy", &new_val);
-        }
-    }
+    ensure_localhost_no_proxy_env();
 
     let _ = session::prune_old_logs(30);
     let _ = session::write_log("INFO", "ForkTTY starting");
@@ -472,4 +502,25 @@ pub fn run() {
         std::env::var("FORKTTY_SOCKET_PATH").unwrap_or_else(|_| socket_api::default_socket_path());
     let _ = std::fs::remove_file(&socket_cleanup);
     let _ = session::write_log("INFO", "ForkTTY shutdown complete");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{append_no_proxy_hosts, LOCALHOST_NO_PROXY_ENTRIES};
+
+    #[test]
+    fn append_no_proxy_hosts_adds_local_entries_once() {
+        let updated = append_no_proxy_hosts("corp.local,localhost");
+
+        assert!(updated.contains("corp.local"));
+        for host in LOCALHOST_NO_PROXY_ENTRIES {
+            assert_eq!(updated.matches(host).count(), 1, "missing or duplicated {host}");
+        }
+    }
+
+    #[test]
+    fn append_no_proxy_hosts_trims_empty_entries() {
+        let updated = append_no_proxy_hosts(" ,127.0.0.1,, ");
+        assert_eq!(updated, "127.0.0.1,localhost,::1");
+    }
 }

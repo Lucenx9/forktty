@@ -66,7 +66,7 @@ sudo dnf install webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel librs
 git clone https://github.com/Lucenx9/forktty.git
 cd forktty
 npm install
-cargo tauri dev
+npm run tauri:dev
 ```
 
 > Requires [Rust 1.88+](https://rustup.rs/) and [Node.js 20+](https://nodejs.org/).
@@ -74,7 +74,7 @@ cargo tauri dev
 ### Install from release
 
 ```bash
-cargo tauri build
+npm run tauri:build
 sudo dpkg -i src-tauri/target/release/bundle/deb/forktty_*.deb
 # Or use the AppImage directly
 ```
@@ -170,7 +170,9 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and the full security
 ForkTTY is in active early development. Issues, feature requests, and PRs are welcome.
 
 ```bash
-cargo tauri dev                           # Dev mode
+npm run tauri:dev                         # Dev mode
+npm run tauri:build                       # Production build
+npm run tauri:info                        # Check Tauri environment
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
