@@ -46,8 +46,8 @@
 
   --focus-outline: rgba(137, 180, 250, 0.32);
   --focus-ring: rgba(137, 180, 250, 0.58);
-  --transition-fast: 0.15s ease;
-  --transition-med: 0.15s ease;
+  --transition-fast: 0.12s ease;
+  --transition-med: 0.22s ease;
   --shortcut-bar-height: 26px;
 
   --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
@@ -289,13 +289,19 @@ textarea {
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .sidebar-icon-btn:hover {
   background: var(--hover-bg);
   border-color: rgba(166, 173, 200, 0.1);
   color: var(--theme-fg);
+}
+
+.sidebar-icon-btn:active {
+  background: rgba(205, 214, 244, 0.12);
+  transform: scale(0.94);
 }
 
 .sidebar-icon-btn-worktree {
@@ -520,13 +526,19 @@ textarea {
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast),
-    border-color var(--transition-fast);
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .sidebar-action-btn:hover {
   background-color: var(--hover-bg);
   color: var(--theme-fg);
   border-color: rgba(166, 173, 200, 0.22);
+}
+
+.sidebar-action-btn:active {
+  background-color: rgba(205, 214, 244, 0.1);
+  transform: scale(0.97);
 }
 
 .sidebar-action-danger:hover {
@@ -951,6 +963,11 @@ textarea {
   opacity: 0.85;
 }
 
+.settings-save-btn:active:not(:disabled) {
+  opacity: 0.7;
+  transform: scale(0.97);
+}
+
 .settings-save-btn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -1152,7 +1169,7 @@ textarea {
 }
 
 .command-palette-input::placeholder {
-  color: rgba(166, 173, 200, 0.88);
+  color: rgba(166, 173, 200, 0.5);
 }
 
 .command-palette-list {
@@ -1318,7 +1335,7 @@ textarea {
 
 .toast-container {
   position: fixed;
-  bottom: 16px;
+  bottom: calc(var(--shortcut-bar-height) + 10px);
   right: 16px;
   z-index: 400;
   display: flex;
@@ -1456,6 +1473,11 @@ textarea {
 
 .modal-btn:hover {
   opacity: 0.85;
+}
+
+.modal-btn:active:not(:disabled) {
+  opacity: 0.7;
+  transform: scale(0.97);
 }
 
 .modal-btn:disabled {
@@ -1644,8 +1666,9 @@ textarea {
   border: 1px solid var(--theme-black);
   border-bottom-width: 2px;
   border-radius: var(--radius-xs);
-  padding: 0 4px;
+  padding: 1px 5px;
   font-size: 10px;
+  line-height: 1.3;
   color: var(--theme-bright-white);
 }
 
@@ -1699,7 +1722,7 @@ textarea {
 .pane-toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex: 0 0 auto;
   opacity: 0;
   transition: opacity var(--transition-fast);
@@ -1727,13 +1750,19 @@ textarea {
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .pane-toolbar-btn:hover {
   background: var(--hover-bg);
   border-color: rgba(166, 173, 200, 0.1);
   color: var(--theme-fg);
+}
+
+.pane-toolbar-btn:active {
+  background: rgba(205, 214, 244, 0.12);
+  transform: scale(0.92);
 }
 
 .pane-toolbar-btn-close:hover {
@@ -2037,6 +2066,18 @@ body.pane-dragging * {
   padding: 5px;
   font-family: var(--ui-font-stack);
   font-size: 12px;
+  animation: context-menu-in 0.1s ease-out;
+}
+
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .context-menu-header {
@@ -2112,7 +2153,7 @@ body.pane-dragging * {
 
 .sidebar-footer {
   padding: 10px 12px;
-  border-top: 1px solid rgba(166, 173, 200, 0.1);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .sidebar-help-wrapper {
@@ -2200,7 +2241,7 @@ body.pane-dragging * {
 }
 
 .branch-picker-input::placeholder {
-  color: rgba(166, 173, 200, 0.88);
+  color: rgba(166, 173, 200, 0.5);
 }
 
 .branch-picker-header {
@@ -2455,7 +2496,8 @@ body.pane-dragging * {
   .context-menu-item,
   .branch-picker,
   .branch-picker-item,
-  .branch-picker-confirm-btn {
+  .branch-picker-confirm-btn,
+  .modal-btn {
     animation: none !important;
     transition: none !important;
   }
