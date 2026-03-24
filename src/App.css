@@ -29,8 +29,8 @@
   --ui-font-stack:
     "Inter", "SF Pro Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono-font-stack:
-    "JetBrainsMono Nerd Font Mono", "JetBrains Mono", "Fira Code",
-    "Cascadia Code", ui-monospace, monospace;
+    "JetBrainsMono Nerd Font Mono", "JetBrains Mono", "Fira Code", "Cascadia Code",
+    ui-monospace, monospace;
 
   /* Surface hierarchy: sidebar (darkest) → pane area → terminal (theme-bg) */
   --surface-0: #181825;
@@ -373,11 +373,7 @@ textarea {
   padding: 14px 12px 12px;
   border-bottom: 1px solid rgba(166, 173, 200, 0.1);
   background:
-    linear-gradient(
-      180deg,
-      rgba(205, 214, 244, 0.035),
-      rgba(205, 214, 244, 0)
-    ),
+    linear-gradient(180deg, rgba(205, 214, 244, 0.035), rgba(205, 214, 244, 0)),
     var(--sidebar-bg);
 }
 
@@ -2283,9 +2279,7 @@ textarea {
 
 .terminal-pane-surface:hover::-webkit-scrollbar-track,
 .terminal-pane-surface .xterm-viewport:hover::-webkit-scrollbar-track,
-.terminal-pane-focused
-  .terminal-pane-surface
-  .xterm-viewport::-webkit-scrollbar-track {
+.terminal-pane-focused .terminal-pane-surface .xterm-viewport::-webkit-scrollbar-track {
   background: rgba(166, 173, 200, 0.04);
 }
 
@@ -2298,13 +2292,9 @@ textarea {
 }
 
 .terminal-pane:hover .terminal-pane-surface::-webkit-scrollbar-thumb,
-.terminal-pane:hover
-  .terminal-pane-surface
-  .xterm-viewport::-webkit-scrollbar-thumb,
+.terminal-pane:hover .terminal-pane-surface .xterm-viewport::-webkit-scrollbar-thumb,
 .terminal-pane-focused .terminal-pane-surface::-webkit-scrollbar-thumb,
-.terminal-pane-focused
-  .terminal-pane-surface
-  .xterm-viewport::-webkit-scrollbar-thumb {
+.terminal-pane-focused .terminal-pane-surface .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(166, 173, 200, 0.24);
 }
 

@@ -47,6 +47,7 @@ import {
   splitPaneWithInheritedCwd,
 } from "./lib/workspace-launch";
 import { buildSessionPayload } from "./lib/session-persistence";
+import { startReconciliation, stopReconciliation } from "./lib/terminal-registry";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
@@ -60,9 +61,7 @@ class LazyErrorBoundary extends Component<
     return { hasError: true };
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
-    logError(
-      `LazyErrorBoundary caught: ${error.message} ${info.componentStack}`,
-    );
+    logError(`LazyErrorBoundary caught: ${error.message} ${info.componentStack}`);
   }
   render() {
     if (this.state.hasError) return null;
@@ -88,6 +87,7 @@ const SIDEBAR_EXPANDED_DEFAULT_PX = 280;
 const SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
 
 export default function App() {
+  const [sessionHydrated, setSessionHydrated] = useState(() => !hasTauriRuntime());
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
   const [pendingCloseWs, setPendingCloseWs] = useState<{
@@ -102,9 +102,7 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
-    return (
-      window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "1"
-    );
+    return window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "1";
   });
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
 
@@ -112,17 +110,11 @@ export default function App() {
   const moveFocus = useWorkspaceStore((s) => s.moveFocus);
   const closeWorkspace = useWorkspaceStore((s) => s.closeWorkspace);
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
-  const createWorktreeWorkspace = useWorkspaceStore(
-    (s) => s.createWorktreeWorkspace,
-  );
-  const toggleNotificationPanel = useWorkspaceStore(
-    (s) => s.toggleNotificationPanel,
-  );
+  const createWorktreeWorkspace = useWorkspaceStore((s) => s.createWorktreeWorkspace);
+  const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
   const jumpToUnread = useWorkspaceStore((s) => s.jumpToUnread);
   const markWorkspaceRead = useWorkspaceStore((s) => s.markWorkspaceRead);
-  const showNotificationPanel = useWorkspaceStore(
-    (s) => s.showNotificationPanel,
-  );
+  const showNotificationPanel = useWorkspaceStore((s) => s.showNotificationPanel);
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const loadConfig = useConfigStore((s) => s.loadConfig);
@@ -139,10 +131,7 @@ export default function App() {
   const setSidebarCollapsedPersisted = useCallback((collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        SIDEBAR_COLLAPSE_STORAGE_KEY,
-        collapsed ? "1" : "0",
-      );
+      window.localStorage.setItem(SIDEBAR_COLLAPSE_STORAGE_KEY, collapsed ? "1" : "0");
     }
   }, []);
 
@@ -154,15 +143,12 @@ export default function App() {
     createWorkspaceWithInheritedCwd().catch(logError);
   }, []);
 
-  const handleSplitFocusedPane = useCallback(
-    (direction: "horizontal" | "vertical") => {
-      const state = useWorkspaceStore.getState();
-      const ws = state.workspaces[state.activeWorkspaceId];
-      if (!ws) return;
-      splitPaneWithInheritedCwd(ws.focusedPaneId, direction).catch(logError);
-    },
-    [],
-  );
+  const handleSplitFocusedPane = useCallback((direction: "horizontal" | "vertical") => {
+    const state = useWorkspaceStore.getState();
+    const ws = state.workspaces[state.activeWorkspaceId];
+    if (!ws) return;
+    splitPaneWithInheritedCwd(ws.focusedPaneId, direction).catch(logError);
+  }, []);
 
   const requestCloseWorkspace = useCallback(
     (workspaceId: string) => {
@@ -241,8 +227,7 @@ export default function App() {
       e.preventDefault();
     }
     document.addEventListener("contextmenu", preventContextMenu);
-    return () =>
-      document.removeEventListener("contextmenu", preventContextMenu);
+    return () => document.removeEventListener("contextmenu", preventContextMenu);
   }, []);
 
   // Load config + theme on startup
@@ -264,6 +249,7 @@ export default function App() {
   useEffect(() => {
     if (!hasTauriRuntime()) {
       setShowWelcome(true);
+      setSessionHydrated(true);
       return;
     }
 
@@ -291,12 +277,18 @@ export default function App() {
       })
       .catch((err) => {
         logError(err);
+      })
+      .finally(() => {
+        setSessionHydrated(true);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Save session on any workspace state change (debounced 2s)
   useEffect(() => {
+    if (!sessionHydrated) {
+      return;
+    }
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsub = useWorkspaceStore.subscribe(() => {
       if (timer) clearTimeout(timer);
@@ -308,6 +300,21 @@ export default function App() {
       unsub();
       if (timer) clearTimeout(timer);
     };
+  }, [sessionHydrated]);
+
+  // Reconcile terminal registry: dispose orphaned instances every 30s
+  useEffect(() => {
+    startReconciliation(() => {
+      const state = useWorkspaceStore.getState();
+      const ids = new Set<string>();
+      for (const ws of Object.values(state.workspaces)) {
+        for (const surfaceId of Object.keys(ws.surfaces)) {
+          ids.add(surfaceId);
+        }
+      }
+      return ids;
+    });
+    return stopReconciliation;
   }, []);
 
   // Listen for branch picker open event from Sidebar
@@ -318,19 +325,10 @@ export default function App() {
     function handleOpenCommandPalette() {
       setShowCommandPalette(true);
     }
-    window.addEventListener(
-      "forktty-open-branch-picker",
-      handleOpenBranchPicker,
-    );
-    window.addEventListener(
-      "forktty-open-command-palette",
-      handleOpenCommandPalette,
-    );
+    window.addEventListener("forktty-open-branch-picker", handleOpenBranchPicker);
+    window.addEventListener("forktty-open-command-palette", handleOpenCommandPalette);
     return () => {
-      window.removeEventListener(
-        "forktty-open-branch-picker",
-        handleOpenBranchPicker,
-      );
+      window.removeEventListener("forktty-open-branch-picker", handleOpenBranchPicker);
       window.removeEventListener(
         "forktty-open-command-palette",
         handleOpenCommandPalette,
@@ -375,8 +373,7 @@ export default function App() {
     function handleKeyDown(e: KeyboardEvent) {
       const editableTarget = isEditableTarget(e.target);
       const modalOrBranchPickerOpen =
-        document.querySelector(".modal-overlay, .branch-picker-overlay") !==
-        null;
+        document.querySelector(".modal-overlay, .branch-picker-overlay") !== null;
       const commandPaletteOpen =
         document.querySelector(".command-palette-overlay") !== null;
       const blockingOverlayOpen = modalOrBranchPickerOpen || commandPaletteOpen;
@@ -531,10 +528,7 @@ export default function App() {
     toggleSettings,
   ]);
 
-  const closeCommandPalette = useCallback(
-    () => setShowCommandPalette(false),
-    [],
-  );
+  const closeCommandPalette = useCallback(() => setShowCommandPalette(false), []);
 
   const commands: CommandEntry[] = useMemo(
     () => [
@@ -666,8 +660,7 @@ export default function App() {
         action: () => {
           const state = useWorkspaceStore.getState();
           const idx = state.workspaceOrder.indexOf(state.activeWorkspaceId);
-          const next =
-            state.workspaceOrder[(idx + 1) % state.workspaceOrder.length];
+          const next = state.workspaceOrder[(idx + 1) % state.workspaceOrder.length];
           if (next) switchWorkspace(next);
         },
       },
@@ -679,8 +672,7 @@ export default function App() {
           const idx = state.workspaceOrder.indexOf(state.activeWorkspaceId);
           const prev =
             state.workspaceOrder[
-              (idx - 1 + state.workspaceOrder.length) %
-                state.workspaceOrder.length
+              (idx - 1 + state.workspaceOrder.length) % state.workspaceOrder.length
             ];
           if (prev) switchWorkspace(prev);
         },
@@ -728,6 +720,14 @@ export default function App() {
     ],
   );
 
+  if (!sessionHydrated) {
+    return (
+      <div className="app">
+        <div className="app-main" />
+      </div>
+    );
+  }
+
   const sidebarPanel = (
     <Panel
       id="sidebar"
@@ -759,17 +759,19 @@ export default function App() {
   const mainPanel = (
     <Panel id="main">
       <div className="workspace-container">
-        {workspaceOrder.map((id) => (
-          <div
-            key={id}
-            className="workspace-pane-area"
-            style={{
-              display: id === activeWorkspaceId ? "flex" : "none",
-            }}
-          >
-            <PaneArea workspaceId={id} />
-          </div>
-        ))}
+        {sessionHydrated
+          ? workspaceOrder.map((id) => (
+              <div
+                key={id}
+                className="workspace-pane-area"
+                style={{
+                  display: id === activeWorkspaceId ? "flex" : "none",
+                }}
+              >
+                <PaneArea workspaceId={id} />
+              </div>
+            ))
+          : null}
       </div>
     </Panel>
   );
@@ -801,12 +803,8 @@ export default function App() {
           {showCommandPalette && (
             <CommandPalette commands={commands} onClose={closeCommandPalette} />
           )}
-          {showBranchPicker && (
-            <BranchPicker onResult={handleBranchPickerResult} />
-          )}
-          {showWelcome && (
-            <WelcomeScreen onDismiss={() => setShowWelcome(false)} />
-          )}
+          {showBranchPicker && <BranchPicker onResult={handleBranchPickerResult} />}
+          {showWelcome && <WelcomeScreen onDismiss={() => setShowWelcome(false)} />}
         </Suspense>
       </LazyErrorBoundary>
       {pendingCloseWs && (

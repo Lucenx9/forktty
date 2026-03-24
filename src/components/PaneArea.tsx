@@ -42,12 +42,7 @@ function RenderNode({
     }
     const child = node.children[i]!;
     elements.push(
-      <Panel
-        key={child.id}
-        id={child.id}
-        defaultSize={`${node.sizes[i]}`}
-        minSize="5"
-      >
+      <Panel key={child.id} id={child.id} defaultSize={`${node.sizes[i]}`} minSize="5">
         <RenderNode
           node={child}
           focusedPaneId={focusedPaneId}
@@ -66,9 +61,7 @@ function RenderNode({
       onLayoutChanged={(layout) =>
         onPaneLayout(
           node.id,
-          node.children.map(
-            (child, index) => layout[child.id] ?? node.sizes[index]!,
-          ),
+          node.children.map((child, index) => layout[child.id] ?? node.sizes[index]!),
         )
       }
     >
@@ -79,15 +72,11 @@ function RenderNode({
 
 export default function PaneArea({ workspaceId }: PaneAreaProps) {
   const root = useWorkspaceStore((s) => s.workspaces[workspaceId]?.root);
-  const isActive = useWorkspaceStore(
-    (s) => s.activeWorkspaceId === workspaceId,
-  );
+  const isActive = useWorkspaceStore((s) => s.activeWorkspaceId === workspaceId);
   const focusedPaneId = useWorkspaceStore(
     (s) => s.workspaces[workspaceId]?.focusedPaneId,
   );
-  const cwd = useWorkspaceStore(
-    (s) => s.workspaces[workspaceId]?.workingDir ?? "",
-  );
+  const cwd = useWorkspaceStore((s) => s.workspaces[workspaceId]?.workingDir ?? "");
   const updatePaneSizes = useWorkspaceStore((s) => s.updatePaneSizes);
 
   const handlePaneLayout = useCallback(

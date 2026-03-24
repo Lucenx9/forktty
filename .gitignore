@@ -22,5 +22,8 @@ Thumbs.db
 # Claude Code personal settings (team settings are in .claude/settings.json)
 .claude/settings.local.json
 
+# Test artifacts
+.playwright-cli/
+
 # ForkTTY runtime
 /tmp/forktty.sock

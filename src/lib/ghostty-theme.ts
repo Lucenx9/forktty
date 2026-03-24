@@ -67,10 +67,7 @@ export function applyThemeCssVars(theme: TerminalTheme): void {
   root.style.setProperty("--sidebar-border", lighten(bg, 0.08));
   root.style.setProperty("--sidebar-hover", lighten(bg, 0.06));
   root.style.setProperty("--sidebar-active", `${theme.blue ?? "#89b4fa"}26`);
-  root.style.setProperty(
-    "--sidebar-active-hover",
-    `${theme.blue ?? "#89b4fa"}33`,
-  );
+  root.style.setProperty("--sidebar-active-hover", `${theme.blue ?? "#89b4fa"}33`);
 }
 
 /** Darken a hex color by a fraction (0..1). */

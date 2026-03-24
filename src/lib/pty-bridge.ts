@@ -73,6 +73,8 @@ export function spawnPty(opts: {
   cwd?: string;
   workspaceId?: string;
   surfaceId?: string;
+  cols?: number;
+  rows?: number;
   onScanEvent?: (event: ScanEventData) => void;
 }): Promise<number> {
   if (!hasTauriRuntime()) {
@@ -114,6 +116,8 @@ export function spawnPty(opts: {
     cwd: opts.cwd ?? null,
     workspaceId: opts.workspaceId ?? null,
     surfaceId: opts.surfaceId ?? null,
+    cols: opts.cols ?? null,
+    rows: opts.rows ?? null,
   });
 }
 
@@ -127,11 +131,7 @@ export function writePty(id: number, data: string): Promise<void> {
 /**
  * Resize a PTY to new dimensions.
  */
-export function resizePty(
-  id: number,
-  cols: number,
-  rows: number,
-): Promise<void> {
+export function resizePty(id: number, cols: number, rows: number): Promise<void> {
   return invoke("pty_resize", { id, cols, rows });
 }
 
@@ -190,10 +190,7 @@ export function getSocketPath(): Promise<string> {
 /**
  * Send a desktop notification via notify-rust (XDG/D-Bus).
  */
-export function sendDesktopNotification(
-  title: string,
-  body: string,
-): Promise<void> {
+export function sendDesktopNotification(title: string, body: string): Promise<void> {
   return invoke("send_desktop_notification", { title, body });
 }
 
@@ -237,10 +234,7 @@ export function worktreeAttach(
   });
 }
 
-export function worktreeCreate(
-  name: string,
-  layout?: string,
-): Promise<WorktreeInfo> {
+export function worktreeCreate(name: string, layout?: string): Promise<WorktreeInfo> {
   return invoke<WorktreeInfo>("worktree_create", {
     name,
     layout: layout ?? null,

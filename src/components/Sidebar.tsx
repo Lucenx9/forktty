@@ -169,8 +169,7 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }
 
   function handleMoveDown() {
-    if (wsIndex < workspaceOrder.length - 1)
-      reorderWorkspaces(wsIndex, wsIndex + 1);
+    if (wsIndex < workspaceOrder.length - 1) reorderWorkspaces(wsIndex, wsIndex + 1);
     onClose();
   }
 
@@ -206,11 +205,7 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }
 
   return (
-    <div
-      ref={menuRef}
-      className="context-menu"
-      style={{ left: menu.x, top: menu.y }}
-    >
+    <div ref={menuRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
       <button className="context-menu-item" onClick={handleRename}>
         <span>Rename Workspace...</span>
       </button>
@@ -304,10 +299,7 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           <span>Mark as Read</span>
         </button>
       ) : (
-        <button
-          className="context-menu-item context-menu-item-disabled"
-          disabled
-        >
+        <button className="context-menu-item context-menu-item-disabled" disabled>
           <span>Mark as Read</span>
         </button>
       )}
@@ -420,9 +412,7 @@ function WorkspaceEntry({
     return activity > 0 && now - activity < ACTIVITY_THRESHOLD_MS;
   });
 
-  const statusColor = hasActivity
-    ? "var(--theme-green)"
-    : "var(--theme-bright-black)";
+  const statusColor = hasActivity ? "var(--theme-green)" : "var(--theme-bright-black)";
 
   function handleMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
@@ -527,9 +517,7 @@ function WorkspaceEntry({
             </span>
           )}
           {workspace.unreadCount > 0 && (
-            <span className="sidebar-unread-badge">
-              {workspace.unreadCount}
-            </span>
+            <span className="sidebar-unread-badge">{workspace.unreadCount}</span>
           )}
           <button
             type="button"
@@ -741,9 +729,7 @@ function HelpButton() {
               className="context-menu-item"
               onClick={() => {
                 setOpen(false);
-                window.dispatchEvent(
-                  new CustomEvent("forktty-open-command-palette"),
-                );
+                window.dispatchEvent(new CustomEvent("forktty-open-command-palette"));
               }}
             >
               <span>Command Palette</span>
@@ -826,25 +812,16 @@ interface SidebarProps {
   onToggleCollapsed: () => void;
 }
 
-export default function Sidebar({
-  collapsed,
-  onToggleCollapsed,
-}: SidebarProps) {
+export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
-  const setWorkspaceGitBranch = useWorkspaceStore(
-    (s) => s.setWorkspaceGitBranch,
-  );
-  const setWorkspaceWorkingDir = useWorkspaceStore(
-    (s) => s.setWorkspaceWorkingDir,
-  );
+  const setWorkspaceGitBranch = useWorkspaceStore((s) => s.setWorkspaceGitBranch);
+  const setWorkspaceWorkingDir = useWorkspaceStore((s) => s.setWorkspaceWorkingDir);
   const setWorktreeStatus = useWorkspaceStore((s) => s.setWorktreeStatus);
   const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
-  const showNotificationPanel = useWorkspaceStore(
-    (s) => s.showNotificationPanel,
-  );
+  const showNotificationPanel = useWorkspaceStore((s) => s.showNotificationPanel);
   const sidebarPosition = useConfigStore(
     (s) => s.config?.appearance.sidebar_position ?? "left",
   );
@@ -892,7 +869,7 @@ export default function Sidebar({
   }
 
   // 1-second tick for status dot re-evaluation
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
@@ -956,9 +933,7 @@ export default function Sidebar({
     window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
   }
 
-  const toggleNotificationPanel = useWorkspaceStore(
-    (s) => s.toggleNotificationPanel,
-  );
+  const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
   const totalUnread = useWorkspaceStore((s) =>
     Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
   );
@@ -1189,10 +1164,7 @@ export default function Sidebar({
       </div>
       {contextMenu &&
         createPortal(
-          <ContextMenu
-            menu={contextMenu}
-            onClose={() => setContextMenu(null)}
-          />,
+          <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />,
           document.body,
         )}
     </div>

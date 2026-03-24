@@ -19,25 +19,20 @@ export default function SettingsPanel() {
 
   if (!draft) return null;
 
-  const isDirty =
-    config !== null && JSON.stringify(draft) !== JSON.stringify(config);
+  const isDirty = config !== null && JSON.stringify(draft) !== JSON.stringify(config);
 
   function updateGeneral<K extends keyof AppConfig["general"]>(
     key: K,
     value: AppConfig["general"][K],
   ) {
-    setDraft((d) =>
-      d ? { ...d, general: { ...d.general, [key]: value } } : d,
-    );
+    setDraft((d) => (d ? { ...d, general: { ...d.general, [key]: value } } : d));
   }
 
   function updateAppearance<K extends keyof AppConfig["appearance"]>(
     key: K,
     value: AppConfig["appearance"][K],
   ) {
-    setDraft((d) =>
-      d ? { ...d, appearance: { ...d.appearance, [key]: value } } : d,
-    );
+    setDraft((d) => (d ? { ...d, appearance: { ...d.appearance, [key]: value } } : d));
   }
 
   function updateNotifications<K extends keyof AppConfig["notifications"]>(
@@ -69,9 +64,7 @@ export default function SettingsPanel() {
           </span>
         </div>
         <div className="settings-panel-actions">
-          <span
-            className={`settings-status ${isDirty ? "settings-status-dirty" : ""}`}
-          >
+          <span className={`settings-status ${isDirty ? "settings-status-dirty" : ""}`}>
             {isDirty ? "Unsaved changes" : "Up to date"}
           </span>
           <button
@@ -147,14 +140,11 @@ export default function SettingsPanel() {
               className="settings-input"
               type="text"
               value={draft.general.notification_command}
-              onChange={(e) =>
-                updateGeneral("notification_command", e.target.value)
-              }
+              onChange={(e) => updateGeneral("notification_command", e.target.value)}
               placeholder="Optional custom command"
             />
             <span className="settings-field-hint">
-              Runs in addition to desktop alerts when a background agent needs
-              input.
+              Runs in addition to desktop alerts when a background agent needs input.
             </span>
           </label>
         </div>
@@ -185,10 +175,7 @@ export default function SettingsPanel() {
               max={32}
               value={draft.appearance.font_size}
               onChange={(e) =>
-                updateAppearance(
-                  "font_size",
-                  parseInt(e.target.value, 10) || 14,
-                )
+                updateAppearance("font_size", parseInt(e.target.value, 10) || 14)
               }
             />
           </label>
@@ -198,9 +185,7 @@ export default function SettingsPanel() {
             <select
               className="settings-select"
               value={draft.appearance.sidebar_position}
-              onChange={(e) =>
-                updateAppearance("sidebar_position", e.target.value)
-              }
+              onChange={(e) => updateAppearance("sidebar_position", e.target.value)}
             >
               <option value="left">Left</option>
               <option value="right">Right</option>
@@ -212,8 +197,7 @@ export default function SettingsPanel() {
         <div className="settings-section">
           <h3 className="settings-section-title">Notifications</h3>
           <p className="settings-section-description">
-            Decide how aggressively ForkTTY pulls your attention back to waiting
-            panes.
+            Decide how aggressively ForkTTY pulls your attention back to waiting panes.
           </p>
 
           <label className="settings-field settings-checkbox-field">

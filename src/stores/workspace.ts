@@ -167,13 +167,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return ws.id;
   },
 
-  createWorktreeWorkspace: (
-    name,
-    workingDir,
-    gitBranch,
-    worktreeDir,
-    worktreeName,
-  ) => {
+  createWorktreeWorkspace: (name, workingDir, gitBranch, worktreeDir, worktreeName) => {
     const { workspaces, workspaceOrder } = get();
     const ws = makeWorkspace(name, {
       workingDir,
@@ -227,8 +221,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   closeWorkspace: (id) => {
-    const { workspaces, workspaceOrder, activeWorkspaceId, notifications } =
-      get();
+    const { workspaces, workspaceOrder, activeWorkspaceId, notifications } = get();
     if (workspaceOrder.length <= 1) return; // Can't close last workspace
 
     const newWorkspaces = { ...workspaces };
@@ -239,8 +232,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     let newActiveId = activeWorkspaceId;
     if (activeWorkspaceId === id) {
       const oldIndex = workspaceOrder.indexOf(id);
-      newActiveId =
-        newOrder[Math.min(oldIndex, newOrder.length - 1)] ?? newOrder[0]!;
+      newActiveId = newOrder[Math.min(oldIndex, newOrder.length - 1)] ?? newOrder[0]!;
     }
 
     set({
@@ -301,8 +293,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   splitPane: (paneId, direction, cwdOverride) => {
     const { workspaces, activeWorkspaceId } = get();
-    const workspaceId =
-      findWorkspaceIdByPane(workspaces, paneId) ?? activeWorkspaceId;
+    const workspaceId = findWorkspaceIdByPane(workspaces, paneId) ?? activeWorkspaceId;
     const ws = workspaces[workspaceId];
     if (!ws) return;
 
@@ -523,8 +514,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   // --- Notification actions ---
 
   addNotification: (workspaceId, title, body) => {
-    const { workspaces, notifications, activeWorkspaceId, workspaceOrder } =
-      get();
+    const { workspaces, notifications, activeWorkspaceId, workspaceOrder } = get();
     const ws = workspaces[workspaceId];
     if (!ws) return;
     const isActiveWorkspace = workspaceId === activeWorkspaceId;
@@ -546,10 +536,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!isActiveWorkspace) {
       const idx = workspaceOrder.indexOf(workspaceId);
       if (idx > 0) {
-        newOrder = [
-          workspaceId,
-          ...workspaceOrder.filter((id) => id !== workspaceId),
-        ];
+        newOrder = [workspaceId, ...workspaceOrder.filter((id) => id !== workspaceId)];
       }
     }
 
@@ -627,9 +614,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Find first workspace with unread notifications (not the active one)
     const target = workspaceOrder.find(
       (id) =>
-        id !== activeWorkspaceId &&
-        workspaces[id] &&
-        workspaces[id]!.unreadCount > 0,
+        id !== activeWorkspaceId && workspaces[id] && workspaces[id]!.unreadCount > 0,
     );
     if (target) {
       get().switchWorkspace(target);

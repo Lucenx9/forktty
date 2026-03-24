@@ -37,6 +37,12 @@ jobs:
       - name: Prettier check
         run: npx prettier --check src/
 
+      - name: ESLint
+        run: npm run lint
+
+      - name: Frontend tests
+        run: npm test
+
       - name: Frontend build (also required by tauri::generate_context!)
         run: npm run build
 

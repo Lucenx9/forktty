@@ -38,6 +38,8 @@ fn pty_spawn(
     cwd: Option<String>,
     workspace_id: Option<String>,
     surface_id: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
 ) -> Result<u32, String> {
     let shell = config::load_config()
         .inspect_err(|e| eprintln!("Warning: failed to load config, using default shell: {e}"))
@@ -75,8 +77,14 @@ fn pty_spawn(
             .pty_manager
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
-        mgr.spawn(&shell, 80, 24, cwd.as_deref(), Some(&env_refs))
-            .map_err(|e| e.to_string())?
+        mgr.spawn(
+            &shell,
+            cols.unwrap_or(120),
+            rows.unwrap_or(30),
+            cwd.as_deref(),
+            Some(&env_refs),
+        )
+        .map_err(|e| e.to_string())?
     };
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -144,6 +152,13 @@ fn read_pty_output(
 
 #[tauri::command]
 fn pty_write(state: State<'_, AppState>, id: u32, data: String) -> Result<(), String> {
+    const PTY_WRITE_MAX_BYTES: usize = 262_144;
+    if data.len() > PTY_WRITE_MAX_BYTES {
+        return Err(format!(
+            "PTY write exceeds {} KiB",
+            PTY_WRITE_MAX_BYTES / 1024
+        ));
+    }
     let mgr = state
         .pty_manager
         .lock()
@@ -514,7 +529,11 @@ mod tests {
 
         assert!(updated.contains("corp.local"));
         for host in LOCALHOST_NO_PROXY_ENTRIES {
-            assert_eq!(updated.matches(host).count(), 1, "missing or duplicated {host}");
+            assert_eq!(
+                updated.matches(host).count(),
+                1,
+                "missing or duplicated {host}"
+            );
         }
     }
 

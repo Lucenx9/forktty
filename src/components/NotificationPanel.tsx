@@ -13,9 +13,7 @@ export default function NotificationPanel() {
   const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
   const markWorkspaceRead = useWorkspaceStore((s) => s.markWorkspaceRead);
   const clearNotifications = useWorkspaceStore((s) => s.clearNotifications);
-  const toggleNotificationPanel = useWorkspaceStore(
-    (s) => s.toggleNotificationPanel,
-  );
+  const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
 
   function handleClick(workspaceId: string) {
     switchWorkspace(workspaceId);
@@ -70,12 +68,8 @@ export default function NotificationPanel() {
             >
               <div className="notification-item-header">
                 {!n.read && <span className="notification-dot" />}
-                <span className="notification-workspace">
-                  {n.workspaceName}
-                </span>
-                <span className="notification-time">
-                  {formatTime(n.timestamp)}
-                </span>
+                <span className="notification-workspace">{n.workspaceName}</span>
+                <span className="notification-time">{formatTime(n.timestamp)}</span>
               </div>
               <div className="notification-title">{n.title}</div>
               {n.body && n.body !== n.title && (

@@ -34,10 +34,7 @@ interface MetadataState {
   clearStatus(workspaceId: string, key?: string): void;
   setProgress(workspaceId: string, entry: ProgressEntry): void;
   clearProgress(workspaceId: string, key?: string): void;
-  appendLog(
-    workspaceId: string,
-    entry: Omit<LogEntry, "id" | "timestamp">,
-  ): void;
+  appendLog(workspaceId: string, entry: Omit<LogEntry, "id" | "timestamp">): void;
   clearLogs(workspaceId: string): void;
   pruneWorkspace(workspaceId: string): void;
 }
@@ -47,9 +44,7 @@ const MAX_LOG_ENTRIES = 200;
 const VALID_LEVELS: ReadonlySet<string> = new Set(["info", "warn", "error"]);
 
 function normalizeLevel(level: string): "info" | "warn" | "error" {
-  return VALID_LEVELS.has(level)
-    ? (level as "info" | "warn" | "error")
-    : "info";
+  return VALID_LEVELS.has(level) ? (level as "info" | "warn" | "error") : "info";
 }
 
 function emptyMetadata(): WorkspaceMetadata {
@@ -194,10 +189,4 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
   },
 }));
 
-export type {
-  StatusEntry,
-  ProgressEntry,
-  LogEntry,
-  WorkspaceMetadata,
-  MetadataState,
-};
+export type { StatusEntry, ProgressEntry, LogEntry, WorkspaceMetadata, MetadataState };

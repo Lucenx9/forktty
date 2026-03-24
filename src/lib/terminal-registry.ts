@@ -41,6 +41,8 @@ export function readScreen(paneId?: string | null): string | null {
 
 export interface SavedTerminalRuntime {
   ptyId: number | null;
+  lastCols: number | null;
+  lastRows: number | null;
 }
 
 export interface SavedTerminalInstance {
@@ -54,19 +56,69 @@ export interface SavedTerminalInstance {
 
 const savedInstances = new Map<string, SavedTerminalInstance>();
 
-export function saveInstance(
-  surfaceId: string,
-  instance: SavedTerminalInstance,
-): void {
+export function saveInstance(surfaceId: string, instance: SavedTerminalInstance): void {
   savedInstances.set(surfaceId, instance);
 }
 
-export function getSavedInstance(
-  surfaceId: string,
-): SavedTerminalInstance | undefined {
+export function getSavedInstance(surfaceId: string): SavedTerminalInstance | undefined {
   return savedInstances.get(surfaceId);
 }
 
 export function removeSavedInstance(surfaceId: string): void {
   savedInstances.delete(surfaceId);
+}
+
+// --- Reconciliation: clean up orphaned instances ---
+
+/**
+ * Remove terminal and saved instances that no longer correspond to active
+ * surface IDs.  Call periodically to prevent memory leaks when React cleanup
+ * is missed (e.g. hot reload, crash recovery).
+ */
+export function reconcileInstances(activeSurfaceIds: Set<string>): number {
+  let cleaned = 0;
+
+  for (const id of savedInstances.keys()) {
+    if (!activeSurfaceIds.has(id)) {
+      const instance = savedInstances.get(id);
+      if (instance) {
+        instance.terminal.dispose();
+        instance.wrapper.remove();
+      }
+      savedInstances.delete(id);
+      cleaned++;
+    }
+  }
+
+  for (const id of terminalMap.keys()) {
+    if (!activeSurfaceIds.has(id)) {
+      terminalMap.delete(id);
+      cleaned++;
+    }
+  }
+
+  return cleaned;
+}
+
+let reconcileTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start periodic reconciliation.  The `getActiveSurfaceIds` callback is
+ * called each cycle to read the current set of surface IDs from the store.
+ */
+export function startReconciliation(
+  getActiveSurfaceIds: () => Set<string>,
+  intervalMs = 30_000,
+): void {
+  stopReconciliation();
+  reconcileTimer = setInterval(() => {
+    reconcileInstances(getActiveSurfaceIds());
+  }, intervalMs);
+}
+
+export function stopReconciliation(): void {
+  if (reconcileTimer !== null) {
+    clearInterval(reconcileTimer);
+    reconcileTimer = null;
+  }
 }

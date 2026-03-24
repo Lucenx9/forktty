@@ -23,8 +23,8 @@ export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
           </div>
         </div>
         <div className="welcome-copy">
-          One workspace is already ready. Split it for quick parallelism, or
-          create a dedicated worktree when you want full git isolation.
+          One workspace is already ready. Split it for quick parallelism, or create a
+          dedicated worktree when you want full git isolation.
         </div>
 
         <div className="welcome-actions">

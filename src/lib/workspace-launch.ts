@@ -81,14 +81,10 @@ export async function createWorkspaceWithCwd(
   return id;
 }
 
-export async function createWorkspaceWithInheritedCwd(
-  name?: string,
-): Promise<string> {
+export async function createWorkspaceWithInheritedCwd(name?: string): Promise<string> {
   const state = useWorkspaceStore.getState();
   const active = state.workspaces[state.activeWorkspaceId];
-  const cwd = active
-    ? await resolvePaneCwd(active.focusedPaneId)
-    : await getCwd();
+  const cwd = active ? await resolvePaneCwd(active.focusedPaneId) : await getCwd();
   const id = state.createWorkspace(name, cwd);
   refreshWorkspaceGitBranch(id, cwd).catch(logError);
   return id;

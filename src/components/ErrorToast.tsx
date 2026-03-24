@@ -13,10 +13,7 @@ function notify() {
   for (const fn of listeners) fn();
 }
 
-export function showToast(
-  message: string,
-  level: "error" | "warn" | "info" = "error",
-) {
+export function showToast(message: string, level: "error" | "warn" | "info" = "error") {
   const toast: Toast = { id: crypto.randomUUID(), message, level };
   toasts.push(toast);
   notify();

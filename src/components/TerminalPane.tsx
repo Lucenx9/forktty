@@ -66,6 +66,25 @@ function pruneNotificationMap() {
   }
 }
 
+function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) {
+    return chunks[0]!;
+  }
+
+  let totalLength = 0;
+  for (const chunk of chunks) {
+    totalLength += chunk.length;
+  }
+
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
 interface PaneContextMenuState {
   x: number;
   y: number;
@@ -141,11 +160,7 @@ function PaneContextMenu({
   const hasSelection = !!termRef.current?.getSelection();
 
   return (
-    <div
-      ref={menuRef}
-      className="context-menu"
-      style={{ left: menu.x, top: menu.y }}
-    >
+    <div ref={menuRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
       <button
         className={`context-menu-item ${!hasSelection ? "context-menu-item-disabled" : ""}`}
         onClick={handleCopy}
@@ -246,9 +261,7 @@ function PaneToolbar({
         <button
           className="pane-toolbar-btn"
           type="button"
-          onClick={() =>
-            splitPaneWithInheritedCwd(paneId, "vertical").catch(logError)
-          }
+          onClick={() => splitPaneWithInheritedCwd(paneId, "vertical").catch(logError)}
           title="Split Down (Ctrl+Shift+D)"
           aria-label="Split Down"
         >
@@ -293,8 +306,9 @@ const TerminalPane = memo(function TerminalPane({
   const [showFind, setShowFind] = useState(false);
   const [flashBorder, setFlashBorder] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [paneContextMenu, setPaneContextMenu] =
-    useState<PaneContextMenuState | null>(null);
+  const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(
+    null,
+  );
   const setFocusedPane = useWorkspaceStore((s) => s.setFocusedPane);
   const swapPanes = useWorkspaceStore((s) => s.swapPanes);
   const registerSurface = useWorkspaceStore((s) => s.registerSurface);
@@ -312,15 +326,12 @@ const TerminalPane = memo(function TerminalPane({
 
   const lastFindTermRef = useRef("");
 
-  const handleFind = useCallback(
-    (term: string, opts: { caseSensitive: boolean }) => {
-      lastFindTermRef.current = term;
-      searchAddonRef.current?.findNext(term, {
-        caseSensitive: opts.caseSensitive,
-      });
-    },
-    [],
-  );
+  const handleFind = useCallback((term: string, opts: { caseSensitive: boolean }) => {
+    lastFindTermRef.current = term;
+    searchAddonRef.current?.findNext(term, {
+      caseSensitive: opts.caseSensitive,
+    });
+  }, []);
 
   const handleFindNext = useCallback(() => {
     if (lastFindTermRef.current) {
@@ -415,7 +426,39 @@ const TerminalPane = memo(function TerminalPane({
     let term: Terminal;
     let wrapper: HTMLDivElement;
     let isNewInstance: boolean;
-    const runtime = saved?.runtime ?? { ptyId: null };
+    const runtime = saved?.runtime ?? {
+      ptyId: null,
+      lastCols: null,
+      lastRows: null,
+    };
+    let outputDrainRaf: number | null = null;
+    let outputWriteInFlight = false;
+    const outputQueue: Uint8Array[] = [];
+
+    function drainOutputQueue() {
+      if (disposed || outputWriteInFlight || outputQueue.length === 0) return;
+
+      outputWriteInFlight = true;
+      const payload = concatUint8Arrays(outputQueue.splice(0, outputQueue.length));
+      term.write(payload, () => {
+        outputWriteInFlight = false;
+        if (disposed) return;
+        if (outputQueue.length > 0) {
+          outputDrainRaf = requestAnimationFrame(() => {
+            outputDrainRaf = null;
+            drainOutputQueue();
+          });
+        }
+      });
+    }
+
+    function scheduleOutputDrain() {
+      if (disposed || outputDrainRaf !== null) return;
+      outputDrainRaf = requestAnimationFrame(() => {
+        outputDrainRaf = null;
+        drainOutputQueue();
+      });
+    }
 
     if (saved) {
       // Re-adopt: reuse existing terminal, wrapper, PTY — no spawn needed
@@ -440,8 +483,7 @@ const TerminalPane = memo(function TerminalPane({
       // Fresh terminal: create everything from scratch
       const cfgStore = useConfigStore.getState();
       const fontFamily = cfgStore.theme?.font_family ?? "monospace";
-      const fontSize =
-        (cfgStore.theme?.font_size ?? 14) + cfgStore.fontSizeOffset;
+      const fontSize = (cfgStore.theme?.font_size ?? 14) + cfgStore.fontSizeOffset;
 
       term = new Terminal({
         cursorBlink: true,
@@ -472,9 +514,14 @@ const TerminalPane = memo(function TerminalPane({
       });
 
       // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
-      const canvasAddon = new CanvasAddon();
-      canvasAddonRef.current = canvasAddon;
-      term.loadAddon(canvasAddon);
+      try {
+        const canvasAddon = new CanvasAddon();
+        canvasAddonRef.current = canvasAddon;
+        term.loadAddon(canvasAddon);
+      } catch (err) {
+        canvasAddonRef.current = null;
+        logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
+      }
 
       // Search addon for Ctrl+F
       const searchAddon = new SearchAddon();
@@ -492,6 +539,18 @@ const TerminalPane = memo(function TerminalPane({
     // Spawn PTY only for new instances (re-adopted instances keep their PTY)
     let disposed = false;
     let hasExited = false;
+    let fontReadyCancelled = false;
+
+    if ("fonts" in document) {
+      document.fonts.ready
+        .then(() => {
+          if (disposed || fontReadyCancelled) return;
+          if (container.clientWidth > 0 && container.clientHeight > 0) {
+            fitAddonRef.current?.fit();
+          }
+        })
+        .catch(logError);
+    }
 
     if (isNewInstance) {
       // Debounce notifications: at most one per 5 seconds per pane
@@ -501,8 +560,7 @@ const TerminalPane = memo(function TerminalPane({
         const state = useWorkspaceStore.getState();
         const config = useConfigStore.getState().config;
         const workspace = state.workspaces[wsId];
-        const notificationCommand =
-          config?.general.notification_command.trim() ?? "";
+        const notificationCommand = config?.general.notification_command.trim() ?? "";
         const dedupeKey = `${wsId}:${title}:${body}`;
         const now = Date.now();
         const lastSeen = recentNotificationMap.get(dedupeKey) ?? 0;
@@ -514,19 +572,14 @@ const TerminalPane = memo(function TerminalPane({
         pruneNotificationMap();
 
         state.addNotification(wsId, title, body);
-        if (
-          wsId !== state.activeWorkspaceId ||
-          workspace?.focusedPaneId !== paneId
-        ) {
+        if (wsId !== state.activeWorkspaceId || workspace?.focusedPaneId !== paneId) {
           state.setSurfaceUnread(paneId, true);
         }
         if (config?.notifications.desktop ?? true) {
           sendDesktopNotification(title, body).catch(logError);
         }
         if (notificationCommand) {
-          sendCustomNotification(notificationCommand, title, body).catch(
-            logError,
-          );
+          sendCustomNotification(notificationCommand, title, body).catch(logError);
         }
       }
 
@@ -585,7 +638,8 @@ const TerminalPane = memo(function TerminalPane({
           return spawnPty({
             onOutput: (data) => {
               if (!disposed) {
-                term.write(data);
+                outputQueue.push(data as Uint8Array);
+                scheduleOutputDrain();
 
                 // Throttled activity tracking (at most once per second)
                 const now = Date.now();
@@ -606,6 +660,14 @@ const TerminalPane = memo(function TerminalPane({
             cwd: spawnCwd || undefined,
             workspaceId,
             surfaceId: paneId,
+            cols:
+              container.clientWidth > 0
+                ? Math.max(term.cols, 2)
+                : (runtime.lastCols ?? 120),
+            rows:
+              container.clientHeight > 0
+                ? Math.max(term.rows, 2)
+                : (runtime.lastRows ?? 30),
             onScanEvent: handleScanEvent,
           });
         })
@@ -659,6 +721,8 @@ const TerminalPane = memo(function TerminalPane({
     // Debounce PTY resize IPC to reduce SIGWINCH storms during panel drag
     let resizeTimeout: number | null = null;
     const resizeDisposable = term.onResize(({ cols, rows }) => {
+      runtime.lastCols = cols;
+      runtime.lastRows = rows;
       if (resizeTimeout !== null) clearTimeout(resizeTimeout);
       resizeTimeout = window.setTimeout(() => {
         resizeTimeout = null;
@@ -670,6 +734,7 @@ const TerminalPane = memo(function TerminalPane({
     });
 
     return () => {
+      fontReadyCancelled = true;
       if (resizeRaf !== null) {
         cancelAnimationFrame(resizeRaf);
       }
@@ -701,6 +766,10 @@ const TerminalPane = memo(function TerminalPane({
       } else {
         // CLOSE: destroy everything
         disposed = true;
+        outputQueue.length = 0;
+        if (outputDrainRaf !== null) {
+          cancelAnimationFrame(outputDrainRaf);
+        }
         canvasAddonRef.current?.dispose();
         canvasAddonRef.current = null;
         term.dispose();

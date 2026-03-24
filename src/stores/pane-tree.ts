@@ -111,8 +111,7 @@ export function removeLeaf(
   // Find which child contains the target
   const childIndex = node.children.findIndex(
     (child) =>
-      child.id === targetId ||
-      (child.type !== "leaf" && containsLeaf(child, targetId)),
+      child.id === targetId || (child.type !== "leaf" && containsLeaf(child, targetId)),
   );
 
   if (childIndex === -1) return { tree: node, focusId: null };
@@ -133,9 +132,7 @@ export function removeLeaf(
     const newSizes = node.sizes.filter((_, i) => i !== childIndex);
     const totalSize = newSizes.reduce((a, b) => a + b, 0);
     const normalizedSizes = newSizes.map((s) => (s / totalSize) * 100);
-    const focusId = firstLeafId(
-      remaining[Math.min(childIndex, remaining.length - 1)]!,
-    );
+    const focusId = firstLeafId(remaining[Math.min(childIndex, remaining.length - 1)]!);
     return {
       tree: {
         ...node,
@@ -227,11 +224,7 @@ export function findLeaf(node: PaneNode, id: string): PaneLeaf | null {
 }
 
 /** Get the depth of a node within the tree (0 = root). Returns -1 if not found. */
-export function getNodeDepth(
-  root: PaneNode,
-  targetId: string,
-  depth = 0,
-): number {
+export function getNodeDepth(root: PaneNode, targetId: string, depth = 0): number {
   if (root.id === targetId) return depth;
   if (root.type === "leaf") return -1;
   for (const child of root.children) {
@@ -261,15 +254,11 @@ export function buildLayoutRects(
     const fraction = node.sizes[i]! / totalSize;
     if (node.type === "horizontal") {
       const childW = w * fraction;
-      rects.push(
-        ...buildLayoutRects(node.children[i]!, x + offset, y, childW, h),
-      );
+      rects.push(...buildLayoutRects(node.children[i]!, x + offset, y, childW, h));
       offset += childW;
     } else {
       const childH = h * fraction;
-      rects.push(
-        ...buildLayoutRects(node.children[i]!, x, y + offset, w, childH),
-      );
+      rects.push(...buildLayoutRects(node.children[i]!, x, y + offset, w, childH));
       offset += childH;
     }
   }
@@ -342,9 +331,7 @@ export function makeSurface(id: string): Surface {
   return { id, ptyId: null, title: "", hasUnreadNotification: false };
 }
 
-export function generateWorkspaceName(
-  workspaces: Record<string, Workspace>,
-): string {
+export function generateWorkspaceName(workspaces: Record<string, Workspace>): string {
   const existingNames = new Set(Object.values(workspaces).map((w) => w.name));
   let n = 1;
   while (existingNames.has(`Workspace ${n}`)) {

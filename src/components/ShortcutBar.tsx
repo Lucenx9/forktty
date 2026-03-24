@@ -2,15 +2,11 @@ import { memo } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 
 const ShortcutBar = memo(function ShortcutBar() {
-  const activeWorkspace = useWorkspaceStore(
-    (s) => s.workspaces[s.activeWorkspaceId],
-  );
+  const activeWorkspace = useWorkspaceStore((s) => s.workspaces[s.activeWorkspaceId]);
   const totalUnread = useWorkspaceStore((s) =>
     Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
   );
-  const paneCount = activeWorkspace
-    ? Object.keys(activeWorkspace.surfaces).length
-    : 0;
+  const paneCount = activeWorkspace ? Object.keys(activeWorkspace.surfaces).length : 0;
 
   return (
     <div className="shortcut-bar">
@@ -19,9 +15,7 @@ const ShortcutBar = memo(function ShortcutBar() {
           {activeWorkspace?.name ?? "No workspace"}
         </span>
         {activeWorkspace?.gitBranch && (
-          <span className="shortcut-status-pill">
-            {activeWorkspace.gitBranch}
-          </span>
+          <span className="shortcut-status-pill">{activeWorkspace.gitBranch}</span>
         )}
         <span className="shortcut-status-meta">
           {paneCount} {paneCount === 1 ? "pane" : "panes"}

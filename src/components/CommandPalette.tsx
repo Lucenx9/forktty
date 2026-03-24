@@ -12,10 +12,7 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
-export default function CommandPalette({
-  commands,
-  onClose,
-}: CommandPaletteProps) {
+export default function CommandPalette({ commands, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

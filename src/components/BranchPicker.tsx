@@ -207,9 +207,7 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
               </div>
 
               {filtered.length === 0 && (
-                <div className="branch-picker-branch-meta">
-                  No matching branches
-                </div>
+                <div className="branch-picker-branch-meta">No matching branches</div>
               )}
 
               {filtered.map((branch, i) => {
@@ -223,9 +221,7 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
                     onMouseMove={() => setSelectedIndex(itemIndex)}
                   >
                     <div>
-                      <span className="branch-picker-branch-name">
-                        {branch.name}
-                      </span>
+                      <span className="branch-picker-branch-name">{branch.name}</span>
                       {branch.is_head && (
                         <span className="branch-picker-badge">[active]</span>
                       )}

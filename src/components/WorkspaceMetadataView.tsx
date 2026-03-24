@@ -48,15 +48,10 @@ function ProgressBars({ entries }: { entries: ProgressEntry[] }) {
           <div key={p.key} className="sidebar-meta-progress-row">
             <span className="sidebar-meta-progress-label">
               {p.label}
-              {p.total != null
-                ? ` ${p.value}/${p.total}`
-                : ` ${Math.round(pct)}%`}
+              {p.total != null ? ` ${p.value}/${p.total}` : ` ${Math.round(pct)}%`}
             </span>
             <div className="sidebar-progress-bar">
-              <div
-                className="sidebar-progress-fill"
-                style={{ width: `${pct}%` }}
-              />
+              <div className="sidebar-progress-fill" style={{ width: `${pct}%` }} />
             </div>
           </div>
         );
@@ -97,9 +92,7 @@ export default function WorkspaceMetadataView({
   if (!wsMeta) return null;
 
   const hasContent =
-    wsMeta.statuses.length > 0 ||
-    wsMeta.progress.length > 0 ||
-    wsMeta.logs.length > 0;
+    wsMeta.statuses.length > 0 || wsMeta.progress.length > 0 || wsMeta.logs.length > 0;
 
   if (!hasContent) return null;
 

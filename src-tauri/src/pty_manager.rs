@@ -127,7 +127,6 @@ impl PtyManager {
         writer
             .write_all(data)
             .map_err(|e| PtyError::Write(e.to_string()))?;
-        writer.flush().map_err(|e| PtyError::Write(e.to_string()))?;
         Ok(())
     }
 
