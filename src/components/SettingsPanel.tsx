@@ -19,6 +19,9 @@ export default function SettingsPanel() {
 
   if (!draft) return null;
 
+  const isDirty =
+    config !== null && JSON.stringify(draft) !== JSON.stringify(config);
+
   function updateGeneral<K extends keyof AppConfig["general"]>(
     key: K,
     value: AppConfig["general"][K],
@@ -59,16 +62,28 @@ export default function SettingsPanel() {
   return (
     <div className="settings-panel">
       <div className="settings-panel-header">
-        <span className="settings-panel-title">Settings</span>
+        <div className="settings-panel-heading">
+          <span className="settings-panel-title">Settings</span>
+          <span className="settings-panel-subtitle">
+            Appearance, worktree behavior and notifications
+          </span>
+        </div>
         <div className="settings-panel-actions">
+          <span
+            className={`settings-status ${isDirty ? "settings-status-dirty" : ""}`}
+          >
+            {isDirty ? "Unsaved changes" : "Up to date"}
+          </span>
           <button
+            type="button"
             className="settings-save-btn"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !isDirty}
           >
             {saving ? "Saving..." : "Save"}
           </button>
           <button
+            type="button"
             className="settings-close-btn"
             onClick={toggleSettings}
             aria-label="Close settings"
@@ -82,6 +97,10 @@ export default function SettingsPanel() {
         {/* General */}
         <div className="settings-section">
           <h3 className="settings-section-title">General</h3>
+          <p className="settings-section-description">
+            Control shell startup, theme source and where isolated worktrees are
+            created.
+          </p>
 
           <label className="settings-field">
             <span className="settings-label">Theme</span>
@@ -117,6 +136,9 @@ export default function SettingsPanel() {
               <option value="sibling">Sibling directories</option>
               <option value="outer-nested">Outer nested</option>
             </select>
+            <span className="settings-field-hint">
+              Choose whether worktrees live inside the repo or beside it.
+            </span>
           </label>
 
           <label className="settings-field">
@@ -130,12 +152,19 @@ export default function SettingsPanel() {
               }
               placeholder="Optional custom command"
             />
+            <span className="settings-field-hint">
+              Runs in addition to desktop alerts when a background agent needs
+              input.
+            </span>
           </label>
         </div>
 
         {/* Appearance */}
         <div className="settings-section">
           <h3 className="settings-section-title">Appearance</h3>
+          <p className="settings-section-description">
+            Tune terminal ergonomics without leaving the current workspace.
+          </p>
 
           <label className="settings-field">
             <span className="settings-label">Font family</span>
@@ -182,6 +211,10 @@ export default function SettingsPanel() {
         {/* Notifications */}
         <div className="settings-section">
           <h3 className="settings-section-title">Notifications</h3>
+          <p className="settings-section-description">
+            Decide how aggressively ForkTTY pulls your attention back to waiting
+            panes.
+          </p>
 
           <label className="settings-field settings-checkbox-field">
             <input

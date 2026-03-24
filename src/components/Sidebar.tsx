@@ -27,6 +27,9 @@ import {
   Columns2,
   Rows2,
   Bell,
+  Command,
+  ChevronsLeft,
+  ChevronsRight,
   CircleHelp,
   X,
   GripVertical,
@@ -389,6 +392,7 @@ function WorkspaceEntry({
   const [pendingClose, setPendingClose] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const canClose = workspaceOrder.length > 1;
+  const paneCount = Object.keys(workspace.surfaces).length;
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -476,6 +480,8 @@ function WorkspaceEntry({
         className={`sidebar-entry ${isActive ? "sidebar-entry-active" : ""} ${isDragging ? "sidebar-entry-dragging" : ""}`}
         role="button"
         tabIndex={0}
+        aria-current={isActive ? "page" : undefined}
+        aria-label={`${index + 1}. ${workspace.name}${isActive ? ", active workspace" : ""}${workspace.unreadCount > 0 ? `, ${workspace.unreadCount} unread alerts` : ""}`}
         onDragEnter={(e) => onDragOver(e, index)}
         onDragOver={(e) => onDragOver(e, index)}
         onDrop={(e) => onDrop(e, index)}
@@ -494,6 +500,9 @@ function WorkspaceEntry({
             className="sidebar-status-dot"
             style={{ backgroundColor: statusColor }}
           />
+          <span className="sidebar-entry-index" aria-hidden="true">
+            {index + 1}
+          </span>
           {editing ? (
             <input
               ref={inputRef}
@@ -523,6 +532,7 @@ function WorkspaceEntry({
             </span>
           )}
           <button
+            type="button"
             className="sidebar-drag-handle"
             draggable
             onMouseDown={(e) => e.stopPropagation()}
@@ -542,6 +552,7 @@ function WorkspaceEntry({
           </button>
           {canClose && (
             <button
+              type="button"
               className="sidebar-close-btn"
               onClick={handleClose}
               title="Close workspace"
@@ -561,6 +572,11 @@ function WorkspaceEntry({
                 {workspace.worktreeStatus}
               </span>
             )}
+            {paneCount > 1 && (
+              <span className="sidebar-pane-count">
+                {paneCount} {paneCount === 1 ? "pane" : "panes"}
+              </span>
+            )}
           </div>
         )}
         {workspace.workingDir && (
@@ -568,6 +584,11 @@ function WorkspaceEntry({
             <span className="sidebar-cwd">
               {truncatePath(workspace.workingDir, 28)}
             </span>
+            {!workspace.gitBranch && paneCount > 1 && (
+              <span className="sidebar-pane-count">
+                {paneCount} {paneCount === 1 ? "pane" : "panes"}
+              </span>
+            )}
           </div>
         )}
         <WorkspaceMetadataView workspaceId={workspace.id} isActive={isActive} />
@@ -579,6 +600,7 @@ function WorkspaceEntry({
         {isWorktree && isActive && (
           <div className="sidebar-entry-actions">
             <button
+              type="button"
               className="sidebar-action-btn"
               onClick={handleMerge}
               title="Merge branch into main"
@@ -587,6 +609,7 @@ function WorkspaceEntry({
               <span>Merge</span>
             </button>
             <button
+              type="button"
               className="sidebar-action-btn sidebar-action-danger"
               onClick={handleRemove}
               title="Remove worktree and delete branch"
@@ -784,8 +807,13 @@ function HelpButton() {
         className="sidebar-icon-btn sidebar-help-btn"
         onClick={() => setOpen((v) => !v)}
         title="Help & Shortcuts"
+        type="button"
+        aria-label="Help and keyboard shortcuts"
+        aria-expanded={open}
+        aria-haspopup="menu"
       >
         <CircleHelp size={14} />
+        <span>Shortcuts</span>
       </button>
     </div>
   );
@@ -793,10 +821,19 @@ function HelpButton() {
 
 // --- Sidebar ---
 
-export default function Sidebar() {
+interface SidebarProps {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+}
+
+export default function Sidebar({
+  collapsed,
+  onToggleCollapsed,
+}: SidebarProps) {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
   const setWorkspaceGitBranch = useWorkspaceStore(
     (s) => s.setWorkspaceGitBranch,
   );
@@ -805,6 +842,12 @@ export default function Sidebar() {
   );
   const setWorktreeStatus = useWorkspaceStore((s) => s.setWorktreeStatus);
   const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
+  const showNotificationPanel = useWorkspaceStore(
+    (s) => s.showNotificationPanel,
+  );
+  const sidebarPosition = useConfigStore(
+    (s) => s.config?.appearance.sidebar_position ?? "left",
+  );
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -919,6 +962,14 @@ export default function Sidebar() {
   const totalUnread = useWorkspaceStore((s) =>
     Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
   );
+  const CollapseIcon =
+    sidebarPosition === "right"
+      ? collapsed
+        ? ChevronsLeft
+        : ChevronsRight
+      : collapsed
+        ? ChevronsRight
+        : ChevronsLeft;
 
   function handleSplitRight() {
     const state = useWorkspaceStore.getState();
@@ -936,47 +987,178 @@ export default function Sidebar() {
     }
   }
 
-  return (
-    <div className="sidebar">
-      <div className="sidebar-header">
-        <div className="sidebar-header-icons">
+  if (collapsed) {
+    return (
+      <div className="sidebar sidebar-collapsed">
+        <div className="sidebar-rail-actions">
+          <button
+            className="sidebar-icon-btn sidebar-rail-toggle"
+            type="button"
+            onClick={onToggleCollapsed}
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+          >
+            <CollapseIcon size={14} />
+          </button>
           <button
             className="sidebar-icon-btn"
+            type="button"
             onClick={() => createWorkspaceWithInheritedCwd().catch(logError)}
             title="New workspace (Ctrl+N)"
+            aria-label="New workspace"
           >
             <Plus size={14} />
           </button>
           <button
             className="sidebar-icon-btn sidebar-icon-btn-worktree"
+            type="button"
             onClick={handleNewWorktree}
             title="New worktree (Ctrl+Shift+N)"
+            aria-label="New worktree workspace"
           >
             <GitBranch size={14} />
           </button>
           <button
             className="sidebar-icon-btn"
-            onClick={handleSplitRight}
-            title="Split Right (Ctrl+D)"
+            type="button"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
+            }
+            title="Command palette (Ctrl+Shift+P)"
+            aria-label="Open command palette"
           >
-            <Columns2 size={14} />
+            <Command size={14} />
           </button>
           <button
-            className="sidebar-icon-btn"
-            onClick={handleSplitDown}
-            title="Split Down (Ctrl+Shift+D)"
-          >
-            <Rows2 size={14} />
-          </button>
-          <button
-            className={`sidebar-icon-btn ${totalUnread > 0 ? "sidebar-icon-btn-unread" : ""}`}
+            className={`sidebar-icon-btn ${totalUnread > 0 ? "sidebar-icon-btn-unread" : ""} ${showNotificationPanel ? "sidebar-icon-btn-active" : ""}`}
+            type="button"
             onClick={toggleNotificationPanel}
             title="Notifications (Ctrl+Shift+I)"
+            aria-label="Toggle notifications"
+            aria-pressed={showNotificationPanel}
           >
             <Bell size={14} />
             {totalUnread > 0 && (
               <span className="sidebar-icon-badge">{totalUnread}</span>
             )}
+          </button>
+        </div>
+        <div className="sidebar-rail-list">
+          {workspaceOrder.map((id, index) => {
+            const ws = workspaces[id];
+            if (!ws) return null;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`sidebar-rail-entry ${id === activeWorkspaceId ? "sidebar-rail-entry-active" : ""}`}
+                onClick={() => switchWorkspace(id)}
+                title={`${index + 1}. ${ws.name}${ws.unreadCount > 0 ? ` • ${ws.unreadCount} unread` : ""}`}
+                aria-label={`${index + 1}. ${ws.name}${id === activeWorkspaceId ? ", active workspace" : ""}${ws.unreadCount > 0 ? `, ${ws.unreadCount} unread alerts` : ""}`}
+              >
+                <span className="sidebar-rail-index">{index + 1}</span>
+                {ws.unreadCount > 0 && (
+                  <span className="sidebar-rail-badge">{ws.unreadCount}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div className="sidebar-footer sidebar-footer-collapsed">
+          <HelpButton />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="sidebar">
+      <div className="sidebar-header">
+        <div className="sidebar-header-copy">
+          <div className="sidebar-header-eyebrow">ForkTTY</div>
+          <div className="sidebar-header-title-row">
+            <div className="sidebar-header-title">Workspaces</div>
+            <div className="sidebar-header-count">{workspaceOrder.length}</div>
+          </div>
+          <div className="sidebar-header-subtitle">
+            {totalUnread > 0
+              ? `${totalUnread} alert${totalUnread === 1 ? "" : "s"} waiting`
+              : "Parallel terminals with isolated worktrees"}
+          </div>
+        </div>
+        <div className="sidebar-primary-actions">
+          <button
+            type="button"
+            className="sidebar-new-btn sidebar-new-btn-primary"
+            onClick={() => createWorkspaceWithInheritedCwd().catch(logError)}
+            title="New workspace (Ctrl+N)"
+            aria-label="New workspace"
+          >
+            <Plus size={14} />
+            <span>Workspace</span>
+          </button>
+          <button
+            type="button"
+            className="sidebar-new-btn sidebar-new-btn-primary sidebar-worktree-btn"
+            onClick={handleNewWorktree}
+            title="New worktree (Ctrl+Shift+N)"
+            aria-label="New worktree workspace"
+          >
+            <GitBranch size={14} />
+            <span>Worktree</span>
+          </button>
+        </div>
+        <div className="sidebar-header-icons sidebar-secondary-actions">
+          <button
+            className="sidebar-icon-btn"
+            type="button"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
+            }
+            title="Command palette (Ctrl+Shift+P)"
+            aria-label="Open command palette"
+          >
+            <Command size={14} />
+          </button>
+          <button
+            className="sidebar-icon-btn"
+            type="button"
+            onClick={handleSplitRight}
+            title="Split Right (Ctrl+D)"
+            aria-label="Split right"
+          >
+            <Columns2 size={14} />
+          </button>
+          <button
+            className="sidebar-icon-btn"
+            type="button"
+            onClick={handleSplitDown}
+            title="Split Down (Ctrl+Shift+D)"
+            aria-label="Split down"
+          >
+            <Rows2 size={14} />
+          </button>
+          <button
+            className={`sidebar-icon-btn ${totalUnread > 0 ? "sidebar-icon-btn-unread" : ""} ${showNotificationPanel ? "sidebar-icon-btn-active" : ""}`}
+            type="button"
+            onClick={toggleNotificationPanel}
+            title="Notifications (Ctrl+Shift+I)"
+            aria-label="Toggle notifications"
+            aria-pressed={showNotificationPanel}
+          >
+            <Bell size={14} />
+            {totalUnread > 0 && (
+              <span className="sidebar-icon-badge">{totalUnread}</span>
+            )}
+          </button>
+          <button
+            className="sidebar-icon-btn"
+            type="button"
+            onClick={onToggleCollapsed}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <CollapseIcon size={14} />
           </button>
         </div>
       </div>

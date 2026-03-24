@@ -32,7 +32,7 @@ import {
   resolveWorkspaceSpawnCwd,
   splitPaneWithInheritedCwd,
 } from "../lib/workspace-launch";
-import { Columns2, Rows2, Search, X } from "lucide-react";
+import { Columns2, Rows2, Search, GripVertical, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -185,10 +185,14 @@ function PaneContextMenu({
 function PaneToolbar({
   paneId,
   isFocused,
+  hasUnreadNotification,
+  isFindOpen,
   onToggleFind,
 }: {
   paneId: string;
   isFocused: boolean;
+  hasUnreadNotification: boolean;
+  isFindOpen: boolean;
   onToggleFind: () => void;
 }) {
   const closePane = useWorkspaceStore((s) => s.closePane);
@@ -203,6 +207,7 @@ function PaneToolbar({
   return (
     <div
       className={`pane-toolbar ${isFocused ? "pane-toolbar-focused" : ""}`}
+      title="Drag to swap panes"
       onMouseDown={(e) => {
         // Buttons handle their own clicks; only start drag from the toolbar itself
         if ((e.target as HTMLElement).closest("button")) {
@@ -215,10 +220,21 @@ function PaneToolbar({
         document.body.classList.add("pane-dragging");
       }}
     >
-      <span className="pane-toolbar-title">{surfaceTitle}</span>
+      <div className="pane-toolbar-leading">
+        <span className="pane-toolbar-grip" aria-hidden="true">
+          <GripVertical size={12} />
+        </span>
+        <span className="pane-toolbar-title">{surfaceTitle}</span>
+        {hasUnreadNotification && (
+          <span className="pane-toolbar-badge pane-toolbar-badge-alert">
+            Needs input
+          </span>
+        )}
+      </div>
       <div className="pane-toolbar-actions">
         <button
           className="pane-toolbar-btn"
+          type="button"
           onClick={() =>
             splitPaneWithInheritedCwd(paneId, "horizontal").catch(logError)
           }
@@ -229,6 +245,7 @@ function PaneToolbar({
         </button>
         <button
           className="pane-toolbar-btn"
+          type="button"
           onClick={() =>
             splitPaneWithInheritedCwd(paneId, "vertical").catch(logError)
           }
@@ -238,15 +255,18 @@ function PaneToolbar({
           <Rows2 size={12} />
         </button>
         <button
-          className="pane-toolbar-btn"
+          className={`pane-toolbar-btn ${isFindOpen ? "pane-toolbar-btn-active" : ""}`}
+          type="button"
           onClick={onToggleFind}
           title="Find (Ctrl+F)"
           aria-label="Find in Terminal"
+          aria-pressed={isFindOpen}
         >
           <Search size={12} />
         </button>
         <button
           className="pane-toolbar-btn pane-toolbar-btn-close"
+          type="button"
           onClick={() => closePane(paneId)}
           title="Close Pane (Ctrl+W)"
           aria-label="Close Pane"
@@ -748,6 +768,8 @@ const TerminalPane = memo(function TerminalPane({
       <PaneToolbar
         paneId={paneId}
         isFocused={isFocused}
+        hasUnreadNotification={hasUnreadNotification}
+        isFindOpen={showFind}
         onToggleFind={() => setShowFind((v) => !v)}
       />
       {showFind && (

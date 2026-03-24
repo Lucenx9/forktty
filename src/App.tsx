@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   useCallback,
   useMemo,
@@ -8,7 +9,12 @@ import {
   Component,
 } from "react";
 import type { ReactNode, ErrorInfo } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
+import {
+  Group,
+  Panel,
+  Separator,
+  type PanelImperativeHandle,
+} from "react-resizable-panels";
 import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
 import NotificationPanel from "./components/NotificationPanel";
@@ -76,6 +82,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+const SIDEBAR_COLLAPSE_STORAGE_KEY = "forktty.sidebar-collapsed";
+const SIDEBAR_COLLAPSE_WIDTH_PX = 56;
+const SIDEBAR_EXPANDED_DEFAULT_PX = 280;
+const SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
+
 export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
@@ -89,6 +100,13 @@ export default function App() {
     currentName: string;
   } | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "1"
+    );
+  });
+  const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
 
   const closePane = useWorkspaceStore((s) => s.closePane);
   const moveFocus = useWorkspaceStore((s) => s.moveFocus);
@@ -117,6 +135,20 @@ export default function App() {
     (s) => s.config?.general.worktree_layout ?? "nested",
   );
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+
+  const setSidebarCollapsedPersisted = useCallback((collapsed: boolean) => {
+    setSidebarCollapsed(collapsed);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        SIDEBAR_COLLAPSE_STORAGE_KEY,
+        collapsed ? "1" : "0",
+      );
+    }
+  }, []);
+
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsedPersisted(!sidebarCollapsed);
+  }, [setSidebarCollapsedPersisted, sidebarCollapsed]);
 
   const handleCreateWorkspace = useCallback(() => {
     createWorkspaceWithInheritedCwd().catch(logError);
@@ -217,6 +249,16 @@ export default function App() {
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
+
+  useEffect(() => {
+    const panel = sidebarPanelRef.current;
+    if (!panel) return;
+    if (sidebarCollapsed) {
+      panel.collapse();
+    } else {
+      panel.expand();
+    }
+  }, [sidebarCollapsed]);
 
   // Restore session on startup; show welcome if no session exists
   useEffect(() => {
@@ -614,6 +656,11 @@ export default function App() {
         action: () => setShowCommandPalette(true),
       },
       {
+        id: "toggle-sidebar",
+        label: sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar",
+        action: toggleSidebarCollapsed,
+      },
+      {
         id: "next-workspace",
         label: "Next Workspace",
         action: () => {
@@ -674,7 +721,9 @@ export default function App() {
       markWorkspaceRead,
       activeWorkspaceId,
       toggleSettings,
+      sidebarCollapsed,
       switchWorkspace,
+      toggleSidebarCollapsed,
       moveFocus,
     ],
   );
@@ -682,12 +731,28 @@ export default function App() {
   const sidebarPanel = (
     <Panel
       id="sidebar"
-      defaultSize="280px"
-      minSize="220px"
+      panelRef={sidebarPanelRef}
+      defaultSize={
+        sidebarCollapsed
+          ? `${SIDEBAR_COLLAPSE_WIDTH_PX}px`
+          : `${SIDEBAR_EXPANDED_DEFAULT_PX}px`
+      }
+      minSize={`${SIDEBAR_COLLAPSE_WIDTH_PX}px`}
       maxSize="420px"
+      collapsedSize={`${SIDEBAR_COLLAPSE_WIDTH_PX}px`}
+      collapsible
       groupResizeBehavior="preserve-pixel-size"
+      onResize={(size) => {
+        const collapsed = size.inPixels <= SIDEBAR_COLLAPSE_THRESHOLD_PX;
+        if (collapsed !== sidebarCollapsed) {
+          setSidebarCollapsedPersisted(collapsed);
+        }
+      }}
     >
-      <Sidebar />
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
+      />
     </Panel>
   );
 

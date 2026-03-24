@@ -26,10 +26,16 @@ export default function NotificationPanel() {
   return (
     <div className="notification-panel">
       <div className="notification-panel-header">
-        <span className="notification-panel-title">Notifications</span>
+        <div className="notification-panel-heading">
+          <span className="notification-panel-title">Notifications</span>
+          <span className="notification-panel-subtitle">
+            Background prompts and agent events
+          </span>
+        </div>
         <div className="notification-panel-actions">
           {notifications.length > 0 && (
             <button
+              type="button"
               className="notification-clear-btn"
               onClick={clearNotifications}
             >
@@ -37,6 +43,7 @@ export default function NotificationPanel() {
             </button>
           )}
           <button
+            type="button"
             className="notification-close-btn"
             onClick={toggleNotificationPanel}
             aria-label="Close notifications"
@@ -47,11 +54,17 @@ export default function NotificationPanel() {
       </div>
       <div className="notification-list">
         {notifications.length === 0 ? (
-          <div className="notification-empty">No notifications</div>
+          <div className="notification-empty">
+            <div className="notification-empty-title">You&apos;re caught up</div>
+            <div className="notification-empty-body">
+              Alerts from background workspaces will land here.
+            </div>
+          </div>
         ) : (
           notifications.map((n) => (
-            <div
+            <button
               key={n.id}
+              type="button"
               className={`notification-item ${n.read ? "notification-read" : ""}`}
               onClick={() => handleClick(n.workspaceId)}
             >
@@ -64,8 +77,11 @@ export default function NotificationPanel() {
                   {formatTime(n.timestamp)}
                 </span>
               </div>
-              <div className="notification-body">{n.body}</div>
-            </div>
+              <div className="notification-title">{n.title}</div>
+              {n.body && n.body !== n.title && (
+                <div className="notification-body">{n.body}</div>
+              )}
+            </button>
           ))
         )}
       </div>
