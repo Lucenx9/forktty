@@ -49,6 +49,11 @@
   --transition-fast: 0.15s ease;
   --transition-med: 0.15s ease;
   --shortcut-bar-height: 26px;
+
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-panel: -4px 0 12px rgba(0, 0, 0, 0.32);
 }
 
 * {
@@ -256,8 +261,8 @@ textarea {
 }
 
 .sidebar-header {
-  padding: 10px 10px 8px;
-  border-bottom: 1px solid rgba(166, 173, 200, 0.08);
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid rgba(166, 173, 200, 0.1);
 }
 
 .sidebar-header-icons {
@@ -715,6 +720,7 @@ textarea {
   height: auto;
   background: var(--surface-overlay);
   border-left: 1px solid var(--border-visible);
+  box-shadow: var(--shadow-panel);
   display: flex;
   flex-direction: column;
   z-index: 100;
@@ -899,6 +905,7 @@ textarea {
   height: auto;
   background: var(--surface-overlay);
   border-left: 1px solid var(--border-visible);
+  box-shadow: var(--shadow-panel);
   display: flex;
   flex-direction: column;
   z-index: 200;
@@ -1117,6 +1124,7 @@ textarea {
   background: var(--surface-overlay);
   border: 1px solid var(--border-visible);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1244,6 +1252,7 @@ textarea {
   background: var(--surface-overlay);
   border: 1px solid var(--border-visible);
   border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
   padding: 5px;
   font-family: var(--ui-font-stack);
 }
@@ -1325,6 +1334,7 @@ textarea {
   border: 1px solid rgba(166, 173, 200, 0.14);
   border-left-width: 2px;
   border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
   width: 100%;
   padding: 10px 12px;
   font-family: var(--ui-font-stack);
@@ -1379,6 +1389,7 @@ textarea {
   background: var(--sidebar-bg);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   width: min(480px, 100%);
   padding: 18px 20px;
   font-family: var(--mono-font-stack);
@@ -1494,6 +1505,7 @@ textarea {
   background: var(--sidebar-bg);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   width: 100%;
   max-width: 460px;
   padding: 24px;
@@ -1606,9 +1618,9 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
+  gap: 16px;
   height: var(--shortcut-bar-height);
-  padding: 0 12px;
+  padding: 0 14px;
   background: var(--sidebar-bg);
   border-top: 1px solid var(--sidebar-border);
   font-family: var(--mono-font-stack);
@@ -1630,6 +1642,7 @@ textarea {
 .shortcut-hint kbd {
   background: var(--theme-bg);
   border: 1px solid var(--theme-black);
+  border-bottom-width: 2px;
   border-radius: var(--radius-xs);
   padding: 0 4px;
   font-size: 10px;
@@ -2020,6 +2033,7 @@ body.pane-dragging * {
   background: var(--surface-overlay);
   border: 1px solid var(--border-visible);
   border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
   padding: 5px;
   font-family: var(--ui-font-stack);
   font-size: 12px;
@@ -2097,8 +2111,8 @@ body.pane-dragging * {
 /* --- Help button & shortcuts --- */
 
 .sidebar-footer {
-  padding: 8px 10px 10px;
-  border-top: 1px solid rgba(166, 173, 200, 0.08);
+  padding: 10px 12px;
+  border-top: 1px solid rgba(166, 173, 200, 0.1);
 }
 
 .sidebar-help-wrapper {
@@ -2159,6 +2173,7 @@ body.pane-dragging * {
   background: var(--surface-overlay);
   border: 1px solid var(--border-visible);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2453,6 +2468,10 @@ body.pane-dragging * {
     --sidebar-hover: rgba(69, 71, 90, 0.94);
     --sidebar-active: rgba(137, 180, 250, 0.22);
     --sidebar-active-hover: rgba(137, 180, 250, 0.28);
+    --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+    --shadow-panel: -4px 0 12px rgba(0, 0, 0, 0.45);
   }
 
   .sidebar-entry,
