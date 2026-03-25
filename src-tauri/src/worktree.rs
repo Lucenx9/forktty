@@ -1,5 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::Serialize;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -34,6 +36,7 @@ pub struct WorktreeInfo {
     pub name: String,
     pub path: String,
     pub branch: String,
+    pub worktree_name: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -83,10 +86,77 @@ fn validate_worktree_name(name: &str) -> Result<(), WorktreeError> {
     Ok(())
 }
 
-/// Create a new git worktree with a branch.
-pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo, WorktreeError> {
-    validate_worktree_name(name)?;
+fn worktree_exists(repo: &Repository, name: &str) -> bool {
+    repo.worktrees()
+        .ok()
+        .map(|names| names.iter().flatten().any(|existing| existing == name))
+        .unwrap_or(false)
+}
 
+fn short_hash(value: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("{:08x}", hasher.finish())
+}
+
+fn sanitize_worktree_name(branch_name: &str) -> String {
+    let mut sanitized = String::with_capacity(branch_name.len());
+    let mut last_was_dash = false;
+
+    for ch in branch_name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            sanitized.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            sanitized.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    let mut cleaned = sanitized.trim_matches(&['-', '.'][..]).to_string();
+    if cleaned.is_empty() {
+        cleaned = "worktree".to_string();
+    }
+
+    while cleaned.contains("..") {
+        cleaned = cleaned.replace("..", "-");
+    }
+
+    cleaned
+}
+
+fn derive_worktree_name(repo: &Repository, branch_name: &str) -> String {
+    let branch_name_is_safe = validate_worktree_name(branch_name).is_ok();
+    let base = if branch_name_is_safe {
+        branch_name.to_string()
+    } else {
+        format!(
+            "{}-{}",
+            sanitize_worktree_name(branch_name),
+            short_hash(branch_name)
+        )
+    };
+
+    if !worktree_exists(repo, &base) {
+        return base;
+    }
+
+    let mut suffix = 2usize;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if !worktree_exists(repo, &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// Create a new git worktree with a branch.
+pub fn create(
+    repo_path: &str,
+    branch_name: &str,
+    layout: &str,
+) -> Result<WorktreeInfo, WorktreeError> {
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
 
@@ -94,13 +164,9 @@ pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo,
         .workdir()
         .ok_or_else(|| WorktreeError::Other("Bare repository".to_string()))?;
 
-    // Check if worktree already exists
-    if let Ok(names) = repo.worktrees() {
-        for n in names.iter().flatten() {
-            if n == name {
-                return Err(WorktreeError::AlreadyExists(name.to_string()));
-            }
-        }
+    let worktree_name = derive_worktree_name(&repo, branch_name);
+    if worktree_exists(&repo, &worktree_name) {
+        return Err(WorktreeError::AlreadyExists(worktree_name));
     }
 
     // Create branch from HEAD
@@ -110,12 +176,12 @@ pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo,
         .peel_to_commit()
         .map_err(|e| WorktreeError::Other(format!("HEAD is not a commit: {e}")))?;
 
-    let branch = repo.branch(name, &head_commit, false)?;
+    let branch = repo.branch(branch_name, &head_commit, false)?;
     let branch_ref = branch.into_reference();
-    let branch_name = branch_ref.shorthand().unwrap_or(name).to_string();
+    let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
 
     // Compute path and ensure parent directory exists
-    let wt_path = worktree_path(workdir, name, layout)?;
+    let wt_path = worktree_path(workdir, &worktree_name, layout)?;
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -123,12 +189,13 @@ pub fn create(repo_path: &str, name: &str, layout: &str) -> Result<WorktreeInfo,
     // Create worktree
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
-    repo.worktree(name, &wt_path, Some(&opts))?;
+    repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
 
     Ok(WorktreeInfo {
-        name: name.to_string(),
+        name: branch.clone(),
         path: wt_path.to_string_lossy().to_string(),
-        branch: branch_name,
+        branch,
+        worktree_name,
     })
 }
 
@@ -146,9 +213,10 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
             // Try to get the branch for this worktree
             let branch = get_worktree_branch(&wt_path);
             result.push(WorktreeInfo {
-                name: name.to_string(),
+                name: branch.clone(),
                 path: wt_path,
                 branch,
+                worktree_name: name.to_string(),
             });
         }
     }
@@ -166,15 +234,34 @@ fn get_worktree_branch(worktree_path: &str) -> String {
     String::new()
 }
 
+fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
+    if repo.find_worktree(selector).is_ok() {
+        return Ok(selector.to_string());
+    }
+
+    if let Ok(names) = repo.worktrees() {
+        for worktree_name in names.iter().flatten() {
+            if let Ok(wt) = repo.find_worktree(worktree_name) {
+                let wt_branch = get_worktree_branch(&wt.path().to_string_lossy());
+                if wt_branch == selector {
+                    return Ok(worktree_name.to_string());
+                }
+            }
+        }
+    }
+
+    Err(WorktreeError::NotFound(selector.to_string()))
+}
+
 /// Remove a worktree and optionally delete its branch.
-pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), WorktreeError> {
-    validate_worktree_name(name)?;
+pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
+    let worktree_name = resolve_worktree_name(&repo, selector)?;
 
     let wt = repo
-        .find_worktree(name)
-        .map_err(|_| WorktreeError::NotFound(name.to_string()))?;
+        .find_worktree(&worktree_name)
+        .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
 
     // Get the worktree path before pruning
     let wt_path = wt.path().to_path_buf();
@@ -182,8 +269,18 @@ pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), Wo
     let wt_repo = Repository::open(&wt_path)
         .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
     if has_uncommitted_changes(&wt_repo)? {
-        return Err(WorktreeError::WorktreeDirty(name.to_string()));
+        return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
     }
+    let branch_name = if delete_branch {
+        let branch_name = get_worktree_branch(&wt_path.to_string_lossy());
+        if branch_name.is_empty() {
+            None
+        } else {
+            Some(branch_name)
+        }
+    } else {
+        None
+    };
 
     // Prune the worktree (removes git reference)
     let mut prune_opts = git2::WorktreePruneOptions::new();
@@ -197,8 +294,8 @@ pub fn remove(repo_path: &str, name: &str, delete_branch: bool) -> Result<(), Wo
     }
 
     // Delete the branch
-    if delete_branch {
-        if let Ok(mut branch) = repo.find_branch(name, BranchType::Local) {
+    if let Some(branch_name) = branch_name {
+        if let Ok(mut branch) = repo.find_branch(&branch_name, BranchType::Local) {
             let _ = branch.delete();
         }
     }
@@ -225,17 +322,33 @@ fn has_uncommitted_changes(repo: &Repository) -> Result<bool, WorktreeError> {
         .any(|entry| entry.status().is_conflicted() || !entry.status().is_empty()))
 }
 
+fn resolve_branch_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
+    if repo.find_branch(selector, BranchType::Local).is_ok() {
+        return Ok(selector.to_string());
+    }
+
+    let worktree_name = resolve_worktree_name(repo, selector)?;
+    let wt = repo
+        .find_worktree(&worktree_name)
+        .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
+    let branch_name = get_worktree_branch(&wt.path().to_string_lossy());
+    if branch_name.is_empty() {
+        return Err(WorktreeError::BranchNotFound(selector.to_string()));
+    }
+    Ok(branch_name)
+}
+
 /// Merge a worktree's branch into the main checkout's current branch.
-pub fn merge(repo_path: &str, branch_name: &str) -> Result<String, WorktreeError> {
-    validate_worktree_name(branch_name)?;
+pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
     ensure_clean_checkout(&repo)?;
+    let branch_name = resolve_branch_name(&repo, selector)?;
 
     // Find the source branch
     let source_branch = repo
-        .find_branch(branch_name, BranchType::Local)
-        .map_err(|_| WorktreeError::BranchNotFound(branch_name.to_string()))?;
+        .find_branch(&branch_name, BranchType::Local)
+        .map_err(|_| WorktreeError::BranchNotFound(branch_name.clone()))?;
 
     let source_oid = source_branch
         .get()
@@ -420,8 +533,6 @@ pub fn attach(
     branch_name: &str,
     layout: &str,
 ) -> Result<WorktreeInfo, WorktreeError> {
-    validate_worktree_name(branch_name)?;
-
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
 
@@ -459,20 +570,22 @@ pub fn attach(
 
     let branch_ref = branch.into_reference();
     let branch_short = branch_ref.shorthand().unwrap_or(branch_name).to_string();
+    let worktree_name = derive_worktree_name(&repo, branch_name);
 
-    let wt_path = worktree_path(workdir, branch_name, layout)?;
+    let wt_path = worktree_path(workdir, &worktree_name, layout)?;
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
-    repo.worktree(branch_name, &wt_path, Some(&opts))?;
+    repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
 
     Ok(WorktreeInfo {
-        name: branch_name.to_string(),
+        name: branch_short.clone(),
         path: wt_path.to_string_lossy().to_string(),
         branch: branch_short,
+        worktree_name,
     })
 }
 
@@ -687,6 +800,49 @@ mod tests {
             result,
             Err(WorktreeError::WorktreeDirty(name)) if name == "remove-guard"
         ));
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn create_supports_branch_names_with_slash() {
+        let (repo_path, repo, _main_ref) = make_temp_repo("create-slash-branch");
+
+        let info = create(repo_path.to_str().unwrap(), "topic/slash", "nested").unwrap();
+
+        assert_eq!(info.name, "topic/slash");
+        assert_eq!(info.branch, "topic/slash");
+        assert_ne!(info.worktree_name, "topic/slash");
+        assert!(info.path.ends_with(&info.worktree_name));
+
+        let listed = list(repo_path.to_str().unwrap()).unwrap();
+        assert!(listed
+            .iter()
+            .any(|wt| { wt.branch == "topic/slash" && wt.worktree_name == info.worktree_name }));
+
+        remove(repo_path.to_str().unwrap(), "topic/slash", true).unwrap();
+        assert!(repo.find_branch("topic/slash", BranchType::Local).is_err());
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn attach_supports_branch_names_with_slash() {
+        let (repo_path, repo, _main_ref) = make_temp_repo("attach-slash-branch");
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("topic/attached", &head_commit, false).unwrap();
+
+        let info = attach(repo_path.to_str().unwrap(), "topic/attached", "nested").unwrap();
+
+        assert_eq!(info.name, "topic/attached");
+        assert_eq!(info.branch, "topic/attached");
+        assert_ne!(info.worktree_name, "topic/attached");
+        assert!(info.path.ends_with(&info.worktree_name));
+
+        remove(repo_path.to_str().unwrap(), "topic/attached", true).unwrap();
+        assert!(repo
+            .find_branch("topic/attached", BranchType::Local)
+            .is_err());
 
         let _ = fs::remove_dir_all(&repo_path);
     }

@@ -9,10 +9,11 @@ type BranchPickerResult =
   | { kind: "cancel" };
 
 interface BranchPickerProps {
+  cwd?: string;
   onResult: (result: BranchPickerResult) => void;
 }
 
-export default function BranchPicker({ onResult }: BranchPickerProps) {
+export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
   const [mode, setMode] = useState<"choose" | "new-branch-name">("choose");
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +32,7 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
 
   useEffect(() => {
     setLoading(true);
-    gitListBranches()
+    gitListBranches(cwd)
       .then((result) => {
         if (isMounted.current) {
           setBranches(result);
@@ -45,7 +46,7 @@ export default function BranchPicker({ onResult }: BranchPickerProps) {
           showToast(`Failed to load branches: ${err}`, "error");
         }
       });
-  }, []);
+  }, [cwd]);
 
   useEffect(() => {
     if (mode === "choose") {

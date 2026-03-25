@@ -209,11 +209,17 @@ fn main() {
 }
 
 fn build_request(command: &Commands) -> (&'static str, Value) {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string());
     match command {
         Commands::Ping => ("system.ping", json!({})),
         Commands::Ls => ("workspace.list", json!({})),
         Commands::New { name, prompt } => match name {
-            Some(name) => ("worktree.create", json!({ "name": name, "prompt": prompt })),
+            Some(name) => (
+                "worktree.create",
+                json!({ "name": name, "prompt": prompt, "cwd": cwd }),
+            ),
             None => ("workspace.create", json!({ "prompt": prompt })),
         },
         Commands::Select { name } => ("workspace.select", json!({ "name": name })),
@@ -226,8 +232,8 @@ fn build_request(command: &Commands) -> (&'static str, Value) {
             json!({ "title": title, "body": body }),
         ),
         Commands::Split { direction } => ("surface.split", json!({ "direction": direction })),
-        Commands::Merge { name } => ("worktree.merge", json!({ "name": name })),
-        Commands::Rm { name } => ("worktree.remove", json!({ "name": name })),
+        Commands::Merge { name } => ("worktree.merge", json!({ "name": name, "cwd": cwd })),
+        Commands::Rm { name } => ("worktree.remove", json!({ "name": name, "cwd": cwd })),
         Commands::Notifications => ("notification.list", json!({})),
         Commands::ClearNotifications => ("notification.clear", json!({})),
         Commands::ReadScreen { surface_id } => {
@@ -335,6 +341,7 @@ mod tests {
         assert_eq!(method, "worktree.create");
         assert_eq!(params["name"], "feature-x");
         assert_eq!(params["prompt"], "hello");
+        assert!(params["cwd"].is_string());
     }
 
     #[test]
@@ -357,6 +364,7 @@ mod tests {
 
         assert_eq!(method, "worktree.remove");
         assert_eq!(params["name"], "feature-x");
+        assert!(params["cwd"].is_string());
     }
 
     #[test]

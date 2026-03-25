@@ -214,7 +214,7 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
-            let cwd = current_dir_string()?;
+            let cwd = request_cwd(&params)?;
             let layout = crate::config::load_config()
                 .ok()
                 .map(|c| c.general.worktree_layout)
@@ -232,11 +232,11 @@ async fn dispatch(
                 pending,
                 "workspace.create",
                 json!({
-                    "name": &info.name,
+                    "name": &info.branch,
                     "workingDir": &info.path,
                     "gitBranch": &info.branch,
                     "worktreeDir": &info.path,
-                    "worktreeName": &info.name,
+                    "worktreeName": &info.worktree_name,
                     "prompt": &prompt,
                 }),
             )
@@ -254,6 +254,7 @@ async fn dispatch(
                 "name": info.name,
                 "path": info.path,
                 "branch": info.branch,
+                "worktree_name": info.worktree_name,
             }))
         }
 
@@ -262,10 +263,15 @@ async fn dispatch(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing name")?;
-            let cwd = current_dir_string()?;
+            let cwd = request_cwd(&params)?;
+            let mut resolved_worktree_name: Option<String> = None;
 
             if let Ok(worktrees) = crate::worktree::list(&cwd) {
-                if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
+                if let Some(wt) = worktrees
+                    .iter()
+                    .find(|w| w.worktree_name == name || w.branch == name || w.name == name)
+                {
+                    resolved_worktree_name = Some(wt.worktree_name.clone());
                     // Intentional: teardown hook failure is advisory and should not block removal
                     if let Ok(verified) = crate::verify_repo_path(&wt.path) {
                         let _ = crate::worktree::run_hook(&verified, "teardown");
@@ -278,7 +284,7 @@ async fn dispatch(
                 app,
                 pending,
                 "workspace.close",
-                json!({ "worktreeName": name }),
+                json!({ "worktreeName": resolved_worktree_name.unwrap_or_else(|| name.to_string()) }),
             )
             .await;
 
@@ -290,8 +296,8 @@ async fn dispatch(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing name")?;
-            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-            crate::worktree::merge(&cwd.to_string_lossy(), name).map_err(|e| e.to_string())?;
+            let cwd = request_cwd(&params)?;
+            crate::worktree::merge(&cwd, name).map_err(|e| e.to_string())?;
             Ok(json!(format!("Merged '{name}'")))
         }
 
@@ -322,6 +328,13 @@ fn current_dir_string() -> Result<String, String> {
     std::env::current_dir()
         .map(|path| path.to_string_lossy().to_string())
         .map_err(|e| e.to_string())
+}
+
+fn request_cwd(params: &Value) -> Result<String, String> {
+    match params.get("cwd").and_then(|value| value.as_str()) {
+        Some(cwd) if !cwd.trim().is_empty() => Ok(cwd.to_string()),
+        _ => current_dir_string(),
+    }
 }
 
 fn write_surface_text(

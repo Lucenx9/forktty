@@ -211,6 +211,7 @@ export interface WorktreeInfo {
   name: string;
   path: string;
   branch: string;
+  worktree_name: string;
 }
 
 export interface BranchInfo {
@@ -220,37 +221,44 @@ export interface BranchInfo {
   last_commit_summary: string;
 }
 
-export function gitListBranches(): Promise<BranchInfo[]> {
-  return invoke<BranchInfo[]>("git_list_branches");
+export function gitListBranches(cwd?: string): Promise<BranchInfo[]> {
+  return invoke<BranchInfo[]>("git_list_branches", { cwd: cwd ?? null });
 }
 
 export function worktreeAttach(
   branchName: string,
   layout?: string,
+  cwd?: string,
 ): Promise<WorktreeInfo> {
   return invoke<WorktreeInfo>("worktree_attach", {
     branchName,
     layout: layout ?? null,
+    cwd: cwd ?? null,
   });
 }
 
-export function worktreeCreate(name: string, layout?: string): Promise<WorktreeInfo> {
+export function worktreeCreate(
+  name: string,
+  layout?: string,
+  cwd?: string,
+): Promise<WorktreeInfo> {
   return invoke<WorktreeInfo>("worktree_create", {
     name,
     layout: layout ?? null,
+    cwd: cwd ?? null,
   });
 }
 
-export function worktreeList(): Promise<WorktreeInfo[]> {
-  return invoke<WorktreeInfo[]>("worktree_list");
+export function worktreeList(cwd?: string): Promise<WorktreeInfo[]> {
+  return invoke<WorktreeInfo[]>("worktree_list", { cwd: cwd ?? null });
 }
 
-export function worktreeRemove(name: string): Promise<void> {
-  return invoke("worktree_remove", { name });
+export function worktreeRemove(name: string, cwd?: string): Promise<void> {
+  return invoke("worktree_remove", { name, cwd: cwd ?? null });
 }
 
-export function worktreeMerge(name: string): Promise<string> {
-  return invoke<string>("worktree_merge", { name });
+export function worktreeMerge(name: string, cwd?: string): Promise<string> {
+  return invoke<string>("worktree_merge", { name, cwd: cwd ?? null });
 }
 
 export function worktreeStatus(path: string): Promise<string> {

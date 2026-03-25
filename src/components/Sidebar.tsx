@@ -46,6 +46,10 @@ function worktreeStatusWarning(status: string): string {
   return "";
 }
 
+function worktreeLabel(workspace: Workspace): string {
+  return workspace.gitBranch || workspace.worktreeName;
+}
+
 function truncatePath(path: string, maxLen: number): string {
   if (path.length <= maxLen) return path;
   const home = path.replace(/^\/home\/[^/]+/, "~");
@@ -194,7 +198,7 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }
 
   function handleMerge() {
-    worktreeMerge(ws!.worktreeName)
+    worktreeMerge(ws!.worktreeName, ws!.workingDir || ws!.worktreeDir)
       .then((msg) => showToast(String(msg), "info"))
       .catch((err) => showToast(`Merge failed: ${err}`, "error"));
     onClose();
@@ -326,12 +330,12 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
         createPortal(
           <ConfirmModal
             title="Remove Worktree"
-            message={`Remove worktree "${ws.worktreeName}" and delete branch?${worktreeStatusWarning(ws.worktreeStatus)}`}
+            message={`Remove worktree "${worktreeLabel(ws)}" and delete branch?${worktreeStatusWarning(ws.worktreeStatus)}`}
             confirmLabel="Remove"
             danger={true}
             onConfirm={() => {
               setPendingRemoveWorktree(false);
-              worktreeRemove(ws.worktreeName)
+              worktreeRemove(ws.worktreeName, ws.workingDir || ws.worktreeDir)
                 .then(() => closeWorkspaceEnsuringOneRemains(menu.workspaceId))
                 .catch((err) => showToast(`Remove failed: ${err}`, "error"));
               onClose();
@@ -437,7 +441,7 @@ function WorkspaceEntry({
 
   function handleMerge(e: React.MouseEvent) {
     e.stopPropagation();
-    worktreeMerge(workspace.worktreeName)
+    worktreeMerge(workspace.worktreeName, workspace.workingDir || workspace.worktreeDir)
       .then((msg) => {
         showToast(String(msg), "info");
       })
@@ -612,12 +616,15 @@ function WorkspaceEntry({
         createPortal(
           <ConfirmModal
             title="Remove Worktree"
-            message={`Remove worktree "${workspace.worktreeName}" and delete branch?${worktreeStatusWarning(workspace.worktreeStatus)}`}
+            message={`Remove worktree "${worktreeLabel(workspace)}" and delete branch?${worktreeStatusWarning(workspace.worktreeStatus)}`}
             confirmLabel="Remove"
             danger={true}
             onConfirm={() => {
               setPendingRemove(false);
-              worktreeRemove(workspace.worktreeName)
+              worktreeRemove(
+                workspace.worktreeName,
+                workspace.workingDir || workspace.worktreeDir,
+              )
                 .then(() => closeWorkspaceEnsuringOneRemains(workspace.id))
                 .catch((err) => showToast(`Remove failed: ${err}`, "error"));
             }}

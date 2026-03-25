@@ -251,22 +251,36 @@ fn cwd_string() -> Result<String, String> {
     Ok(cwd)
 }
 
+fn resolved_repo_cwd(cwd: Option<String>) -> Result<String, String> {
+    match cwd {
+        Some(path) if !path.trim().is_empty() => Ok(path),
+        _ => cwd_string(),
+    }
+}
+
 #[tauri::command]
-fn worktree_create(name: String, layout: Option<String>) -> Result<worktree::WorktreeInfo, String> {
+fn worktree_create(
+    name: String,
+    layout: Option<String>,
+    cwd: Option<String>,
+) -> Result<worktree::WorktreeInfo, String> {
     let layout = layout.as_deref().unwrap_or("nested");
-    worktree::create(&cwd_string()?, &name, layout).map_err(|e| e.to_string())
+    worktree::create(&resolved_repo_cwd(cwd)?, &name, layout).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn worktree_list() -> Result<Vec<worktree::WorktreeInfo>, String> {
-    worktree::list(&cwd_string()?).map_err(|e| e.to_string())
+fn worktree_list(cwd: Option<String>) -> Result<Vec<worktree::WorktreeInfo>, String> {
+    worktree::list(&resolved_repo_cwd(cwd)?).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn worktree_remove(name: String) -> Result<(), String> {
-    let cwd = cwd_string()?;
+fn worktree_remove(name: String, cwd: Option<String>) -> Result<(), String> {
+    let cwd = resolved_repo_cwd(cwd)?;
     let worktrees = worktree::list(&cwd).map_err(|e| e.to_string())?;
-    if let Some(wt) = worktrees.iter().find(|w| w.name == name) {
+    if let Some(wt) = worktrees
+        .iter()
+        .find(|w| w.worktree_name == name || w.branch == name || w.name == name)
+    {
         if let Ok(verified) = verify_repo_path(&wt.path) {
             let _ = worktree::run_hook(&verified, "teardown");
         }
@@ -275,8 +289,8 @@ fn worktree_remove(name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn worktree_merge(name: String) -> Result<String, String> {
-    worktree::merge(&cwd_string()?, &name).map_err(|e| e.to_string())
+fn worktree_merge(name: String, cwd: Option<String>) -> Result<String, String> {
+    worktree::merge(&resolved_repo_cwd(cwd)?, &name).map_err(|e| e.to_string())
 }
 
 /// Canonicalize a path and verify it is inside a git repository's working directory.
@@ -307,8 +321,8 @@ fn worktree_run_hook(worktree_path: String, hook_name: String) -> Result<Option<
 }
 
 #[tauri::command]
-fn git_list_branches() -> Result<Vec<worktree::BranchInfo>, String> {
-    let cwd = cwd_string()?;
+fn git_list_branches(cwd: Option<String>) -> Result<Vec<worktree::BranchInfo>, String> {
+    let cwd = resolved_repo_cwd(cwd)?;
     worktree::list_branches(&cwd).map_err(|e| e.to_string())
 }
 
@@ -316,8 +330,9 @@ fn git_list_branches() -> Result<Vec<worktree::BranchInfo>, String> {
 fn worktree_attach(
     branch_name: String,
     layout: Option<String>,
+    cwd: Option<String>,
 ) -> Result<worktree::WorktreeInfo, String> {
-    let cwd = cwd_string()?;
+    let cwd = resolved_repo_cwd(cwd)?;
     let layout_str = layout.as_deref().unwrap_or("nested");
     worktree::attach(&cwd, &branch_name, layout_str).map_err(|e| e.to_string())
 }

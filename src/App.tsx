@@ -44,6 +44,7 @@ import {
 import { handleSocketRequest } from "./lib/socket-handler";
 import {
   createWorkspaceWithInheritedCwd,
+  resolvePaneCwd,
   splitPaneWithInheritedCwd,
 } from "./lib/workspace-launch";
 import { buildSessionPayload } from "./lib/session-persistence";
@@ -90,6 +91,7 @@ export default function App() {
   const [sessionHydrated, setSessionHydrated] = useState(() => !hasTauriRuntime());
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
+  const [branchPickerCwd, setBranchPickerCwd] = useState<string>();
   const [pendingCloseWs, setPendingCloseWs] = useState<{
     id: string;
     name: string;
@@ -191,32 +193,60 @@ export default function App() {
     );
   }, []);
 
+  const openBranchPicker = useCallback(() => {
+    const state = useWorkspaceStore.getState();
+    const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+    const fallbackCwd = activeWorkspace?.workingDir || undefined;
+
+    if (!activeWorkspace?.focusedPaneId) {
+      setBranchPickerCwd(fallbackCwd);
+      setShowBranchPicker(true);
+      return;
+    }
+
+    resolvePaneCwd(activeWorkspace.focusedPaneId)
+      .then((cwd) => {
+        setBranchPickerCwd(cwd);
+        setShowBranchPicker(true);
+      })
+      .catch((err) => {
+        logError(err);
+        setBranchPickerCwd(fallbackCwd);
+        setShowBranchPicker(true);
+      });
+  }, []);
+
   const handleBranchPickerResult = useCallback(
     (result: BranchPickerResult) => {
       setShowBranchPicker(false);
-      if (result.kind === "cancel") return;
+      if (result.kind === "cancel") {
+        setBranchPickerCwd(undefined);
+        return;
+      }
 
       const createFn =
         result.kind === "new-branch"
-          ? worktreeCreate(result.name, worktreeLayout)
-          : worktreeAttach(result.branchName, worktreeLayout);
+          ? worktreeCreate(result.name, worktreeLayout, branchPickerCwd)
+          : worktreeAttach(result.branchName, worktreeLayout, branchPickerCwd);
 
       createFn
         .then((info) => {
           createWorktreeWorkspace(
-            info.name,
+            info.branch,
             info.path,
             info.branch,
             info.path,
-            info.name,
+            info.worktree_name,
           );
           worktreeRunHook(info.path, "setup").catch(logError);
+          setBranchPickerCwd(undefined);
         })
         .catch((err) => {
+          setBranchPickerCwd(undefined);
           showToast(`Failed to create worktree: ${err}`, "error");
         });
     },
-    [worktreeLayout, createWorktreeWorkspace],
+    [branchPickerCwd, worktreeLayout, createWorktreeWorkspace],
   );
 
   const restoreSession = useWorkspaceStore((s) => s.restoreSession);
@@ -320,7 +350,7 @@ export default function App() {
   // Listen for branch picker open event from Sidebar
   useEffect(() => {
     function handleOpenBranchPicker() {
-      setShowBranchPicker(true);
+      openBranchPicker();
     }
     function handleOpenCommandPalette() {
       setShowCommandPalette(true);
@@ -334,7 +364,7 @@ export default function App() {
         handleOpenCommandPalette,
       );
     };
-  }, []);
+  }, [openBranchPicker]);
 
   // Window title badge: show unread count
   const totalUnread = useWorkspaceStore((s) =>
@@ -407,7 +437,7 @@ export default function App() {
       // Ctrl+Shift+N: new worktree workspace (open branch picker)
       if (e.ctrlKey && e.shiftKey && e.key === "N") {
         e.preventDefault();
-        setShowBranchPicker(true);
+        openBranchPicker();
         return;
       }
 
@@ -521,6 +551,7 @@ export default function App() {
     handleCreateWorkspace,
     handleSplitFocusedPane,
     moveFocus,
+    openBranchPicker,
     requestCloseWorkspace,
     switchWorkspace,
     toggleNotificationPanel,
@@ -542,7 +573,7 @@ export default function App() {
         id: "new-worktree",
         label: "New Worktree Workspace",
         shortcut: "Ctrl+Shift+N",
-        action: () => setShowBranchPicker(true),
+        action: openBranchPicker,
       },
       {
         id: "rename-workspace",
@@ -708,6 +739,7 @@ export default function App() {
       requestCloseWorkspace,
       closePane,
       dispatchFocusedPaneAction,
+      openBranchPicker,
       toggleNotificationPanel,
       jumpToUnread,
       markWorkspaceRead,
@@ -803,7 +835,9 @@ export default function App() {
           {showCommandPalette && (
             <CommandPalette commands={commands} onClose={closeCommandPalette} />
           )}
-          {showBranchPicker && <BranchPicker onResult={handleBranchPickerResult} />}
+          {showBranchPicker && (
+            <BranchPicker cwd={branchPickerCwd} onResult={handleBranchPickerResult} />
+          )}
           {showWelcome && <WelcomeScreen onDismiss={() => setShowWelcome(false)} />}
         </Suspense>
       </LazyErrorBoundary>

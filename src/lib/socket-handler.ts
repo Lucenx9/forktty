@@ -464,14 +464,15 @@ export async function handleSocketRequest(
         const name = params.name as string;
         const layout =
           (params.layout as string) || config?.general.worktree_layout || undefined;
+        const cwd = getStringParam(params, "cwd") ?? undefined;
         try {
-          const info = await worktreeCreate(name, layout);
+          const info = await worktreeCreate(name, layout, cwd);
           const wsId = state.createWorktreeWorkspace(
-            info.name,
+            info.branch,
             info.path,
             info.branch,
             info.path,
-            info.name,
+            info.worktree_name,
           );
           worktreeRunHook(info.path, "setup").catch(logError);
           result = { result: { id: wsId, ...info } };
@@ -482,8 +483,9 @@ export async function handleSocketRequest(
       }
       case "worktree.merge": {
         const name = params.name as string;
+        const cwd = getStringParam(params, "cwd") ?? undefined;
         try {
-          const msg = await worktreeMerge(name);
+          const msg = await worktreeMerge(name, cwd);
           result = { result: msg };
         } catch (err) {
           result = { error: String(err) };
@@ -492,12 +494,20 @@ export async function handleSocketRequest(
       }
       case "worktree.remove": {
         const name = params.name as string;
+        const cwd = getStringParam(params, "cwd") ?? undefined;
         try {
-          await worktreeRemove(name);
+          await worktreeRemove(name, cwd);
           // Close the workspace associated with this worktree
           const latestState = useWorkspaceStore.getState();
           const target = latestState.workspaceOrder.find(
-            (wsId) => latestState.workspaces[wsId]?.worktreeName === name,
+            (wsId) => {
+              const workspace = latestState.workspaces[wsId];
+              return (
+                workspace?.worktreeName === name ||
+                workspace?.gitBranch === name ||
+                workspace?.name === name
+              );
+            },
           );
           if (target) closeWorkspaceEnsuringOneRemains(target);
           result = { result: true };
