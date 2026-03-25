@@ -237,7 +237,8 @@ fn send_custom_notification(command: String, title: String, body: String) -> Res
 
 // --- Worktree commands ---
 
-fn cwd_string() -> Result<String, String> {
+/// Return the process CWD, falling back to $HOME when running inside an AppImage.
+pub(crate) fn cwd_string() -> Result<String, String> {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| e.to_string())?;
@@ -252,10 +253,18 @@ fn cwd_string() -> Result<String, String> {
 }
 
 fn resolved_repo_cwd(cwd: Option<String>) -> Result<String, String> {
-    match cwd {
-        Some(path) if !path.trim().is_empty() => Ok(path),
-        _ => cwd_string(),
+    let path = match cwd {
+        Some(p) if !p.trim().is_empty() => p,
+        _ => cwd_string()?,
+    };
+    // Validate the path is inside a git repository before proceeding.
+    // Without this, fallback CWDs like $HOME silently fail deep in worktree ops.
+    if git2::Repository::discover(&path).is_err() {
+        return Err(format!(
+            "Not a git repository: {path} — open a terminal in a git project first"
+        ));
     }
+    Ok(path)
 }
 
 #[tauri::command]

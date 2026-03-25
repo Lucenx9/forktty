@@ -38,6 +38,7 @@ import {
   loadSession,
   writeLog,
   logError,
+  getPtyCwd,
   updateTrayTooltip,
   hasTauriRuntime,
 } from "./lib/pty-bridge";
@@ -198,22 +199,59 @@ export default function App() {
     const activeWorkspace = state.workspaces[state.activeWorkspaceId];
     const fallbackCwd = activeWorkspace?.workingDir || undefined;
 
-    if (!activeWorkspace?.focusedPaneId) {
+    // Try to get the CWD directly from the focused pane's PTY first.
+    // This is more reliable than resolvePaneCwd which can fall back to
+    // the process CWD ($HOME) when the workspace has no workingDir set.
+    const focusedPaneId = activeWorkspace?.focusedPaneId;
+    const ptyId = focusedPaneId
+      ? (activeWorkspace?.surfaces[focusedPaneId]?.ptyId ?? null)
+      : null;
+
+    if (ptyId != null) {
+      getPtyCwd(ptyId)
+        .then((cwd) => {
+          setBranchPickerCwd(cwd);
+          setShowBranchPicker(true);
+        })
+        .catch(() => {
+          // PTY CWD failed; try workspace workingDir, then resolvePaneCwd
+          if (fallbackCwd) {
+            setBranchPickerCwd(fallbackCwd);
+            setShowBranchPicker(true);
+          } else if (focusedPaneId) {
+            resolvePaneCwd(focusedPaneId)
+              .then((cwd) => {
+                setBranchPickerCwd(cwd);
+                setShowBranchPicker(true);
+              })
+              .catch((err) => {
+                logError(err);
+                setBranchPickerCwd(undefined);
+                setShowBranchPicker(true);
+              });
+          } else {
+            setBranchPickerCwd(undefined);
+            setShowBranchPicker(true);
+          }
+        });
+    } else if (fallbackCwd) {
       setBranchPickerCwd(fallbackCwd);
       setShowBranchPicker(true);
-      return;
+    } else if (focusedPaneId) {
+      resolvePaneCwd(focusedPaneId)
+        .then((cwd) => {
+          setBranchPickerCwd(cwd);
+          setShowBranchPicker(true);
+        })
+        .catch((err) => {
+          logError(err);
+          setBranchPickerCwd(undefined);
+          setShowBranchPicker(true);
+        });
+    } else {
+      setBranchPickerCwd(undefined);
+      setShowBranchPicker(true);
     }
-
-    resolvePaneCwd(activeWorkspace.focusedPaneId)
-      .then((cwd) => {
-        setBranchPickerCwd(cwd);
-        setShowBranchPicker(true);
-      })
-      .catch((err) => {
-        logError(err);
-        setBranchPickerCwd(fallbackCwd);
-        setShowBranchPicker(true);
-      });
   }, []);
 
   const handleBranchPickerResult = useCallback(

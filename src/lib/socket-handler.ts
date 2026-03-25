@@ -499,16 +499,14 @@ export async function handleSocketRequest(
           await worktreeRemove(name, cwd);
           // Close the workspace associated with this worktree
           const latestState = useWorkspaceStore.getState();
-          const target = latestState.workspaceOrder.find(
-            (wsId) => {
-              const workspace = latestState.workspaces[wsId];
-              return (
-                workspace?.worktreeName === name ||
-                workspace?.gitBranch === name ||
-                workspace?.name === name
-              );
-            },
-          );
+          const target = latestState.workspaceOrder.find((wsId) => {
+            const workspace = latestState.workspaces[wsId];
+            return (
+              workspace?.worktreeName === name ||
+              workspace?.gitBranch === name ||
+              workspace?.name === name
+            );
+          });
           if (target) closeWorkspaceEnsuringOneRemains(target);
           result = { result: true };
         } catch (err) {

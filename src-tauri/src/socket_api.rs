@@ -324,16 +324,10 @@ async fn dispatch(
     }
 }
 
-fn current_dir_string() -> Result<String, String> {
-    std::env::current_dir()
-        .map(|path| path.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
-}
-
 fn request_cwd(params: &Value) -> Result<String, String> {
     match params.get("cwd").and_then(|value| value.as_str()) {
         Some(cwd) if !cwd.trim().is_empty() => Ok(cwd.to_string()),
-        _ => current_dir_string(),
+        _ => crate::cwd_string(),
     }
 }
 
