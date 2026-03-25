@@ -330,7 +330,7 @@ pub fn execute_remove(repo_path: &str, plan: &RemovePlan) -> Result<(), Worktree
 
     // Delete the branch
     if let Some(branch_name) = &plan.branch_name {
-        if let Ok(mut branch) = repo.find_branch(&branch_name, BranchType::Local) {
+        if let Ok(mut branch) = repo.find_branch(branch_name, BranchType::Local) {
             let _ = branch.delete();
         }
     }

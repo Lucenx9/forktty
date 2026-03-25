@@ -337,8 +337,8 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or("Missing name")?;
             let cwd = request_cwd(&params)?;
-            let plan = crate::worktree::prepare_remove(&cwd, name, true)
-                .map_err(|e| e.to_string())?;
+            let plan =
+                crate::worktree::prepare_remove(&cwd, name, true).map_err(|e| e.to_string())?;
             let resolved_worktree_name = plan.worktree_name().to_string();
 
             // Intentional: teardown hook failure is advisory and should not block removal
