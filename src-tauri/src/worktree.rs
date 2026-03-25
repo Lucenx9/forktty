@@ -39,6 +39,23 @@ pub struct WorktreeInfo {
     pub worktree_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemovePlan {
+    worktree_name: String,
+    worktree_path: String,
+    branch_name: Option<String>,
+}
+
+impl RemovePlan {
+    pub fn worktree_name(&self) -> &str {
+        &self.worktree_name
+    }
+
+    pub fn worktree_path(&self) -> &str {
+        &self.worktree_path
+    }
+}
+
 #[derive(Clone, Serialize)]
 pub struct BranchInfo {
     pub name: String,
@@ -253,8 +270,11 @@ fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, Wo
     Err(WorktreeError::NotFound(selector.to_string()))
 }
 
-/// Remove a worktree and optionally delete its branch.
-pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
+pub fn prepare_remove(
+    repo_path: &str,
+    selector: &str,
+    delete_branch: bool,
+) -> Result<RemovePlan, WorktreeError> {
     let repo = Repository::discover(repo_path)
         .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
     let worktree_name = resolve_worktree_name(&repo, selector)?;
@@ -282,6 +302,21 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
         None
     };
 
+    Ok(RemovePlan {
+        worktree_name,
+        worktree_path: wt_path.to_string_lossy().to_string(),
+        branch_name,
+    })
+}
+
+pub fn execute_remove(repo_path: &str, plan: &RemovePlan) -> Result<(), WorktreeError> {
+    let repo = Repository::discover(repo_path)
+        .map_err(|_| WorktreeError::NotARepo(repo_path.to_string()))?;
+    let wt = repo
+        .find_worktree(plan.worktree_name())
+        .map_err(|_| WorktreeError::NotFound(plan.worktree_name.clone()))?;
+    let wt_path = PathBuf::from(plan.worktree_path());
+
     // Prune the worktree (removes git reference)
     let mut prune_opts = git2::WorktreePruneOptions::new();
     prune_opts.valid(true);
@@ -294,13 +329,19 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
     }
 
     // Delete the branch
-    if let Some(branch_name) = branch_name {
+    if let Some(branch_name) = &plan.branch_name {
         if let Ok(mut branch) = repo.find_branch(&branch_name, BranchType::Local) {
             let _ = branch.delete();
         }
     }
 
     Ok(())
+}
+
+/// Remove a worktree and optionally delete its branch.
+pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
+    let plan = prepare_remove(repo_path, selector, delete_branch)?;
+    execute_remove(repo_path, &plan)
 }
 
 fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {

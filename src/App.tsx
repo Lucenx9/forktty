@@ -333,6 +333,7 @@ export default function App() {
               worktreeDir: ws.worktree_dir,
               worktreeName: ws.worktree_name,
               paneTree: ws.pane_tree,
+              focusedLeafIndex: ws.focused_leaf_index ?? 0,
             })),
             data.active_workspace_index,
           );

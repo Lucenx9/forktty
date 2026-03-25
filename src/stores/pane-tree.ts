@@ -42,6 +42,7 @@ export interface SessionSnapshot {
   worktreeDir: string;
   worktreeName: string;
   paneTree: PaneTreeSnap;
+  focusedLeafIndex: number;
 }
 
 // --- Surface type (needed by factory helpers) ---
@@ -74,6 +75,10 @@ export interface Workspace {
 // --- Constants ---
 
 export const MAX_SPLIT_DEPTH = 5;
+
+function isFinitePositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
 
 // --- Pure pane tree algorithms ---
 
@@ -449,4 +454,35 @@ export function snapshotPaneTree(node: PaneNode): PaneTreeSnap {
     children: node.children.map(snapshotPaneTree),
     sizes: [...node.sizes],
   };
+}
+
+/** Validate a persisted pane tree snapshot before attempting rehydration. */
+export function isValidPaneTreeSnap(
+  snap: PaneTreeSnap | null | undefined,
+): snap is PaneTreeSnap {
+  if (!snap || typeof snap !== "object") {
+    return false;
+  }
+
+  if (snap.type === "leaf") {
+    return true;
+  }
+
+  if (snap.type !== "horizontal" && snap.type !== "vertical") {
+    return false;
+  }
+
+  if (!Array.isArray(snap.children) || snap.children.length < 2) {
+    return false;
+  }
+
+  if (!Array.isArray(snap.sizes) || snap.sizes.length !== snap.children.length) {
+    return false;
+  }
+
+  if (snap.sizes.some((size) => !isFinitePositiveNumber(size))) {
+    return false;
+  }
+
+  return snap.children.every((child) => isValidPaneTreeSnap(child));
 }

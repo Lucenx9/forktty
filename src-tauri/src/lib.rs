@@ -8,7 +8,7 @@ mod worktree;
 
 use base64::Engine;
 use output_scanner::{OutputScanner, ScanEvent};
-use pty_manager::PtyManager;
+use pty_manager::{PtyError, PtyManager};
 use serde::Serialize;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -182,7 +182,10 @@ fn pty_kill(state: State<'_, AppState>, id: u32) -> Result<(), String> {
         .pty_manager
         .lock()
         .map_err(|e| format!("Lock error: {e}"))?;
-    mgr.kill(id).map_err(|e| e.to_string())
+    match mgr.kill(id) {
+        Ok(()) | Err(PtyError::NotFound(_)) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -295,16 +298,11 @@ fn worktree_list(cwd: Option<String>) -> Result<Vec<worktree::WorktreeInfo>, Str
 #[tauri::command]
 fn worktree_remove(name: String, cwd: Option<String>) -> Result<(), String> {
     let cwd = resolved_repo_cwd(cwd)?;
-    let worktrees = worktree::list(&cwd).map_err(|e| e.to_string())?;
-    if let Some(wt) = worktrees
-        .iter()
-        .find(|w| w.worktree_name == name || w.branch == name || w.name == name)
-    {
-        if let Ok(verified) = verify_repo_path(&wt.path) {
-            let _ = worktree::run_hook(&verified, "teardown");
-        }
+    let plan = worktree::prepare_remove(&cwd, &name, true).map_err(|e| e.to_string())?;
+    if let Ok(verified) = verify_repo_path(plan.worktree_path()) {
+        let _ = worktree::run_hook(&verified, "teardown");
     }
-    worktree::remove(&cwd, &name, true).map_err(|e| e.to_string())
+    worktree::execute_remove(&cwd, &plan).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

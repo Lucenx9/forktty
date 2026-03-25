@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useMetadataStore } from "./metadata";
+import { hasTauriRuntime, killPty, logError } from "../lib/pty-bridge";
 import {
   replaceNode,
   removeLeaf,
@@ -18,6 +19,7 @@ import {
   generateWorkspaceName,
   findWorkspaceIdByPane,
   rebuildPaneTree,
+  isValidPaneTreeSnap,
   snapshotPaneTree,
   swapLeaves,
 } from "./pane-tree";
@@ -52,6 +54,7 @@ export {
   generateWorkspaceName,
   findWorkspaceIdByPane,
   rebuildPaneTree,
+  isValidPaneTreeSnap,
   snapshotPaneTree,
 };
 export type {
@@ -140,6 +143,93 @@ interface WorkspaceState {
 
 const initialWorkspace = makeWorkspace("Workspace 1");
 
+function clearWorkspaceUnreadState(workspace: Workspace): Workspace {
+  let surfacesChanged = false;
+  const clearedSurfaces: Record<string, Surface> = {};
+
+  for (const [surfaceId, surface] of Object.entries(workspace.surfaces)) {
+    if (surface.hasUnreadNotification) {
+      surfacesChanged = true;
+      clearedSurfaces[surfaceId] = { ...surface, hasUnreadNotification: false };
+    } else {
+      clearedSurfaces[surfaceId] = surface;
+    }
+  }
+
+  if (
+    workspace.unreadCount === 0 &&
+    workspace.lastNotificationText === "" &&
+    !surfacesChanged
+  ) {
+    return workspace;
+  }
+
+  return {
+    ...workspace,
+    unreadCount: 0,
+    lastNotificationText: "",
+    surfaces: clearedSurfaces,
+  };
+}
+
+function buildWorkspaceSelectionPatch(
+  workspaces: Record<string, Workspace>,
+  notifications: AppNotification[],
+  workspaceId: string,
+): Pick<WorkspaceState, "workspaces" | "notifications" | "activeWorkspaceId"> | null {
+  const workspace = workspaces[workspaceId];
+  if (!workspace) {
+    return null;
+  }
+
+  lastWorkspaceSwitchTime = Date.now();
+  const nextWorkspace = clearWorkspaceUnreadState(workspace);
+  const nextWorkspaces =
+    nextWorkspace === workspace
+      ? workspaces
+      : { ...workspaces, [workspaceId]: nextWorkspace };
+
+  const hasUnreadNotifications = notifications.some(
+    (notification) => notification.workspaceId === workspaceId && !notification.read,
+  );
+  const nextNotifications = hasUnreadNotifications
+    ? notifications.map((notification) =>
+        notification.workspaceId === workspaceId && !notification.read
+          ? { ...notification, read: true }
+          : notification,
+      )
+    : notifications;
+
+  return {
+    activeWorkspaceId: workspaceId,
+    workspaces: nextWorkspaces,
+    notifications: nextNotifications,
+  };
+}
+
+function collectWorkspacePtyIds(workspace: Workspace): number[] {
+  return [
+    ...new Set(
+      Object.values(workspace.surfaces).flatMap((surface) => {
+        if (surface.ptyId == null) {
+          return [];
+        }
+        return [surface.ptyId];
+      }),
+    ),
+  ];
+}
+
+function disposePtys(ptyIds: number[]): void {
+  if (!hasTauriRuntime() || ptyIds.length === 0) {
+    return;
+  }
+
+  for (const ptyId of ptyIds) {
+    killPty(ptyId).catch(logError);
+  }
+}
+
 // --- Store ---
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -187,42 +277,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   switchWorkspace: (id) => {
     const { workspaces, notifications } = get();
-    const ws = workspaces[id];
-    if (!ws) return;
-    lastWorkspaceSwitchTime = Date.now();
-
-    // Merge activeWorkspaceId + markWorkspaceRead into a single state update
-    // to avoid a double render on every workspace switch.
-    if (ws.unreadCount > 0) {
-      const clearedSurfaces: Record<string, Surface> = {};
-      for (const [sid, surface] of Object.entries(ws.surfaces)) {
-        clearedSurfaces[sid] = surface.hasUnreadNotification
-          ? { ...surface, hasUnreadNotification: false }
-          : surface;
-      }
-      set({
-        activeWorkspaceId: id,
-        workspaces: {
-          ...workspaces,
-          [id]: {
-            ...ws,
-            unreadCount: 0,
-            lastNotificationText: "",
-            surfaces: clearedSurfaces,
-          },
-        },
-        notifications: notifications.map((n) =>
-          n.workspaceId === id ? { ...n, read: true } : n,
-        ),
-      });
-    } else {
-      set({ activeWorkspaceId: id });
+    const patch = buildWorkspaceSelectionPatch(workspaces, notifications, id);
+    if (patch) {
+      set(patch);
     }
   },
 
   closeWorkspace: (id) => {
     const { workspaces, workspaceOrder, activeWorkspaceId, notifications } = get();
     if (workspaceOrder.length <= 1) return; // Can't close last workspace
+    const workspaceToClose = workspaces[id];
+    if (!workspaceToClose) return;
+    const ptyIdsToDispose = collectWorkspacePtyIds(workspaceToClose);
 
     const newWorkspaces = { ...workspaces };
     delete newWorkspaces[id];
@@ -235,15 +301,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       newActiveId = newOrder[Math.min(oldIndex, newOrder.length - 1)] ?? newOrder[0]!;
     }
 
+    const selectionPatch =
+      activeWorkspaceId === id
+        ? buildWorkspaceSelectionPatch(newWorkspaces, newNotifications, newActiveId)
+        : null;
+
     set({
-      workspaces: newWorkspaces,
+      workspaces: selectionPatch?.workspaces ?? newWorkspaces,
       workspaceOrder: newOrder,
-      activeWorkspaceId: newActiveId,
-      notifications: newNotifications,
+      activeWorkspaceId: selectionPatch?.activeWorkspaceId ?? newActiveId,
+      notifications: selectionPatch?.notifications ?? newNotifications,
     });
 
     // Clean up ephemeral metadata for the closed workspace
     useMetadataStore.getState().pruneWorkspace(id);
+    disposePtys(ptyIdsToDispose);
   },
 
   renameWorkspace: (id, name) => {
@@ -335,8 +407,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closePane: (paneId) => {
     const { workspaces, activeWorkspaceId } = get();
-    const ws = workspaces[activeWorkspaceId];
-    if (!ws) return;
+    const workspaceId = findWorkspaceIdByPane(workspaces, paneId);
+    if (!workspaceId || workspaceId !== activeWorkspaceId) return;
+
+    const ws = workspaces[workspaceId];
+    if (!ws || !findLeaf(ws.root, paneId)) return;
+    const ptyIdToDispose = ws.surfaces[paneId]?.ptyId;
 
     const leaves = collectLeafIds(ws.root);
     // Don't close the last pane
@@ -352,7 +428,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({
       workspaces: {
         ...workspaces,
-        [activeWorkspaceId]: {
+        [workspaceId]: {
           ...ws,
           root: result.tree,
           surfaces: newSurfaces,
@@ -360,6 +436,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
       },
     });
+
+    if (ptyIdToDispose != null) {
+      disposePtys([ptyIdToDispose]);
+    }
   },
 
   swapPanes: (idA, idB) => {
@@ -381,8 +461,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setFocusedPane: (paneId) => {
     const { workspaces, activeWorkspaceId } = get();
-    const ws = workspaces[activeWorkspaceId];
-    if (!ws) return;
+    const workspaceId = findWorkspaceIdByPane(workspaces, paneId);
+    if (!workspaceId || workspaceId !== activeWorkspaceId) return;
+
+    const ws = workspaces[workspaceId];
+    if (!ws || !findLeaf(ws.root, paneId)) return;
 
     // Clear unread notification on the surface being focused
     const surface = ws.surfaces[paneId];
@@ -396,7 +479,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({
       workspaces: {
         ...workspaces,
-        [activeWorkspaceId]: {
+        [workspaceId]: {
           ...ws,
           focusedPaneId: paneId,
           surfaces: updatedSurfaces,
@@ -413,12 +496,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const rects = buildLayoutRects(ws.root, 0, 0, 1000, 1000);
     const neighborId = findNeighbor(rects, ws.focusedPaneId, direction);
     if (neighborId) {
-      set({
-        workspaces: {
-          ...workspaces,
-          [activeWorkspaceId]: { ...ws, focusedPaneId: neighborId },
-        },
-      });
+      get().setFocusedPane(neighborId);
     }
   },
 
@@ -559,29 +637,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   markWorkspaceRead: (workspaceId) => {
     const { workspaces, notifications } = get();
     const ws = workspaces[workspaceId];
-    if (!ws || ws.unreadCount === 0) return;
+    if (!ws) return;
 
-    // Clear unread notification on all surfaces in this workspace
-    const clearedSurfaces: Record<string, Surface> = {};
-    for (const [id, surface] of Object.entries(ws.surfaces)) {
-      clearedSurfaces[id] = surface.hasUnreadNotification
-        ? { ...surface, hasUnreadNotification: false }
-        : surface;
-    }
+    const nextWorkspace = clearWorkspaceUnreadState(ws);
+    const hasUnreadNotifications = notifications.some(
+      (notification) => notification.workspaceId === workspaceId && !notification.read,
+    );
+    if (nextWorkspace === ws && !hasUnreadNotifications) return;
 
     set({
       workspaces: {
         ...workspaces,
-        [workspaceId]: {
-          ...ws,
-          unreadCount: 0,
-          lastNotificationText: "",
-          surfaces: clearedSurfaces,
-        },
+        [workspaceId]: nextWorkspace,
       },
-      notifications: notifications.map((n) =>
-        n.workspaceId === workspaceId ? { ...n, read: true } : n,
-      ),
+      notifications: hasUnreadNotifications
+        ? notifications.map((n) =>
+            n.workspaceId === workspaceId && !n.read ? { ...n, read: true } : n,
+          )
+        : notifications,
     });
   },
 
@@ -640,13 +713,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const newOrder: string[] = [];
 
     for (const snap of snapshots) {
+      if (!isValidPaneTreeSnap(snap.paneTree)) {
+        continue;
+      }
+
       const { node, surfaces } = rebuildPaneTree(snap.paneTree);
+      const leafIds = collectLeafIds(node);
+      const focusedLeafIndex = Number.isInteger(snap.focusedLeafIndex)
+        ? Math.max(0, Math.min(snap.focusedLeafIndex, leafIds.length - 1))
+        : 0;
       const ws: Workspace = {
         id: crypto.randomUUID(),
         name: snap.name,
         root: node,
         surfaces,
-        focusedPaneId: firstLeafId(node),
+        focusedPaneId: leafIds[focusedLeafIndex] ?? firstLeafId(node),
         workingDir: snap.workingDir,
         gitBranch: snap.gitBranch,
         worktreeDir: snap.worktreeDir,
@@ -659,6 +740,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       newWorkspaces[ws.id] = ws;
       newOrder.push(ws.id);
     }
+
+    if (newOrder.length === 0) return;
 
     const safeIndex = Math.min(activeIndex, newOrder.length - 1);
     set({
@@ -685,6 +768,7 @@ export function getSessionData(): {
       worktreeDir: ws.worktreeDir,
       worktreeName: ws.worktreeName,
       paneTree: snapshotPaneTree(ws.root),
+      focusedLeafIndex: Math.max(0, collectLeafIds(ws.root).indexOf(ws.focusedPaneId)),
     };
   });
   const activeIndex = state.workspaceOrder.indexOf(state.activeWorkspaceId);

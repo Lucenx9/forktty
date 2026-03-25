@@ -326,28 +326,22 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or("Missing name")?;
             let cwd = request_cwd(&params)?;
-            let mut resolved_worktree_name: Option<String> = None;
+            let plan = crate::worktree::prepare_remove(&cwd, name, true)
+                .map_err(|e| e.to_string())?;
+            let resolved_worktree_name = plan.worktree_name().to_string();
 
-            if let Ok(worktrees) = crate::worktree::list(&cwd) {
-                if let Some(wt) = worktrees
-                    .iter()
-                    .find(|w| w.worktree_name == name || w.branch == name || w.name == name)
-                {
-                    resolved_worktree_name = Some(wt.worktree_name.clone());
-                    // Intentional: teardown hook failure is advisory and should not block removal
-                    if let Ok(verified) = crate::verify_repo_path(&wt.path) {
-                        let _ = crate::worktree::run_hook(&verified, "teardown");
-                    }
-                }
+            // Intentional: teardown hook failure is advisory and should not block removal
+            if let Ok(verified) = crate::verify_repo_path(plan.worktree_path()) {
+                let _ = crate::worktree::run_hook(&verified, "teardown");
             }
 
-            crate::worktree::remove(&cwd, name, true).map_err(|e| e.to_string())?;
+            crate::worktree::execute_remove(&cwd, &plan).map_err(|e| e.to_string())?;
             match bridge_to_frontend(
                 app,
                 pending,
                 frontend,
                 "workspace.close",
-                json!({ "worktreeName": resolved_worktree_name.unwrap_or_else(|| name.to_string()) }),
+                json!({ "worktreeName": resolved_worktree_name }),
             )
             .await
             {

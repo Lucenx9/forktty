@@ -300,7 +300,6 @@ export interface AppConfig {
   notifications: {
     desktop: boolean;
     sound: boolean;
-    idle_threshold_ms: number;
   };
 }
 
@@ -357,9 +356,11 @@ export interface WorkspaceSnapshot {
   worktree_dir: string;
   worktree_name: string;
   pane_tree: PaneTreeSnapshot;
+  focused_leaf_index: number;
 }
 
 export interface SessionData {
+  version?: number;
   workspaces: WorkspaceSnapshot[];
   active_workspace_index: number;
 }

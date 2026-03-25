@@ -11,12 +11,28 @@ pub enum SessionError {
     Json(#[from] serde_json::Error),
     #[error("Data directory not found")]
     NoDataDir,
+    #[error("Unsupported session version: {0}")]
+    UnsupportedVersion(u32),
+    #[error("Invalid session data: {0}")]
+    InvalidData(String),
+}
+
+pub const SESSION_FORMAT_VERSION: u32 = 1;
+
+fn default_session_version() -> u32 {
+    SESSION_FORMAT_VERSION
+}
+
+fn default_focused_leaf_index() -> usize {
+    0
 }
 
 /// Serializable workspace layout for session restore.
 /// Only stores structure — no scrollback, no PTY handles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionData {
+    #[serde(default = "default_session_version")]
+    pub version: u32,
     pub workspaces: Vec<WorkspaceSnapshot>,
     pub active_workspace_index: usize,
 }
@@ -29,6 +45,8 @@ pub struct WorkspaceSnapshot {
     pub worktree_dir: String,
     pub worktree_name: String,
     pub pane_tree: PaneTreeSnapshot,
+    #[serde(default = "default_focused_leaf_index")]
+    pub focused_leaf_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +64,52 @@ pub enum PaneTreeSnapshot {
         children: Vec<PaneTreeSnapshot>,
         sizes: Vec<f64>,
     },
+}
+
+fn validate_pane_tree(node: &PaneTreeSnapshot) -> Result<(), SessionError> {
+    match node {
+        PaneTreeSnapshot::Leaf => Ok(()),
+        PaneTreeSnapshot::Horizontal { children, sizes }
+        | PaneTreeSnapshot::Vertical { children, sizes } => {
+            if children.len() < 2 {
+                return Err(SessionError::InvalidData(
+                    "pane split must have at least 2 children".to_string(),
+                ));
+            }
+            if sizes.len() != children.len() {
+                return Err(SessionError::InvalidData(
+                    "pane split sizes must match child count".to_string(),
+                ));
+            }
+            if sizes.iter().any(|size| !size.is_finite() || *size <= 0.0) {
+                return Err(SessionError::InvalidData(
+                    "pane split sizes must be finite positive numbers".to_string(),
+                ));
+            }
+            for child in children {
+                validate_pane_tree(child)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
+    if data.version != SESSION_FORMAT_VERSION {
+        return Err(SessionError::UnsupportedVersion(data.version));
+    }
+
+    if !data.workspaces.is_empty() && data.active_workspace_index >= data.workspaces.len() {
+        return Err(SessionError::InvalidData(
+            "active workspace index is out of bounds".to_string(),
+        ));
+    }
+
+    for workspace in &data.workspaces {
+        validate_pane_tree(&workspace.pane_tree)?;
+    }
+
+    Ok(())
 }
 
 fn data_dir() -> Result<PathBuf, SessionError> {
@@ -85,7 +149,13 @@ fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionErr
     }
     let content = fs::read_to_string(path)?;
     match serde_json::from_str(&content) {
-        Ok(data) => Ok(Some(data)),
+        Ok(data) => match validate_session_data(&data) {
+            Ok(()) => Ok(Some(data)),
+            Err(_) => {
+                quarantine_corrupt_session(path)?;
+                Ok(None)
+            }
+        },
         Err(_err) => {
             quarantine_corrupt_session(path)?;
             Ok(None)
@@ -166,6 +236,7 @@ mod tests {
     #[test]
     fn test_session_roundtrip() {
         let data = SessionData {
+            version: SESSION_FORMAT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
                 name: "Test".to_string(),
                 working_dir: "/tmp".to_string(),
@@ -176,14 +247,36 @@ mod tests {
                     children: vec![PaneTreeSnapshot::Leaf, PaneTreeSnapshot::Leaf],
                     sizes: vec![50.0, 50.0],
                 },
+                focused_leaf_index: 1,
             }],
             active_workspace_index: 0,
         };
 
         let json = serde_json::to_string(&data).unwrap();
         let parsed: SessionData = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.version, SESSION_FORMAT_VERSION);
         assert_eq!(parsed.workspaces.len(), 1);
         assert_eq!(parsed.workspaces[0].name, "Test");
+        assert_eq!(parsed.workspaces[0].focused_leaf_index, 1);
+    }
+
+    #[test]
+    fn legacy_session_without_version_or_focus_index_still_loads() {
+        let legacy = r#"{
+          "workspaces": [{
+            "name": "Legacy",
+            "working_dir": "/tmp",
+            "git_branch": "",
+            "worktree_dir": "",
+            "worktree_name": "",
+            "pane_tree": { "type": "leaf" }
+          }],
+          "active_workspace_index": 0
+        }"#;
+
+        let parsed: SessionData = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.version, SESSION_FORMAT_VERSION);
+        assert_eq!(parsed.workspaces[0].focused_leaf_index, 0);
     }
 
     #[test]
@@ -210,6 +303,37 @@ mod tests {
             quarantined,
             "Expected quarantined session.json.bad-* file to exist"
         );
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn invalid_session_structure_is_quarantined_and_ignored() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("forktty-session-invalid-{}", std::process::id()));
+        fs::create_dir_all(&tmp_dir).unwrap();
+        let session_file = tmp_dir.join("session.json");
+        fs::write(
+            &session_file,
+            r#"{
+              "version": 1,
+              "workspaces": [{
+                "name": "Broken",
+                "working_dir": "/tmp",
+                "git_branch": "",
+                "worktree_dir": "",
+                "worktree_name": "",
+                "pane_tree": { "type": "horizontal", "children": [{ "type": "leaf" }], "sizes": [100] },
+                "focused_leaf_index": 0
+              }],
+              "active_workspace_index": 0
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = load_session_from_path(&session_file).unwrap();
+        assert!(loaded.is_none(), "Invalid session should be ignored");
+        assert!(!session_file.exists(), "Invalid session should be quarantined");
 
         let _ = fs::remove_dir_all(&tmp_dir);
     }

@@ -58,8 +58,6 @@ pub struct NotificationConfig {
     pub desktop: bool,
     #[serde(default = "default_true")]
     pub sound: bool,
-    #[serde(default = "default_idle_threshold")]
-    pub idle_threshold_ms: u64,
 }
 
 fn default_theme() -> String {
@@ -82,9 +80,6 @@ fn default_sidebar_position() -> String {
 }
 fn default_true() -> bool {
     true
-}
-fn default_idle_threshold() -> u64 {
-    2000
 }
 
 impl Default for GeneralConfig {
@@ -113,7 +108,6 @@ impl Default for NotificationConfig {
         Self {
             desktop: true,
             sound: true,
-            idle_threshold_ms: default_idle_threshold(),
         }
     }
 }

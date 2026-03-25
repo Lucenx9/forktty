@@ -5,6 +5,7 @@ import type { SessionData } from "./pty-bridge";
 export function buildSessionPayload(): SessionData {
   const { workspaces, activeIndex } = getSessionData();
   return {
+    version: 1,
     workspaces: workspaces.map((ws) => ({
       name: ws.name,
       working_dir: ws.workingDir,
@@ -12,6 +13,7 @@ export function buildSessionPayload(): SessionData {
       worktree_dir: ws.worktreeDir,
       worktree_name: ws.worktreeName,
       pane_tree: ws.paneTree,
+      focused_leaf_index: ws.focusedLeafIndex,
     })),
     active_workspace_index: activeIndex,
   };

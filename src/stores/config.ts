@@ -44,7 +44,6 @@ function makeDefaultConfig(): AppConfig {
     notifications: {
       desktop: true,
       sound: true,
-      idle_threshold_ms: 2000,
     },
   };
 }
