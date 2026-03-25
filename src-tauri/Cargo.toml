@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
+authors = ["Lucenx9"]
+description = "Multi-agent Linux terminal with isolated git worktrees and desktop notifications"
+homepage = "https://github.com/Lucenx9/forktty"
+repository = "https://github.com/Lucenx9/forktty"
 default-run = "forktty"
 
 [lib]
@@ -20,7 +24,6 @@ path = "src/cli.rs"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-build = { version = "2", features = [] }
 portable-pty = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -35,6 +38,7 @@ toml = "1.0"
 dirs = "6"
 chrono = "0.4"
 libc = "0.2"
+shell-words = "1"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

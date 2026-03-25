@@ -45,7 +45,7 @@ ForkTTY gives each agent its own git worktree, watches for prompts, and tells yo
 <summary><strong>Debian / Ubuntu</strong></summary>
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev \
+sudo apt install libwebkit2gtk-4.1-dev build-essential \
   libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
@@ -75,7 +75,7 @@ npm run tauri:dev
 
 ```bash
 npm run tauri:build
-sudo dpkg -i src-tauri/target/release/bundle/deb/forktty_*.deb
+sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 # Or use the AppImage directly
 ```
 
@@ -135,6 +135,8 @@ desktop = true
 ```
 
 If you have a Ghostty config with a theme, ForkTTY picks up your colors and fonts automatically.
+If `notification_command` is set, ForkTTY exports `FORKTTY_NOTIFICATION_TITLE` and
+`FORKTTY_NOTIFICATION_BODY` to that command.
 
 ## Architecture
 

@@ -14,9 +14,10 @@ interface BranchPickerProps {
 }
 
 export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
+  const requestCwd = cwd ?? null;
   const [mode, setMode] = useState<"choose" | "new-branch-name">("choose");
   const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedCwd, setLoadedCwd] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [newBranchName, setNewBranchName] = useState("");
@@ -31,22 +32,21 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
     gitListBranches(cwd)
       .then((result) => {
         if (isMounted.current) {
           setBranches(result);
-          setLoading(false);
+          setLoadedCwd(requestCwd);
         }
       })
       .catch((err) => {
         if (isMounted.current) {
           setBranches([]);
-          setLoading(false);
+          setLoadedCwd(requestCwd);
           showToast(`Failed to load branches: ${err}`, "error");
         }
       });
-  }, [cwd]);
+  }, [cwd, requestCwd]);
 
   useEffect(() => {
     if (mode === "choose") {
@@ -62,11 +62,7 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
     const lower = query.toLowerCase();
     return branches.filter((b) => b.name.toLowerCase().includes(lower));
   }, [query, branches]);
-
-  // Reset selection when filter query changes.
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
+  const loading = loadedCwd !== requestCwd;
 
   const handleCancel = useCallback(() => {
     onResult({ kind: "cancel" });
@@ -187,7 +183,10 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
           className="branch-picker-input"
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setSelectedIndex(0);
+          }}
           placeholder="Search branches or create new..."
         />
         <div className="branch-picker-list">

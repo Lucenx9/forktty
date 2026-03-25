@@ -185,13 +185,21 @@ export function getSocketPath(): Promise<string> {
   return invoke<string>("get_socket_path");
 }
 
+export function signalFrontendReady(): Promise<void> {
+  return invoke("socket_frontend_ready");
+}
+
 // --- Notification commands ---
 
 /**
  * Send a desktop notification via notify-rust (XDG/D-Bus).
  */
-export function sendDesktopNotification(title: string, body: string): Promise<void> {
-  return invoke("send_desktop_notification", { title, body });
+export function sendDesktopNotification(
+  title: string,
+  body: string,
+  playSound = true,
+): Promise<void> {
+  return invoke("send_desktop_notification", { title, body, playSound });
 }
 
 /**

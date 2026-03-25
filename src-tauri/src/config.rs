@@ -14,6 +14,8 @@ pub enum ConfigError {
     TomlSerialize(#[from] toml::ser::Error),
     #[error("Config directory not found")]
     NoCfgDir,
+    #[error("Invalid configuration: {0}")]
+    Invalid(String),
 }
 
 // --- ForkTTY config (TOML) ---
@@ -136,15 +138,105 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
     }
     let content = fs::read_to_string(&path)?;
     let config: AppConfig = toml::from_str(&content)?;
-    Ok(config)
+    Ok(normalize_loaded_config(config))
 }
 
 /// Save ForkTTY config to disk.
 pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
+    validate_config(config)?;
     let dir = config_dir()?;
     fs::create_dir_all(&dir)?;
     let content = toml::to_string_pretty(config)?;
     fs::write(config_path()?, content)?;
+    Ok(())
+}
+
+fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
+    if config.general.shell.trim().is_empty() {
+        config.general.shell = default_shell();
+    }
+    if !matches!(
+        config.general.worktree_layout.as_str(),
+        "nested" | "sibling" | "outer-nested"
+    ) {
+        config.general.worktree_layout = default_worktree_layout();
+    }
+    if !matches!(
+        config.appearance.sidebar_position.as_str(),
+        "left" | "right"
+    ) {
+        config.appearance.sidebar_position = default_sidebar_position();
+    }
+    if config.appearance.font_size == 0 {
+        config.appearance.font_size = default_font_size();
+    }
+    config
+}
+
+fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
+    let shell = config.general.shell.trim();
+    if shell.is_empty() {
+        return Err(ConfigError::Invalid(
+            "general.shell must not be empty".to_string(),
+        ));
+    }
+    let shell_path = Path::new(shell);
+    if !shell_path.is_absolute() || !shell_path.exists() {
+        return Err(ConfigError::Invalid(format!(
+            "general.shell must be an absolute path to an existing file: {shell}"
+        )));
+    }
+
+    if !matches!(
+        config.general.worktree_layout.as_str(),
+        "nested" | "sibling" | "outer-nested"
+    ) {
+        return Err(ConfigError::Invalid(
+            "general.worktree_layout must be one of: nested, sibling, outer-nested".to_string(),
+        ));
+    }
+
+    if !matches!(
+        config.appearance.sidebar_position.as_str(),
+        "left" | "right"
+    ) {
+        return Err(ConfigError::Invalid(
+            "appearance.sidebar_position must be 'left' or 'right'".to_string(),
+        ));
+    }
+
+    if !(8..=64).contains(&config.appearance.font_size) {
+        return Err(ConfigError::Invalid(
+            "appearance.font_size must be between 8 and 64".to_string(),
+        ));
+    }
+
+    validate_notification_command(&config.general.notification_command)?;
+
+    Ok(())
+}
+
+fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    let parts = shell_words::split(trimmed)
+        .map_err(|err| ConfigError::Invalid(format!("general.notification_command: {err}")))?;
+    let Some(program) = parts.first() else {
+        return Err(ConfigError::Invalid(
+            "general.notification_command must not be empty".to_string(),
+        ));
+    };
+
+    let program_path = Path::new(program);
+    if !program_path.is_absolute() || !program_path.exists() {
+        return Err(ConfigError::Invalid(format!(
+            "general.notification_command must start with an absolute path to an existing file: {program}"
+        )));
+    }
+
     Ok(())
 }
 
@@ -503,5 +595,33 @@ mod tests {
     fn empty_theme_name_passes_validation() {
         // Empty string has no invalid chars; the file lookup will simply fail
         assert!(is_valid_theme_name(""));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_worktree_layout() {
+        let mut config = AppConfig::default();
+        config.general.worktree_layout = "invalid".to_string();
+        let err = validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("worktree_layout"));
+    }
+
+    #[test]
+    fn validate_config_rejects_relative_notification_command() {
+        let mut config = AppConfig::default();
+        config.general.notification_command = "notify-send done".to_string();
+        let err = validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("notification_command"));
+    }
+
+    #[test]
+    fn normalize_loaded_config_repairs_invalid_enums() {
+        let mut config = AppConfig::default();
+        config.general.worktree_layout = "bogus".to_string();
+        config.appearance.sidebar_position = "middle".to_string();
+        config.appearance.font_size = 0;
+        let normalized = normalize_loaded_config(config);
+        assert_eq!(normalized.general.worktree_layout, "nested");
+        assert_eq!(normalized.appearance.sidebar_position, "left");
+        assert_eq!(normalized.appearance.font_size, 14);
     }
 }

@@ -29,6 +29,11 @@
   "bundle": {
     "active": true,
     "targets": ["deb", "appimage"],
+    "publisher": "Lucenx9",
+    "homepage": "https://github.com/Lucenx9/forktty",
+    "category": "DeveloperTool",
+    "shortDescription": "Multi-agent Linux terminal with isolated git worktrees and desktop notifications.",
+    "longDescription": "ForkTTY is a Linux desktop terminal designed for running multiple AI coding agents in parallel. It combines split-pane terminals, isolated git worktrees, prompt-aware desktop notifications, session restore, and a local socket API for automation.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,9 +43,9 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1"],
         "section": "utils",
-        "priority": "optional"
+        "priority": "optional",
+        "desktopTemplate": "packaging/forktty.desktop.hbs"
       },
       "appimage": {
         "bundleMediaFramework": false

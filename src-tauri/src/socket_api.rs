@@ -2,11 +2,12 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 
 use crate::pty_manager::PtyManager;
 
@@ -23,9 +24,48 @@ pub fn default_socket_path() -> String {
 }
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+const FRONTEND_READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Pending frontend bridge requests: request_id -> response sender.
 pub type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>;
+
+pub struct FrontendState {
+    ready: AtomicBool,
+    notify: Notify,
+}
+
+impl Default for FrontendState {
+    fn default() -> Self {
+        Self {
+            ready: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+}
+
+impl FrontendState {
+    pub fn mark_ready(&self) {
+        self.ready.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
+
+    async fn wait_until_ready(&self, timeout: Duration) -> bool {
+        if self.is_ready() {
+            return true;
+        }
+
+        let notified = self.notify.notified();
+        if self.is_ready() {
+            return true;
+        }
+
+        tokio::time::timeout(timeout, notified).await.is_ok() || self.is_ready()
+    }
+}
 
 /// Resolve a pending bridge request (called from Tauri command).
 pub fn resolve_request(pending: &PendingRequests, id: &str, result: Value) {
@@ -44,6 +84,7 @@ pub async fn run(
     app_handle: tauri::AppHandle,
     pty_manager: Arc<Mutex<PtyManager>>,
     pending: PendingRequests,
+    frontend: Arc<FrontendState>,
 ) {
     // Remove stale socket file
     if Path::new(&socket_path).exists() {
@@ -73,8 +114,9 @@ pub async fn run(
                 let app = app_handle.clone();
                 let ptys = pty_manager.clone();
                 let pend = pending.clone();
+                let front = frontend.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, app, ptys, pend).await;
+                    handle_connection(stream, app, ptys, pend, front).await;
                 });
             }
             Err(e) => {
@@ -89,6 +131,7 @@ async fn handle_connection(
     app: tauri::AppHandle,
     pty_manager: Arc<Mutex<PtyManager>>,
     pending: PendingRequests,
+    frontend: Arc<FrontendState>,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
@@ -117,7 +160,7 @@ async fn handle_connection(
         let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or(json!({}));
 
-        let result = dispatch(method, params, &app, &pty_manager, &pending).await;
+        let result = dispatch(method, params, &app, &pty_manager, &pending, &frontend).await;
 
         let resp = match result {
             Ok(val) => json!({"id": id, "ok": true, "result": val}),
@@ -186,6 +229,7 @@ async fn dispatch(
     app: &tauri::AppHandle,
     pty_manager: &Arc<Mutex<PtyManager>>,
     pending: &PendingRequests,
+    frontend: &Arc<FrontendState>,
 ) -> Result<Value, String> {
     match method {
         // --- Direct backend handlers ---
@@ -205,6 +249,7 @@ async fn dispatch(
         }
 
         "worktree.create" => {
+            wait_for_frontend_ready(frontend).await?;
             let name = params
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -222,14 +267,11 @@ async fn dispatch(
                 .unwrap_or_else(|| "nested".to_string());
 
             let info = crate::worktree::create(&cwd, name, &layout).map_err(|e| e.to_string())?;
-            // Intentional: setup hook failure is advisory and should not block worktree creation
-            if let Ok(verified) = crate::verify_repo_path(&info.path) {
-                let _ = crate::worktree::run_hook(&verified, "setup");
-            }
 
-            let workspace = bridge_to_frontend(
+            let workspace = match bridge_to_frontend(
                 app,
                 pending,
+                frontend,
                 "workspace.create",
                 json!({
                     "name": &info.branch,
@@ -240,13 +282,32 @@ async fn dispatch(
                     "prompt": &prompt,
                 }),
             )
-            .await?;
+            .await
+            {
+                Ok(workspace) => workspace,
+                Err(err) => {
+                    let rollback = crate::worktree::remove(&cwd, &info.worktree_name, true);
+                    let rollback_note = match rollback {
+                        Ok(()) => "Rolled back the backend worktree state".to_string(),
+                        Err(rollback_err) => format!("Rollback failed: {rollback_err}"),
+                    };
+                    return Err(format!(
+                        "Failed to synchronize the frontend after creating worktree '{}': {err}. {rollback_note}",
+                        info.worktree_name
+                    ));
+                }
+            };
 
             if let (Some(prompt), Some(pty_id)) = (
                 prompt.as_deref(),
                 workspace.get("pty_id").and_then(|v| v.as_u64()),
             ) {
                 write_surface_text(pty_manager, pty_id as u32, prompt)?;
+            }
+
+            // Intentional: setup hook failure is advisory and should not block worktree creation
+            if let Ok(verified) = crate::verify_repo_path(&info.path) {
+                let _ = crate::worktree::run_hook(&verified, "setup");
             }
 
             Ok(json!({
@@ -259,6 +320,7 @@ async fn dispatch(
         }
 
         "worktree.remove" => {
+            wait_for_frontend_ready(frontend).await?;
             let name = params
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -280,13 +342,22 @@ async fn dispatch(
             }
 
             crate::worktree::remove(&cwd, name, true).map_err(|e| e.to_string())?;
-            let _ = bridge_to_frontend(
+            match bridge_to_frontend(
                 app,
                 pending,
+                frontend,
                 "workspace.close",
                 json!({ "worktreeName": resolved_worktree_name.unwrap_or_else(|| name.to_string()) }),
             )
-            .await;
+            .await
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    return Err(format!(
+                        "Removed '{name}', but failed to synchronize the frontend: {err}"
+                    ));
+                }
+            }
 
             Ok(json!(format!("Removed '{name}'")))
         }
@@ -318,7 +389,7 @@ async fn dispatch(
         | "metadata.clear_status"
         | "metadata.set_progress"
         | "metadata.clear_progress"
-        | "metadata.log" => bridge_to_frontend(app, pending, method, params).await,
+        | "metadata.log" => bridge_to_frontend(app, pending, frontend, method, params).await,
 
         _ => Err(format!("Unknown method: {method}")),
     }
@@ -348,10 +419,13 @@ fn write_surface_text(
 async fn bridge_to_frontend(
     app: &tauri::AppHandle,
     pending: &PendingRequests,
+    frontend: &Arc<FrontendState>,
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
     use tauri::Emitter;
+
+    wait_for_frontend_ready(frontend).await?;
 
     let req_id = format!("sr-{}", NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed));
     let (tx, rx) = oneshot::channel();
@@ -386,6 +460,14 @@ async fn bridge_to_frontend(
             }
             Err("Request timed out (frontend not responding)".to_string())
         }
+    }
+}
+
+async fn wait_for_frontend_ready(frontend: &Arc<FrontendState>) -> Result<(), String> {
+    if frontend.wait_until_ready(FRONTEND_READY_TIMEOUT).await {
+        Ok(())
+    } else {
+        Err("Frontend is not ready to handle socket requests".to_string())
     }
 }
 

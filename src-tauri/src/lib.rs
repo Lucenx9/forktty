@@ -19,6 +19,7 @@ use tauri::{Manager, State};
 struct AppState {
     pty_manager: Arc<Mutex<PtyManager>>,
     socket_pending: socket_api::PendingRequests,
+    socket_frontend: Arc<socket_api::FrontendState>,
     socket_path: String,
 }
 
@@ -216,6 +217,11 @@ fn get_socket_path(state: State<'_, AppState>) -> String {
     state.socket_path.clone()
 }
 
+#[tauri::command]
+fn socket_frontend_ready(state: State<'_, AppState>) {
+    state.socket_frontend.mark_ready();
+}
+
 // --- Socket bridge: frontend responds to bridged requests ---
 
 #[tauri::command]
@@ -226,8 +232,12 @@ fn socket_respond(state: State<'_, AppState>, id: String, result: serde_json::Va
 // --- Notification commands ---
 
 #[tauri::command]
-fn send_desktop_notification(title: String, body: String) -> Result<(), String> {
-    notification::send_desktop(&title, &body)
+fn send_desktop_notification(
+    title: String,
+    body: String,
+    play_sound: Option<bool>,
+) -> Result<(), String> {
+    notification::send_desktop(&title, &body, play_sound.unwrap_or(true))
 }
 
 #[tauri::command]
@@ -458,15 +468,18 @@ pub fn run() {
 
     let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
     let socket_pending = socket_api::PendingRequests::default();
+    let socket_frontend = Arc::new(socket_api::FrontendState::default());
 
     let pty_mgr_for_socket = pty_manager.clone();
     let pending_for_socket = socket_pending.clone();
+    let frontend_for_socket = socket_frontend.clone();
     let socket_path_clone = socket_path.clone();
 
     tauri::Builder::default()
         .manage(AppState {
             pty_manager,
             socket_pending,
+            socket_frontend,
             socket_path,
         })
         .setup(move |app| {
@@ -501,6 +514,7 @@ pub fn run() {
                     handle,
                     pty_mgr_for_socket,
                     pending_for_socket,
+                    frontend_for_socket,
                 ));
             });
             Ok(())
@@ -514,6 +528,7 @@ pub fn run() {
             get_git_branch,
             get_cwd,
             get_socket_path,
+            socket_frontend_ready,
             socket_respond,
             send_desktop_notification,
             send_custom_notification,

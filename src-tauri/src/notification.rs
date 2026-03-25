@@ -1,12 +1,26 @@
 /// Send a desktop notification via notify-rust (XDG/D-Bus).
-pub fn send_desktop(title: &str, body: &str) -> Result<(), String> {
-    notify_rust::Notification::new()
+pub fn send_desktop(title: &str, body: &str, play_sound: bool) -> Result<(), String> {
+    let mut notification = notify_rust::Notification::new();
+    notification
         .summary(title)
         .body(body)
-        .icon("dialog-information")
-        .appname("ForkTTY")
-        .show()
-        .map_err(|e| e.to_string())?;
+        .icon("forktty")
+        .appname("ForkTTY");
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use notify_rust::Hint;
+
+        notification
+            .hint(Hint::DesktopEntry("forktty".to_string()))
+            .hint(Hint::Category("im.received".to_string()));
+
+        if !play_sound {
+            notification.hint(Hint::SuppressSound(true));
+        }
+    }
+
+    notification.show().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -17,7 +31,7 @@ pub(crate) fn run_custom_command(command: &str, title: &str, body: &str) -> Resu
         return Ok(());
     }
 
-    let parts: Vec<&str> = command.split_whitespace().collect();
+    let parts = shell_words::split(command).map_err(|e| e.to_string())?;
     let (prog, args) = parts.split_first().ok_or("Empty command")?;
     let prog_path = std::path::Path::new(prog);
     if !prog_path.is_absolute() || !prog_path.exists() {
@@ -93,6 +107,15 @@ mod tests {
         assert!(
             result.is_ok(),
             "Expected Ok for '/bin/echo hello', got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn quoted_arguments_are_parsed_correctly() {
+        let result = run_custom_command("/bin/echo 'hello world'", "title", "body");
+        assert!(
+            result.is_ok(),
+            "Expected quoted args to be parsed correctly, got: {result:?}"
         );
     }
 }

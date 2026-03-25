@@ -7,13 +7,13 @@ import { useConfigStore } from "../stores/config";
 import {
   writePty,
   socketRespond,
-  sendDesktopNotification,
   worktreeCreate,
   worktreeMerge,
   worktreeRemove,
   worktreeRunHook,
   logError,
 } from "./pty-bridge";
+import { dispatchWorkspaceNotification } from "./notification-dispatch";
 import {
   createWorkspaceWithCwd,
   createWorkspaceWithInheritedCwd,
@@ -323,10 +323,11 @@ export async function handleSocketRequest(
       case "notification.create": {
         const title = (params.title as string) || "ForkTTY";
         const body = (params.body as string) || "";
-        state.addNotification(state.activeWorkspaceId, title, body);
-        if (config?.notifications.desktop ?? true) {
-          sendDesktopNotification(title, body).catch(logError);
-        }
+        dispatchWorkspaceNotification({
+          workspaceId: state.activeWorkspaceId,
+          title,
+          body,
+        });
         result = { result: true };
         break;
       }

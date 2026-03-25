@@ -27,10 +27,6 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
     return commands.filter((cmd) => cmd.label.toLowerCase().includes(lower));
   }, [query, commands]);
 
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -70,7 +66,10 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
           className="command-palette-input"
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setSelectedIndex(0);
+          }}
           placeholder="Type a command..."
         />
         <div className="command-palette-list" role="listbox">
