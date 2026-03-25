@@ -2,7 +2,7 @@
 
 All notable changes to ForkTTY are documented here.
 
-## [Unreleased] - 2026-03-20
+## [Unreleased]
 
 ### UI Polish
 - Refined sidebar, pane chrome, command palette, branch picker, notifications, settings, menus, and find bar with a more consistent dark desktop visual language
@@ -54,8 +54,8 @@ All notable changes to ForkTTY are documented here.
 
 ### Phase 6 — Socket API + CLI
 - Unix domain socket JSON-RPC server (tokio)
-- 12 methods: system.ping, workspace.*, surface.*, notification.*, worktree.*
-- forktty-cli binary with 10 subcommands (clap)
+- 22 methods: system.ping, workspace.*, surface.*, notification.*, worktree.*, metadata.*
+- forktty-cli binary with 13 subcommands + 6 metadata sub-commands (clap)
 - Environment variables set in spawned shells (FORKTTY_WORKSPACE_ID, SURFACE_ID, SOCKET_PATH)
 
 ### Phase 7 — Theming + Config
@@ -88,7 +88,6 @@ All notable changes to ForkTTY are documented here.
 ### Known Limitations
 - `BufReader::lines()` buffers unboundedly before the 1MiB size check (tokio limitation)
 - `beforeunload` session save is fire-and-forget (async IPC may not complete)
-- No idle detection (Phase 5 future work)
-- No dark/light mode toggle (only dark theme)
-- `forktty read-screen` not implemented (deferred)
+- No idle detection (`idle_threshold_ms` config field reserved but not active)
+- No dark/light mode toggle (dark theme only; CSS has a minimal system-preference fallback)
 - No flow control / backpressure on PTY output

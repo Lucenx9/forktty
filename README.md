@@ -18,6 +18,8 @@ Run multiple AI coding agents in parallel. Each gets its own git worktree. When 
 
 </div>
 
+> **Status**: Early development (v0.1.0). Usable for daily work on Linux, but expect rough edges. Not yet packaged for distribution — build from source.
+
 ## Why ForkTTY?
 
 Running 5+ AI agents on the same repo means juggling terminals, worrying about file conflicts, and constantly checking which agent needs input. tmux splits screens but doesn't isolate code or notify you when an agent is waiting.
@@ -27,19 +29,25 @@ ForkTTY gives each agent its own git worktree, watches for prompts, and tells yo
 ## Features
 
 - **Split panes** — horizontal/vertical splits, resize with drag, navigate with `Alt+Arrow`
-- **Workspaces** — named sessions with their own pane layouts, visible in a sidebar
+- **Workspaces** — named sessions with their own pane layouts, visible in a resizable sidebar
 - **Git worktree isolation** — each workspace gets an isolated worktree and branch, no conflicts between agents
 - **Smart notifications** — detects when an agent waits for input (OSC 133, prompt patterns, OSC 9/99/777) and alerts via sidebar badge + desktop notification
 - **Ghostty theme compatible** — reads `~/.config/ghostty/config` for colors and fonts automatically
-- **Scriptable** — Unix socket API (JSON-RPC) and CLI for automation
+- **Scriptable** — Unix socket API (JSON-RPC) and `forktty-cli` for automation
 - **Command palette** — `Ctrl+Shift+P` to fuzzy-search all actions
 - **Session persistence** — workspace layout restored on restart
-- **Lightweight** — Tauri v2, not Electron. ~30MB RAM, ~10MB binary
+- **System tray** — unread count tooltip, click to focus window
+- **Find in terminal** — `Ctrl+F` via xterm.js SearchAddon
+- **Workspace metadata** — status pills, progress bars, and log entries via CLI/API
 - **Privacy-first** — zero telemetry, zero network connections, all data stays local ([PRIVACY.md](PRIVACY.md))
 
 ## Quick Start
 
-### Dependencies
+### Prerequisites
+
+- [Rust 1.88+](https://rustup.rs/)
+- [Node.js 20+](https://nodejs.org/)
+- System libraries (see below)
 
 <details>
 <summary><strong>Debian / Ubuntu</strong></summary>
@@ -69,14 +77,12 @@ npm install
 npm run tauri:dev
 ```
 
-> Requires [Rust 1.88+](https://rustup.rs/) and [Node.js 20+](https://nodejs.org/).
-
-### Install from release
+### Install from release build
 
 ```bash
 npm run tauri:build
 sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
-# Or use the AppImage directly
+# Or use the AppImage directly from src-tauri/target/release/bundle/appimage/
 ```
 
 ## Keyboard Shortcuts
@@ -101,18 +107,25 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 
 ## CLI
 
-Control ForkTTY from scripts or other terminals:
+The `forktty-cli` binary connects to the running app via Unix socket:
 
 ```bash
-forktty-cli ls                      # List workspaces
-forktty-cli new feature-x           # New worktree workspace
-forktty-cli select feature-x        # Focus workspace
-forktty-cli split right             # Split current pane
-forktty-cli send <pty_id> "text"    # Send text to terminal
-forktty-cli read-screen             # Read terminal content
-forktty-cli merge feature-x         # Merge worktree branch
-forktty-cli rm feature-x            # Remove worktree + close workspace
-forktty-cli notify --title "Done"   # Send notification
+forktty-cli ping                        # Check if ForkTTY is running
+forktty-cli ls                          # List workspaces
+forktty-cli new feature-x               # New worktree workspace
+forktty-cli new                         # New plain workspace
+forktty-cli select feature-x            # Focus workspace
+forktty-cli split right                 # Split current pane (right|down)
+forktty-cli send <pty_id> "text"        # Send text to terminal
+forktty-cli read-screen                 # Read focused terminal content
+forktty-cli merge feature-x             # Merge worktree branch
+forktty-cli rm feature-x                # Remove worktree + close workspace
+forktty-cli notify --title "Done"       # Send notification
+forktty-cli notifications               # List notifications
+forktty-cli clear-notifications         # Clear all notifications
+forktty-cli metadata set-status ...     # Set workspace status pill
+forktty-cli metadata set-progress ...   # Set workspace progress bar
+forktty-cli metadata log "message"      # Append workspace log entry
 ```
 
 ## Configuration
@@ -121,9 +134,10 @@ Config file: `~/.config/forktty/config.toml`
 
 ```toml
 [general]
-theme = "ghostty"              # "ghostty" auto-detects, or "builtin"
-shell = "/bin/bash"
+theme = "ghostty"              # "ghostty" auto-detects, or custom theme name
+shell = "/bin/bash"            # Default: $SHELL
 worktree_layout = "nested"     # "nested", "sibling", or "outer-nested"
+notification_command = ""      # Custom command (must be absolute path), empty = disabled
 
 [appearance]
 font_family = "JetBrains Mono"
@@ -132,6 +146,7 @@ sidebar_position = "left"      # "left" or "right"
 
 [notifications]
 desktop = true
+sound = true
 ```
 
 If you have a Ghostty config with a theme, ForkTTY picks up your colors and fonts automatically.
@@ -142,19 +157,19 @@ If `notification_command` is set, ForkTTY exports `FORKTTY_NOTIFICATION_TITLE` a
 
 ```
 Frontend (React 19 + TypeScript + Vite)
-  ├── @xterm/xterm (canvas)    Terminal rendering
-  ├── react-resizable-panels   Split pane layout
-  └── Zustand                  State management
+  ├── @xterm/xterm 6.x         Terminal rendering (built-in canvas renderer)
+  ├── react-resizable-panels    Split pane layout
+  └── Zustand 5.x              State management
 
 Tauri v2 IPC (Channels for PTY streaming, invoke for commands)
 
 Backend (Rust)
-  ├── portable-pty             PTY management
-  ├── git2                     Worktree lifecycle
-  ├── output_scanner           OSC 133/9/99/777 parsing
-  ├── notify-rust              Desktop notifications (D-Bus)
-  ├── tokio                    Socket API server
-  └── clap                     CLI client
+  ├── portable-pty              PTY management
+  ├── git2                      Worktree lifecycle
+  ├── output_scanner            OSC 133/9/99/777 parsing
+  ├── notify-rust               Desktop notifications (D-Bus)
+  ├── tokio                     Socket API server
+  └── clap                      CLI client
 ```
 
 ## Security
@@ -166,6 +181,14 @@ Backend (Rust)
 - No `sh -c` anywhere — all external commands use argv splitting
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and the full security model.
+
+## Known Limitations
+
+- Dark theme only (no light mode toggle; CSS has a minimal system-preference fallback)
+- No idle detection for notifications (config field reserved but not active)
+- `beforeunload` session save is fire-and-forget (async IPC may not complete)
+- No flow control / backpressure on PTY output
+- Linux only — no macOS or Windows support
 
 ## Contributing
 

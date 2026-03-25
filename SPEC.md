@@ -72,7 +72,7 @@ Each entry in the sidebar displays:
 │  Backend (Rust)                                     │
 │  ├── pty_manager     — portable-pty, spawn/resize   │
 │  ├── output_scanner  — OSC 133 + pattern matching   │
-│  ├── worktree_mgr    — git2-rs worktree lifecycle   │
+│  ├── worktree        — git2-rs worktree lifecycle   │
 │  ├── notification    — notify-rust + D-Bus          │
 │  ├── socket_api      — Unix socket, JSON-RPC        │
 │  ├── config          — Ghostty theme parser         │
@@ -86,7 +86,7 @@ Each entry in the sidebar displays:
 |-------|-----------|-----|
 | Shell | Tauri v2 | ~30MB RAM, native Linux packaging, Rust backend |
 | Frontend | React 19 + TypeScript + Vite | Fast iteration, huge ecosystem |
-| Terminal | @xterm/xterm 5.x + addons (fit, canvas, search) | Industry-standard terminal component with a stable canvas renderer |
+| Terminal | @xterm/xterm 6.x + addons (fit, search) | Industry-standard terminal component with a built-in canvas renderer |
 | Split panes | react-resizable-panels | 2M+ downloads/week, React 19 native, used by shadcn/ui |
 | PTY | portable-pty 0.9 (Rust) | Battle-tested (powers WezTerm), sync API via spawn_blocking |
 | PTY→Frontend | Tauri v2 Channels (`Channel<String>`) | Push-based streaming, ordered delivery, built for this use case |
@@ -100,7 +100,7 @@ Each entry in the sidebar displays:
 
 WebGL inside WebKitGTK has **known upstream bugs** (context lost, freezes — Tauri issues #6559, #8498), so the current build standardizes on canvas rendering.
 
-- **Default**: Canvas renderer (`@xterm/addon-canvas`) — reliable on WebKitGTK and faster than DOM
+- **Default**: Canvas renderer (built into xterm.js 6.x) — reliable on WebKitGTK and faster than DOM
 - **Fallback**: DOM renderer — built-in and available if needed in the future
 
 ### PTY Data Flow
@@ -359,5 +359,5 @@ sidebar_position = "left"            # "left" or "right"
 [notifications]
 desktop = true                       # XDG desktop notifications
 sound = true                         # Notification sound
-idle_threshold_ms = 2000             # Reserved for notification heuristics
+idle_threshold_ms = 2000             # Reserved — config field exists but logic not yet active
 ```

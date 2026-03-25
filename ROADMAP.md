@@ -81,9 +81,9 @@
 - [x] 4.8 — Sidebar shows worktree status (clean/dirty/conflicts)
 
 ### Acceptance
-- `forktty new feature-x` creates worktree and opens workspace inside it
-- Work in worktree, commit, then `forktty merge feature-x` merges into main
-- `forktty rm feature-x` cleans up everything
+- `forktty-cli new feature-x` creates worktree and opens workspace inside it
+- Work in worktree, commit, then `forktty-cli merge feature-x` merges into main
+- `forktty-cli rm feature-x` cleans up everything
 - Setup hook runs `npm install` (or equivalent) on worktree creation
 
 ---
@@ -96,7 +96,7 @@
 
 - [x] 5.1 — Output scanner in Rust: intercept PTY output, parse OSC 133 sequences (A/B/C/D)
 - [x] 5.2 — Pattern matcher: regex scan last terminal line for Claude Code prompt patterns
-- [x] 5.3 — Idle detector: timer resets on each PTY output, fires after threshold
+- [ ] 5.3 — Idle detector: timer resets on each PTY output, fires after threshold (config field reserved, logic not yet implemented)
 - [x] 5.4 — Notification engine: when trigger fires and workspace is unfocused, create notification
 - [x] 5.5 — In-app: blue dot on sidebar workspace entry, unread count badge
 - [x] 5.6 — Desktop notification via notify-rust (XDG/D-Bus)
@@ -127,9 +127,9 @@
 - [x] 6.6 — `forktty read-screen [surface]`: dump current terminal buffer content
 
 ### Acceptance
-- `forktty ls` from another terminal lists workspaces
-- `forktty new test -p "fix the bug"` creates workspace and sends prompt to Claude
-- `forktty notify --title "Done"` triggers notification in app
+- `forktty-cli ls` from another terminal lists workspaces
+- `forktty-cli new test -p "fix the bug"` creates workspace and sends prompt to Claude
+- `forktty-cli notify --title "Done"` triggers notification in app
 - Scripts can orchestrate multiple agents via CLI
 
 ---
@@ -145,7 +145,7 @@
 - [x] 7.3 — Map Ghostty palette to xterm.js ITheme
 - [x] 7.4 — Config file: `~/.config/forktty/config.toml` with TOML parser (toml crate)
 - [x] 7.5 — Settings UI (Ctrl+,): appearance, notifications, shell, worktree layout
-- [x] 7.6 — Dark/light mode support, follow system preference
+- [ ] 7.6 — Dark/light mode support, follow system preference (CSS has minimal prefers-color-scheme fallback, no user toggle)
 - [x] 7.7 — Sidebar theming (respect background/foreground from theme)
 
 ### Acceptance
@@ -188,7 +188,7 @@
 - [x] 9.2 — Notification ring: blue glowing border on panes with unread notifications
 - [x] 9.3 — Sidebar notification preview: latest notification text inline
 - [x] 9.4 — Window title badge: unread count in document.title
-- [x] 9.5 — Auto-reorder: move workspace to top of sidebar on notification
+- [ ] 9.5 — Auto-reorder: move workspace to top of sidebar on notification
 - [x] 9.6 — `forktty read-screen`: dump terminal buffer via socket API + CLI
 - [x] 9.7 — Focus flash: brief blue flash on pane focus change
 - [x] 9.8 — Workspace drag-and-drop reorder in sidebar
@@ -198,7 +198,7 @@
 - `echo -e '\033]9;Hello\007'` triggers notification with blue pane ring
 - Drag workspace entries in sidebar to reorder
 - Tray icon shows unread count, click opens window
-- `forktty read-screen` returns terminal content
+- `forktty-cli read-screen` returns terminal content
 
 ---
 

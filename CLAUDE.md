@@ -5,7 +5,7 @@ Multi-agent terminal for Linux. See SPEC.md for architecture, ROADMAP.md for pha
 ## Stack
 
 - **Backend**: Rust (Tauri v2), portable-pty, git2, tokio, notify-rust, chrono
-- **Frontend**: React 19 + TypeScript + Vite, @xterm/xterm 5.x (canvas), react-resizable-panels, Zustand 5.x
+- **Frontend**: React 19 + TypeScript + Vite, @xterm/xterm 6.x (canvas), react-resizable-panels, Zustand 5.x
 - **IPC**: Tauri `invoke` (request/response), `Channel<String>` (PTY streaming)
 - **External API**: Unix socket JSON-RPC at `$XDG_RUNTIME_DIR/forktty.sock`, CLI via clap
 
@@ -34,14 +34,17 @@ src/
     pty-bridge.ts    # Tauri invoke wrappers
     socket-handler.ts    # Socket API RPC dispatch
     ghostty-theme.ts     # Theme → xterm.js ITheme + CSS vars
+    notification-dispatch.ts  # Notification routing (desktop + custom command)
+    workspace-launch.ts  # Workspace/pane creation helpers
     session-persistence.ts
     terminal-registry.ts
   components/
     Sidebar.tsx, TerminalPane.tsx, PaneArea.tsx
     NotificationPanel.tsx, SettingsPanel.tsx (lazy)
     CommandPalette.tsx (lazy), BranchPicker.tsx (lazy)
-    FindBar.tsx, ErrorToast.tsx, Icons.tsx
-    WorkspaceMetadataView.tsx
+    FindBar.tsx, ErrorToast.tsx, InlineModal.tsx
+    ShortcutBar.tsx, WelcomeScreen.tsx
+    AppErrorBoundary.tsx, WorkspaceMetadataView.tsx
 ```
 
 ## Verification
