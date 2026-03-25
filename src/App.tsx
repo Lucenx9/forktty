@@ -241,7 +241,7 @@ export default function App() {
     if (sidebarCollapsed) {
       panel.collapse();
     } else {
-      panel.expand();
+      panel.resize(`${SIDEBAR_EXPANDED_DEFAULT_PX}px`);
     }
   }, [sidebarCollapsed]);
 
