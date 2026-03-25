@@ -18,12 +18,16 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.mcp.json
 
 # Claude Code personal settings (team settings are in .claude/settings.json)
 .claude/settings.local.json
 
 # Test artifacts
 .playwright-cli/
+
+# Local audit artifacts
+security_best_practices_report.md
 
 # ForkTTY runtime
 /tmp/forktty.sock
