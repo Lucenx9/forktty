@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
 import { spawnPty, writePty, resizePty, killPty, logError } from "../lib/pty-bridge";
@@ -294,7 +293,6 @@ const TerminalPane = memo(function TerminalPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
@@ -460,7 +458,6 @@ const TerminalPane = memo(function TerminalPane({
       wrapper = saved.wrapper;
       termRef.current = term;
       fitAddonRef.current = saved.fitAddon;
-      canvasAddonRef.current = saved.canvasAddon;
       searchAddonRef.current = saved.searchAddon;
       container.appendChild(wrapper);
       registerTerminal(paneId, term);
@@ -506,16 +503,6 @@ const TerminalPane = memo(function TerminalPane({
         if (e.ctrlKey && e.shiftKey && e.key === "C") return false;
         return true;
       });
-
-      // Canvas renderer by default (WebGL has known bugs on WebKitGTK)
-      try {
-        const canvasAddon = new CanvasAddon();
-        canvasAddonRef.current = canvasAddon;
-        term.loadAddon(canvasAddon);
-      } catch (err) {
-        canvasAddonRef.current = null;
-        logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
-      }
 
       // Search addon for Ctrl+F
       const searchAddon = new SearchAddon();
@@ -741,7 +728,6 @@ const TerminalPane = memo(function TerminalPane({
           wrapper,
           runtime,
           fitAddon: fitAddonRef.current!,
-          canvasAddon: canvasAddonRef.current,
           searchAddon: searchAddonRef.current!,
         });
       } else {
@@ -751,8 +737,6 @@ const TerminalPane = memo(function TerminalPane({
         if (outputDrainRaf !== null) {
           cancelAnimationFrame(outputDrainRaf);
         }
-        canvasAddonRef.current?.dispose();
-        canvasAddonRef.current = null;
         term.dispose();
 
         const id = runtime.ptyId;

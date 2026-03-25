@@ -445,6 +445,15 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      const isComposingInput =
+        e.isComposing ||
+        e.key === "Dead" ||
+        e.key === "Process" ||
+        e.getModifierState?.("AltGraph") === true;
+      if (isComposingInput) {
+        return;
+      }
+
       const editableTarget = isEditableTarget(e.target);
       const modalOrBranchPickerOpen =
         document.querySelector(".modal-overlay, .branch-picker-overlay") !== null;
