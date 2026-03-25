@@ -7,7 +7,7 @@ Multi-agent terminal for Linux. See SPEC.md for architecture, ROADMAP.md for pha
 - **Backend**: Rust (Tauri v2), portable-pty, git2, tokio, notify-rust, chrono
 - **Frontend**: React 19 + TypeScript + Vite, @xterm/xterm 6.x (canvas), react-resizable-panels, Zustand 5.x
 - **IPC**: Tauri `invoke` (request/response), `Channel<String>` (PTY streaming)
-- **External API**: Unix socket JSON-RPC at `$XDG_RUNTIME_DIR/forktty.sock`, CLI via clap
+- **External API**: Unix socket JSON-RPC at `$XDG_RUNTIME_DIR/forktty.sock`
 
 ## Project Structure
 
@@ -21,7 +21,6 @@ src-tauri/src/
   socket_api.rs      # Unix socket JSON-RPC server
   config.rs          # TOML config + Ghostty theme parser
   session.rs         # Session persistence + structured logging
-  cli.rs             # forktty-cli binary (clap-based)
 
 src/
   App.tsx            # Root: layout, shortcuts, session lifecycle

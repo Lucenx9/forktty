@@ -55,7 +55,7 @@ All notable changes to ForkTTY are documented here.
 ### Phase 6 — Socket API + CLI
 - Unix domain socket JSON-RPC server (tokio)
 - 22 methods: system.ping, workspace.*, surface.*, notification.*, worktree.*, metadata.*
-- forktty-cli binary with 13 subcommands + 6 metadata sub-commands (clap)
+- 22 socket API methods: system.ping, workspace.*, surface.*, notification.*, worktree.*, metadata.*
 - Environment variables set in spawned shells (FORKTTY_WORKSPACE_ID, SURFACE_ID, SOCKET_PATH)
 
 ### Phase 7 — Theming + Config

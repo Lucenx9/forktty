@@ -75,8 +75,7 @@ Each entry in the sidebar displays:
 │  ├── worktree        — git2-rs worktree lifecycle   │
 │  ├── notification    — notify-rust + D-Bus          │
 │  ├── socket_api      — Unix socket, JSON-RPC        │
-│  ├── config          — Ghostty theme parser         │
-│  └── cli             — clap-based CLI client        │
+│  └── config          — Ghostty theme parser         │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -93,7 +92,7 @@ Each entry in the sidebar displays:
 | Git | git2-rs | Native git operations without shelling out |
 | Notifications | notify-rust | XDG Desktop Notifications via D-Bus |
 | State | Zustand 5.x | Lightweight, React 19 compatible, subscription-based |
-| CLI/API | clap (CLI) + tokio + serde_json (socket) | Standard Rust ecosystem |
+| Socket API | tokio + serde_json (Unix socket JSON-RPC) | Standard Rust ecosystem |
 | Theme compat | Custom parser | Ghostty `key = value` format → xterm.js ITheme |
 
 ### Renderer Strategy
@@ -278,25 +277,6 @@ Protocol: newline-delimited JSON
 | Metadata | `metadata.set_progress` | Add/update a sidebar progress row |
 | Metadata | `metadata.clear_progress` | Clear one or all progress rows |
 | Metadata | `metadata.log` | Append a sidebar log entry |
-
-## CLI
-
-```bash
-forktty-cli new                 # New plain workspace
-forktty-cli new feature-x       # New worktree-backed workspace
-forktty-cli ls                  # List workspaces
-forktty-cli select <name>       # Focus workspace
-forktty-cli split [right|down]  # Split current pane
-forktty-cli send <pty_id> "x"   # Send text to PTY
-forktty-cli notify --title "X"  # Send notification
-forktty-cli notifications       # List notifications
-forktty-cli clear-notifications # Clear notifications
-forktty-cli read-screen         # Read focused screen
-forktty-cli merge feature-x     # Merge worktree branch
-forktty-cli rm feature-x        # Remove worktree + close workspace
-```
-
-The CLI is a thin JSON-RPC client that connects to the socket.
 
 ## Ghostty Theme Compatibility
 

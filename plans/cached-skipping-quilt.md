@@ -86,7 +86,6 @@ Dump terminal buffer content via socket API + CLI.
 - `src/components/TerminalPane.tsx` — Call `registerTerminal(paneId, term)` after `term.open()`, `unregisterTerminal(paneId)` before `term.dispose()`
 - `src/App.tsx` — Add `surface.read_screen` case to `handleSocketRequest`, import `readScreen` from registry
 - `src-tauri/src/socket_api.rs` — Add `"surface.read_screen"` to bridged methods list
-- `src-tauri/src/cli.rs` — Add `ReadScreen { surface_id: Option<String> }` command
 
 ---
 

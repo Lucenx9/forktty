@@ -33,7 +33,7 @@ ForkTTY gives each agent its own git worktree, watches for prompts, and tells yo
 - **Git worktree isolation** — each workspace gets an isolated worktree and branch, no conflicts between agents
 - **Smart notifications** — detects when an agent waits for input (OSC 133, prompt patterns, OSC 9/99/777) and alerts via sidebar badge + desktop notification
 - **Ghostty theme compatible** — reads `~/.config/ghostty/config` for colors and fonts automatically
-- **Scriptable** — Unix socket API (JSON-RPC) and `forktty-cli` for automation
+- **Scriptable** — Unix socket API (JSON-RPC) at `$XDG_RUNTIME_DIR/forktty.sock`
 - **Command palette** — `Ctrl+Shift+P` to fuzzy-search all actions
 - **Session persistence** — workspace layout restored on restart
 - **System tray** — unread count tooltip, click to focus window
@@ -104,29 +104,6 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 | Jump to unread | `Ctrl+Shift+U` |
 | Settings | `Ctrl+,` |
 | Zoom in/out/reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
-
-## CLI
-
-The `forktty-cli` binary connects to the running app via Unix socket:
-
-```bash
-forktty-cli ping                        # Check if ForkTTY is running
-forktty-cli ls                          # List workspaces
-forktty-cli new feature-x               # New worktree workspace
-forktty-cli new                         # New plain workspace
-forktty-cli select feature-x            # Focus workspace
-forktty-cli split right                 # Split current pane (right|down)
-forktty-cli send <pty_id> "text"        # Send text to terminal
-forktty-cli read-screen                 # Read focused terminal content
-forktty-cli merge feature-x             # Merge worktree branch
-forktty-cli rm feature-x                # Remove worktree + close workspace
-forktty-cli notify --title "Done"       # Send notification
-forktty-cli notifications               # List notifications
-forktty-cli clear-notifications         # Clear all notifications
-forktty-cli metadata set-status ...     # Set workspace status pill
-forktty-cli metadata set-progress ...   # Set workspace progress bar
-forktty-cli metadata log "message"      # Append workspace log entry
-```
 
 ## Configuration
 

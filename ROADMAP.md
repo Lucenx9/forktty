@@ -81,9 +81,9 @@
 - [x] 4.8 — Sidebar shows worktree status (clean/dirty/conflicts)
 
 ### Acceptance
-- `forktty-cli new feature-x` creates worktree and opens workspace inside it
-- Work in worktree, commit, then `forktty-cli merge feature-x` merges into main
-- `forktty-cli rm feature-x` cleans up everything
+- Creating a worktree workspace via socket API opens workspace inside it
+- Work in worktree, commit, then merge via socket API merges into main
+- Removing worktree via socket API cleans up everything
 - Setup hook runs `npm install` (or equivalent) on worktree creation
 
 ---
@@ -121,16 +121,11 @@
 
 - [x] 6.1 — Unix domain socket server in Rust (tokio), JSON-RPC protocol
 - [x] 6.2 — Implement MVP methods: system.ping, workspace.*, surface.*, notification.*
-- [x] 6.3 — CLI binary (`forktty`): clap-based, connects to socket, sends JSON-RPC
-- [x] 6.4 — Set env vars in spawned shells: `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, `FORKTTY_SOCKET_PATH`
-- [x] 6.5 — `forktty send <surface> "text"`: send keystrokes to a specific terminal
-- [x] 6.6 — `forktty read-screen [surface]`: dump current terminal buffer content
+- [x] 6.3 — Set env vars in spawned shells: `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, `FORKTTY_SOCKET_PATH`
 
 ### Acceptance
-- `forktty-cli ls` from another terminal lists workspaces
-- `forktty-cli new test -p "fix the bug"` creates workspace and sends prompt to Claude
-- `forktty-cli notify --title "Done"` triggers notification in app
-- Scripts can orchestrate multiple agents via CLI
+- Scripts can orchestrate multiple agents via Unix socket JSON-RPC
+- Environment variables are set in spawned shells for socket discovery
 
 ---
 
@@ -198,7 +193,7 @@
 - `echo -e '\033]9;Hello\007'` triggers notification with blue pane ring
 - Drag workspace entries in sidebar to reorder
 - Tray icon shows unread count, click opens window
-- `forktty-cli read-screen` returns terminal content
+- `surface.read_screen` socket method returns terminal content
 
 ---
 
