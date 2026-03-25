@@ -139,8 +139,13 @@ async fn handle_connection(
     loop {
         let line = match read_limited_line(&mut buf_reader, MAX_REQUEST_SIZE).await {
             None => break, // EOF
-            Some(Err(_)) => {
+            Some(Err(ReadLineError::TooLarge)) => {
                 let resp = json!({"id": null, "ok": false, "error": {"code": "request_too_large", "message": "Request exceeds 1 MiB"}});
+                let _ = write_response(&mut writer, &resp).await;
+                break;
+            }
+            Some(Err(ReadLineError::InvalidUtf8)) => {
+                let resp = json!({"id": null, "ok": false, "error": {"code": "parse_error", "message": "Request must be valid UTF-8 JSON"}});
                 let _ = write_response(&mut writer, &resp).await;
                 break;
             }
@@ -187,10 +192,16 @@ async fn write_response(
 /// Read a newline-delimited line, enforcing a maximum byte size before allocation.
 /// Uses fill_buf/consume to avoid buffering unbounded data.
 /// Returns None on EOF, Some(Err) if the line exceeds max_size, Some(Ok) otherwise.
+#[derive(Debug, PartialEq, Eq)]
+enum ReadLineError {
+    TooLarge,
+    InvalidUtf8,
+}
+
 async fn read_limited_line(
     reader: &mut (impl AsyncBufRead + Unpin),
     max_size: usize,
-) -> Option<Result<String, ()>> {
+) -> Option<Result<String, ReadLineError>> {
     let mut buf = Vec::with_capacity(4096);
     loop {
         let available = reader.fill_buf().await.ok()?;
@@ -198,7 +209,7 @@ async fn read_limited_line(
             return if buf.is_empty() {
                 None
             } else {
-                Some(String::from_utf8(buf).map_err(|_| ()))
+                Some(String::from_utf8(buf).map_err(|_| ReadLineError::InvalidUtf8))
             };
         }
         if let Some(pos) = available.iter().position(|&b| b == b'\n') {
@@ -208,19 +219,19 @@ async fn read_limited_line(
         }
         let len = available.len();
         if buf.len() + len > max_size {
-            return Some(Err(()));
+            return Some(Err(ReadLineError::TooLarge));
         }
         buf.extend_from_slice(available);
         reader.consume(len);
     }
     if buf.len() > max_size {
-        return Some(Err(()));
+        return Some(Err(ReadLineError::TooLarge));
     }
     // Strip trailing \r for Windows-style line endings
     if buf.last() == Some(&b'\r') {
         buf.pop();
     }
-    Some(String::from_utf8(buf).map_err(|_| ()))
+    Some(String::from_utf8(buf).map_err(|_| ReadLineError::InvalidUtf8))
 }
 
 async fn dispatch(
@@ -486,7 +497,7 @@ mod tests {
         let data = b"this line is too long\n";
         let mut reader = BufReader::new(Cursor::new(data.to_vec()));
         let result = read_limited_line(&mut reader, 5).await;
-        assert_eq!(result, Some(Err(())));
+        assert_eq!(result, Some(Err(ReadLineError::TooLarge)));
     }
 
     #[tokio::test]
@@ -518,7 +529,7 @@ mod tests {
         let data = vec![0xFF, 0xFE, b'\n'];
         let mut reader = BufReader::new(Cursor::new(data));
         let result = read_limited_line(&mut reader, 1024).await;
-        assert_eq!(result, Some(Err(())));
+        assert_eq!(result, Some(Err(ReadLineError::InvalidUtf8)));
     }
 
     #[tokio::test]
