@@ -326,18 +326,17 @@ File: `~/.config/forktty/config.toml`
 
 ```toml
 [general]
-theme = "ghostty"                    # "ghostty" reads Ghostty config, or custom theme name
-shell = "/bin/bash"                  # Default shell
+theme_source = "auto"                # "auto" detects from Ghostty, "builtin" uses Catppuccin Mocha
+shell = "/bin/bash"                  # Default: $SHELL
 worktree_layout = "nested"           # "nested" (.worktrees/), "sibling", "outer-nested"
-notification_command = ""            # Custom command, empty = disabled
+notification_command = ""            # Custom command (absolute path), empty = disabled
 
 [appearance]
-font_family = "JetBrains Mono"      # Override, or read from Ghostty
-font_size = 14
+font_family = ""                     # Overrides Ghostty font if set
+font_size = 14                       # Overrides Ghostty size if set
 sidebar_position = "left"            # "left" or "right"
 
 [notifications]
 desktop = true                       # XDG desktop notifications
-sound = true                         # Notification sound
-idle_threshold_ms = 2000             # Reserved — config field exists but logic not yet active
+sound = true                         # Notification sound via D-Bus hint
 ```

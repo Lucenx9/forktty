@@ -31,7 +31,7 @@ interface ConfigState {
 function makeDefaultConfig(): AppConfig {
   return {
     general: {
-      theme: "ghostty",
+      theme_source: "auto",
       shell: "/bin/bash",
       worktree_layout: "nested",
       notification_command: "",

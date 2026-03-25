@@ -113,7 +113,7 @@ Config file: `~/.config/forktty/config.toml` — all fields are optional with se
 # All values below are defaults — only add what you want to change.
 
 [general]
-# theme = "ghostty"           # reads Ghostty colors/fonts; any other value uses Catppuccin Mocha
+# theme_source = "auto"       # "auto" detects from Ghostty; "builtin" uses Catppuccin Mocha
 # shell = "/bin/zsh"          # default: $SHELL
 # worktree_layout = "nested"  # "nested", "sibling", or "outer-nested"
 # notification_command = "/usr/bin/notify-send"  # must be absolute path, empty = disabled

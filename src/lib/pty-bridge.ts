@@ -287,7 +287,7 @@ export function worktreeRunHook(
 
 export interface AppConfig {
   general: {
-    theme: string;
+    theme_source: string;
     shell: string;
     worktree_layout: string;
     notification_command: string;

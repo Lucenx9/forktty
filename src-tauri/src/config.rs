@@ -32,8 +32,8 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
-    #[serde(default = "default_theme")]
-    pub theme: String,
+    #[serde(default = "default_theme_source")]
+    pub theme_source: String,
     #[serde(default = "default_shell")]
     pub shell: String,
     #[serde(default = "default_worktree_layout")]
@@ -60,8 +60,8 @@ pub struct NotificationConfig {
     pub sound: bool,
 }
 
-fn default_theme() -> String {
-    "ghostty".to_string()
+fn default_theme_source() -> String {
+    "auto".to_string()
 }
 fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
@@ -85,7 +85,7 @@ fn default_true() -> bool {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            theme: default_theme(),
+            theme_source: default_theme_source(),
             shell: default_shell(),
             worktree_layout: default_worktree_layout(),
             notification_command: String::new(),
@@ -432,10 +432,10 @@ fn apply_palette(theme: &mut TerminalTheme, palette: &HashMap<u8, String>) {
 }
 
 /// Resolve the full terminal theme based on config.
-/// If theme = "ghostty", reads Ghostty config.
+/// If theme_source = "auto", reads Ghostty config.
 /// AppConfig appearance settings override everything.
 pub fn resolve_theme(config: &AppConfig) -> TerminalTheme {
-    let mut theme = if config.general.theme == "ghostty" {
+    let mut theme = if config.general.theme_source == "auto" {
         load_ghostty_theme()
     } else {
         // Built-in Catppuccin Mocha as fallback
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AppConfig::default();
-        assert_eq!(config.general.theme, "ghostty");
+        assert_eq!(config.general.theme_source, "auto");
         assert_eq!(config.appearance.font_size, 14);
         assert!(config.notifications.desktop);
     }
@@ -531,7 +531,7 @@ mod tests {
     fn test_resolve_theme_defaults() {
         let config = AppConfig {
             general: GeneralConfig {
-                theme: "builtin".to_string(),
+                theme_source: "builtin".to_string(),
                 ..Default::default()
             },
             ..Default::default()
@@ -546,7 +546,7 @@ mod tests {
         let config = AppConfig::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.general.theme, config.general.theme);
+        assert_eq!(parsed.general.theme_source, config.general.theme_source);
         assert_eq!(parsed.appearance.font_size, config.appearance.font_size);
     }
 

@@ -96,13 +96,13 @@ export default function SettingsPanel() {
           </p>
 
           <label className="settings-field">
-            <span className="settings-label">Theme</span>
+            <span className="settings-label">Theme source</span>
             <select
               className="settings-select"
-              value={draft.general.theme}
-              onChange={(e) => updateGeneral("theme", e.target.value)}
+              value={draft.general.theme_source}
+              onChange={(e) => updateGeneral("theme_source", e.target.value)}
             >
-              <option value="ghostty">Ghostty (auto-detect)</option>
+              <option value="auto">Auto (detect from Ghostty)</option>
               <option value="builtin">Catppuccin Mocha (built-in)</option>
             </select>
           </label>
