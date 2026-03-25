@@ -4,7 +4,14 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
-import { spawnPty, writePty, resizePty, killPty, logError } from "../lib/pty-bridge";
+import {
+  spawnPty,
+  writePty,
+  resizePty,
+  killPty,
+  logError,
+  hasTauriRuntime,
+} from "../lib/pty-bridge";
 import {
   registerTerminal,
   unregisterTerminal,
@@ -81,6 +88,15 @@ interface PaneContextMenuState {
   x: number;
   y: number;
   hasSelection: boolean;
+}
+
+interface PaneSurfaceState {
+  kind: "preview" | "error";
+  badge: string;
+  title: string;
+  body: string;
+  hint: string;
+  chips: string[];
 }
 
 function PaneContextMenu({
@@ -195,12 +211,14 @@ function PaneToolbar({
   isFocused,
   hasUnreadNotification,
   isFindOpen,
+  findDisabled,
   onToggleFind,
 }: {
   paneId: string;
   isFocused: boolean;
   hasUnreadNotification: boolean;
   isFindOpen: boolean;
+  findDisabled: boolean;
   onToggleFind: () => void;
 }) {
   const closePane = useWorkspaceStore((s) => s.closePane);
@@ -267,6 +285,7 @@ function PaneToolbar({
           title="Find (Ctrl+F)"
           aria-label="Find in Terminal"
           aria-pressed={isFindOpen}
+          disabled={findDisabled}
         >
           <Search size={12} />
         </button>
@@ -298,6 +317,7 @@ const TerminalPane = memo(function TerminalPane({
   const [showFind, setShowFind] = useState(false);
   const [flashBorder, setFlashBorder] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [surfaceState, setSurfaceState] = useState<PaneSurfaceState | null>(null);
   const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(
     null,
   );
@@ -411,6 +431,19 @@ const TerminalPane = memo(function TerminalPane({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    if (!hasTauriRuntime()) {
+      setSurfaceState({
+        kind: "preview",
+        badge: "Browser Preview",
+        title: "Pane chrome is live, shell backend is not",
+        body: "Use this mode to tune layout, spacing and overlays. Real PTYs start only inside the Tauri app.",
+        hint: "Run npm run tauri:dev when you want a full terminal session.",
+        chips: ["Ctrl+D Split", "Ctrl+Shift+P Palette", "npm run tauri:dev"],
+      });
+      return;
+    }
+
+    setSurfaceState(null);
 
     // Check if a saved instance exists (re-adoption after swap/split)
     const saved = getSavedInstance(paneId);
@@ -649,6 +682,7 @@ const TerminalPane = memo(function TerminalPane({
           if (hasExited) {
             return;
           }
+          setSurfaceState(null);
           runtime.ptyId = id;
           registerSurface(paneId, id);
 
@@ -658,7 +692,14 @@ const TerminalPane = memo(function TerminalPane({
         })
         .catch((err) => {
           logError(err);
-          term.write(`\r\n\x1b[31mFailed to spawn PTY: ${err}\x1b[0m\r\n`);
+          setSurfaceState({
+            kind: "error",
+            badge: "Terminal Unavailable",
+            title: "Shell failed to start",
+            body: String(err),
+            hint: "Check the shell path in Settings or relaunch inside the Tauri app.",
+            chips: ["Ctrl+, Settings", "Ctrl+Shift+P Palette"],
+          });
         });
     }
 
@@ -780,6 +821,9 @@ const TerminalPane = memo(function TerminalPane({
       onKeyDown={(e) => {
         // Ctrl+F: find in terminal
         if (e.ctrlKey && !e.shiftKey && e.key === "f") {
+          if (surfaceState) {
+            return;
+          }
           e.preventDefault();
           e.stopPropagation();
           setShowFind(true);
@@ -804,9 +848,10 @@ const TerminalPane = memo(function TerminalPane({
         isFocused={isFocused}
         hasUnreadNotification={hasUnreadNotification}
         isFindOpen={showFind}
+        findDisabled={surfaceState !== null}
         onToggleFind={() => setShowFind((v) => !v)}
       />
-      {showFind && (
+      {showFind && !surfaceState && (
         <FindBar
           onFind={handleFind}
           onFindNext={handleFindNext}
@@ -833,14 +878,32 @@ const TerminalPane = memo(function TerminalPane({
           minHeight: 0,
         }}
       >
-        <div
-          ref={containerRef}
-          className="terminal-pane-surface"
-          style={{
-            width: "100%",
-            height: "100%",
-          }}
-        />
+        {surfaceState ? (
+          <div
+            className={`terminal-pane-state terminal-pane-state-${surfaceState.kind}`}
+          >
+            <div className="terminal-pane-state-badge">{surfaceState.badge}</div>
+            <div className="terminal-pane-state-title">{surfaceState.title}</div>
+            <div className="terminal-pane-state-copy">{surfaceState.body}</div>
+            <div className="terminal-pane-state-hint">{surfaceState.hint}</div>
+            <div className="terminal-pane-state-chips">
+              {surfaceState.chips.map((chip) => (
+                <span key={chip} className="terminal-pane-state-chip">
+                  {chip}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            ref={containerRef}
+            className="terminal-pane-surface"
+            style={{
+              width: "100%",
+              height: "100%",
+            }}
+          />
+        )}
       </div>
       {paneContextMenu &&
         createPortal(

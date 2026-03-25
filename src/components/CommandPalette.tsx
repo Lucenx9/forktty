@@ -26,6 +26,10 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
     const lower = query.toLowerCase();
     return commands.filter((cmd) => cmd.label.toLowerCase().includes(lower));
   }, [query, commands]);
+  const queryTrimmed = query.trim();
+  const resultSummary = queryTrimmed
+    ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}`
+    : `${commands.length} commands`;
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
@@ -72,6 +76,10 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
           }}
           placeholder="Type a command..."
         />
+        <div className="command-palette-meta">
+          <span>{resultSummary}</span>
+          <span>Enter to run</span>
+        </div>
         <div className="command-palette-list" role="listbox">
           {filtered.length === 0 && (
             <div className="command-palette-empty">No matching commands</div>

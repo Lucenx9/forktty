@@ -132,6 +132,56 @@ export default function App() {
   );
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 
+  const closeCommandPalette = useCallback(() => setShowCommandPalette(false), []);
+
+  const openCommandPalette = useCallback(() => {
+    setShowBranchPicker(false);
+    setBranchPickerCwd(undefined);
+    if (showSettings) {
+      toggleSettings();
+    }
+    if (showNotificationPanel) {
+      toggleNotificationPanel();
+    }
+    setShowCommandPalette(true);
+  }, [showSettings, showNotificationPanel, toggleSettings, toggleNotificationPanel]);
+
+  const toggleCommandPalette = useCallback(() => {
+    if (showCommandPalette) {
+      setShowCommandPalette(false);
+      return;
+    }
+    openCommandPalette();
+  }, [showCommandPalette, openCommandPalette]);
+
+  const toggleSettingsPanel = useCallback(() => {
+    if (showSettings) {
+      toggleSettings();
+      return;
+    }
+    setShowCommandPalette(false);
+    setShowBranchPicker(false);
+    setBranchPickerCwd(undefined);
+    if (showNotificationPanel) {
+      toggleNotificationPanel();
+    }
+    toggleSettings();
+  }, [showSettings, showNotificationPanel, toggleNotificationPanel, toggleSettings]);
+
+  const toggleNotificationsDrawer = useCallback(() => {
+    if (showNotificationPanel) {
+      toggleNotificationPanel();
+      return;
+    }
+    setShowCommandPalette(false);
+    setShowBranchPicker(false);
+    setBranchPickerCwd(undefined);
+    if (showSettings) {
+      toggleSettings();
+    }
+    toggleNotificationPanel();
+  }, [showNotificationPanel, showSettings, toggleNotificationPanel, toggleSettings]);
+
   const setSidebarCollapsedPersisted = useCallback((collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     if (typeof window !== "undefined") {
@@ -196,6 +246,13 @@ export default function App() {
   }, []);
 
   const openBranchPicker = useCallback(() => {
+    setShowCommandPalette(false);
+    if (showSettings) {
+      toggleSettings();
+    }
+    if (showNotificationPanel) {
+      toggleNotificationPanel();
+    }
     const state = useWorkspaceStore.getState();
     const activeWorkspace = state.workspaces[state.activeWorkspaceId];
     const fallbackCwd = activeWorkspace?.workingDir || undefined;
@@ -253,7 +310,7 @@ export default function App() {
       setBranchPickerCwd(undefined);
       setShowBranchPicker(true);
     }
-  }, []);
+  }, [showSettings, showNotificationPanel, toggleSettings, toggleNotificationPanel]);
 
   const handleBranchPickerResult = useCallback(
     (result: BranchPickerResult) => {
@@ -393,18 +450,31 @@ export default function App() {
       openBranchPicker();
     }
     function handleOpenCommandPalette() {
-      setShowCommandPalette(true);
+      openCommandPalette();
+    }
+    function handleOpenSettings() {
+      toggleSettingsPanel();
+    }
+    function handleToggleNotifications() {
+      toggleNotificationsDrawer();
     }
     window.addEventListener("forktty-open-branch-picker", handleOpenBranchPicker);
     window.addEventListener("forktty-open-command-palette", handleOpenCommandPalette);
+    window.addEventListener("forktty-open-settings", handleOpenSettings);
+    window.addEventListener("forktty-toggle-notifications", handleToggleNotifications);
     return () => {
       window.removeEventListener("forktty-open-branch-picker", handleOpenBranchPicker);
       window.removeEventListener(
         "forktty-open-command-palette",
         handleOpenCommandPalette,
       );
+      window.removeEventListener("forktty-open-settings", handleOpenSettings);
+      window.removeEventListener(
+        "forktty-toggle-notifications",
+        handleToggleNotifications,
+      );
     };
-  }, [openBranchPicker]);
+  }, [openBranchPicker, openCommandPalette, toggleSettingsPanel, toggleNotificationsDrawer]);
 
   // Window title badge: show unread count
   const totalUnread = useWorkspaceStore((s) =>
@@ -474,7 +544,27 @@ export default function App() {
           return;
         }
         e.preventDefault();
-        setShowCommandPalette((v) => !v);
+        toggleCommandPalette();
+        return;
+      }
+
+      // Ctrl+,: toggle settings panel
+      if (e.ctrlKey && !e.shiftKey && e.key === ",") {
+        if (modalOrBranchPickerOpen) {
+          return;
+        }
+        e.preventDefault();
+        toggleSettingsPanel();
+        return;
+      }
+
+      // Ctrl+Shift+I: toggle notification panel
+      if (e.ctrlKey && e.shiftKey && e.key === "I") {
+        if (modalOrBranchPickerOpen) {
+          return;
+        }
+        e.preventDefault();
+        toggleNotificationsDrawer();
         return;
       }
 
@@ -492,20 +582,6 @@ export default function App() {
       if (e.ctrlKey && e.shiftKey && e.key === "N") {
         e.preventDefault();
         openBranchPicker();
-        return;
-      }
-
-      // Ctrl+,: toggle settings panel
-      if (e.ctrlKey && !e.shiftKey && e.key === ",") {
-        e.preventDefault();
-        toggleSettings();
-        return;
-      }
-
-      // Ctrl+Shift+I: toggle notification panel
-      if (e.ctrlKey && e.shiftKey && e.key === "I") {
-        e.preventDefault();
-        toggleNotificationPanel();
         return;
       }
 
@@ -608,12 +684,11 @@ export default function App() {
     openBranchPicker,
     requestCloseWorkspace,
     switchWorkspace,
-    toggleNotificationPanel,
     jumpToUnread,
-    toggleSettings,
+    toggleCommandPalette,
+    toggleNotificationsDrawer,
+    toggleSettingsPanel,
   ]);
-
-  const closeCommandPalette = useCallback(() => setShowCommandPalette(false), []);
 
   const commands: CommandEntry[] = useMemo(
     () => [
@@ -691,7 +766,7 @@ export default function App() {
         id: "notifications",
         label: "Toggle Notifications",
         shortcut: "Ctrl+Shift+I",
-        action: toggleNotificationPanel,
+        action: toggleNotificationsDrawer,
       },
       {
         id: "jump-unread",
@@ -726,13 +801,13 @@ export default function App() {
         id: "settings",
         label: "Open Settings",
         shortcut: "Ctrl+,",
-        action: toggleSettings,
+        action: toggleSettingsPanel,
       },
       {
         id: "command-palette",
         label: "Command Palette",
         shortcut: "Ctrl+Shift+P",
-        action: () => setShowCommandPalette(true),
+        action: openCommandPalette,
       },
       {
         id: "toggle-sidebar",
@@ -794,11 +869,12 @@ export default function App() {
       closePane,
       dispatchFocusedPaneAction,
       openBranchPicker,
-      toggleNotificationPanel,
       jumpToUnread,
       markWorkspaceRead,
       activeWorkspaceId,
-      toggleSettings,
+      toggleNotificationsDrawer,
+      toggleSettingsPanel,
+      openCommandPalette,
       sidebarCollapsed,
       switchWorkspace,
       toggleSidebarCollapsed,

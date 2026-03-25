@@ -658,7 +658,6 @@ function HelpButton() {
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const toggleSettings = useConfigStore((s) => s.toggleSettings);
 
   useEffect(() => {
     if (!open) return;
@@ -746,7 +745,7 @@ function HelpButton() {
               className="context-menu-item"
               onClick={() => {
                 setOpen(false);
-                toggleSettings();
+                window.dispatchEvent(new CustomEvent("forktty-open-settings"));
               }}
             >
               <span>Settings</span>
@@ -939,8 +938,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
   function handleNewWorktree() {
     window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
   }
-
-  const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
   const totalUnread = useWorkspaceStore((s) =>
     Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
   );
@@ -1014,7 +1011,9 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
           <button
             className={`sidebar-icon-btn ${totalUnread > 0 ? "sidebar-icon-btn-unread" : ""} ${showNotificationPanel ? "sidebar-icon-btn-active" : ""}`}
             type="button"
-            onClick={toggleNotificationPanel}
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("forktty-toggle-notifications"))
+            }
             title="Notifications (Ctrl+Shift+I)"
             aria-label="Toggle notifications"
             aria-pressed={showNotificationPanel}
@@ -1123,7 +1122,9 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
           <button
             className={`sidebar-icon-btn ${totalUnread > 0 ? "sidebar-icon-btn-unread" : ""} ${showNotificationPanel ? "sidebar-icon-btn-active" : ""}`}
             type="button"
-            onClick={toggleNotificationPanel}
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("forktty-toggle-notifications"))
+            }
             title="Notifications (Ctrl+Shift+I)"
             aria-label="Toggle notifications"
             aria-pressed={showNotificationPanel}

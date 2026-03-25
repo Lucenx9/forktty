@@ -14,6 +14,15 @@ export default function NotificationPanel() {
   const markWorkspaceRead = useWorkspaceStore((s) => s.markWorkspaceRead);
   const clearNotifications = useWorkspaceStore((s) => s.clearNotifications);
   const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+  const workspaceCount = new Set(notifications.map((n) => n.workspaceId)).size;
+
+  const subtitle =
+    notifications.length === 0
+      ? "Background prompts and agent events will land here"
+      : unreadCount > 0
+        ? `${unreadCount} unread event${unreadCount === 1 ? "" : "s"} across ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`
+        : `${notifications.length} recent event${notifications.length === 1 ? "" : "s"}, all caught up`;
 
   function handleClick(workspaceId: string) {
     switchWorkspace(workspaceId);
@@ -26,9 +35,7 @@ export default function NotificationPanel() {
       <div className="notification-panel-header">
         <div className="notification-panel-heading">
           <span className="notification-panel-title">Notifications</span>
-          <span className="notification-panel-subtitle">
-            Background prompts and agent events
-          </span>
+          <span className="notification-panel-subtitle">{subtitle}</span>
         </div>
         <div className="notification-panel-actions">
           {notifications.length > 0 && (

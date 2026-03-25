@@ -56,8 +56,8 @@ export function hasTauriRuntime(): boolean {
 }
 
 function browserFallbackCwd(): string {
-  if (typeof window === "undefined") return "/";
-  return window.location.pathname || "/";
+  if (typeof window === "undefined") return "";
+  return "";
 }
 
 /**
