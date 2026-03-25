@@ -327,8 +327,10 @@ fn parse_palette_from_content(content: &str) -> HashMap<u8, String> {
 /// Validate a Ghostty theme name: only alphanumeric, dash, underscore, space allowed.
 /// Rejects path traversal characters (/, ..) and null bytes.
 fn is_valid_theme_name(name: &str) -> bool {
-    name.chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
 }
 
 /// Load Ghostty theme from config and optional theme file.
@@ -586,9 +588,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_theme_name_passes_validation() {
-        // Empty string has no invalid chars; the file lookup will simply fail
-        assert!(is_valid_theme_name(""));
+    fn empty_theme_name_is_rejected() {
+        assert!(!is_valid_theme_name(""));
     }
 
     #[test]

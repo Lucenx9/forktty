@@ -333,7 +333,10 @@ mod tests {
 
         let loaded = load_session_from_path(&session_file).unwrap();
         assert!(loaded.is_none(), "Invalid session should be ignored");
-        assert!(!session_file.exists(), "Invalid session should be quarantined");
+        assert!(
+            !session_file.exists(),
+            "Invalid session should be quarantined"
+        );
 
         let _ = fs::remove_dir_all(&tmp_dir);
     }
