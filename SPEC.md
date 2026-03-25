@@ -237,7 +237,7 @@ The backend also forwards explicit terminal notification sequences:
 
 ## Socket API (JSON-RPC over Unix Domain Socket)
 
-Socket path: `/tmp/forktty.sock` (override: `FORKTTY_SOCKET_PATH`)
+Socket path: `$XDG_RUNTIME_DIR/forktty.sock` (fallback: `/tmp/forktty.sock`; override: `FORKTTY_SOCKET_PATH`)
 
 Protocol: newline-delimited JSON
 

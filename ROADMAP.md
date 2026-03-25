@@ -122,7 +122,7 @@
 - [x] 6.1 — Unix domain socket server in Rust (tokio), JSON-RPC protocol
 - [x] 6.2 — Implement MVP methods: system.ping, workspace.*, surface.*, notification.*
 - [x] 6.3 — CLI binary (`forktty`): clap-based, connects to socket, sends JSON-RPC
-- [x] 6.4 — Set env vars in spawned shells: `AGENTMUX_WORKSPACE_ID`, `AGENTMUX_SURFACE_ID`, `AGENTMUX_SOCKET_PATH`
+- [x] 6.4 — Set env vars in spawned shells: `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, `FORKTTY_SOCKET_PATH`
 - [x] 6.5 — `forktty send <surface> "text"`: send keystrokes to a specific terminal
 - [x] 6.6 — `forktty read-screen [surface]`: dump current terminal buffer content
 

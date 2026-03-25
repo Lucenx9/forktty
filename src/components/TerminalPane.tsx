@@ -5,15 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
-import {
-  spawnPty,
-  writePty,
-  resizePty,
-  killPty,
-  sendDesktopNotification,
-  sendCustomNotification,
-  logError,
-} from "../lib/pty-bridge";
+import { spawnPty, writePty, resizePty, killPty, logError } from "../lib/pty-bridge";
 import {
   registerTerminal,
   unregisterTerminal,
@@ -32,6 +24,7 @@ import {
   resolveWorkspaceSpawnCwd,
   splitPaneWithInheritedCwd,
 } from "../lib/workspace-launch";
+import { dispatchWorkspaceNotification } from "../lib/notification-dispatch";
 import { Columns2, Rows2, Search, GripVertical, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
@@ -88,6 +81,7 @@ function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
 interface PaneContextMenuState {
   x: number;
   y: number;
+  hasSelection: boolean;
 }
 
 function PaneContextMenu({
@@ -157,7 +151,7 @@ function PaneContextMenu({
     onClose();
   }
 
-  const hasSelection = !!termRef.current?.getSelection();
+  const hasSelection = menu.hasSelection;
 
   return (
     <div ref={menuRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
@@ -557,10 +551,6 @@ const TerminalPane = memo(function TerminalPane({
       let lastNotifyTime = 0;
 
       function fireNotification(wsId: string, title: string, body: string) {
-        const state = useWorkspaceStore.getState();
-        const config = useConfigStore.getState().config;
-        const workspace = state.workspaces[wsId];
-        const notificationCommand = config?.general.notification_command.trim() ?? "";
         const dedupeKey = `${wsId}:${title}:${body}`;
         const now = Date.now();
         const lastSeen = recentNotificationMap.get(dedupeKey) ?? 0;
@@ -571,16 +561,7 @@ const TerminalPane = memo(function TerminalPane({
         recentNotificationMap.set(dedupeKey, now);
         pruneNotificationMap();
 
-        state.addNotification(wsId, title, body);
-        if (wsId !== state.activeWorkspaceId || workspace?.focusedPaneId !== paneId) {
-          state.setSurfaceUnread(paneId, true);
-        }
-        if (config?.notifications.desktop ?? true) {
-          sendDesktopNotification(title, body).catch(logError);
-        }
-        if (notificationCommand) {
-          sendCustomNotification(notificationCommand, title, body).catch(logError);
-        }
+        dispatchWorkspaceNotification({ workspaceId: wsId, title, body, paneId });
       }
 
       function handleScanEvent(event: ScanEventData) {
@@ -856,7 +837,11 @@ const TerminalPane = memo(function TerminalPane({
           e.preventDefault();
           e.stopPropagation();
           setFocusedPane(paneId);
-          setPaneContextMenu({ x: e.clientX, y: e.clientY });
+          setPaneContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            hasSelection: !!termRef.current?.getSelection(),
+          });
         }}
         style={{
           width: "100%",

@@ -41,6 +41,7 @@ import {
   getPtyCwd,
   updateTrayTooltip,
   hasTauriRuntime,
+  signalFrontendReady,
 } from "./lib/pty-bridge";
 import { handleSocketRequest } from "./lib/socket-handler";
 import {
@@ -432,8 +433,13 @@ export default function App() {
       const { id, method, params } = event.payload;
       void handleSocketRequest(id, method, params);
     });
+    unlisten
+      .then(() => {
+        signalFrontendReady().catch(logError);
+      })
+      .catch(logError);
     return () => {
-      unlisten.then((fn) => fn());
+      unlisten.then((fn) => fn()).catch(logError);
     };
   }, []);
 
