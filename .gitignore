@@ -19,9 +19,12 @@ Thumbs.db
 .env
 .env.local
 .mcp.json
+CLAUDE.md
 
 # Claude Code personal settings (team settings are in .claude/settings.json)
+.claude/
 .claude/settings.local.json
+plans/
 
 # Test artifacts
 .playwright-cli/
