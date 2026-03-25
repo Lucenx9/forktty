@@ -247,10 +247,12 @@ async fn dispatch(
         "system.ping" => Ok(json!("pong")),
 
         "surface.send_text" => {
-            let pty_id = params
+            let pty_id: u32 = params
                 .get("pty_id")
                 .and_then(|v| v.as_u64())
-                .ok_or("Missing pty_id")? as u32;
+                .ok_or("Missing pty_id")?
+                .try_into()
+                .map_err(|_| "pty_id exceeds u32 range")?;
             let text = params
                 .get("text")
                 .and_then(|v| v.as_str())
@@ -311,9 +313,12 @@ async fn dispatch(
 
             if let (Some(prompt), Some(pty_id)) = (
                 prompt.as_deref(),
-                workspace.get("pty_id").and_then(|v| v.as_u64()),
+                workspace
+                    .get("pty_id")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| u32::try_from(v).ok()),
             ) {
-                write_surface_text(pty_manager, pty_id as u32, prompt)?;
+                write_surface_text(pty_manager, pty_id, prompt)?;
             }
 
             // Intentional: setup hook failure is advisory and should not block worktree creation
