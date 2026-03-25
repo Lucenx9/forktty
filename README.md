@@ -107,28 +107,30 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 
 ## Configuration
 
-Config file: `~/.config/forktty/config.toml`
+Config file: `~/.config/forktty/config.toml` — all fields are optional with sensible defaults.
 
 ```toml
+# All values below are defaults — only add what you want to change.
+
 [general]
-theme = "ghostty"              # "ghostty" auto-detects, or custom theme name
-shell = "/bin/bash"            # Default: $SHELL
-worktree_layout = "nested"     # "nested", "sibling", or "outer-nested"
-notification_command = ""      # Custom command (must be absolute path), empty = disabled
+# theme = "ghostty"           # reads Ghostty colors/fonts; any other value uses Catppuccin Mocha
+# shell = "/bin/zsh"          # default: $SHELL
+# worktree_layout = "nested"  # "nested", "sibling", or "outer-nested"
+# notification_command = "/usr/bin/notify-send"  # must be absolute path, empty = disabled
 
 [appearance]
-font_family = "JetBrains Mono"
-font_size = 14
-sidebar_position = "left"      # "left" or "right"
+# font_family = "Fira Code"   # overrides Ghostty font if set
+# font_size = 16              # overrides Ghostty size if set (default: 14)
+# sidebar_position = "right"  # "left" (default) or "right"
 
 [notifications]
-desktop = true
-sound = true
+# desktop = true              # enable/disable desktop notifications
+# sound = true                # enable/disable notification sound
 ```
 
-If you have a Ghostty config with a theme, ForkTTY picks up your colors and fonts automatically.
-If `notification_command` is set, ForkTTY exports `FORKTTY_NOTIFICATION_TITLE` and
-`FORKTTY_NOTIFICATION_BODY` to that command.
+Ghostty users: ForkTTY reads `~/.config/ghostty/config` automatically for colors, fonts, and palette. Explicit `[appearance]` values override Ghostty.
+
+If `notification_command` is set, ForkTTY exports `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY` as environment variables to that command.
 
 ## Architecture
 
