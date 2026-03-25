@@ -1,3 +1,7 @@
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine,
+};
 use regex::Regex;
 use serde::Serialize;
 
@@ -12,6 +16,13 @@ pub enum ScanEvent {
     CommandFinished { exit_code: Option<i32> },
     #[serde(rename = "notification")]
     Notification { title: String, body: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Osc99PayloadType {
+    Title,
+    Body,
+    Ignore,
 }
 
 /// Scans PTY output for OSC 133 shell integration sequences and
@@ -161,19 +172,19 @@ impl OutputScanner {
             if let Ok(rest) = std::str::from_utf8(&payload[3..]) {
                 // Split metadata (key=val:key=val) from payload at first unescaped semicolon
                 let (metadata, body) = rest.split_once(';').unwrap_or((rest, ""));
-                // Parse title from metadata if present (p=title means the body IS the title)
-                let mut title = "Terminal".to_string();
-                let mut payload_type = "body";
-                for param in metadata.split(':') {
-                    if let Some(val) = param.strip_prefix("p=") {
-                        payload_type = if val == "title" { "title" } else { "body" };
-                    }
+                let (payload_type, is_base64) = parse_osc99_metadata(metadata);
+                if payload_type == Osc99PayloadType::Ignore {
+                    return;
                 }
-                let clean = String::from_utf8_lossy(&strip_ansi(body.as_bytes())).into_owned();
-                if payload_type == "title" {
-                    title = clean.clone();
-                }
+
+                let decoded = decode_osc99_payload(body, is_base64);
+                let clean = String::from_utf8_lossy(&strip_ansi(&decoded)).into_owned();
                 if !clean.is_empty() {
+                    let title = if payload_type == Osc99PayloadType::Title {
+                        clean.clone()
+                    } else {
+                        "Terminal".to_string()
+                    };
                     events.push(ScanEvent::Notification { title, body: clean });
                 }
             }
@@ -262,6 +273,37 @@ impl Default for OutputScanner {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn parse_osc99_metadata(metadata: &str) -> (Osc99PayloadType, bool) {
+    let mut payload_type = Osc99PayloadType::Body;
+    let mut is_base64 = false;
+
+    for param in metadata.split(':') {
+        if let Some(value) = param.strip_prefix("p=") {
+            payload_type = match value {
+                "title" => Osc99PayloadType::Title,
+                "body" => Osc99PayloadType::Body,
+                _ => Osc99PayloadType::Ignore,
+            };
+        } else if param == "e=1" {
+            is_base64 = true;
+        }
+    }
+
+    (payload_type, is_base64)
+}
+
+fn decode_osc99_payload(payload: &str, is_base64: bool) -> Vec<u8> {
+    if !is_base64 {
+        return payload.as_bytes().to_vec();
+    }
+
+    let trimmed = payload.trim();
+    STANDARD
+        .decode(trimmed)
+        .or_else(|_| STANDARD_NO_PAD.decode(trimmed))
+        .unwrap_or_else(|_| payload.as_bytes().to_vec())
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -471,6 +513,43 @@ mod tests {
             }
             _ => panic!("Expected Notification event"),
         }
+    }
+
+    #[test]
+    fn test_osc99_base64_payload_decoded() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]99;e=1;SGVsbG8\x07";
+        let events = scanner.scan(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ScanEvent::Notification { title, body } => {
+                assert_eq!(title, "Terminal");
+                assert_eq!(body, "Hello");
+            }
+            _ => panic!("Expected Notification event"),
+        }
+    }
+
+    #[test]
+    fn test_osc99_close_payload_is_skipped() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]99;i=myid:p=close;untracked\x07";
+        let events = scanner.scan(data);
+        assert!(
+            events.is_empty(),
+            "kitty close reports should not emit notifications"
+        );
+    }
+
+    #[test]
+    fn test_osc99_query_payload_is_skipped() {
+        let mut scanner = OutputScanner::new();
+        let data = b"\x1b]99;i=myid:p=?;p=title:s=silent\x07";
+        let events = scanner.scan(data);
+        assert!(
+            events.is_empty(),
+            "kitty query responses should not emit notifications"
+        );
     }
 
     #[test]
