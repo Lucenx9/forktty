@@ -10,15 +10,17 @@ Run multiple AI coding agents in parallel. Each gets its own git worktree. When 
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty)](https://github.com/Lucenx9/forktty/releases/latest)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![Tauri](https://img.shields.io/badge/tauri-v2-blue.svg)](https://v2.tauri.app/)
 
-<!-- TODO: Add screenshot/GIF after first visual test -->
-<!-- ![ForkTTY screenshot](docs/assets/screenshot.png) -->
+[Download Latest Release](https://github.com/Lucenx9/forktty/releases/latest)
+
+![ForkTTY UI preview](docs/assets/ui.png)
 
 </div>
 
-> **Status**: Early development (v0.1.0). Usable for daily work on Linux, but expect rough edges. Release artifacts are available for Linux as `.deb` and `AppImage`.
+> **Status**: Early development (v0.1.0). Usable for daily work on Linux, but expect rough edges. Download the latest Linux release from [GitHub Releases](https://github.com/Lucenx9/forktty/releases/latest).
 
 ## Why ForkTTY?
 
@@ -87,9 +89,23 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 
 ### Install from GitHub release
 
+- Release page: https://github.com/Lucenx9/forktty/releases/latest
 - Debian / Ubuntu / Linux Mint: download `ForkTTY_*.deb` and install with `sudo dpkg -i`
 - Arch / CachyOS / other distros: download `ForkTTY_*.AppImage`, `chmod +x`, then run it directly
 - If both are available for your distro, prefer the native package first and keep the `AppImage` as the portable fallback
+
+```bash
+# .deb
+curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.0_amd64.deb
+sudo dpkg -i ForkTTY_0.1.0_amd64.deb
+```
+
+```bash
+# AppImage
+curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.0_amd64.AppImage
+chmod +x ForkTTY_0.1.0_amd64.AppImage
+./ForkTTY_0.1.0_amd64.AppImage
+```
 
 ## Keyboard Shortcuts
 
