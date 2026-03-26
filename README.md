@@ -18,7 +18,7 @@ Run multiple AI coding agents in parallel. Each gets its own git worktree. When 
 
 </div>
 
-> **Status**: Early development (v0.1.0). Usable for daily work on Linux, but expect rough edges. Not yet packaged for distribution — build from source.
+> **Status**: Early development (v0.1.0). Usable for daily work on Linux, but expect rough edges. Release artifacts are available for Linux as `.deb` and `AppImage`.
 
 ## Why ForkTTY?
 
@@ -85,6 +85,12 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 # Or use the AppImage directly from src-tauri/target/release/bundle/appimage/
 ```
 
+### Install from GitHub release
+
+- Debian / Ubuntu / Linux Mint: download `ForkTTY_*.deb` and install with `sudo dpkg -i`
+- Arch / CachyOS / other distros: download `ForkTTY_*.AppImage`, `chmod +x`, then run it directly
+- If both are available for your distro, prefer the native package first and keep the `AppImage` as the portable fallback
+
 ## Keyboard Shortcuts
 
 | Action | Shortcut |
@@ -136,7 +142,8 @@ If `notification_command` is set, ForkTTY exports `FORKTTY_NOTIFICATION_TITLE` a
 
 ```
 Frontend (React 19 + TypeScript + Vite)
-  ├── @xterm/xterm 6.x         Terminal rendering (built-in canvas renderer)
+  ├── @xterm/xterm 5.5         Terminal rendering
+  ├── @xterm/addon-canvas      Stable terminal renderer on Linux/WebKitGTK
   ├── react-resizable-panels    Split pane layout
   └── Zustand 5.x              State management
 

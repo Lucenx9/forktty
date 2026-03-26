@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "bash src-tauri/packaging/tauri-build.sh",
     "tauri:info": "tauri info",
     "test": "vitest run",
     "test:watch": "vitest",
