@@ -2,16 +2,10 @@ import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
-import {
-  spawnPty,
-  writePty,
-  resizePty,
-  killPty,
-  logError,
-  hasTauriRuntime,
-} from "../lib/pty-bridge";
+import { spawnPty, writePty, resizePty, killPty, logError } from "../lib/pty-bridge";
 import {
   registerTerminal,
   unregisterTerminal,
@@ -84,19 +78,14 @@ function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
   return merged;
 }
 
+function isTargetInsideXterm(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && !!target.closest(".xterm");
+}
+
 interface PaneContextMenuState {
   x: number;
   y: number;
   hasSelection: boolean;
-}
-
-interface PaneSurfaceState {
-  kind: "preview" | "error";
-  badge: string;
-  title: string;
-  body: string;
-  hint: string;
-  chips: string[];
 }
 
 function PaneContextMenu({
@@ -211,14 +200,12 @@ function PaneToolbar({
   isFocused,
   hasUnreadNotification,
   isFindOpen,
-  findDisabled,
   onToggleFind,
 }: {
   paneId: string;
   isFocused: boolean;
   hasUnreadNotification: boolean;
   isFindOpen: boolean;
-  findDisabled: boolean;
   onToggleFind: () => void;
 }) {
   const closePane = useWorkspaceStore((s) => s.closePane);
@@ -285,7 +272,6 @@ function PaneToolbar({
           title="Find (Ctrl+F)"
           aria-label="Find in Terminal"
           aria-pressed={isFindOpen}
-          disabled={findDisabled}
         >
           <Search size={12} />
         </button>
@@ -312,12 +298,12 @@ const TerminalPane = memo(function TerminalPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
   const [flashBorder, setFlashBorder] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [surfaceState, setSurfaceState] = useState<PaneSurfaceState | null>(null);
   const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(
     null,
   );
@@ -431,19 +417,6 @@ const TerminalPane = memo(function TerminalPane({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    if (!hasTauriRuntime()) {
-      setSurfaceState({
-        kind: "preview",
-        badge: "Browser Preview",
-        title: "Pane chrome is live, shell backend is not",
-        body: "Use this mode to tune layout, spacing and overlays. Real PTYs start only inside the Tauri app.",
-        hint: "Run npm run tauri:dev when you want a full terminal session.",
-        chips: ["Ctrl+D Split", "Ctrl+Shift+P Palette", "npm run tauri:dev"],
-      });
-      return;
-    }
-
-    setSurfaceState(null);
 
     // Check if a saved instance exists (re-adoption after swap/split)
     const saved = getSavedInstance(paneId);
@@ -491,6 +464,7 @@ const TerminalPane = memo(function TerminalPane({
       wrapper = saved.wrapper;
       termRef.current = term;
       fitAddonRef.current = saved.fitAddon;
+      canvasAddonRef.current = saved.canvasAddon;
       searchAddonRef.current = saved.searchAddon;
       container.appendChild(wrapper);
       registerTerminal(paneId, term);
@@ -521,6 +495,15 @@ const TerminalPane = memo(function TerminalPane({
       const fitAddon = new FitAddon();
       fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
+
+      try {
+        const canvasAddon = new CanvasAddon();
+        canvasAddonRef.current = canvasAddon;
+        term.loadAddon(canvasAddon);
+      } catch (err) {
+        canvasAddonRef.current = null;
+        logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
+      }
 
       // Use an intermediary wrapper so xterm DOM survives React unmount
       wrapper = document.createElement("div");
@@ -682,7 +665,6 @@ const TerminalPane = memo(function TerminalPane({
           if (hasExited) {
             return;
           }
-          setSurfaceState(null);
           runtime.ptyId = id;
           registerSurface(paneId, id);
 
@@ -692,14 +674,7 @@ const TerminalPane = memo(function TerminalPane({
         })
         .catch((err) => {
           logError(err);
-          setSurfaceState({
-            kind: "error",
-            badge: "Terminal Unavailable",
-            title: "Shell failed to start",
-            body: String(err),
-            hint: "Check the shell path in Settings or relaunch inside the Tauri app.",
-            chips: ["Ctrl+, Settings", "Ctrl+Shift+P Palette"],
-          });
+          term.write(`\r\n\x1b[31mFailed to spawn PTY: ${err}\x1b[0m\r\n`);
         });
     }
 
@@ -769,6 +744,7 @@ const TerminalPane = memo(function TerminalPane({
           wrapper,
           runtime,
           fitAddon: fitAddonRef.current!,
+          canvasAddon: canvasAddonRef.current,
           searchAddon: searchAddonRef.current!,
         });
       } else {
@@ -778,6 +754,8 @@ const TerminalPane = memo(function TerminalPane({
         if (outputDrainRaf !== null) {
           cancelAnimationFrame(outputDrainRaf);
         }
+        canvasAddonRef.current?.dispose();
+        canvasAddonRef.current = null;
         term.dispose();
 
         const id = runtime.ptyId;
@@ -806,13 +784,15 @@ const TerminalPane = memo(function TerminalPane({
   return (
     <div
       className={paneClasses}
-      onMouseEnter={() => {
+      onMouseEnter={(e) => {
+        if (isTargetInsideXterm(e.target)) return;
         if (paneDragState.sourceId && paneDragState.sourceId !== paneId) {
           setDragOver(true);
         }
       }}
       onMouseLeave={() => setDragOver(false)}
-      onMouseUp={() => {
+      onMouseUp={(e) => {
+        if (isTargetInsideXterm(e.target)) return;
         if (paneDragState.sourceId && paneDragState.sourceId !== paneId) {
           swapPanes(paneDragState.sourceId, paneId);
         }
@@ -821,9 +801,6 @@ const TerminalPane = memo(function TerminalPane({
       onKeyDown={(e) => {
         // Ctrl+F: find in terminal
         if (e.ctrlKey && !e.shiftKey && e.key === "f") {
-          if (surfaceState) {
-            return;
-          }
           e.preventDefault();
           e.stopPropagation();
           setShowFind(true);
@@ -848,10 +825,9 @@ const TerminalPane = memo(function TerminalPane({
         isFocused={isFocused}
         hasUnreadNotification={hasUnreadNotification}
         isFindOpen={showFind}
-        findDisabled={surfaceState !== null}
         onToggleFind={() => setShowFind((v) => !v)}
       />
-      {showFind && !surfaceState && (
+      {showFind && (
         <FindBar
           onFind={handleFind}
           onFindNext={handleFindNext}
@@ -861,8 +837,23 @@ const TerminalPane = memo(function TerminalPane({
       )}
       <div
         className="terminal-pane-shell"
-        onClick={() => setFocusedPane(paneId)}
+        onMouseDown={(e) => {
+          if (!isTargetInsideXterm(e.target)) return;
+          setFocusedPane(paneId);
+          // Do NOT stopPropagation — xterm.js registers mouseup/mousemove
+          // handlers on `document` for selection. React 18's stopPropagation
+          // also stops the native event, preventing it from reaching document
+          // and breaking xterm text selection entirely.
+        }}
+        onClick={(e) => {
+          if (isTargetInsideXterm(e.target)) return;
+          setFocusedPane(paneId);
+        }}
         onContextMenu={(e) => {
+          if (isTargetInsideXterm(e.target)) {
+            setFocusedPane(paneId);
+            return;
+          }
           e.preventDefault();
           e.stopPropagation();
           setFocusedPane(paneId);
@@ -878,32 +869,14 @@ const TerminalPane = memo(function TerminalPane({
           minHeight: 0,
         }}
       >
-        {surfaceState ? (
-          <div
-            className={`terminal-pane-state terminal-pane-state-${surfaceState.kind}`}
-          >
-            <div className="terminal-pane-state-badge">{surfaceState.badge}</div>
-            <div className="terminal-pane-state-title">{surfaceState.title}</div>
-            <div className="terminal-pane-state-copy">{surfaceState.body}</div>
-            <div className="terminal-pane-state-hint">{surfaceState.hint}</div>
-            <div className="terminal-pane-state-chips">
-              {surfaceState.chips.map((chip) => (
-                <span key={chip} className="terminal-pane-state-chip">
-                  {chip}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div
-            ref={containerRef}
-            className="terminal-pane-surface"
-            style={{
-              width: "100%",
-              height: "100%",
-            }}
-          />
-        )}
+        <div
+          ref={containerRef}
+          className="terminal-pane-surface"
+          style={{
+            width: "100%",
+            height: "100%",
+          }}
+        />
       </div>
       {paneContextMenu &&
         createPortal(
