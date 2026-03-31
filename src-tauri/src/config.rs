@@ -311,7 +311,9 @@ fn theme_from_ghostty_map(map: &HashMap<String, String>) -> TerminalTheme {
         cursor: map.get("cursor-color").cloned(),
         selection_background: map.get("selection-background").cloned(),
         selection_foreground: map.get("selection-foreground").cloned(),
-        font_family: map.get("font-family").map(|value| normalize_font_family(value)),
+        font_family: map
+            .get("font-family")
+            .map(|value| normalize_font_family(value)),
         font_size: map.get("font-size").and_then(|s| s.parse().ok()),
         ..Default::default()
     }
@@ -561,7 +563,10 @@ mod tests {
 
     #[test]
     fn normalize_font_family_strips_wrapping_quotes() {
-        assert_eq!(normalize_font_family("\"JetBrains Mono\""), "JetBrains Mono");
+        assert_eq!(
+            normalize_font_family("\"JetBrains Mono\""),
+            "JetBrains Mono"
+        );
         assert_eq!(normalize_font_family("'JetBrains Mono'"), "JetBrains Mono");
     }
 
