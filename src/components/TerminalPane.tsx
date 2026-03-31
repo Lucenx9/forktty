@@ -169,6 +169,7 @@ function PaneContextMenu({
       </button>
       <button className="context-menu-item" onClick={handlePaste}>
         <span>Paste</span>
+        <span className="context-menu-shortcut">Ctrl+Shift+V</span>
       </button>
       <div className="context-menu-separator" />
       <button
@@ -513,10 +514,12 @@ const TerminalPane = memo(function TerminalPane({
       term.open(wrapper);
       registerTerminal(paneId, term);
 
-      // Let Ctrl+F and Ctrl+Shift+C bubble up to React (find bar, copy)
+      // Let Ctrl+F, Ctrl+Shift+C, and Ctrl+Shift+V bubble up to React
+      // (find bar, copy, paste)
       term.attachCustomKeyEventHandler((e) => {
         if (e.ctrlKey && !e.shiftKey && e.key === "f") return false;
         if (e.ctrlKey && e.shiftKey && e.key === "C") return false;
+        if (e.ctrlKey && e.shiftKey && e.key === "V") return false;
         return true;
       });
 
@@ -813,6 +816,20 @@ const TerminalPane = memo(function TerminalPane({
           handleCopySelection();
           return;
         }
+        // Ctrl+Shift+V: paste from clipboard
+        if (e.ctrlKey && e.shiftKey && e.key === "V") {
+          e.preventDefault();
+          e.stopPropagation();
+          navigator.clipboard
+            .readText()
+            .then((text) => {
+              if (text && termRef.current) {
+                termRef.current.paste(text);
+              }
+            })
+            .catch(logError);
+          return;
+        }
         // Prevent Tab from navigating focus away from the terminal
         // (WebKitGTK webview captures Tab for focus traversal by default)
         if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
@@ -850,10 +867,6 @@ const TerminalPane = memo(function TerminalPane({
           setFocusedPane(paneId);
         }}
         onContextMenu={(e) => {
-          if (isTargetInsideXterm(e.target)) {
-            setFocusedPane(paneId);
-            return;
-          }
           e.preventDefault();
           e.stopPropagation();
           setFocusedPane(paneId);
