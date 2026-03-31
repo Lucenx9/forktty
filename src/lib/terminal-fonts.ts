@@ -73,9 +73,7 @@ function formatFontFamily(name: string): string {
   return `"${escaped}"`;
 }
 
-export function buildTerminalFontFamily(
-  preferred: string | null | undefined,
-): string {
+export function buildTerminalFontFamily(preferred: string | null | undefined): string {
   const families: string[] = [];
   const seen = new Set<string>();
   const deferredGenerics: string[] = [];

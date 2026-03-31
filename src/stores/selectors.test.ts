@@ -93,11 +93,7 @@ describe("shared selectors", () => {
     expect(selectNotifications(state)).toEqual([]);
 
     // Add a notification
-    state.addNotification(
-      state.activeWorkspaceId,
-      "Test alert",
-      "Something happened",
-    );
+    state.addNotification(state.activeWorkspaceId, "Test alert", "Something happened");
     const updated = useWorkspaceStore.getState();
     expect(selectNotifications(updated).length).toBe(1);
     expect(selectNotifications(updated)[0]!.title).toBe("Test alert");

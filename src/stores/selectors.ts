@@ -12,11 +12,9 @@ import type { WorkspaceState } from "./workspace";
 
 // --- Primitive selectors (safe with Object.is equality) ---
 
-export const selectActiveWorkspaceId = (s: WorkspaceState) =>
-  s.activeWorkspaceId;
+export const selectActiveWorkspaceId = (s: WorkspaceState) => s.activeWorkspaceId;
 
-export const selectWorkspaceCount = (s: WorkspaceState) =>
-  s.workspaceOrder.length;
+export const selectWorkspaceCount = (s: WorkspaceState) => s.workspaceOrder.length;
 
 export const selectTotalUnread = (s: WorkspaceState) =>
   Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0);

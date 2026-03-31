@@ -10,7 +10,9 @@ describe("buildTerminalFontFamily", () => {
 
   it("normalizes a quoted single family", () => {
     expect(buildTerminalFontFamily('"JetBrains Mono"')).toContain('"JetBrains Mono"');
-    expect(buildTerminalFontFamily('"JetBrains Mono"')).not.toContain('"\\"JetBrains Mono\\""');
+    expect(buildTerminalFontFamily('"JetBrains Mono"')).not.toContain(
+      '"\\"JetBrains Mono\\""',
+    );
   });
 
   it("preserves a comma-separated family list", () => {

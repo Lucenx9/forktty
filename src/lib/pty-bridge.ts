@@ -60,7 +60,7 @@ function isMissingTauriRuntimeError(err: unknown): boolean {
   return (
     message.includes("__TAURI_INTERNALS__") ||
     message.includes("reading 'invoke'") ||
-    message.includes("reading \"invoke\"") ||
+    message.includes('reading "invoke"') ||
     message.includes("window is not defined")
   );
 }
