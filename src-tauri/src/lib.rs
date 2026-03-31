@@ -250,16 +250,24 @@ fn send_custom_notification(command: String, title: String, body: String) -> Res
 
 // --- Worktree commands ---
 
-/// Return the process CWD, falling back to $HOME when running inside an AppImage.
+/// Return a sensible initial working directory.
+/// Prefers $HOME over the process CWD because desktop launchers, file managers,
+/// and AppImage mounts often set CWD to a non-project directory.
 pub(crate) fn cwd_string() -> Result<String, String> {
+    if let Ok(home) = std::env::var("HOME") {
+        let path = std::path::Path::new(&home);
+        if path.is_absolute() && path.exists() {
+            return Ok(home);
+        }
+    }
+
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| e.to_string())?;
 
     // AppImage mounts at /tmp/.mount_*, which is not a useful CWD.
-    // Fall back to $HOME when we detect this.
     if cwd.starts_with("/tmp/.mount_") {
-        return std::env::var("HOME").map_err(|e| format!("No HOME: {e}"));
+        return Err("No usable CWD and $HOME is not set".to_string());
     }
 
     Ok(cwd)
