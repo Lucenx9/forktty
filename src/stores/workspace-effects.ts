@@ -18,10 +18,7 @@ const SESSION_SAVE_DEBOUNCE_MS = 2000;
 
 function computeTotalUnread(): number {
   const { workspaces } = useWorkspaceStore.getState();
-  return Object.values(workspaces).reduce(
-    (sum, ws) => sum + ws.unreadCount,
-    0,
-  );
+  return Object.values(workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0);
 }
 
 /**
@@ -53,8 +50,21 @@ export function startWorkspaceEffects(): () => void {
     }
   });
 
+  // Flush pending session save when the window is about to close.
+  // This is fire-and-forget — the async IPC may not complete, but it
+  // catches the common case where a debounced save is still pending.
+  function handleBeforeUnload() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      saveSession(buildSessionPayload()).catch(logError);
+    }
+  }
+  window.addEventListener("beforeunload", handleBeforeUnload);
+
   return () => {
     unsub();
+    window.removeEventListener("beforeunload", handleBeforeUnload);
     if (saveTimer) clearTimeout(saveTimer);
   };
 }
