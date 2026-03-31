@@ -6,6 +6,7 @@ import {
   closeWorkspaceEnsuringOneRemains,
 } from "../stores/workspace";
 import { useConfigStore } from "../stores/config";
+import { selectTotalUnread, selectTotalPaneCount } from "../stores/selectors";
 import type { Workspace } from "../stores/workspace";
 import {
   getCwd,
@@ -31,12 +32,14 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
+  Search,
   X,
   GripVertical,
   GitMerge,
   Trash2,
 } from "lucide-react";
 import WorkspaceMetadataView from "./WorkspaceMetadataView";
+import { truncatePath } from "../lib/path-utils";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
 
@@ -48,13 +51,6 @@ function worktreeStatusWarning(status: string): string {
 
 function worktreeLabel(workspace: Workspace): string {
   return workspace.gitBranch || workspace.worktreeName;
-}
-
-function truncatePath(path: string, maxLen: number): string {
-  if (path.length <= maxLen) return path;
-  const home = path.replace(/^\/home\/[^/]+/, "~");
-  if (home.length <= maxLen) return home;
-  return "..." + home.slice(home.length - maxLen + 3);
 }
 
 // --- Context menu ---
@@ -938,9 +934,9 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
   function handleNewWorktree() {
     window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
   }
-  const totalUnread = useWorkspaceStore((s) =>
-    Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
-  );
+  const totalUnread = useWorkspaceStore(selectTotalUnread);
+  const totalPaneCount = useWorkspaceStore(selectTotalPaneCount);
+  const activeWorkspace = workspaces[activeWorkspaceId];
   const CollapseIcon =
     sidebarPosition === "right"
       ? collapsed
@@ -1055,18 +1051,61 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <div className="sidebar-header-copy">
-          <div className="sidebar-header-eyebrow">ForkTTY</div>
-          <div className="sidebar-header-title-row">
-            <div className="sidebar-header-title">Workspaces</div>
-            <div className="sidebar-header-count">{workspaceOrder.length}</div>
+        <div className="sidebar-brand-row">
+          <div className="sidebar-brand-mark" aria-hidden="true">
+            &gt;_
           </div>
-          <div className="sidebar-header-subtitle">
-            {totalUnread > 0
-              ? `${totalUnread} alert${totalUnread === 1 ? "" : "s"} waiting`
-              : "Parallel terminals with isolated worktrees"}
+          <div className="sidebar-header-copy">
+            <div className="sidebar-header-eyebrow">ForkTTY</div>
+            <div className="sidebar-header-title-row">
+              <div className="sidebar-header-title">Workspaces</div>
+              <div className="sidebar-header-count">{workspaceOrder.length}</div>
+            </div>
+            <div className="sidebar-header-subtitle">
+              {activeWorkspace?.gitBranch
+                ? `${activeWorkspace.gitBranch} on ${truncatePath(activeWorkspace.workingDir, 28)}`
+                : totalUnread > 0
+                  ? `${totalUnread} alert${totalUnread === 1 ? "" : "s"} waiting`
+                  : "Parallel terminals with isolated worktrees"}
+            </div>
           </div>
         </div>
+
+        <button
+          type="button"
+          className="sidebar-search-trigger"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
+          }
+          aria-label="Open command palette"
+        >
+          <Search size={14} />
+          <span className="sidebar-search-copy">Type a command or search...</span>
+          <span className="sidebar-search-shortcut">Ctrl+Shift+P</span>
+        </button>
+
+        <div className="sidebar-header-stats">
+          <div className="sidebar-header-stat">
+            <span className="sidebar-header-stat-label">Live panes</span>
+            <strong className="sidebar-header-stat-value">{totalPaneCount}</strong>
+            <span className="sidebar-header-stat-meta">Across session</span>
+          </div>
+          <div className="sidebar-header-stat">
+            <span className="sidebar-header-stat-label">Focused</span>
+            <strong className="sidebar-header-stat-value">
+              {activeWorkspace ? Object.keys(activeWorkspace.surfaces).length : 0}
+            </strong>
+            <span className="sidebar-header-stat-meta">In active workspace</span>
+          </div>
+          <div className="sidebar-header-stat">
+            <span className="sidebar-header-stat-label">Unread</span>
+            <strong className="sidebar-header-stat-value">{totalUnread}</strong>
+            <span className="sidebar-header-stat-meta">
+              {totalUnread > 0 ? "Needs review" : "All clear"}
+            </span>
+          </div>
+        </div>
+
         <div className="sidebar-primary-actions">
           <button
             type="button"

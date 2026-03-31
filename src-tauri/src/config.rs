@@ -285,6 +285,22 @@ fn parse_ghostty_file(path: &Path) -> HashMap<String, String> {
     map
 }
 
+fn normalize_font_family(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() < 2 {
+        return trimmed.to_string();
+    }
+
+    let bytes = trimmed.as_bytes();
+    let first = bytes[0] as char;
+    let last = bytes[trimmed.len() - 1] as char;
+    if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+        trimmed[1..trimmed.len() - 1].trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Extract a TerminalTheme from parsed Ghostty key-value pairs.
 /// Note: palette colors must be applied separately via `apply_palette` + `parse_palette_from_content`,
 /// because Ghostty uses duplicate `palette` keys that a HashMap cannot represent.
@@ -295,7 +311,7 @@ fn theme_from_ghostty_map(map: &HashMap<String, String>) -> TerminalTheme {
         cursor: map.get("cursor-color").cloned(),
         selection_background: map.get("selection-background").cloned(),
         selection_foreground: map.get("selection-foreground").cloned(),
-        font_family: map.get("font-family").cloned(),
+        font_family: map.get("font-family").map(|value| normalize_font_family(value)),
         font_size: map.get("font-size").and_then(|s| s.parse().ok()),
         ..Default::default()
     }
@@ -396,7 +412,7 @@ fn load_ghostty_theme() -> TerminalTheme {
         theme.selection_foreground = Some(v.clone());
     }
     if let Some(v) = map.get("font-family") {
-        theme.font_family = Some(v.clone());
+        theme.font_family = Some(normalize_font_family(v));
     }
     if let Some(v) = map.get("font-size") {
         if let Ok(size) = v.parse::<u16>() {
@@ -446,7 +462,7 @@ pub fn resolve_theme(config: &AppConfig) -> TerminalTheme {
 
     // AppConfig appearance overrides
     if !config.appearance.font_family.is_empty() {
-        theme.font_family = Some(config.appearance.font_family.clone());
+        theme.font_family = Some(normalize_font_family(&config.appearance.font_family));
     }
     if config.appearance.font_size > 0 {
         theme.font_size = Some(config.appearance.font_size);
@@ -504,7 +520,7 @@ fn default_catppuccin_mocha() -> TerminalTheme {
         bright_magenta: Some("#f5c2e7".to_string()),
         bright_cyan: Some("#94e2d5".to_string()),
         bright_white: Some("#a6adc8".to_string()),
-        font_family: Some("JetBrains Mono".to_string()),
+        font_family: Some("monospace".to_string()),
         font_size: Some(14),
     }
 }
@@ -541,6 +557,12 @@ mod tests {
         let theme = resolve_theme(&config);
         assert_eq!(theme.background, Some("#1e1e2e".to_string()));
         assert_eq!(theme.font_size, Some(14));
+    }
+
+    #[test]
+    fn normalize_font_family_strips_wrapping_quotes() {
+        assert_eq!(normalize_font_family("\"JetBrains Mono\""), "JetBrains Mono");
+        assert_eq!(normalize_font_family("'JetBrains Mono'"), "JetBrains Mono");
     }
 
     #[test]

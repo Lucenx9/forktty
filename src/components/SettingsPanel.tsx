@@ -163,7 +163,11 @@ export default function SettingsPanel() {
               type="text"
               value={draft.appearance.font_family}
               onChange={(e) => updateAppearance("font_family", e.target.value)}
+              placeholder="Blank uses system monospace"
             />
+            <span className="settings-field-hint">
+              Accepts a single family or a comma-separated fallback list.
+            </span>
           </label>
 
           <label className="settings-field">

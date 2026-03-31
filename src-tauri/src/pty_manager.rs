@@ -34,6 +34,44 @@ pub struct PtyManager {
     next_id: u32,
 }
 
+fn fallback_spawn_cwd() -> String {
+    let home = std::env::var("HOME").ok();
+    if let Some(home_dir) = home {
+        let path = std::path::Path::new(&home_dir);
+        if path.is_absolute() && path.exists() {
+            return home_dir;
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        let cwd = current_dir.to_string_lossy().to_string();
+        if !cwd.starts_with("/tmp/.mount_") {
+            return cwd;
+        }
+    }
+
+    "/".to_string()
+}
+
+fn resolve_spawn_cwd(dir: &str) -> String {
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        return fallback_spawn_cwd();
+    }
+
+    // AppImage mounts at /tmp/.mount_*, which is not a valid shell CWD.
+    if trimmed.starts_with("/tmp/.mount_") {
+        return fallback_spawn_cwd();
+    }
+
+    let path = std::path::Path::new(trimmed);
+    if path.is_absolute() && path.exists() {
+        trimmed.to_string()
+    } else {
+        fallback_spawn_cwd()
+    }
+}
+
 impl PtyManager {
     pub fn new() -> Self {
         Self {
@@ -66,16 +104,9 @@ impl PtyManager {
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
         if let Some(dir) = cwd {
-            // AppImage mounts at /tmp/.mount_*, which is not a valid shell CWD
-            let effective_dir = if dir.starts_with("/tmp/.mount_") {
-                std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
-            } else {
-                dir.to_string()
-            };
-            let path = std::path::Path::new(&effective_dir);
-            if !path.is_absolute() || !path.exists() {
-                return Err(PtyError::Creation(format!("Invalid cwd: {effective_dir}")));
-            }
+            // Sessions can contain stale worktree paths; fall back to a safe directory
+            // instead of bricking the terminal on startup.
+            let effective_dir = resolve_spawn_cwd(dir);
             cmd.cwd(&effective_dir);
         }
         if let Some(vars) = env_vars {
@@ -211,5 +242,33 @@ impl Drop for PtyManager {
 impl Default for PtyManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_spawn_cwd;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn resolve_spawn_cwd_keeps_existing_absolute_path() {
+        let dir = std::env::temp_dir().join(format!("forktty-pty-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let resolved = resolve_spawn_cwd(dir.to_str().unwrap());
+        assert_eq!(resolved, dir.to_string_lossy());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_spawn_cwd_falls_back_for_missing_path() {
+        let missing = format!("/tmp/forktty-missing-{}", std::process::id());
+        let resolved = resolve_spawn_cwd(&missing);
+
+        assert_ne!(resolved, missing);
+        assert!(Path::new(&resolved).is_absolute());
+        assert!(Path::new(&resolved).exists());
     }
 }

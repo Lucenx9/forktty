@@ -17,6 +17,7 @@ import {
 } from "react-resizable-panels";
 import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
+import DashboardChrome from "./components/DashboardChrome";
 import NotificationPanel from "./components/NotificationPanel";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const CommandPalette = lazy(() => import("./components/CommandPalette"));
@@ -34,12 +35,10 @@ import {
   worktreeCreate,
   worktreeAttach,
   worktreeRunHook,
-  saveSession,
   loadSession,
   writeLog,
   logError,
   getPtyCwd,
-  updateTrayTooltip,
   hasTauriRuntime,
   signalFrontendReady,
 } from "./lib/pty-bridge";
@@ -49,8 +48,8 @@ import {
   resolvePaneCwd,
   splitPaneWithInheritedCwd,
 } from "./lib/workspace-launch";
-import { buildSessionPayload } from "./lib/session-persistence";
 import { startReconciliation, stopReconciliation } from "./lib/terminal-registry";
+import { startWorkspaceEffects } from "./stores/workspace-effects";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
@@ -82,6 +81,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
     tagName === "TEXTAREA" ||
     tagName === "SELECT"
   );
+}
+
+function isTerminalTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && !!target.closest(".xterm");
 }
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "forktty.sidebar-collapsed";
@@ -122,6 +125,7 @@ export default function App() {
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const loadConfig = useConfigStore((s) => s.loadConfig);
+  const configLoaded = useConfigStore((s) => s.loaded);
   const toggleSettings = useConfigStore((s) => s.toggleSettings);
   const showSettings = useConfigStore((s) => s.showSettings);
   const sidebarPosition = useConfigStore(
@@ -203,6 +207,15 @@ export default function App() {
     if (!ws) return;
     splitPaneWithInheritedCwd(ws.focusedPaneId, direction).catch(logError);
   }, []);
+
+  const handleSplitRight = useCallback(
+    () => handleSplitFocusedPane("horizontal"),
+    [handleSplitFocusedPane],
+  );
+  const handleSplitDown = useCallback(
+    () => handleSplitFocusedPane("vertical"),
+    [handleSplitFocusedPane],
+  );
 
   const requestCloseWorkspace = useCallback(
     (workspaceId: string) => {
@@ -350,6 +363,9 @@ export default function App() {
   // Disable WebKitGTK default context menu (Back/Forward/Stop/Reload)
   useEffect(() => {
     function preventContextMenu(e: MouseEvent) {
+      if (isTerminalTarget(e.target)) {
+        return;
+      }
       e.preventDefault();
     }
     document.addEventListener("contextmenu", preventContextMenu);
@@ -411,22 +427,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Save session on any workspace state change (debounced 2s)
+  // Centralized workspace side-effects: session persistence + title/tray badge
   useEffect(() => {
-    if (!sessionHydrated) {
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const unsub = useWorkspaceStore.subscribe(() => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        saveSession(buildSessionPayload()).catch(logError);
-      }, 2000);
-    });
-    return () => {
-      unsub();
-      if (timer) clearTimeout(timer);
-    };
+    if (!sessionHydrated) return;
+    return startWorkspaceEffects();
   }, [sessionHydrated]);
 
   // Reconcile terminal registry: dispose orphaned instances every 30s
@@ -474,17 +478,12 @@ export default function App() {
         handleToggleNotifications,
       );
     };
-  }, [openBranchPicker, openCommandPalette, toggleSettingsPanel, toggleNotificationsDrawer]);
-
-  // Window title badge: show unread count
-  const totalUnread = useWorkspaceStore((s) =>
-    Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
-  );
-  useEffect(() => {
-    document.title = totalUnread > 0 ? `ForkTTY (${totalUnread})` : "ForkTTY";
-    if (!hasTauriRuntime()) return;
-    updateTrayTooltip(totalUnread).catch(logError);
-  }, [totalUnread]);
+  }, [
+    openBranchPicker,
+    openCommandPalette,
+    toggleSettingsPanel,
+    toggleNotificationsDrawer,
+  ]);
 
   // Listen for socket API bridge events.
   // Empty deps is intentional: handleSocketRequest reads all state via
@@ -882,7 +881,7 @@ export default function App() {
     ],
   );
 
-  if (!sessionHydrated) {
+  if (!sessionHydrated || !configLoaded) {
     return (
       <div className="app">
         <div className="app-main" />
@@ -920,21 +919,32 @@ export default function App() {
 
   const mainPanel = (
     <Panel id="main">
-      <div className="workspace-container">
-        {sessionHydrated
-          ? workspaceOrder.map((id) => (
-              <div
-                key={id}
-                className="workspace-pane-area"
-                style={{
-                  display: id === activeWorkspaceId ? "flex" : "none",
-                }}
-              >
-                <PaneArea workspaceId={id} />
-              </div>
-            ))
-          : null}
-      </div>
+      <DashboardChrome
+        onCreateWorkspace={handleCreateWorkspace}
+        onOpenBranchPicker={openBranchPicker}
+        onOpenCommandPalette={openCommandPalette}
+        onOpenSettings={toggleSettingsPanel}
+        onToggleNotifications={toggleNotificationsDrawer}
+        onSplitRight={handleSplitRight}
+        onSplitDown={handleSplitDown}
+        showNotificationPanel={showNotificationPanel}
+      >
+        <div className="workspace-container">
+          {sessionHydrated
+            ? workspaceOrder.map((id) => (
+                <div
+                  key={id}
+                  className="workspace-pane-area"
+                  style={{
+                    display: id === activeWorkspaceId ? "flex" : "none",
+                  }}
+                >
+                  <PaneArea workspaceId={id} />
+                </div>
+              ))
+            : null}
+        </div>
+      </DashboardChrome>
     </Panel>
   );
 

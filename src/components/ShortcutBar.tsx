@@ -1,28 +1,41 @@
 import { memo } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
+import {
+  useActiveWorkspaceSummary,
+  selectWorkspaceCount,
+  selectTotalUnread,
+} from "../stores/selectors";
+import { truncatePath } from "../lib/path-utils";
 
 const ShortcutBar = memo(function ShortcutBar() {
-  const activeWorkspace = useWorkspaceStore((s) => s.workspaces[s.activeWorkspaceId]);
-  const totalUnread = useWorkspaceStore((s) =>
-    Object.values(s.workspaces).reduce((sum, ws) => sum + ws.unreadCount, 0),
-  );
-  const paneCount = activeWorkspace ? Object.keys(activeWorkspace.surfaces).length : 0;
+  const activeWs = useActiveWorkspaceSummary();
+  const workspaceCount = useWorkspaceStore(selectWorkspaceCount);
+  const totalUnread = useWorkspaceStore(selectTotalUnread);
+  const paneCount = activeWs?.surfaceCount ?? 0;
 
   return (
     <div className="shortcut-bar">
       <span className="shortcut-status">
         <span className="shortcut-status-label">
-          {activeWorkspace?.name ?? "No workspace"}
+          {activeWs?.name ?? "No workspace"}
         </span>
-        {activeWorkspace?.gitBranch && (
-          <span className="shortcut-status-pill">{activeWorkspace.gitBranch}</span>
+        {activeWs?.gitBranch && (
+          <span className="shortcut-status-pill">{activeWs.gitBranch}</span>
         )}
         <span className="shortcut-status-meta">
           {paneCount} {paneCount === 1 ? "pane" : "panes"}
         </span>
+        <span className="shortcut-status-meta">
+          {workspaceCount} {workspaceCount === 1 ? "workspace" : "workspaces"}
+        </span>
         {totalUnread > 0 && (
           <span className="shortcut-status-pill shortcut-status-pill-alert">
             {totalUnread} unread
+          </span>
+        )}
+        {activeWs?.workingDir && (
+          <span className="shortcut-status-path">
+            {truncatePath(activeWs.workingDir, 44)}
           </span>
         )}
       </span>

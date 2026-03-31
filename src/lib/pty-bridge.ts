@@ -55,6 +55,16 @@ export function hasTauriRuntime(): boolean {
   return typeof (window as TauriWindow).__TAURI_INTERNALS__ !== "undefined";
 }
 
+function isMissingTauriRuntimeError(err: unknown): boolean {
+  const message = String(err);
+  return (
+    message.includes("__TAURI_INTERNALS__") ||
+    message.includes("reading 'invoke'") ||
+    message.includes("reading \"invoke\"") ||
+    message.includes("window is not defined")
+  );
+}
+
 function browserFallbackCwd(): string {
   if (typeof window === "undefined") return "";
   return "";
@@ -77,12 +87,6 @@ export function spawnPty(opts: {
   rows?: number;
   onScanEvent?: (event: ScanEventData) => void;
 }): Promise<number> {
-  if (!hasTauriRuntime()) {
-    return Promise.reject(
-      new Error("PTY spawn is only available inside the Tauri app"),
-    );
-  }
-
   const onOutputChannel = new Channel<PtyEvent>();
 
   onOutputChannel.onmessage = (event: PtyEvent) => {
@@ -118,6 +122,11 @@ export function spawnPty(opts: {
     surfaceId: opts.surfaceId ?? null,
     cols: opts.cols ?? null,
     rows: opts.rows ?? null,
+  }).catch((err) => {
+    if (isMissingTauriRuntimeError(err)) {
+      throw new Error("PTY spawn is only available inside the Tauri app");
+    }
+    throw err;
   });
 }
 
@@ -153,20 +162,24 @@ export function getPtyCwd(id: number): Promise<string> {
  * Get the current git branch for a directory.
  */
 export function getGitBranch(cwd: string): Promise<string> {
-  if (!hasTauriRuntime()) {
-    return Promise.resolve("");
-  }
-  return invoke<string>("get_git_branch", { cwd });
+  return invoke<string>("get_git_branch", { cwd }).catch((err) => {
+    if (isMissingTauriRuntimeError(err)) {
+      return "";
+    }
+    throw err;
+  });
 }
 
 /**
  * Get the app's current working directory.
  */
 export function getCwd(): Promise<string> {
-  if (!hasTauriRuntime()) {
-    return Promise.resolve(browserFallbackCwd());
-  }
-  return invoke<string>("get_cwd");
+  return invoke<string>("get_cwd").catch((err) => {
+    if (isMissingTauriRuntimeError(err)) {
+      return browserFallbackCwd();
+    }
+    throw err;
+  });
 }
 
 // --- Socket bridge ---
@@ -366,32 +379,38 @@ export interface SessionData {
 }
 
 export function saveSession(data: SessionData): Promise<void> {
-  if (!hasTauriRuntime()) {
-    return Promise.resolve();
-  }
-  return invoke("save_session", { data });
+  return invoke<void>("save_session", { data }).catch((err) => {
+    if (isMissingTauriRuntimeError(err)) {
+      return;
+    }
+    throw err;
+  });
 }
 
 export function loadSession(): Promise<SessionData | null> {
-  if (!hasTauriRuntime()) {
-    return Promise.resolve(null);
-  }
-  return invoke<SessionData | null>("load_session");
+  return invoke<SessionData | null>("load_session").catch((err) => {
+    if (isMissingTauriRuntimeError(err)) {
+      return null;
+    }
+    throw err;
+  });
 }
 
 // --- Logging ---
 
 export function writeLog(level: string, message: string): Promise<void> {
-  if (!hasTauriRuntime()) {
-    const prefix = `[ForkTTY/${level}]`;
-    if (level === "ERROR") {
-      console.error(prefix, message);
-    } else {
-      console.log(prefix, message);
+  return invoke<void>("write_log", { level, message }).catch((err) => {
+    if (isMissingTauriRuntimeError(err)) {
+      const prefix = `[ForkTTY/${level}]`;
+      if (level === "ERROR") {
+        console.error(prefix, message);
+      } else {
+        console.log(prefix, message);
+      }
+      return;
     }
-    return Promise.resolve();
-  }
-  return invoke("write_log", { level, message });
+    throw err;
+  });
 }
 
 /** Drop-in replacement for console.error in .catch() chains */
