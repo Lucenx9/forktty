@@ -197,10 +197,7 @@ export async function handleSocketRequest(
         if (prompt) {
           const ptyId = await waitForWorkspacePty(wsId);
           response.pty_id = ptyId;
-
-          if (!isWorktree) {
-            await writePty(ptyId, prompt);
-          }
+          await writePty(ptyId, prompt);
         }
 
         result = { result: response };
@@ -231,37 +228,65 @@ export async function handleSocketRequest(
           const targetWorkspace = latestState.workspaces[target.workspaceId];
           if (latestState.workspaceOrder.length <= 1 && targetWorkspace?.worktreeName) {
             closeWorkspaceEnsuringOneRemains(target.workspaceId);
+            result = { result: true };
+          } else if (latestState.workspaceOrder.length <= 1) {
+            result = { error: "Cannot close the last workspace" };
           } else {
             latestState.closeWorkspace(target.workspaceId);
+            result = { result: true };
           }
-          result = { result: true };
         } else {
           result = { error: target.error ?? "Workspace not found" };
         }
         break;
       }
       case "surface.list": {
-        const ws = state.workspaces[state.activeWorkspaceId];
-        if (ws) {
+        const listTarget = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          worktreeName: getStringParam(params, "worktreeName", "worktree_name"),
+          fallbackActive: true,
+        });
+        const listWs = listTarget.workspaceId
+          ? state.workspaces[listTarget.workspaceId]
+          : null;
+        if (listWs) {
           result = {
-            result: Object.values(ws.surfaces).map((s) => ({
+            result: Object.values(listWs.surfaces).map((s) => ({
               id: s.id,
               ptyId: s.ptyId,
               title: s.title,
             })),
           };
         } else {
-          result = { result: [] };
+          result = { error: listTarget.error ?? "Workspace not found" };
         }
         break;
       }
       case "surface.split": {
-        const ws = state.workspaces[state.activeWorkspaceId];
-        if (ws) {
+        const splitSurfaceId = getStringParam(params, "surface_id", "surfaceId");
+        let splitPaneId: string | null = null;
+        if (splitSurfaceId) {
+          // Verify the surface exists in some workspace
+          for (const ws of Object.values(state.workspaces)) {
+            if (ws.surfaces[splitSurfaceId]) {
+              splitPaneId = splitSurfaceId;
+              break;
+            }
+          }
+          if (!splitPaneId) {
+            result = { error: `Surface "${splitSurfaceId}" not found` };
+            break;
+          }
+        } else {
+          const ws = state.workspaces[state.activeWorkspaceId];
+          splitPaneId = ws?.focusedPaneId ?? null;
+        }
+        if (splitPaneId) {
           const dir =
             (params.direction as string) === "down" ? "vertical" : "horizontal";
           await splitPaneWithInheritedCwd(
-            ws.focusedPaneId,
+            splitPaneId,
             dir as "horizontal" | "vertical",
           );
           result = { result: true };
@@ -271,18 +296,41 @@ export async function handleSocketRequest(
         break;
       }
       case "surface.close": {
-        const ws = state.workspaces[state.activeWorkspaceId];
-        if (ws) {
-          state.closePane(ws.focusedPaneId);
+        const closeSurfaceId = getStringParam(params, "surface_id", "surfaceId");
+        if (closeSurfaceId) {
+          // Find which workspace owns this surface
+          const ownerWsId = Object.entries(state.workspaces).find(
+            ([, ws]) => ws.surfaces[closeSurfaceId],
+          )?.[0];
+          if (!ownerWsId) {
+            result = { error: `Surface "${closeSurfaceId}" not found` };
+            break;
+          }
+          // closePane only works on the active workspace, so switch if needed
+          const latestState = useWorkspaceStore.getState();
+          if (ownerWsId !== latestState.activeWorkspaceId) {
+            latestState.switchWorkspace(ownerWsId);
+          }
+          useWorkspaceStore.getState().closePane(closeSurfaceId);
           result = { result: true };
         } else {
-          result = { error: "No active workspace" };
+          const ws = state.workspaces[state.activeWorkspaceId];
+          if (ws) {
+            state.closePane(ws.focusedPaneId);
+            result = { result: true };
+          } else {
+            result = { error: "No active workspace" };
+          }
         }
         break;
       }
       case "surface.send_text": {
         const surfaceId = params.surface_id as string | undefined;
-        const text = params.text as string;
+        const text = params.text;
+        if (typeof text !== "string") {
+          result = { error: "Missing required parameter: text" };
+          break;
+        }
         if (surfaceId) {
           for (const ws of Object.values(state.workspaces)) {
             const surface = ws.surfaces[surfaceId];
@@ -321,10 +369,20 @@ export async function handleSocketRequest(
         break;
       }
       case "notification.create": {
+        const notifTarget = resolveWorkspaceId(state, {
+          workspaceId: getStringParam(params, "workspace_id", "workspaceId"),
+          workspaceName: getStringParam(params, "workspace_name", "workspaceName"),
+          worktreeName: getStringParam(params, "worktreeName", "worktree_name"),
+          fallbackActive: true,
+        });
+        if (!notifTarget.workspaceId) {
+          result = { error: notifTarget.error ?? "Workspace not found" };
+          break;
+        }
         const title = (params.title as string) || "ForkTTY";
         const body = (params.body as string) || "";
         dispatchWorkspaceNotification({
-          workspaceId: state.activeWorkspaceId,
+          workspaceId: notifTarget.workspaceId,
           title,
           body,
         });

@@ -59,6 +59,9 @@ function pruneNotificationMap() {
   }
 }
 
+// Periodically prune stale entries so the map doesn't grow in long sessions
+setInterval(pruneNotificationMap, 60_000);
+
 function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
   if (chunks.length === 1) {
     return chunks[0]!;

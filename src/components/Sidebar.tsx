@@ -354,10 +354,9 @@ function WorkspaceEntry({
   isActive,
   now,
   index,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
+  onGripMouseDown,
+  onEntryMouseEnter,
+  onEntryMouseUp,
   isDragOver,
   isDragging,
   onContextMenu,
@@ -366,10 +365,9 @@ function WorkspaceEntry({
   isActive: boolean;
   now: number;
   index: number;
-  onDragStart: (e: React.DragEvent, index: number) => void;
-  onDragOver: (e: React.DragEvent, index: number) => void;
-  onDrop: (e: React.DragEvent, index: number) => void;
-  onDragEnd: () => void;
+  onGripMouseDown: (index: number) => void;
+  onEntryMouseEnter: (index: number) => void;
+  onEntryMouseUp: (index: number) => void;
   isDragOver: boolean;
   isDragging: boolean;
   onContextMenu: (e: React.MouseEvent, workspaceId: string) => void;
@@ -472,10 +470,8 @@ function WorkspaceEntry({
         tabIndex={0}
         aria-current={isActive ? "page" : undefined}
         aria-label={`${index + 1}. ${workspace.name}${isActive ? ", active workspace" : ""}${workspace.unreadCount > 0 ? `, ${workspace.unreadCount} unread alerts` : ""}`}
-        onDragEnter={(e) => onDragOver(e, index)}
-        onDragOver={(e) => onDragOver(e, index)}
-        onDrop={(e) => onDrop(e, index)}
-        onDragEnd={onDragEnd}
+        onMouseEnter={() => onEntryMouseEnter(index)}
+        onMouseUp={() => onEntryMouseUp(index)}
         onMouseDown={handleMouseDown}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -522,17 +518,12 @@ function WorkspaceEntry({
           <button
             type="button"
             className="sidebar-drag-handle"
-            draggable
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onGripMouseDown(index);
+            }}
             onClick={(e) => e.preventDefault()}
-            onDragStart={(e) => {
-              e.stopPropagation();
-              onDragStart(e, index);
-            }}
-            onDragEnd={(e) => {
-              e.stopPropagation();
-              onDragEnd();
-            }}
             title="Reorder workspaces"
             aria-label={`Reorder ${workspace.name}`}
           >
@@ -840,35 +831,34 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
   const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  function handleDragStart(e: React.DragEvent, index: number) {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.dropEffect = "move";
-    e.dataTransfer.setData("text/plain", String(index));
+  function handleGripMouseDown(index: number) {
     setDragFromIndex(index);
     setDragOverIndex(index);
+    document.body.classList.add("sidebar-dragging");
   }
 
-  function handleDragOver(e: React.DragEvent, index: number) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+  function handleEntryMouseEnter(index: number) {
     if (dragFromIndex !== null && dragOverIndex !== index) {
       setDragOverIndex(index);
     }
   }
 
-  function handleDrop(e: React.DragEvent, toIndex: number) {
-    e.preventDefault();
+  function handleEntryMouseUp(toIndex: number) {
     if (dragFromIndex !== null && dragFromIndex !== toIndex) {
       reorderWorkspaces(dragFromIndex, toIndex);
     }
-    setDragFromIndex(null);
-    setDragOverIndex(null);
   }
 
-  function handleDragEnd() {
-    setDragFromIndex(null);
-    setDragOverIndex(null);
-  }
+  // Clean up drag state on any mouseup (drop or cancel)
+  useEffect(() => {
+    function handleGlobalMouseUp() {
+      setDragFromIndex(null);
+      setDragOverIndex(null);
+      document.body.classList.remove("sidebar-dragging");
+    }
+    window.addEventListener("mouseup", handleGlobalMouseUp);
+    return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
+  }, []);
 
   // 1-second tick for status dot re-evaluation
   const [now, setNow] = useState(() => Date.now());
@@ -1195,10 +1185,9 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
               isActive={id === activeWorkspaceId}
               now={now}
               index={index}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
+              onGripMouseDown={handleGripMouseDown}
+              onEntryMouseEnter={handleEntryMouseEnter}
+              onEntryMouseUp={handleEntryMouseUp}
               isDragOver={dragOverIndex === index && dragFromIndex !== index}
               isDragging={dragFromIndex === index}
               onContextMenu={handleContextMenu}

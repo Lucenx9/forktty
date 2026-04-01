@@ -162,30 +162,6 @@ textarea {
   min-height: 0;
 }
 
-/* --- Workspace container --- */
-
-.workspace-container {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  background: var(--surface-0);
-}
-
-.workspace-pane-area {
-  width: 100%;
-  height: 100%;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  padding: 8px;
-  box-sizing: border-box;
-  background: var(--theme-bg);
-  contain: layout style paint;
-}
-
 /* --- react-resizable-panels v4 resize handle --- */
 
 .resize-handle {
@@ -3090,9 +3066,9 @@ body.pane-dragging * {
 }
 
 .dashboard-hero-title {
-  font-size: 24px;
+  font-size: 17px;
   font-weight: 700;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.025em;
   color: #f3f6ff;
 }
 
@@ -3110,11 +3086,11 @@ body.pane-dragging * {
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  min-height: 56px;
+  min-height: 40px;
   width: 100%;
-  padding: 0 18px;
+  padding: 0 14px;
   border: 1px solid rgba(120, 138, 209, 0.28);
-  border-radius: 18px;
+  border-radius: 12px;
   background:
     linear-gradient(180deg, rgba(31, 36, 61, 0.96), rgba(19, 23, 41, 0.96)),
     rgba(15, 18, 31, 0.9);
@@ -3142,7 +3118,7 @@ body.pane-dragging * {
   flex: 1;
   min-width: 0;
   text-align: left;
-  font-size: 16px;
+  font-size: 14px;
   color: rgba(218, 225, 246, 0.82);
 }
 
@@ -3211,10 +3187,10 @@ body.pane-dragging * {
 .dashboard-signal-card {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 15px 16px;
+  gap: 3px;
+  padding: 10px 14px;
   border: 1px solid rgba(119, 136, 202, 0.14);
-  border-radius: 18px;
+  border-radius: 12px;
   background:
     linear-gradient(180deg, rgba(25, 29, 49, 0.92), rgba(14, 17, 31, 0.92)),
     rgba(15, 18, 31, 0.86);
@@ -3248,7 +3224,7 @@ body.pane-dragging * {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 260px;
   gap: 18px;
 }
 
@@ -3269,7 +3245,7 @@ body.pane-dragging * {
   min-height: 0;
   padding: 14px;
   border: 1px solid rgba(120, 138, 209, 0.16);
-  border-radius: 28px;
+  border-radius: 12px;
   background:
     linear-gradient(180deg, rgba(18, 22, 38, 0.92), rgba(9, 11, 22, 0.96)),
     rgba(9, 11, 22, 0.94);
@@ -3294,7 +3270,7 @@ body.pane-dragging * {
   overflow-y: auto;
   padding: 18px;
   border: 1px solid rgba(120, 138, 209, 0.16);
-  border-radius: 24px;
+  border-radius: 12px;
   background:
     linear-gradient(180deg, rgba(20, 23, 40, 0.96), rgba(12, 14, 25, 0.98)),
     rgba(12, 14, 25, 0.96);
