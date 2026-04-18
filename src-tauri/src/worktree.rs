@@ -1,6 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
+use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -270,6 +271,73 @@ fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, Wo
     Err(WorktreeError::NotFound(selector.to_string()))
 }
 
+fn parse_linked_worktree_gitdir(git_file_contents: &str) -> Option<&str> {
+    git_file_contents
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("gitdir:").map(str::trim))
+}
+
+fn verify_linked_worktree_path(
+    repo: &Repository,
+    worktree_name: &str,
+    reported_path: &Path,
+) -> Result<PathBuf, WorktreeError> {
+    let canonical_worktree = fs::canonicalize(reported_path).map_err(|e| {
+        WorktreeError::Other(format!(
+            "Cannot resolve worktree path for '{worktree_name}': {e}"
+        ))
+    })?;
+
+    let admin_dir = repo.path().join("worktrees").join(worktree_name);
+    let canonical_admin_dir = fs::canonicalize(&admin_dir).map_err(|e| {
+        WorktreeError::Other(format!(
+            "Cannot resolve admin directory for '{worktree_name}': {e}"
+        ))
+    })?;
+
+    let git_file = canonical_worktree.join(".git");
+    let git_file_contents = fs::read_to_string(&git_file).map_err(|e| {
+        WorktreeError::Other(format!(
+            "Cannot read linked worktree metadata for '{worktree_name}': {e}"
+        ))
+    })?;
+    let referenced_gitdir = parse_linked_worktree_gitdir(&git_file_contents).ok_or_else(|| {
+        WorktreeError::Other(format!(
+            "Worktree '{worktree_name}' does not contain a valid linked .git file"
+        ))
+    })?;
+
+    let gitdir_path = Path::new(referenced_gitdir);
+    let resolved_gitdir = if gitdir_path.is_absolute() {
+        gitdir_path.to_path_buf()
+    } else {
+        canonical_worktree.join(gitdir_path)
+    };
+    let canonical_gitdir = fs::canonicalize(&resolved_gitdir).map_err(|e| {
+        WorktreeError::Other(format!(
+            "Cannot resolve gitdir for worktree '{worktree_name}': {e}"
+        ))
+    })?;
+
+    if canonical_gitdir != canonical_admin_dir {
+        return Err(WorktreeError::Other(format!(
+            "Worktree '{worktree_name}' metadata does not match this repository"
+        )));
+    }
+
+    Ok(canonical_worktree)
+}
+
+fn resolve_verified_worktree_path(
+    repo: &Repository,
+    worktree_name: &str,
+) -> Result<PathBuf, WorktreeError> {
+    let worktree = repo
+        .find_worktree(worktree_name)
+        .map_err(|_| WorktreeError::NotFound(worktree_name.to_string()))?;
+    verify_linked_worktree_path(repo, worktree_name, worktree.path())
+}
+
 pub fn prepare_remove(
     repo_path: &str,
     selector: &str,
@@ -283,8 +351,8 @@ pub fn prepare_remove(
         .find_worktree(&worktree_name)
         .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
 
-    // Get the worktree path before pruning
-    let wt_path = wt.path().to_path_buf();
+    // Verify the worktree root still links back to this repository before acting on it.
+    let wt_path = verify_linked_worktree_path(&repo, &worktree_name, wt.path())?;
 
     let wt_repo = Repository::open(&wt_path)
         .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
@@ -315,7 +383,19 @@ pub fn execute_remove(repo_path: &str, plan: &RemovePlan) -> Result<(), Worktree
     let wt = repo
         .find_worktree(plan.worktree_name())
         .map_err(|_| WorktreeError::NotFound(plan.worktree_name.clone()))?;
-    let wt_path = PathBuf::from(plan.worktree_path());
+    let planned_wt_path = PathBuf::from(plan.worktree_path());
+    let verified_wt_path = if planned_wt_path.exists() {
+        let resolved = resolve_verified_worktree_path(&repo, plan.worktree_name())?;
+        if resolved != planned_wt_path {
+            return Err(WorktreeError::Other(format!(
+                "Worktree '{}' changed on disk during removal; aborting",
+                plan.worktree_name()
+            )));
+        }
+        Some(resolved)
+    } else {
+        None
+    };
 
     // Prune the worktree (removes git reference)
     let mut prune_opts = git2::WorktreePruneOptions::new();
@@ -324,8 +404,10 @@ pub fn execute_remove(repo_path: &str, plan: &RemovePlan) -> Result<(), Worktree
     wt.prune(Some(&mut prune_opts))?;
 
     // Remove the directory if it still exists
-    if wt_path.exists() {
-        std::fs::remove_dir_all(&wt_path)?;
+    if let Some(path) = verified_wt_path {
+        if path.exists() {
+            fs::remove_dir_all(&path)?;
+        }
     }
 
     // Delete the branch
@@ -746,6 +828,38 @@ mod tests {
     #[test]
     fn test_validate_worktree_name_rejects_empty() {
         assert!(validate_worktree_name("").is_err());
+    }
+
+    #[test]
+    fn verify_linked_worktree_path_accepts_real_worktree() {
+        let (repo_path, repo, _main_ref) = make_temp_repo("verify-linked-ok");
+        let info = create(repo_path.to_str().unwrap(), "feature-safe", "nested").unwrap();
+
+        let verified =
+            resolve_verified_worktree_path(&repo, &info.worktree_name).expect("should verify");
+        let expected = fs::canonicalize(&info.path).unwrap();
+
+        assert_eq!(verified, expected);
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn verify_linked_worktree_path_rejects_tampered_gitdir() {
+        let (repo_path, repo, _main_ref) = make_temp_repo("verify-linked-tampered");
+        let info = create(repo_path.to_str().unwrap(), "feature-tampered", "nested").unwrap();
+        let worktree_path = PathBuf::from(&info.path);
+
+        fs::write(worktree_path.join(".git"), "gitdir: /tmp/not-this-repo\n").unwrap();
+
+        let err = resolve_verified_worktree_path(&repo, &info.worktree_name).unwrap_err();
+        assert!(
+            err.to_string().contains("Cannot resolve gitdir")
+                || err.to_string().contains("does not match this repository"),
+            "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_dir_all(&repo_path);
     }
 
     // --- Test 4: worktree_path layout modes ---

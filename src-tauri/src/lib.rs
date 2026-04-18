@@ -469,8 +469,11 @@ pub fn run() {
     let _ = session::prune_old_logs(30);
     let _ = session::write_log("INFO", "ForkTTY starting");
 
-    let socket_path =
-        std::env::var("FORKTTY_SOCKET_PATH").unwrap_or_else(|_| socket_api::default_socket_path());
+    let (socket_path, socket_uses_default_parent_policy) =
+        match std::env::var("FORKTTY_SOCKET_PATH") {
+            Ok(path) => (path, false),
+            Err(_) => (socket_api::default_socket_path(), true),
+        };
 
     let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
     let socket_pending = socket_api::PendingRequests::default();
@@ -517,6 +520,7 @@ pub fn run() {
                 let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
                 rt.block_on(socket_api::run(
                     socket_path_clone,
+                    socket_uses_default_parent_policy,
                     handle,
                     pty_mgr_for_socket,
                     pending_for_socket,

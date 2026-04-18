@@ -1,7 +1,9 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::fs::{self, DirBuilder};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,13 +16,32 @@ use crate::pty_manager::PtyManager;
 /// Maximum request size (1 MiB).
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 
+fn effective_uid() -> u32 {
+    // SAFETY: libc::geteuid has no preconditions and cannot violate memory safety.
+    unsafe { libc::geteuid() as u32 }
+}
+
+fn fallback_socket_dir_for_uid(uid: u32) -> PathBuf {
+    std::env::temp_dir().join(format!("forktty-{uid}"))
+}
+
+fn default_socket_dir() -> PathBuf {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        let path = PathBuf::from(runtime_dir);
+        if path.is_absolute() {
+            return path;
+        }
+    }
+
+    fallback_socket_dir_for_uid(effective_uid())
+}
+
 /// Returns the default socket path, preferring XDG_RUNTIME_DIR for security.
 pub fn default_socket_path() -> String {
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        format!("{runtime_dir}/forktty.sock")
-    } else {
-        "/tmp/forktty.sock".to_string()
-    }
+    default_socket_dir()
+        .join("forktty.sock")
+        .to_string_lossy()
+        .to_string()
 }
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -81,30 +102,43 @@ pub fn resolve_request(pending: &PendingRequests, id: &str, result: Value) {
 /// Start the Unix socket JSON-RPC server.
 pub async fn run(
     socket_path: String,
+    enforce_private_parent: bool,
     app_handle: tauri::AppHandle,
     pty_manager: Arc<Mutex<PtyManager>>,
     pending: PendingRequests,
     frontend: Arc<FrontendState>,
 ) {
+    let socket_path = PathBuf::from(socket_path);
+    if let Err(e) = prepare_socket_parent(&socket_path, enforce_private_parent) {
+        eprintln!(
+            "Failed to prepare socket parent directory for {}: {e}",
+            socket_path.display()
+        );
+        return;
+    }
+
     // Remove stale socket file
-    if Path::new(&socket_path).exists() {
-        if let Err(e) = std::fs::remove_file(&socket_path) {
-            eprintln!("Warning: could not remove stale socket at {socket_path}: {e}");
+    if socket_path.exists() {
+        if let Err(e) = fs::remove_file(&socket_path) {
+            eprintln!(
+                "Warning: could not remove stale socket at {}: {e}",
+                socket_path.display()
+            );
         }
     }
 
     let listener = match UnixListener::bind(&socket_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Failed to bind socket at {socket_path}: {e}");
+            eprintln!("Failed to bind socket at {}: {e}", socket_path.display());
             return;
         }
     };
 
     // Restrict socket to owner only (mode 0600) — security invariant
-    if let Err(e) = std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)) {
+    if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
         eprintln!("CRITICAL: Failed to set socket permissions, removing socket: {e}");
-        let _ = std::fs::remove_file(&socket_path);
+        let _ = fs::remove_file(&socket_path);
         return;
     }
 
@@ -124,6 +158,67 @@ pub async fn run(
             }
         }
     }
+}
+
+fn validate_private_socket_parent(path: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("socket parent is not a directory: {}", path.display()),
+        ));
+    }
+
+    if metadata.uid() != effective_uid() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "socket parent {} is owned by uid {}, expected {}",
+                path.display(),
+                metadata.uid(),
+                effective_uid()
+            ),
+        ));
+    }
+
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "socket parent {} must not be accessible by group/other (mode {:o})",
+                path.display(),
+                mode
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn prepare_socket_parent(socket_path: &Path, enforce_private_parent: bool) -> io::Result<()> {
+    let parent = socket_path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("socket path has no parent: {}", socket_path.display()),
+        )
+    })?;
+
+    if !parent.exists() {
+        let mut builder = DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        match builder.create(parent) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+
+    if enforce_private_parent {
+        validate_private_socket_parent(parent)?;
+    }
+
+    Ok(())
 }
 
 async fn handle_connection(
@@ -484,7 +579,9 @@ async fn wait_for_frontend_ready(frontend: &Arc<FrontendState>) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Cursor;
+    use std::os::unix::fs::PermissionsExt;
     use tokio::io::BufReader;
 
     // -- read_limited_line tests --
@@ -580,5 +677,44 @@ mod tests {
         .join();
         // Mutex is now poisoned — should not panic, just log
         resolve_request(&pending, "r1", json!(null));
+    }
+
+    #[test]
+    fn fallback_socket_dir_is_uid_scoped() {
+        let uid = 4242;
+        let expected = std::env::temp_dir().join("forktty-4242");
+        assert_eq!(fallback_socket_dir_for_uid(uid), expected);
+    }
+
+    #[test]
+    fn validate_private_socket_parent_rejects_world_accessible_dir() {
+        let dir =
+            std::env::temp_dir().join(format!("forktty-socket-parent-open-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let err = validate_private_socket_parent(&dir).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prepare_socket_parent_creates_private_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "forktty-socket-parent-create-{}",
+            std::process::id()
+        ));
+        let socket_path = dir.join("forktty.sock");
+        let _ = fs::remove_dir_all(&dir);
+
+        prepare_socket_parent(&socket_path, true).unwrap();
+
+        let metadata = fs::metadata(&dir).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
