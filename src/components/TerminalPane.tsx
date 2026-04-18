@@ -13,6 +13,12 @@ import {
   saveInstance,
   removeSavedInstance,
 } from "../lib/terminal-registry";
+import {
+  concatUint8Arrays,
+  createPtyOutputBufferState,
+  enqueueBoundedPtyOutput,
+  takePtyOutputBatch,
+} from "../lib/pty-output-buffer";
 import type { ScanEventData } from "../lib/pty-bridge";
 import {
   useWorkspaceStore,
@@ -62,23 +68,25 @@ function pruneNotificationMap() {
 // Periodically prune stale entries so the map doesn't grow in long sessions
 setInterval(pruneNotificationMap, 60_000);
 
-function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 1) {
-    return chunks[0]!;
-  }
+const MAX_PENDING_OUTPUT_BYTES = 4 * 1024 * 1024;
+const MAX_OUTPUT_WRITE_BATCH_BYTES = 256 * 1024;
+const textEncoder = new TextEncoder();
 
-  let totalLength = 0;
-  for (const chunk of chunks) {
-    totalLength += chunk.length;
+function formatDroppedOutputBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
   }
+  if (bytes >= 1024) {
+    return `${Math.ceil(bytes / 1024)} KiB`;
+  }
+  return `${bytes} bytes`;
+}
 
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return merged;
+function buildDroppedOutputNotice(bytes: number): Uint8Array {
+  const amount = formatDroppedOutputBytes(bytes);
+  return textEncoder.encode(
+    `\r\n\x1b[33m[ForkTTY dropped ${amount} of terminal output while catching up]\x1b[0m\r\n`,
+  );
 }
 
 function isTargetInsideXterm(target: EventTarget | null): boolean {
@@ -433,19 +441,35 @@ const TerminalPane = memo(function TerminalPane({
       lastCols: null,
       lastRows: null,
     };
+    const outputBuffer = createPtyOutputBufferState();
     let outputDrainRaf: number | null = null;
     let outputWriteInFlight = false;
-    const outputQueue: Uint8Array[] = [];
+    let droppedOutputBytes = 0;
 
     function drainOutputQueue() {
-      if (disposed || outputWriteInFlight || outputQueue.length === 0) return;
+      if (
+        disposed ||
+        outputWriteInFlight ||
+        (outputBuffer.totalBytes === 0 && droppedOutputBytes === 0)
+      ) {
+        return;
+      }
 
       outputWriteInFlight = true;
-      const payload = concatUint8Arrays(outputQueue.splice(0, outputQueue.length));
+      const chunks: Uint8Array[] = [];
+      if (droppedOutputBytes > 0) {
+        chunks.push(buildDroppedOutputNotice(droppedOutputBytes));
+        droppedOutputBytes = 0;
+      }
+      const batch = takePtyOutputBatch(outputBuffer, MAX_OUTPUT_WRITE_BATCH_BYTES);
+      if (batch) {
+        chunks.push(batch);
+      }
+      const payload = concatUint8Arrays(chunks);
       term.write(payload, () => {
         outputWriteInFlight = false;
         if (disposed) return;
-        if (outputQueue.length > 0) {
+        if (outputBuffer.totalBytes > 0 || droppedOutputBytes > 0) {
           outputDrainRaf = requestAnimationFrame(() => {
             outputDrainRaf = null;
             drainOutputQueue();
@@ -628,7 +652,14 @@ const TerminalPane = memo(function TerminalPane({
           return spawnPty({
             onOutput: (data) => {
               if (!disposed) {
-                outputQueue.push(data as Uint8Array);
+                const dropped = enqueueBoundedPtyOutput(
+                  outputBuffer,
+                  data as Uint8Array,
+                  MAX_PENDING_OUTPUT_BYTES,
+                );
+                if (dropped > 0) {
+                  droppedOutputBytes += dropped;
+                }
                 scheduleOutputDrain();
 
                 // Throttled activity tracking (at most once per second)
@@ -756,7 +787,9 @@ const TerminalPane = memo(function TerminalPane({
       } else {
         // CLOSE: destroy everything
         disposed = true;
-        outputQueue.length = 0;
+        outputBuffer.chunks = [];
+        outputBuffer.totalBytes = 0;
+        droppedOutputBytes = 0;
         if (outputDrainRaf !== null) {
           cancelAnimationFrame(outputDrainRaf);
         }
