@@ -332,15 +332,20 @@ export async function handleSocketRequest(
           break;
         }
         if (surfaceId) {
+          let targetPtyId: number | null = null;
           for (const ws of Object.values(state.workspaces)) {
             const surface = ws.surfaces[surfaceId];
             if (surface?.ptyId != null) {
-              writePty(surface.ptyId, text).catch(logError);
-              result = { result: true };
+              targetPtyId = surface.ptyId;
               break;
             }
           }
-          if (!result) result = { error: "Surface not found" };
+          if (targetPtyId != null) {
+            await writePty(targetPtyId, text);
+            result = { result: true };
+          } else {
+            result = { error: "Surface not found" };
+          }
         } else if (params.pty_id != null) {
           await writePty(params.pty_id as number, text);
           result = { result: true };

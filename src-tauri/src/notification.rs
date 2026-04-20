@@ -39,12 +39,17 @@ pub(crate) fn run_custom_command(command: &str, title: &str, body: &str) -> Resu
             "notification_command must be an absolute path to an existing file: {prog}"
         ));
     }
-    std::process::Command::new(prog)
+    let mut child = std::process::Command::new(prog)
         .args(args)
         .env("FORKTTY_NOTIFICATION_TITLE", title)
         .env("FORKTTY_NOTIFICATION_BODY", body)
         .spawn()
         .map_err(|e| e.to_string())?;
+
+    // Reap the child in a background thread to avoid leaving zombies.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 
     Ok(())
 }
