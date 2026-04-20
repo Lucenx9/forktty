@@ -367,7 +367,7 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
-            let cwd = request_cwd(&params)?;
+            let cwd = resolve_socket_cwd(&params, app, pending, frontend).await?;
             let layout = crate::config::load_config()
                 .ok()
                 .map(|c| c.general.worktree_layout)
@@ -436,7 +436,7 @@ async fn dispatch(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing name")?;
-            let cwd = request_cwd(&params)?;
+            let cwd = resolve_socket_cwd(&params, app, pending, frontend).await?;
             let plan =
                 crate::worktree::prepare_remove(&cwd, name, true).map_err(|e| e.to_string())?;
             let resolved_worktree_name = plan.worktree_name().to_string();
@@ -468,11 +468,12 @@ async fn dispatch(
         }
 
         "worktree.merge" => {
+            wait_for_frontend_ready(frontend).await?;
             let name = params
                 .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing name")?;
-            let cwd = request_cwd(&params)?;
+            let cwd = resolve_socket_cwd(&params, app, pending, frontend).await?;
             crate::worktree::merge(&cwd, name).map_err(|e| e.to_string())?;
             Ok(json!(format!("Merged '{name}'")))
         }
@@ -500,11 +501,55 @@ async fn dispatch(
     }
 }
 
-fn request_cwd(params: &Value) -> Result<String, String> {
-    match params.get("cwd").and_then(|value| value.as_str()) {
-        Some(cwd) if !cwd.trim().is_empty() => Ok(cwd.to_string()),
-        _ => crate::cwd_string(),
+/// Resolve the `cwd` parameter for worktree operations.
+///
+/// Security boundary: a caller-supplied `cwd` can steer `worktree.*` operations
+/// (and their hook execution) at arbitrary repositories. Because the socket is
+/// only guarded by filesystem permissions, any same-user process could point
+/// `cwd` at an attacker-prepared repo to trigger `.forktty/setup|teardown`
+/// execution. We therefore require the canonicalized `cwd` to exactly match
+/// the canonicalized `workingDir` of a currently-open workspace (the frontend
+/// workspace list is the authoritative set of user-trusted repos).
+///
+/// If the caller omits `cwd`, the app's own launch directory is used — it is
+/// not attacker-controlled.
+async fn resolve_socket_cwd(
+    params: &Value,
+    app: &tauri::AppHandle,
+    pending: &PendingRequests,
+    frontend: &Arc<FrontendState>,
+) -> Result<String, String> {
+    let raw = match params.get("cwd").and_then(|value| value.as_str()) {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => return crate::cwd_string(),
+    };
+
+    let canonical =
+        std::fs::canonicalize(raw).map_err(|e| format!("Invalid cwd '{raw}': {e}"))?;
+
+    let list = bridge_to_frontend(app, pending, frontend, "workspace.list", json!({})).await?;
+    let workspaces = list
+        .as_array()
+        .ok_or("workspace.list returned a non-array response")?;
+
+    for ws in workspaces {
+        let Some(dir) = ws.get("workingDir").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if dir.is_empty() {
+            continue;
+        }
+        if let Ok(ws_canonical) = std::fs::canonicalize(dir) {
+            if ws_canonical == canonical {
+                return canonical
+                    .to_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "cwd is not valid UTF-8".to_string());
+            }
+        }
     }
+
+    Err("cwd must match the workingDir of an open workspace".to_string())
 }
 
 fn write_surface_text(
