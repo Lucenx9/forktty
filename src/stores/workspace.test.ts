@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useWorkspaceStore } from "./workspace";
+import { closeWorkspaceEnsuringOneRemains, useWorkspaceStore } from "./workspace";
 import { useMetadataStore } from "./metadata";
 import { collectLeafIds, makeWorkspace } from "./pane-tree";
 import type { SessionSnapshot } from "./pane-tree";
@@ -150,5 +150,31 @@ describe("workspace lifecycle state transitions", () => {
     const leafIds = collectLeafIds(workspace.root);
     expect(workspace.name).toBe("Valid");
     expect(workspace.focusedPaneId).toBe(leafIds[1]);
+  });
+
+  it("uses a safe fallback working dir when closing the last removed worktree workspace", () => {
+    const store = useWorkspaceStore.getState();
+    const workspaceId = store.activeWorkspaceId;
+
+    useWorkspaceStore.setState((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        [workspaceId]: {
+          ...state.workspaces[workspaceId]!,
+          workingDir: "/tmp/deleted-worktree",
+          worktreeDir: "/tmp/deleted-worktree",
+          worktreeName: "feature/remove-me",
+        },
+      },
+    }));
+
+    closeWorkspaceEnsuringOneRemains(workspaceId, "/tmp");
+
+    const finalState = useWorkspaceStore.getState();
+    expect(finalState.workspaceOrder).toHaveLength(1);
+    expect(finalState.activeWorkspaceId).not.toBe(workspaceId);
+    expect(finalState.workspaces[finalState.activeWorkspaceId]?.workingDir).toBe(
+      "/tmp",
+    );
   });
 });

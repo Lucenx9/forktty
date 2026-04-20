@@ -406,16 +406,6 @@ async fn dispatch(
                 }
             };
 
-            if let (Some(prompt), Some(pty_id)) = (
-                prompt.as_deref(),
-                workspace
-                    .get("pty_id")
-                    .and_then(|v| v.as_u64())
-                    .and_then(|v| u32::try_from(v).ok()),
-            ) {
-                write_surface_text(pty_manager, pty_id, prompt)?;
-            }
-
             // Intentional: setup hook failure is advisory and should not block worktree creation
             if let Ok(verified) = crate::verify_repo_path(&info.path) {
                 let _ = crate::worktree::run_hook(&verified, "setup");
@@ -440,6 +430,7 @@ async fn dispatch(
             let plan =
                 crate::worktree::prepare_remove(&cwd, name, true).map_err(|e| e.to_string())?;
             let resolved_worktree_name = plan.worktree_name().to_string();
+            let fallback_working_dir = crate::repo_root_for_path(&cwd)?;
 
             // Intentional: teardown hook failure is advisory and should not block removal
             if let Ok(verified) = crate::verify_repo_path(plan.worktree_path()) {
@@ -452,7 +443,10 @@ async fn dispatch(
                 pending,
                 frontend,
                 "workspace.close",
-                json!({ "worktreeName": resolved_worktree_name }),
+                json!({
+                    "worktreeName": resolved_worktree_name,
+                    "fallbackWorkingDir": fallback_working_dir,
+                }),
             )
             .await
             {
@@ -507,12 +501,35 @@ async fn dispatch(
 /// (and their hook execution) at arbitrary repositories. Because the socket is
 /// only guarded by filesystem permissions, any same-user process could point
 /// `cwd` at an attacker-prepared repo to trigger `.forktty/setup|teardown`
-/// execution. We therefore require the canonicalized `cwd` to exactly match
-/// the canonicalized `workingDir` of a currently-open workspace (the frontend
-/// workspace list is the authoritative set of user-trusted repos).
+/// execution. We therefore require the canonicalized `cwd` to belong to the
+/// same Git repository (identified by canonical common git dir) as a currently
+/// open workspace. This preserves the trust boundary while still allowing
+/// legitimate subdirectories and stale per-pane working directories.
 ///
 /// If the caller omits `cwd`, the app's own launch directory is used — it is
 /// not attacker-controlled.
+fn validate_socket_cwd_against_open_workspaces<I, S>(
+    raw: &str,
+    workspace_dirs: I,
+) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let verified = crate::verify_repo_path(raw)?;
+    let candidate_repo = crate::repo_commondir_for_path(&verified)?;
+
+    for dir in workspace_dirs {
+        if let Ok(workspace_repo) = crate::repo_commondir_for_path(dir.as_ref()) {
+            if workspace_repo == candidate_repo {
+                return Ok(verified);
+            }
+        }
+    }
+
+    Err("cwd must be inside the git repository of an open workspace".to_string())
+}
+
 async fn resolve_socket_cwd(
     params: &Value,
     app: &tauri::AppHandle,
@@ -524,32 +541,24 @@ async fn resolve_socket_cwd(
         _ => return crate::cwd_string(),
     };
 
-    let canonical =
-        std::fs::canonicalize(raw).map_err(|e| format!("Invalid cwd '{raw}': {e}"))?;
+    let canonical = std::fs::canonicalize(raw).map_err(|e| format!("Invalid cwd '{raw}': {e}"))?;
 
     let list = bridge_to_frontend(app, pending, frontend, "workspace.list", json!({})).await?;
     let workspaces = list
         .as_array()
         .ok_or("workspace.list returned a non-array response")?;
 
-    for ws in workspaces {
-        let Some(dir) = ws.get("workingDir").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        if dir.is_empty() {
-            continue;
-        }
-        if let Ok(ws_canonical) = std::fs::canonicalize(dir) {
-            if ws_canonical == canonical {
-                return canonical
-                    .to_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| "cwd is not valid UTF-8".to_string());
-            }
-        }
-    }
-
-    Err("cwd must match the workingDir of an open workspace".to_string())
+    validate_socket_cwd_against_open_workspaces(
+        canonical
+            .to_str()
+            .map(str::to_string)
+            .ok_or_else(|| "cwd is not valid UTF-8".to_string())?
+            .as_str(),
+        workspaces
+            .iter()
+            .filter_map(|ws| ws.get("workingDir").and_then(|v| v.as_str()))
+            .filter(|dir| !dir.is_empty()),
+    )
 }
 
 fn write_surface_text(
@@ -624,10 +633,52 @@ async fn wait_for_frontend_ready(frontend: &Arc<FrontendState>) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::Repository;
     use std::fs;
     use std::io::Cursor;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::BufReader;
+
+    fn make_temp_repo(name: &str) -> (PathBuf, Repository) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_path = std::env::temp_dir().join(format!(
+            "forktty-socket-api-test-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&repo_path).unwrap();
+
+        let repo = Repository::init(&repo_path).unwrap();
+        fs::write(repo_path.join("note.txt"), "base\n").unwrap();
+        commit_all(&repo, "initial");
+
+        (repo_path, repo)
+    }
+
+    fn commit_all(repo: &Repository, message: &str) {
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+            .unwrap();
+    }
 
     // -- read_limited_line tests --
 
@@ -761,5 +812,66 @@ mod tests {
         assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn validate_socket_cwd_accepts_subdirectories_in_an_open_workspace_repo() {
+        let (repo_path, _repo) = make_temp_repo("subdir");
+        let nested_dir = repo_path.join("src").join("nested");
+        fs::create_dir_all(&nested_dir).unwrap();
+
+        let validated = validate_socket_cwd_against_open_workspaces(
+            nested_dir.to_str().unwrap(),
+            [repo_path.to_string_lossy().to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            PathBuf::from(validated),
+            fs::canonicalize(&nested_dir).unwrap()
+        );
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn validate_socket_cwd_accepts_paths_in_same_repo_across_linked_worktrees() {
+        let (repo_path, repo) = make_temp_repo("linked-worktree");
+        let worktree_path = repo_path.with_file_name(format!(
+            "{}-wt",
+            repo_path.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_dir_all(&worktree_path);
+        repo.worktree("feature", &worktree_path, None).unwrap();
+
+        let validated = validate_socket_cwd_against_open_workspaces(
+            repo_path.to_str().unwrap(),
+            [worktree_path.to_string_lossy().to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            PathBuf::from(validated),
+            fs::canonicalize(&repo_path).unwrap()
+        );
+
+        let _ = fs::remove_dir_all(&worktree_path);
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn validate_socket_cwd_rejects_repos_not_open_in_the_frontend() {
+        let (repo_a, _repo_a) = make_temp_repo("repo-a");
+        let (repo_b, _repo_b) = make_temp_repo("repo-b");
+
+        let err = validate_socket_cwd_against_open_workspaces(
+            repo_b.to_str().unwrap(),
+            [repo_a.to_string_lossy().to_string()],
+        )
+        .unwrap_err();
+        assert!(err.contains("git repository of an open workspace"));
+
+        let _ = fs::remove_dir_all(&repo_a);
+        let _ = fs::remove_dir_all(&repo_b);
     }
 }

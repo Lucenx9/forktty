@@ -288,6 +288,30 @@ fn resolved_repo_cwd(cwd: Option<String>) -> Result<String, String> {
     Ok(path)
 }
 
+pub(crate) fn repo_commondir_for_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let repo = git2::Repository::discover(path).map_err(|_| {
+        format!("Not a git repository: {path} — open a terminal in a git project first")
+    })?;
+    if repo.workdir().is_none() {
+        return Err("Bare repository".to_string());
+    }
+    std::fs::canonicalize(repo.commondir())
+        .map_err(|e| format!("Cannot resolve repository common dir: {e}"))
+}
+
+pub(crate) fn repo_root_for_path(path: &str) -> Result<String, String> {
+    let common_dir = repo_commondir_for_path(path)?;
+    let repo_root = common_dir
+        .parent()
+        .ok_or_else(|| "Repository common dir has no parent".to_string())?;
+    let canonical_root =
+        std::fs::canonicalize(repo_root).map_err(|e| format!("Cannot resolve repo root: {e}"))?;
+    canonical_root
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Repository root is not valid UTF-8".to_string())
+}
+
 #[tauri::command]
 fn worktree_create(
     name: String,
@@ -304,13 +328,15 @@ fn worktree_list(cwd: Option<String>) -> Result<Vec<worktree::WorktreeInfo>, Str
 }
 
 #[tauri::command]
-fn worktree_remove(name: String, cwd: Option<String>) -> Result<(), String> {
+fn worktree_remove(name: String, cwd: Option<String>) -> Result<String, String> {
     let cwd = resolved_repo_cwd(cwd)?;
+    let fallback_working_dir = repo_root_for_path(&cwd)?;
     let plan = worktree::prepare_remove(&cwd, &name, true).map_err(|e| e.to_string())?;
     if let Ok(verified) = verify_repo_path(plan.worktree_path()) {
         let _ = worktree::run_hook(&verified, "teardown");
     }
-    worktree::execute_remove(&cwd, &plan).map_err(|e| e.to_string())
+    worktree::execute_remove(&cwd, &plan).map_err(|e| e.to_string())?;
+    Ok(fallback_working_dir)
 }
 
 #[tauri::command]
@@ -570,7 +596,53 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_no_proxy_hosts, LOCALHOST_NO_PROXY_ENTRIES};
+    use super::{
+        append_no_proxy_hosts, repo_commondir_for_path, repo_root_for_path,
+        LOCALHOST_NO_PROXY_ENTRIES,
+    };
+    use git2::Repository;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_repo(name: &str) -> (PathBuf, Repository) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo_path = std::env::temp_dir().join(format!(
+            "forktty-lib-test-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&repo_path).unwrap();
+
+        let repo = Repository::init(&repo_path).unwrap();
+        fs::write(repo_path.join("note.txt"), "base\n").unwrap();
+        commit_all(&repo, "initial");
+
+        (repo_path, repo)
+    }
+
+    fn commit_all(repo: &Repository, message: &str) {
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+
+        let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+            .unwrap();
+    }
 
     #[test]
     fn append_no_proxy_hosts_adds_local_entries_once() {
@@ -590,5 +662,30 @@ mod tests {
     fn append_no_proxy_hosts_trims_empty_entries() {
         let updated = append_no_proxy_hosts(" ,127.0.0.1,, ");
         assert_eq!(updated, "127.0.0.1,localhost,::1");
+    }
+
+    #[test]
+    fn repo_helpers_resolve_main_repo_identity_for_linked_worktrees() {
+        let (repo_path, repo) = make_temp_repo("repo-root");
+        let worktree_path = repo_path.with_file_name(format!(
+            "{}-worktree",
+            repo_path.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_dir_all(&worktree_path);
+
+        repo.worktree("feature", &worktree_path, None).unwrap();
+
+        let repo_common_dir = fs::canonicalize(repo.path()).unwrap();
+        assert_eq!(
+            repo_commondir_for_path(worktree_path.to_str().unwrap()).unwrap(),
+            repo_common_dir
+        );
+        assert_eq!(
+            Path::new(&repo_root_for_path(worktree_path.to_str().unwrap()).unwrap()),
+            fs::canonicalize(&repo_path).unwrap()
+        );
+
+        let _ = fs::remove_dir_all(&worktree_path);
+        let _ = fs::remove_dir_all(&repo_path);
     }
 }

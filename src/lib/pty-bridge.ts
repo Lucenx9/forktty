@@ -274,8 +274,8 @@ export function worktreeList(cwd?: string): Promise<WorktreeInfo[]> {
   return invoke<WorktreeInfo[]>("worktree_list", { cwd: cwd ?? null });
 }
 
-export function worktreeRemove(name: string, cwd?: string): Promise<void> {
-  return invoke("worktree_remove", { name, cwd: cwd ?? null });
+export function worktreeRemove(name: string, cwd?: string): Promise<string> {
+  return invoke<string>("worktree_remove", { name, cwd: cwd ?? null });
 }
 
 export function worktreeMerge(name: string, cwd?: string): Promise<string> {

@@ -227,7 +227,11 @@ export async function handleSocketRequest(
           const latestState = useWorkspaceStore.getState();
           const targetWorkspace = latestState.workspaces[target.workspaceId];
           if (latestState.workspaceOrder.length <= 1 && targetWorkspace?.worktreeName) {
-            closeWorkspaceEnsuringOneRemains(target.workspaceId);
+            closeWorkspaceEnsuringOneRemains(
+              target.workspaceId,
+              getStringParam(params, "fallbackWorkingDir", "fallback_working_dir") ??
+                undefined,
+            );
             result = { result: true };
           } else if (latestState.workspaceOrder.length <= 1) {
             result = { error: "Cannot close the last workspace" };
@@ -560,7 +564,7 @@ export async function handleSocketRequest(
         const name = params.name as string;
         const cwd = getStringParam(params, "cwd") ?? undefined;
         try {
-          await worktreeRemove(name, cwd);
+          const fallbackWorkingDir = await worktreeRemove(name, cwd);
           // Close the workspace associated with this worktree
           const latestState = useWorkspaceStore.getState();
           const target = latestState.workspaceOrder.find((wsId) => {
@@ -571,7 +575,9 @@ export async function handleSocketRequest(
               workspace?.name === name
             );
           });
-          if (target) closeWorkspaceEnsuringOneRemains(target);
+          if (target) {
+            closeWorkspaceEnsuringOneRemains(target, fallbackWorkingDir);
+          }
           result = { result: true };
         } catch (err) {
           result = { error: String(err) };

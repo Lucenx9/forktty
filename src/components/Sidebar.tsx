@@ -332,7 +332,12 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
             onConfirm={() => {
               setPendingRemoveWorktree(false);
               worktreeRemove(ws.worktreeName, ws.workingDir || ws.worktreeDir)
-                .then(() => closeWorkspaceEnsuringOneRemains(menu.workspaceId))
+                .then((fallbackWorkingDir) =>
+                  closeWorkspaceEnsuringOneRemains(
+                    menu.workspaceId,
+                    fallbackWorkingDir,
+                  ),
+                )
                 .catch((err) => showToast(`Remove failed: ${err}`, "error"));
               onClose();
             }}
@@ -612,7 +617,9 @@ function WorkspaceEntry({
                 workspace.worktreeName,
                 workspace.workingDir || workspace.worktreeDir,
               )
-                .then(() => closeWorkspaceEnsuringOneRemains(workspace.id))
+                .then((fallbackWorkingDir) =>
+                  closeWorkspaceEnsuringOneRemains(workspace.id, fallbackWorkingDir),
+                )
                 .catch((err) => showToast(`Remove failed: ${err}`, "error"));
             }}
             onCancel={() => setPendingRemove(false)}

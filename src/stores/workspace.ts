@@ -793,13 +793,19 @@ export function getLastWorkspaceSwitchTime(): number {
   return lastWorkspaceSwitchTime;
 }
 
-export function closeWorkspaceEnsuringOneRemains(id: string): void {
+export function closeWorkspaceEnsuringOneRemains(
+  id: string,
+  fallbackWorkingDir?: string,
+): void {
   const state = useWorkspaceStore.getState();
   const workspace = state.workspaces[id];
   if (!workspace) return;
 
   if (state.workspaceOrder.length <= 1) {
-    state.createWorkspace(undefined, workspace.workingDir);
+    state.createWorkspace(
+      undefined,
+      fallbackWorkingDir?.trim() || workspace.workingDir,
+    );
   }
 
   useWorkspaceStore.getState().closeWorkspace(id);
