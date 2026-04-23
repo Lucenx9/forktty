@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-23
+
 ### UI Polish
 - Refined sidebar, pane chrome, command palette, branch picker, notifications, settings, menus, and find bar with a more consistent dark desktop visual language
 - Split UI typography from terminal typography: proportional font for chrome, monospace for terminal content, shortcuts, and badges
@@ -19,6 +21,11 @@ All notable changes to ForkTTY are documented here.
 - Workspace reordering now uses a dedicated drag handle instead of making the whole row draggable
 - Reduced duplicate prompt notifications with stronger switch-time suppression and short-window deduplication
 - Avoid repeated `Prompt waiting` notifications while a workspace is already unread
+
+### Socket & Worktree Hardening
+- Fixed socket-driven `worktree.create` prompts being written twice to the target PTY
+- Fixed removal of the last worktree-backed workspace so the replacement workspace falls back to a valid repository root instead of a deleted directory
+- Relaxed socket `cwd` validation to accept subdirectories and linked worktrees from the same open repository while preserving repo-boundary checks
 
 ## [0.1.0] - 2026-03-19
 

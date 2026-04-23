@@ -20,7 +20,7 @@ Run multiple AI coding agents in parallel. Each gets its own git worktree. When 
 
 </div>
 
-> **Status**: Early development (v0.1.0). Usable for daily work on Linux, but expect rough edges. Download the latest Linux release from [GitHub Releases](https://github.com/Lucenx9/forktty/releases/latest).
+> **Status**: Early development (v0.1.1). Usable for daily work on Linux, but expect rough edges. Download the latest Linux release from [GitHub Releases](https://github.com/Lucenx9/forktty/releases/latest).
 
 ## Why ForkTTY?
 
@@ -96,15 +96,15 @@ sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
 
 ```bash
 # .deb
-curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.0_amd64.deb
-sudo dpkg -i ForkTTY_0.1.0_amd64.deb
+curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.1_amd64.deb
+sudo dpkg -i ForkTTY_0.1.1_amd64.deb
 ```
 
 ```bash
 # AppImage
-curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.0_amd64.AppImage
-chmod +x ForkTTY_0.1.0_amd64.AppImage
-./ForkTTY_0.1.0_amd64.AppImage
+curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.1_amd64.AppImage
+chmod +x ForkTTY_0.1.1_amd64.AppImage
+./ForkTTY_0.1.1_amd64.AppImage
 ```
 
 ## Keyboard Shortcuts
