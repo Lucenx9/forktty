@@ -43,6 +43,7 @@ export interface SavedTerminalRuntime {
   ptyId: number | null;
   lastCols: number | null;
   lastRows: number | null;
+  disposed: boolean;
 }
 
 export interface SavedTerminalInstance {
@@ -82,6 +83,8 @@ export function reconcileInstances(activeSurfaceIds: Set<string>): number {
     if (!activeSurfaceIds.has(id)) {
       const instance = savedInstances.get(id);
       if (instance) {
+        instance.runtime.disposed = true;
+        instance.runtime.ptyId = null;
         instance.terminal.dispose();
         instance.wrapper.remove();
       }

@@ -129,12 +129,11 @@ impl OutputScanner {
         if payload.starts_with(b"133;") {
             let sequence = &payload[4..];
             match sequence.first().copied() {
-                Some(b'A') => {
-                    if !self.prompt_emitted_for_line {
-                        events.push(ScanEvent::PromptDetected);
-                        self.prompt_emitted_for_line = true;
-                    }
+                Some(b'A') if !self.prompt_emitted_for_line => {
+                    events.push(ScanEvent::PromptDetected);
+                    self.prompt_emitted_for_line = true;
                 }
+                Some(b'A') => {}
                 Some(b'C') => {
                     events.push(ScanEvent::CommandStarted);
                     self.prompt_emitted_for_line = false;

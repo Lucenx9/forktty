@@ -84,6 +84,7 @@ export default function DashboardChrome({
   const recentStatuses = activeMetadata?.statuses.slice(0, 3) ?? [];
   const recentProgress = activeMetadata?.progress.slice(0, 3) ?? [];
   const recentLogs = activeMetadata?.logs.slice(0, 3) ?? [];
+  const workspaceMode = activeWs?.worktreeDir ? "Worktree workspace" : "Workspace";
 
   const signalCards = useMemo(
     () => [
@@ -124,7 +125,7 @@ export default function DashboardChrome({
       <div className="dashboard-chrome">
         <div className="dashboard-command-row">
           <div className="dashboard-hero-copy">
-            <div className="dashboard-hero-eyebrow">ForkTTY Pro</div>
+            <div className="dashboard-hero-eyebrow">{workspaceMode}</div>
             <div className="dashboard-hero-title">
               {activeWs?.name ?? "Workspace overview"}
             </div>

@@ -416,6 +416,7 @@ function WorkspaceEntry({
   });
 
   const statusColor = hasActivity ? "var(--theme-green)" : "var(--theme-bright-black)";
+  const activityLabel = hasActivity ? "Recent terminal activity" : "Idle";
 
   function handleMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
@@ -465,16 +466,42 @@ function WorkspaceEntry({
   }
 
   const isWorktree = workspace.worktreeDir !== "";
+  const worktreeStatusClass =
+    isWorktree && workspace.worktreeStatus
+      ? `sidebar-entry-wt-${workspace.worktreeStatus}`
+      : "";
+  const entryClassName = [
+    "sidebar-entry",
+    isActive ? "sidebar-entry-active" : "",
+    isDragging ? "sidebar-entry-dragging" : "",
+    hasActivity ? "sidebar-entry-live" : "",
+    workspace.unreadCount > 0 ? "sidebar-entry-unread" : "",
+    isWorktree ? "sidebar-entry-worktree" : "",
+    worktreeStatusClass,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const entryAriaLabel = [
+    `${index + 1}. ${workspace.name}`,
+    isActive ? "active workspace" : "",
+    activityLabel,
+    isWorktree && workspace.worktreeStatus
+      ? `worktree ${workspace.worktreeStatus}`
+      : "",
+    workspace.unreadCount > 0 ? `${workspace.unreadCount} unread alerts` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <>
       {isDragOver && <div className="sidebar-drop-indicator" />}
       <div
-        className={`sidebar-entry ${isActive ? "sidebar-entry-active" : ""} ${isDragging ? "sidebar-entry-dragging" : ""}`}
+        className={entryClassName}
         role="button"
         tabIndex={0}
         aria-current={isActive ? "page" : undefined}
-        aria-label={`${index + 1}. ${workspace.name}${isActive ? ", active workspace" : ""}${workspace.unreadCount > 0 ? `, ${workspace.unreadCount} unread alerts` : ""}`}
+        aria-label={entryAriaLabel}
         onMouseEnter={() => onEntryMouseEnter(index)}
         onMouseUp={() => onEntryMouseUp(index)}
         onMouseDown={handleMouseDown}
@@ -490,6 +517,7 @@ function WorkspaceEntry({
           <span
             className="sidebar-status-dot"
             style={{ backgroundColor: statusColor }}
+            title={activityLabel}
           />
           <span className="sidebar-entry-index" aria-hidden="true">
             {index + 1}

@@ -71,6 +71,26 @@ normalize_appimage_root() {
   fi
 }
 
+patch_appimage_runtime_env() {
+  local hook="$APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+
+  if [[ ! -f "$hook" ]]; then
+    echo "Expected AppImage GTK hook not found at $hook" >&2
+    exit 1
+  fi
+
+  sed -i 's/^export GDK_BACKEND=x11\b/export GDK_BACKEND="${GDK_BACKEND:-x11}"/' "$hook"
+
+  if ! grep -q '^export GDK_BACKEND=' "$hook"; then
+    echo "Expected GDK_BACKEND setting not found in $hook" >&2
+    exit 1
+  fi
+
+  if ! grep -q '^export WEBKIT_DISABLE_DMABUF_RENDERER=' "$hook"; then
+    sed -i '/^export GDK_BACKEND=/a export WEBKIT_DISABLE_DMABUF_RENDERER=1 # Avoid WebKitGTK GBM\/DMABUF aborts on Fedora\/NVIDIA AppImage runs.' "$hook"
+  fi
+}
+
 cd "$ROOT_DIR"
 tauri build "$@"
 
@@ -92,6 +112,7 @@ if [[ ! -x "$APPIMAGE_PLUGIN" ]]; then
 fi
 
 normalize_appimage_root
+patch_appimage_runtime_env
 
 rm -f "$APPIMAGE_DIR"/ForkTTY_*.AppImage "$APPIMAGE_DIR"/ForkTTY-*.AppImage
 (

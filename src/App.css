@@ -20,7 +20,7 @@
   --sidebar-bg: #11111b;
   --sidebar-border: #313244;
 
-  --muted: #7f849c;
+  --muted: #8f96ae;
   --border-subtle: rgba(166, 173, 200, 0.1);
   --border-visible: rgba(166, 173, 200, 0.18);
   --hover-bg: rgba(205, 214, 244, 0.07);
@@ -376,7 +376,7 @@ textarea {
 .sidebar-header-title {
   font-size: 15px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   color: var(--theme-fg);
 }
 
@@ -630,7 +630,7 @@ textarea {
   max-width: 100%;
   font-weight: 600;
   font-size: 13px;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
@@ -982,7 +982,7 @@ textarea {
 .notification-panel-title {
   font-size: 14px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .notification-panel-subtitle {
@@ -1213,7 +1213,7 @@ textarea {
 .settings-panel-title {
   font-size: 14px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .settings-panel-subtitle {
@@ -1473,7 +1473,7 @@ textarea {
   border-bottom: 1px solid rgba(166, 173, 200, 0.08);
   color: var(--theme-fg);
   font-size: 15px;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   font-weight: 500;
   outline: none;
   transition:
@@ -2260,7 +2260,6 @@ textarea {
   height: 100%;
   padding: clamp(20px, 3vw, 32px);
   background:
-    radial-gradient(circle at top right, rgba(137, 180, 250, 0.1), transparent 32%),
     linear-gradient(180deg, rgba(205, 214, 244, 0.03), rgba(205, 214, 244, 0)),
     var(--theme-bg);
   color: var(--theme-fg);
@@ -2288,9 +2287,9 @@ textarea {
 
 .terminal-pane-state-title {
   max-width: 560px;
-  font-size: clamp(18px, 2.2vw, 24px);
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   line-height: 1.05;
 }
 
@@ -2776,7 +2775,7 @@ body.pane-dragging * {
   border-bottom: 1px solid rgba(166, 173, 200, 0.08);
   color: var(--theme-fg);
   font-size: 15px;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   outline: none;
   transition:
     background-color var(--transition-fast),
@@ -3011,14 +3010,11 @@ body.pane-dragging * {
 }
 
 :root {
-  --shortcut-bar-height: 58px;
+  --shortcut-bar-height: 42px;
 }
 
 .app {
-  background:
-    radial-gradient(circle at top left, rgba(64, 86, 170, 0.22), transparent 30%),
-    radial-gradient(circle at top right, rgba(47, 63, 120, 0.18), transparent 28%),
-    linear-gradient(180deg, #0d1020, #090b16 55%, #070911);
+  background: linear-gradient(180deg, #101421 0%, #0b0e18 54%, #070911 100%);
 }
 
 .app-main {
@@ -3032,9 +3028,7 @@ body.pane-dragging * {
   height: 100%;
   min-height: 0;
   padding: 18px 18px 14px;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(106, 135, 255, 0.12), transparent 22%),
-    radial-gradient(circle at 100% 0%, rgba(98, 116, 198, 0.08), transparent 20%);
+  background: linear-gradient(180deg, rgba(20, 24, 42, 0.82), rgba(8, 10, 19, 0.36));
 }
 
 .dashboard-chrome {
@@ -3068,7 +3062,7 @@ body.pane-dragging * {
 .dashboard-hero-title {
   font-size: 17px;
   font-weight: 700;
-  letter-spacing: -0.025em;
+  letter-spacing: 0;
   color: #f3f6ff;
 }
 
@@ -3090,7 +3084,7 @@ body.pane-dragging * {
   width: 100%;
   padding: 0 14px;
   border: 1px solid rgba(120, 138, 209, 0.28);
-  border-radius: 12px;
+  border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(31, 36, 61, 0.96), rgba(19, 23, 41, 0.96)),
     rgba(15, 18, 31, 0.9);
@@ -3126,7 +3120,7 @@ body.pane-dragging * {
   flex-shrink: 0;
   padding: 7px 10px;
   border: 1px solid rgba(166, 173, 200, 0.12);
-  border-radius: 999px;
+  border-radius: 6px;
   background: rgba(205, 214, 244, 0.04);
   font-family: var(--mono-font-stack);
   font-size: 11px;
@@ -3147,7 +3141,7 @@ body.pane-dragging * {
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid rgba(166, 173, 200, 0.12);
-  border-radius: 14px;
+  border-radius: 8px;
   background: rgba(16, 20, 34, 0.72);
   color: rgba(221, 229, 250, 0.84);
   cursor: pointer;
@@ -3170,7 +3164,7 @@ body.pane-dragging * {
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: rgba(137, 180, 250, 0.18);
   color: #9ec4ff;
   font-family: var(--mono-font-stack);
@@ -3190,7 +3184,7 @@ body.pane-dragging * {
   gap: 3px;
   padding: 10px 14px;
   border: 1px solid rgba(119, 136, 202, 0.14);
-  border-radius: 12px;
+  border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(25, 29, 49, 0.92), rgba(14, 17, 31, 0.92)),
     rgba(15, 18, 31, 0.86);
@@ -3210,7 +3204,7 @@ body.pane-dragging * {
 .dashboard-signal-value {
   font-size: 22px;
   font-weight: 700;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   color: #f4f7ff;
 }
 
@@ -3245,7 +3239,7 @@ body.pane-dragging * {
   min-height: 0;
   padding: 14px;
   border: 1px solid rgba(120, 138, 209, 0.16);
-  border-radius: 12px;
+  border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(18, 22, 38, 0.92), rgba(9, 11, 22, 0.96)),
     rgba(9, 11, 22, 0.94);
@@ -3270,7 +3264,7 @@ body.pane-dragging * {
   overflow-y: auto;
   padding: 18px;
   border: 1px solid rgba(120, 138, 209, 0.16);
-  border-radius: 12px;
+  border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(20, 23, 40, 0.96), rgba(12, 14, 25, 0.98)),
     rgba(12, 14, 25, 0.96);
@@ -3299,7 +3293,7 @@ body.pane-dragging * {
 .workspace-inspector-title {
   font-size: 22px;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   color: #f2f6ff;
 }
 
@@ -3325,7 +3319,7 @@ body.pane-dragging * {
   min-height: 40px;
   padding: 0 12px;
   border: 1px solid rgba(166, 173, 200, 0.1);
-  border-radius: 14px;
+  border-radius: 8px;
   background: rgba(205, 214, 244, 0.035);
   color: rgba(229, 236, 255, 0.84);
   cursor: pointer;
@@ -3376,7 +3370,7 @@ body.pane-dragging * {
 .workspace-progress-card,
 .dashboard-empty-row {
   border: 1px solid rgba(166, 173, 200, 0.08);
-  border-radius: 16px;
+  border-radius: 8px;
   background: rgba(205, 214, 244, 0.028);
 }
 
@@ -3507,8 +3501,7 @@ body.pane-dragging * {
   padding: 18px 16px 16px;
   border-bottom: 1px solid rgba(120, 138, 209, 0.14);
   background:
-    radial-gradient(circle at top left, rgba(111, 139, 255, 0.14), transparent 38%),
-    linear-gradient(180deg, rgba(205, 214, 244, 0.045), rgba(205, 214, 244, 0.01)),
+    linear-gradient(180deg, rgba(205, 214, 244, 0.052), rgba(205, 214, 244, 0.01)),
     var(--sidebar-bg);
 }
 
@@ -3525,7 +3518,7 @@ body.pane-dragging * {
   width: 42px;
   height: 42px;
   border: 1px solid rgba(137, 180, 250, 0.26);
-  border-radius: 14px;
+  border-radius: 8px;
   background: linear-gradient(135deg, rgba(86, 111, 230, 0.28), rgba(20, 28, 61, 0.94));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
@@ -3544,7 +3537,7 @@ body.pane-dragging * {
   width: 100%;
   padding: 0 12px;
   border: 1px solid rgba(120, 138, 209, 0.2);
-  border-radius: 14px;
+  border-radius: 8px;
   background: rgba(205, 214, 244, 0.04);
   color: rgba(229, 236, 255, 0.78);
   cursor: pointer;
@@ -3589,7 +3582,7 @@ body.pane-dragging * {
   gap: 4px;
   padding: 12px;
   border: 1px solid rgba(166, 173, 200, 0.08);
-  border-radius: 16px;
+  border-radius: 8px;
   background: rgba(205, 214, 244, 0.028);
 }
 
@@ -3604,7 +3597,7 @@ body.pane-dragging * {
 .sidebar-header-stat-value {
   font-size: 19px;
   font-weight: 700;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   color: #f4f7ff;
 }
 
@@ -3620,7 +3613,7 @@ body.pane-dragging * {
 
 .sidebar-secondary-actions {
   padding: 6px;
-  border-radius: 16px;
+  border-radius: 8px;
   background: rgba(205, 214, 244, 0.025);
 }
 
@@ -3631,7 +3624,7 @@ body.pane-dragging * {
 .sidebar-entry {
   margin-bottom: 10px;
   padding: 14px 13px 13px;
-  border-radius: 18px;
+  border-radius: 8px;
   border-color: rgba(120, 138, 209, 0.08);
   background:
     linear-gradient(180deg, rgba(205, 214, 244, 0.038), rgba(205, 214, 244, 0.016)),
@@ -3656,6 +3649,37 @@ body.pane-dragging * {
     0 18px 34px rgba(5, 8, 17, 0.2);
 }
 
+.sidebar-entry-live .sidebar-status-dot {
+  box-shadow:
+    0 0 0 3px rgba(166, 227, 161, 0.12),
+    0 0 12px rgba(166, 227, 161, 0.28);
+}
+
+.sidebar-entry-unread {
+  border-color: rgba(137, 180, 250, 0.28);
+  background:
+    linear-gradient(180deg, rgba(137, 180, 250, 0.09), rgba(205, 214, 244, 0.018)),
+    rgba(205, 214, 244, 0.02);
+}
+
+.sidebar-entry-worktree .sidebar-branch {
+  color: rgba(177, 231, 173, 0.94);
+}
+
+.sidebar-entry-wt-dirty {
+  border-left-color: rgba(249, 226, 175, 0.78);
+}
+
+.sidebar-entry-wt-conflicts,
+.sidebar-entry-wt-error {
+  border-left-color: rgba(243, 139, 168, 0.84);
+}
+
+.sidebar-wt-error {
+  color: var(--theme-red);
+  background: rgba(243, 139, 168, 0.14);
+}
+
 .sidebar-entry-meta {
   margin-top: 8px;
 }
@@ -3672,7 +3696,7 @@ body.pane-dragging * {
   gap: 10px;
   min-height: 44px;
   padding: 0 12px;
-  border-radius: 14px;
+  border-radius: 8px;
   border: 1px solid rgba(166, 173, 200, 0.08);
   background: rgba(205, 214, 244, 0.03);
   color: rgba(229, 236, 255, 0.8);
@@ -3681,9 +3705,9 @@ body.pane-dragging * {
 .shortcut-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 0 18px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0 14px;
   height: var(--shortcut-bar-height);
   background:
     linear-gradient(180deg, rgba(16, 18, 31, 0.98), rgba(8, 10, 19, 0.98)),
@@ -3696,13 +3720,19 @@ body.pane-dragging * {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .shortcut-status-label {
   font-size: 14px;
   font-weight: 700;
   color: #f0f4ff;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .shortcut-status-meta,
@@ -3710,9 +3740,9 @@ body.pane-dragging * {
 .shortcut-status-path {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
   border: 1px solid rgba(166, 173, 200, 0.1);
   background: rgba(205, 214, 244, 0.04);
 }
@@ -3736,7 +3766,7 @@ body.pane-dragging * {
 
 .shortcut-status-path {
   min-width: 0;
-  max-width: 340px;
+  max-width: 280px;
   font-family: var(--mono-font-stack);
   font-size: 11px;
   color: rgba(205, 214, 244, 0.62);
@@ -3746,18 +3776,29 @@ body.pane-dragging * {
 }
 
 .shortcut-divider {
-  flex: 1;
-  min-width: 24px;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(120, 138, 209, 0.16), transparent);
+  flex: 0 0 1px;
+  width: 1px;
+  min-width: 1px;
+  height: 18px;
+  background: rgba(120, 138, 209, 0.18);
+}
+
+.shortcut-hints {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .shortcut-hint {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 6px;
+  font-size: 11px;
   color: rgba(219, 227, 248, 0.8);
+  white-space: nowrap;
+  letter-spacing: 0;
 }
 
 .shortcut-hint kbd,
@@ -3766,7 +3807,8 @@ body.pane-dragging * {
 }
 
 .pane-toolbar {
-  min-height: 44px;
+  height: 38px;
+  min-height: 38px;
   padding: 0 10px 0 12px;
   border-bottom: 1px solid rgba(120, 138, 209, 0.16);
   background:
@@ -3777,17 +3819,18 @@ body.pane-dragging * {
 .pane-toolbar-title {
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0;
   color: rgba(240, 244, 255, 0.9);
 }
 
 .pane-toolbar-btn {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: 6px;
 }
 
 .terminal-pane {
-  border-radius: 18px;
+  border-radius: 8px;
   border-color: rgba(120, 138, 209, 0.18);
   background:
     linear-gradient(180deg, rgba(18, 20, 34, 0.98), rgba(10, 12, 22, 0.98)),
@@ -4004,6 +4047,18 @@ body.pane-dragging * {
 
   .shortcut-status-meta,
   .shortcut-divider {
+    display: none;
+  }
+
+  .shortcut-bar {
+    padding: 0 10px;
+  }
+
+  .shortcut-status {
+    width: 100%;
+  }
+
+  .shortcut-hints {
     display: none;
   }
 }

@@ -36,6 +36,7 @@ export function toXtermTheme(theme: TerminalTheme): ITheme {
  */
 export function applyThemeCssVars(theme: TerminalTheme): void {
   const root = document.documentElement;
+  root.dataset.theme = "applied";
   const set = (name: string, value: string | null) => {
     if (value) root.style.setProperty(name, value);
   };

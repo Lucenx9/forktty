@@ -5,7 +5,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
-import { spawnPty, writePty, resizePty, killPty, logError } from "../lib/pty-bridge";
+import {
+  spawnPty,
+  writePty,
+  resizePty,
+  killPty,
+  logError,
+  hasTauriRuntime,
+} from "../lib/pty-bridge";
 import {
   registerTerminal,
   unregisterTerminal,
@@ -31,6 +38,7 @@ import {
   splitPaneWithInheritedCwd,
 } from "../lib/workspace-launch";
 import { dispatchWorkspaceNotification } from "../lib/notification-dispatch";
+import { buildTerminalFontFamily } from "../lib/terminal-fonts";
 import { Columns2, Rows2, Search, GripVertical, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
@@ -416,7 +424,7 @@ const TerminalPane = memo(function TerminalPane({
     if (termRef.current && configTheme) {
       const fontFamily = configTheme.font_family ?? "monospace";
       const fontSize = (configTheme.font_size ?? 14) + fontSizeOffset;
-      termRef.current.options.fontFamily = `'${fontFamily}', 'Symbols Nerd Font Mono', monospace`;
+      termRef.current.options.fontFamily = buildTerminalFontFamily(fontFamily);
       termRef.current.options.fontSize = fontSize;
       // Only fit if container is visible (non-zero dimensions)
       const el = containerRef.current;
@@ -440,7 +448,13 @@ const TerminalPane = memo(function TerminalPane({
       ptyId: null,
       lastCols: null,
       lastRows: null,
+      disposed: false,
     };
+    runtime.disposed = false;
+    let disposed = false;
+    let hasExited = false;
+    let fontReadyCancelled = false;
+    const isDisposed = () => disposed || runtime.disposed;
     const outputBuffer = createPtyOutputBufferState();
     let outputDrainRaf: number | null = null;
     let outputWriteInFlight = false;
@@ -448,7 +462,7 @@ const TerminalPane = memo(function TerminalPane({
 
     function drainOutputQueue() {
       if (
-        disposed ||
+        isDisposed() ||
         outputWriteInFlight ||
         (outputBuffer.totalBytes === 0 && droppedOutputBytes === 0)
       ) {
@@ -468,7 +482,7 @@ const TerminalPane = memo(function TerminalPane({
       const payload = concatUint8Arrays(chunks);
       term.write(payload, () => {
         outputWriteInFlight = false;
-        if (disposed) return;
+        if (isDisposed()) return;
         if (outputBuffer.totalBytes > 0 || droppedOutputBytes > 0) {
           outputDrainRaf = requestAnimationFrame(() => {
             outputDrainRaf = null;
@@ -479,7 +493,7 @@ const TerminalPane = memo(function TerminalPane({
     }
 
     function scheduleOutputDrain() {
-      if (disposed || outputDrainRaf !== null) return;
+      if (isDisposed() || outputDrainRaf !== null) return;
       outputDrainRaf = requestAnimationFrame(() => {
         outputDrainRaf = null;
         drainOutputQueue();
@@ -514,7 +528,7 @@ const TerminalPane = memo(function TerminalPane({
       term = new Terminal({
         cursorBlink: true,
         fontSize,
-        fontFamily: `'${fontFamily}', 'Symbols Nerd Font Mono', monospace`,
+        fontFamily: buildTerminalFontFamily(fontFamily),
         theme: cfgStore.xtermTheme ?? undefined,
       });
 
@@ -564,14 +578,11 @@ const TerminalPane = memo(function TerminalPane({
     }
 
     // Spawn PTY only for new instances (re-adopted instances keep their PTY)
-    let disposed = false;
-    let hasExited = false;
-    let fontReadyCancelled = false;
 
     if ("fonts" in document) {
       document.fonts.ready
         .then(() => {
-          if (disposed || fontReadyCancelled) return;
+          if (isDisposed() || fontReadyCancelled) return;
           if (container.clientWidth > 0 && container.clientHeight > 0) {
             fitAddonRef.current?.fit();
           }
@@ -598,7 +609,7 @@ const TerminalPane = memo(function TerminalPane({
       }
 
       function handleScanEvent(event: ScanEventData) {
-        if (disposed) return;
+        if (isDisposed()) return;
 
         // Handle OSC 9/99/777 notification events
         if (event.event_type === "notification") {
@@ -647,11 +658,11 @@ const TerminalPane = memo(function TerminalPane({
 
       resolveWorkspaceSpawnCwd(workspaceId, cwd)
         .then((spawnCwd) => {
-          if (disposed) return null;
+          if (isDisposed()) return null;
 
           return spawnPty({
             onOutput: (data) => {
-              if (!disposed) {
+              if (!isDisposed()) {
                 const dropped = enqueueBoundedPtyOutput(
                   outputBuffer,
                   data as Uint8Array,
@@ -671,7 +682,7 @@ const TerminalPane = memo(function TerminalPane({
               }
             },
             onExit: () => {
-              if (!disposed) {
+              if (!isDisposed()) {
                 hasExited = true;
                 runtime.ptyId = null;
                 unregisterSurface(paneId);
@@ -694,7 +705,7 @@ const TerminalPane = memo(function TerminalPane({
         })
         .then((id) => {
           if (id === null) return;
-          if (disposed) {
+          if (isDisposed()) {
             // Pane was closed before spawn resolved; kill the orphaned PTY.
             killPty(id).catch(logError);
             return;
@@ -710,8 +721,16 @@ const TerminalPane = memo(function TerminalPane({
           resizePty(id, cols, rows).catch(logError);
         })
         .catch((err) => {
-          logError(err);
-          term.write(`\r\n\x1b[31mFailed to spawn PTY: ${err}\x1b[0m\r\n`);
+          const message = String(err);
+          if (
+            hasTauriRuntime() ||
+            !message.includes("PTY spawn is only available inside the Tauri app")
+          ) {
+            logError(err);
+          }
+          if (!isDisposed()) {
+            term.write(`\r\n\x1b[31mFailed to spawn PTY: ${message}\x1b[0m\r\n`);
+          }
         });
     }
 
@@ -787,6 +806,7 @@ const TerminalPane = memo(function TerminalPane({
       } else {
         // CLOSE: destroy everything
         disposed = true;
+        runtime.disposed = true;
         outputBuffer.chunks = [];
         outputBuffer.totalBytes = 0;
         droppedOutputBytes = 0;

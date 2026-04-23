@@ -187,6 +187,13 @@ pub fn create(
         return Err(WorktreeError::AlreadyExists(worktree_name));
     }
 
+    // Compute path and ensure parent directory exists before creating the branch,
+    // so filesystem errors cannot leave an orphan branch behind.
+    let wt_path = worktree_path(workdir, &worktree_name, layout)?;
+    if let Some(parent) = wt_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     // Create branch from HEAD
     let head_commit = repo
         .head()
@@ -194,20 +201,25 @@ pub fn create(
         .peel_to_commit()
         .map_err(|e| WorktreeError::Other(format!("HEAD is not a commit: {e}")))?;
 
-    let branch = repo.branch(branch_name, &head_commit, false)?;
-    let branch_ref = branch.into_reference();
-    let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
+    let (branch, worktree_result) = {
+        let branch = repo.branch(branch_name, &head_commit, false)?;
+        let branch_ref = branch.into_reference();
+        let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
 
-    // Compute path and ensure parent directory exists
-    let wt_path = worktree_path(workdir, &worktree_name, layout)?;
-    if let Some(parent) = wt_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        // Create worktree
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&branch_ref));
+        let worktree_result = repo
+            .worktree(&worktree_name, &wt_path, Some(&opts))
+            .map(|_| ());
+        (branch, worktree_result)
+    };
+    if let Err(err) = worktree_result {
+        if let Ok(mut created_branch) = repo.find_branch(&branch, BranchType::Local) {
+            let _ = created_branch.delete();
+        }
+        return Err(err.into());
     }
-
-    // Create worktree
-    let mut opts = git2::WorktreeAddOptions::new();
-    opts.reference(Some(&branch_ref));
-    repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
 
     Ok(WorktreeInfo {
         name: branch.clone(),
@@ -644,7 +656,7 @@ pub fn list_branches(repo_path: &str) -> Result<Vec<BranchInfo>, WorktreeError> 
     }
 
     // Sort descending by last_commit_time (most recent first).
-    result.sort_by(|a, b| b.last_commit_time.cmp(&a.last_commit_time));
+    result.sort_by_key(|branch| std::cmp::Reverse(branch.last_commit_time));
 
     Ok(result)
 }
@@ -955,6 +967,22 @@ mod tests {
             result,
             Err(WorktreeError::WorktreeDirty(name)) if name == "remove-guard"
         ));
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn create_removes_branch_if_worktree_creation_fails() {
+        let (repo_path, repo, _main_ref) = make_temp_repo("create-rollback");
+        let branch_name = "orphan-cleanup";
+        let wt_path = worktree_path(&repo_path, branch_name, "nested").unwrap();
+        fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        fs::write(&wt_path, "not a directory").unwrap();
+
+        let result = create(repo_path.to_str().unwrap(), branch_name, "nested");
+
+        assert!(result.is_err());
+        assert!(repo.find_branch(branch_name, BranchType::Local).is_err());
 
         let _ = fs::remove_dir_all(&repo_path);
     }

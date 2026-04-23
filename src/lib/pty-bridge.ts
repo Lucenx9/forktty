@@ -61,6 +61,8 @@ function isMissingTauriRuntimeError(err: unknown): boolean {
     message.includes("__TAURI_INTERNALS__") ||
     message.includes("reading 'invoke'") ||
     message.includes('reading "invoke"') ||
+    message.includes("reading 'transformCallback'") ||
+    message.includes('reading "transformCallback"') ||
     message.includes("window is not defined")
   );
 }
@@ -87,6 +89,12 @@ export function spawnPty(opts: {
   rows?: number;
   onScanEvent?: (event: ScanEventData) => void;
 }): Promise<number> {
+  if (!hasTauriRuntime()) {
+    return Promise.reject(
+      new Error("PTY spawn is only available inside the Tauri app"),
+    );
+  }
+
   const onOutputChannel = new Channel<PtyEvent>();
 
   onOutputChannel.onmessage = (event: PtyEvent) => {

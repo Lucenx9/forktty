@@ -195,9 +195,14 @@ export async function handleSocketRequest(
 
         const response: Record<string, unknown> = { id: wsId };
         if (prompt) {
-          const ptyId = await waitForWorkspacePty(wsId);
-          response.pty_id = ptyId;
-          await writePty(ptyId, prompt);
+          try {
+            const ptyId = await waitForWorkspacePty(wsId);
+            response.pty_id = ptyId;
+            await writePty(ptyId, prompt);
+          } catch (err) {
+            useWorkspaceStore.getState().closeWorkspace(wsId);
+            throw err;
+          }
         }
 
         result = { result: response };
