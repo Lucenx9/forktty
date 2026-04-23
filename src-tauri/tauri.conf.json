@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": ["deb", "rpm", "appimage"],
     "publisher": "Lucenx9",
     "homepage": "https://github.com/Lucenx9/forktty",
     "category": "DeveloperTool",

@@ -86,9 +86,16 @@ patch_appimage_runtime_env() {
     exit 1
   fi
 
-  if ! grep -q '^export WEBKIT_DISABLE_DMABUF_RENDERER=' "$hook"; then
-    sed -i '/^export GDK_BACKEND=/a export WEBKIT_DISABLE_DMABUF_RENDERER=1 # Avoid WebKitGTK GBM\/DMABUF aborts on Fedora\/NVIDIA AppImage runs.' "$hook"
-  fi
+  sed -i \
+    -e '/^export WEBKIT_DISABLE_DMABUF_RENDERER=/d' \
+    -e '/^export WEBKIT_DISABLE_COMPOSITING_MODE=/d' \
+    -e '/^export LIBGL_ALWAYS_SOFTWARE=/d' \
+    "$hook"
+
+  sed -i '/^export GDK_BACKEND=/a\
+export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" # Avoid host GPU/EGL crashes in WebKitGTK AppImage runs.\
+export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}" # Avoid WebKitGTK GBM/DMABUF aborts on Fedora/NVIDIA AppImage runs.\
+export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}" # Fall back when WebKitGTK accelerated compositing aborts.' "$hook"
 }
 
 cd "$ROOT_DIR"

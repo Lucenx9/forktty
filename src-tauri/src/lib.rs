@@ -487,6 +487,9 @@ pub fn run() {
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
 
     // WebKitGTK routes localhost through http_proxy, causing blank window in dev.
     // Ensure localhost is excluded from proxy.
