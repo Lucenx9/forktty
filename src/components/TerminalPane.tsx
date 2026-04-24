@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
 import {
@@ -317,6 +318,7 @@ const TerminalPane = memo(function TerminalPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
@@ -504,6 +506,7 @@ const TerminalPane = memo(function TerminalPane({
       wrapper = saved.wrapper;
       termRef.current = term;
       fitAddonRef.current = saved.fitAddon;
+      canvasAddonRef.current = saved.canvasAddon;
       searchAddonRef.current = saved.searchAddon;
       container.appendChild(wrapper);
       registerTerminal(paneId, term);
@@ -534,6 +537,15 @@ const TerminalPane = memo(function TerminalPane({
       const fitAddon = new FitAddon();
       fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
+
+      try {
+        const canvasAddon = new CanvasAddon();
+        canvasAddonRef.current = canvasAddon;
+        term.loadAddon(canvasAddon);
+      } catch (err) {
+        canvasAddonRef.current = null;
+        logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
+      }
 
       // Use an intermediary wrapper so xterm DOM survives React unmount
       wrapper = document.createElement("div");
@@ -788,6 +800,7 @@ const TerminalPane = memo(function TerminalPane({
           wrapper,
           runtime,
           fitAddon: fitAddonRef.current!,
+          canvasAddon: canvasAddonRef.current,
           searchAddon: searchAddonRef.current!,
         });
       } else {
@@ -800,6 +813,8 @@ const TerminalPane = memo(function TerminalPane({
         if (outputDrainRaf !== null) {
           cancelAnimationFrame(outputDrainRaf);
         }
+        canvasAddonRef.current?.dispose();
+        canvasAddonRef.current = null;
         term.dispose();
 
         const id = runtime.ptyId;

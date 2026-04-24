@@ -1,5 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import type { CanvasAddon } from "@xterm/addon-canvas";
 import type { SearchAddon } from "@xterm/addon-search";
 
 // --- Active terminal map (for readScreen / socket API) ---
@@ -50,6 +51,7 @@ export interface SavedTerminalInstance {
   wrapper: HTMLDivElement;
   runtime: SavedTerminalRuntime;
   fitAddon: FitAddon;
+  canvasAddon: CanvasAddon | null;
   searchAddon: SearchAddon;
 }
 
