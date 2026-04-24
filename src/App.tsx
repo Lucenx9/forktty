@@ -26,7 +26,6 @@ import type { BranchPickerResult } from "./components/BranchPicker";
 import ErrorToast, { showToast } from "./components/ErrorToast";
 import { ConfirmModal, PromptModal } from "./components/InlineModal";
 import ShortcutBar from "./components/ShortcutBar";
-const WelcomeScreen = lazy(() => import("./components/WelcomeScreen"));
 import { useWorkspaceStore } from "./stores/workspace";
 import { useConfigStore } from "./stores/config";
 import type { Direction } from "./stores/workspace";
@@ -89,7 +88,7 @@ function isTerminalTarget(target: EventTarget | null): boolean {
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "forktty.sidebar-collapsed";
 const SIDEBAR_COLLAPSE_WIDTH_PX = 56;
-const SIDEBAR_EXPANDED_DEFAULT_PX = 280;
+const SIDEBAR_EXPANDED_DEFAULT_PX = 232;
 const SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
 
 export default function App() {
@@ -106,7 +105,6 @@ export default function App() {
     id: string;
     currentName: string;
   } | null>(null);
-  const [showWelcome, setShowWelcome] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "1";
@@ -387,10 +385,9 @@ export default function App() {
     }
   }, [sidebarCollapsed]);
 
-  // Restore session on startup; show welcome if no session exists
+  // Restore session on startup.
   useEffect(() => {
     if (!hasTauriRuntime()) {
-      setShowWelcome(true);
       setSessionHydrated(true);
       return;
     }
@@ -414,8 +411,6 @@ export default function App() {
             "INFO",
             `Restored session with ${data.workspaces.length} workspaces`,
           ).catch(logError);
-        } else {
-          setShowWelcome(true);
         }
       })
       .catch((err) => {
@@ -899,7 +894,7 @@ export default function App() {
           : `${SIDEBAR_EXPANDED_DEFAULT_PX}px`
       }
       minSize={`${SIDEBAR_COLLAPSE_WIDTH_PX}px`}
-      maxSize="420px"
+      maxSize="320px"
       collapsedSize={`${SIDEBAR_COLLAPSE_WIDTH_PX}px`}
       collapsible
       groupResizeBehavior="preserve-pixel-size"
@@ -978,7 +973,6 @@ export default function App() {
           {showBranchPicker && (
             <BranchPicker cwd={branchPickerCwd} onResult={handleBranchPickerResult} />
           )}
-          {showWelcome && <WelcomeScreen onDismiss={() => setShowWelcome(false)} />}
         </Suspense>
       </LazyErrorBoundary>
       {pendingCloseWs && (

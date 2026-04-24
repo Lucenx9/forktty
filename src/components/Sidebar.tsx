@@ -6,7 +6,7 @@ import {
   closeWorkspaceEnsuringOneRemains,
 } from "../stores/workspace";
 import { useConfigStore } from "../stores/config";
-import { selectTotalUnread, selectTotalPaneCount } from "../stores/selectors";
+import { selectTotalUnread } from "../stores/selectors";
 import type { Workspace } from "../stores/workspace";
 import {
   getCwd,
@@ -31,14 +31,9 @@ import {
   Command,
   ChevronsLeft,
   ChevronsRight,
-  CircleHelp,
-  Search,
   X,
   GripVertical,
-  GitMerge,
-  Trash2,
 } from "lucide-react";
-import WorkspaceMetadataView from "./WorkspaceMetadataView";
 import { truncatePath } from "../lib/path-utils";
 
 const ACTIVITY_THRESHOLD_MS = 3000;
@@ -383,7 +378,6 @@ function WorkspaceEntry({
   const workspaceOrder = useWorkspaceStore((s) => s.workspaceOrder);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(workspace.name);
-  const [pendingRemove, setPendingRemove] = useState(false);
   const [pendingClose, setPendingClose] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const canClose = workspaceOrder.length > 1;
@@ -437,22 +431,6 @@ function WorkspaceEntry({
       renameWorkspace(workspace.id, trimmed);
     }
     setEditing(false);
-  }
-
-  function handleMerge(e: React.MouseEvent) {
-    e.stopPropagation();
-    worktreeMerge(workspace.worktreeName, workspace.workingDir || workspace.worktreeDir)
-      .then((msg) => {
-        showToast(String(msg), "info");
-      })
-      .catch((err) => {
-        showToast(`Merge failed: ${err}`, "error");
-      });
-  }
-
-  function handleRemove(e: React.MouseEvent) {
-    e.stopPropagation();
-    setPendingRemove(true);
   }
 
   function handleClose(e: React.MouseEvent) {
@@ -603,57 +581,7 @@ function WorkspaceEntry({
             )}
           </div>
         )}
-        <WorkspaceMetadataView workspaceId={workspace.id} isActive={isActive} />
-        {!isActive && workspace.lastNotificationText && (
-          <div className="sidebar-notification-preview">
-            {workspace.lastNotificationText}
-          </div>
-        )}
-        {isWorktree && isActive && (
-          <div className="sidebar-entry-actions">
-            <button
-              type="button"
-              className="sidebar-action-btn"
-              onClick={handleMerge}
-              title="Merge branch into main"
-            >
-              <GitMerge size={12} />
-              <span>Merge</span>
-            </button>
-            <button
-              type="button"
-              className="sidebar-action-btn sidebar-action-danger"
-              onClick={handleRemove}
-              title="Remove worktree and delete branch"
-            >
-              <Trash2 size={12} />
-              <span>Remove</span>
-            </button>
-          </div>
-        )}
       </div>
-      {pendingRemove &&
-        createPortal(
-          <ConfirmModal
-            title="Remove Worktree"
-            message={`Remove worktree "${worktreeLabel(workspace)}" and delete branch?${worktreeStatusWarning(workspace.worktreeStatus)}`}
-            confirmLabel="Remove"
-            danger={true}
-            onConfirm={() => {
-              setPendingRemove(false);
-              worktreeRemove(
-                workspace.worktreeName,
-                workspace.workingDir || workspace.worktreeDir,
-              )
-                .then((fallbackWorkingDir) =>
-                  closeWorkspaceEnsuringOneRemains(workspace.id, fallbackWorkingDir),
-                )
-                .catch((err) => showToast(`Remove failed: ${err}`, "error"));
-            }}
-            onCancel={() => setPendingRemove(false)}
-          />,
-          document.body,
-        )}
       {pendingClose &&
         createPortal(
           <ConfirmModal
@@ -670,166 +598,6 @@ function WorkspaceEntry({
           document.body,
         )}
     </>
-  );
-}
-
-// --- Help button ---
-
-function HelpButton() {
-  const [open, setOpen] = useState(false);
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function updateMenuPosition() {
-      const btn = btnRef.current;
-      const menu = menuRef.current;
-      if (!btn || !menu) return;
-
-      const padding = 8;
-      const gap = 8;
-      const btnRect = btn.getBoundingClientRect();
-      const menuRect = menu.getBoundingClientRect();
-      const minWidth = Math.max(btnRect.width, 240);
-
-      let left = btnRect.left;
-      if (left + menuRect.width > window.innerWidth - padding) {
-        left = window.innerWidth - menuRect.width - padding;
-      }
-      left = Math.max(padding, left);
-
-      let top = btnRect.top - menuRect.height - gap;
-      if (top < padding) {
-        top = Math.min(
-          btnRect.bottom + gap,
-          window.innerHeight - menuRect.height - padding,
-        );
-      }
-
-      setMenuStyle({
-        left,
-        top,
-        minWidth,
-      });
-    }
-
-    function handleClick(e: MouseEvent) {
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target as Node) &&
-        btnRef.current &&
-        !btnRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    const rafId = requestAnimationFrame(updateMenuPosition);
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
-    return () => {
-      cancelAnimationFrame(rafId);
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
-    };
-  }, [open]);
-
-  return (
-    <div className="sidebar-help-wrapper">
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className="context-menu sidebar-help-menu"
-            style={menuStyle ?? { visibility: "hidden" }}
-          >
-            <div className="context-menu-header">ForkTTY</div>
-            <button
-              className="context-menu-item"
-              onClick={() => {
-                setOpen(false);
-                window.dispatchEvent(new CustomEvent("forktty-open-command-palette"));
-              }}
-            >
-              <span>Command Palette</span>
-              <span className="context-menu-shortcut">Ctrl+Shift+P</span>
-            </button>
-            <button
-              className="context-menu-item"
-              onClick={() => {
-                setOpen(false);
-                window.dispatchEvent(new CustomEvent("forktty-open-settings"));
-              }}
-            >
-              <span>Settings</span>
-              <span className="context-menu-shortcut">Ctrl+,</span>
-            </button>
-            <div className="context-menu-separator" />
-            <div className="context-menu-header">Keyboard Shortcuts</div>
-            <div className="help-shortcut-list">
-              <div className="help-shortcut-row">
-                <span>New Workspace</span>
-                <span className="context-menu-shortcut">Ctrl+N</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Close Workspace</span>
-                <span className="context-menu-shortcut">Ctrl+Shift+W</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Split Right</span>
-                <span className="context-menu-shortcut">Ctrl+D</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Split Down</span>
-                <span className="context-menu-shortcut">Ctrl+Shift+D</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Close Pane</span>
-                <span className="context-menu-shortcut">Ctrl+W</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Navigate Panes</span>
-                <span className="context-menu-shortcut">Alt+Arrow</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Find in Terminal</span>
-                <span className="context-menu-shortcut">Ctrl+F</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Jump to Unread</span>
-                <span className="context-menu-shortcut">Ctrl+Shift+U</span>
-              </div>
-              <div className="help-shortcut-row">
-                <span>Switch Workspace</span>
-                <span className="context-menu-shortcut">Ctrl+1..9</span>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
-      <button
-        ref={btnRef}
-        className="sidebar-icon-btn sidebar-help-btn"
-        onClick={() => setOpen((v) => !v)}
-        title="Help & Shortcuts"
-        type="button"
-        aria-label="Help and keyboard shortcuts"
-        aria-expanded={open}
-        aria-haspopup="menu"
-      >
-        <CircleHelp size={14} />
-        <span>Shortcuts</span>
-      </button>
-    </div>
   );
 }
 
@@ -960,8 +728,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
     window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
   }
   const totalUnread = useWorkspaceStore(selectTotalUnread);
-  const totalPaneCount = useWorkspaceStore(selectTotalPaneCount);
-  const activeWorkspace = workspaces[activeWorkspaceId];
   const CollapseIcon =
     sidebarPosition === "right"
       ? collapsed
@@ -1066,9 +832,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             );
           })}
         </div>
-        <div className="sidebar-footer sidebar-footer-collapsed">
-          <HelpButton />
-        </div>
       </div>
     );
   }
@@ -1076,84 +839,40 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <div className="sidebar-brand-row">
-          <div className="sidebar-brand-mark" aria-hidden="true">
-            &gt;_
+        <div className="sidebar-titlebar">
+          <div className="sidebar-header-title-row">
+            <div className="sidebar-header-title">ForkTTY</div>
+            <div className="sidebar-header-count">{workspaceOrder.length}</div>
           </div>
-          <div className="sidebar-header-copy">
-            <div className="sidebar-header-eyebrow">ForkTTY</div>
-            <div className="sidebar-header-title-row">
-              <div className="sidebar-header-title">Workspaces</div>
-              <div className="sidebar-header-count">{workspaceOrder.length}</div>
-            </div>
-            <div className="sidebar-header-subtitle">
-              {activeWorkspace?.gitBranch
-                ? `${activeWorkspace.gitBranch} on ${truncatePath(activeWorkspace.workingDir, 28)}`
-                : totalUnread > 0
-                  ? `${totalUnread} alert${totalUnread === 1 ? "" : "s"} waiting`
-                  : "Parallel terminals with isolated worktrees"}
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="sidebar-search-trigger"
-          onClick={() =>
-            window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
-          }
-          aria-label="Open command palette"
-        >
-          <Search size={14} />
-          <span className="sidebar-search-copy">Type a command or search...</span>
-          <span className="sidebar-search-shortcut">Ctrl+Shift+P</span>
-        </button>
-
-        <div className="sidebar-header-stats">
-          <div className="sidebar-header-stat">
-            <span className="sidebar-header-stat-label">Live panes</span>
-            <strong className="sidebar-header-stat-value">{totalPaneCount}</strong>
-            <span className="sidebar-header-stat-meta">Across session</span>
-          </div>
-          <div className="sidebar-header-stat">
-            <span className="sidebar-header-stat-label">Focused</span>
-            <strong className="sidebar-header-stat-value">
-              {activeWorkspace ? Object.keys(activeWorkspace.surfaces).length : 0}
-            </strong>
-            <span className="sidebar-header-stat-meta">In active workspace</span>
-          </div>
-          <div className="sidebar-header-stat">
-            <span className="sidebar-header-stat-label">Unread</span>
-            <strong className="sidebar-header-stat-value">{totalUnread}</strong>
-            <span className="sidebar-header-stat-meta">
-              {totalUnread > 0 ? "Needs review" : "All clear"}
-            </span>
-          </div>
-        </div>
-
-        <div className="sidebar-primary-actions">
           <button
+            className="sidebar-icon-btn"
             type="button"
-            className="sidebar-new-btn sidebar-new-btn-primary"
+            onClick={onToggleCollapsed}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <CollapseIcon size={14} />
+          </button>
+        </div>
+        <div className="sidebar-header-icons sidebar-secondary-actions">
+          <button
+            className="sidebar-icon-btn"
+            type="button"
             onClick={() => createWorkspaceWithInheritedCwd().catch(logError)}
             title="New workspace (Ctrl+N)"
             aria-label="New workspace"
           >
             <Plus size={14} />
-            <span>Workspace</span>
           </button>
           <button
+            className="sidebar-icon-btn sidebar-icon-btn-worktree"
             type="button"
-            className="sidebar-new-btn sidebar-new-btn-primary sidebar-worktree-btn"
             onClick={handleNewWorktree}
             title="New worktree (Ctrl+Shift+N)"
             aria-label="New worktree workspace"
           >
             <GitBranch size={14} />
-            <span>Worktree</span>
           </button>
-        </div>
-        <div className="sidebar-header-icons sidebar-secondary-actions">
           <button
             className="sidebar-icon-btn"
             type="button"
@@ -1198,15 +917,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
               <span className="sidebar-icon-badge">{totalUnread}</span>
             )}
           </button>
-          <button
-            className="sidebar-icon-btn"
-            type="button"
-            onClick={onToggleCollapsed}
-            title="Collapse sidebar"
-            aria-label="Collapse sidebar"
-          >
-            <CollapseIcon size={14} />
-          </button>
         </div>
       </div>
       <div className="sidebar-list">
@@ -1229,9 +939,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             />
           );
         })}
-      </div>
-      <div className="sidebar-footer">
-        <HelpButton />
       </div>
       {contextMenu &&
         createPortal(
