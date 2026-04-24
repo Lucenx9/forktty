@@ -7,12 +7,15 @@ const GENERIC_FONT_FAMILIES = new Set([
 ]);
 
 const TERMINAL_FONT_FALLBACKS = [
+  "Symbols Nerd Font Mono",
+  "Symbols Nerd Font",
+  "Noto Sans Symbols 2",
+  "Noto Color Emoji",
   "DejaVu Sans Mono",
   "Liberation Mono",
   "Noto Mono",
   "FreeMono",
   "monospace",
-  "Symbols Nerd Font Mono",
 ];
 
 function stripWrappingQuotes(value: string): string {

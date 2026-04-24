@@ -4,7 +4,7 @@ import { buildTerminalFontFamily } from "./terminal-fonts";
 describe("buildTerminalFontFamily", () => {
   it("prefers concrete fallbacks before generic monospace", () => {
     expect(buildTerminalFontFamily("monospace")).toBe(
-      '"DejaVu Sans Mono", "Liberation Mono", "Noto Mono", "FreeMono", monospace, "Symbols Nerd Font Mono"',
+      '"Symbols Nerd Font Mono", "Symbols Nerd Font", "Noto Sans Symbols 2", "Noto Color Emoji", "DejaVu Sans Mono", "Liberation Mono", "Noto Mono", "FreeMono", monospace',
     );
   });
 
@@ -30,7 +30,7 @@ describe("buildTerminalFontFamily", () => {
 
   it("falls back to a sane monospace stack when empty", () => {
     expect(buildTerminalFontFamily("")).toBe(
-      '"DejaVu Sans Mono", "Liberation Mono", "Noto Mono", "FreeMono", monospace, "Symbols Nerd Font Mono"',
+      '"Symbols Nerd Font Mono", "Symbols Nerd Font", "Noto Sans Symbols 2", "Noto Color Emoji", "DejaVu Sans Mono", "Liberation Mono", "Noto Mono", "FreeMono", monospace',
     );
   });
 });
