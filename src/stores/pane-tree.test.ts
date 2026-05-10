@@ -434,6 +434,26 @@ describe("findWorkspaceIdByPane", () => {
     const ws = makeWorkspace("Test");
     expect(findWorkspaceIdByPane({ [ws.id]: ws }, "unknown")).toBeNull();
   });
+
+  it("ignores panes inherited by the surfaces prototype", () => {
+    const ws = makeWorkspace("Test");
+    const inheritedSurfaceId = "inherited-surface";
+    const surfaces = Object.create({
+      [inheritedSurfaceId]: makeSurface(inheritedSurfaceId),
+    }) as typeof ws.surfaces;
+
+    expect(
+      findWorkspaceIdByPane({ [ws.id]: { ...ws, surfaces } }, inheritedSurfaceId),
+    ).toBeNull();
+  });
+
+  it("ignores workspaces inherited by the workspaces prototype", () => {
+    const ws = makeWorkspace("Test");
+    const surfaceId = Object.keys(ws.surfaces)[0]!;
+    const workspaces = Object.create({ [ws.id]: ws }) as Record<string, typeof ws>;
+
+    expect(findWorkspaceIdByPane(workspaces, surfaceId)).toBeNull();
+  });
 });
 
 // --- Session snapshot ---
