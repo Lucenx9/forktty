@@ -118,7 +118,7 @@ describe("dispatchWorkspaceNotification", () => {
   });
 
   it("should mark surface as unread if paneId provided but pane is not focused", () => {
-    mockWorkspaceState.workspaces.workspace1.focusedPaneId = "pane2";
+    mockWorkspaceState.workspaces.workspace1!.focusedPaneId = "pane2";
 
     dispatchWorkspaceNotification({
       workspaceId: "workspace1",
@@ -142,7 +142,7 @@ describe("dispatchWorkspaceNotification", () => {
   });
 
   it("should send custom notification if command is configured", () => {
-    mockConfigState.config.general.notification_command = "echo 'test'";
+    mockConfigState.config!.general.notification_command = "echo 'test'";
 
     dispatchWorkspaceNotification({
       workspaceId: "workspace1",
@@ -158,7 +158,7 @@ describe("dispatchWorkspaceNotification", () => {
   });
 
   it("should not send desktop notification if disabled in config", () => {
-    mockConfigState.config.notifications.desktop = false;
+    mockConfigState.config!.notifications.desktop = false;
 
     dispatchWorkspaceNotification({
       workspaceId: "workspace1",
@@ -170,7 +170,7 @@ describe("dispatchWorkspaceNotification", () => {
   });
 
   it("should respect playSound config", () => {
-    mockConfigState.config.notifications.sound = false;
+    mockConfigState.config!.notifications.sound = false;
 
     dispatchWorkspaceNotification({
       workspaceId: "workspace1",
