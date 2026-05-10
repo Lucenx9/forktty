@@ -93,12 +93,12 @@ describe("dispatchWorkspaceNotification", () => {
     expect(mockWorkspaceState.addNotification).toHaveBeenCalledWith(
       "workspace1",
       "Test Title",
-      "Test Body"
+      "Test Body",
     );
     expect(sendDesktopNotification).toHaveBeenCalledWith(
       "Test Title",
       "Test Body",
-      true
+      true,
     );
     expect(sendCustomNotification).not.toHaveBeenCalled();
     expect(mockWorkspaceState.setSurfaceUnread).not.toHaveBeenCalled();
@@ -114,10 +114,7 @@ describe("dispatchWorkspaceNotification", () => {
       paneId: "pane1",
     });
 
-    expect(mockWorkspaceState.setSurfaceUnread).toHaveBeenCalledWith(
-      "pane1",
-      true
-    );
+    expect(mockWorkspaceState.setSurfaceUnread).toHaveBeenCalledWith("pane1", true);
   });
 
   it("should mark surface as unread if paneId provided but pane is not focused", () => {
@@ -130,10 +127,7 @@ describe("dispatchWorkspaceNotification", () => {
       paneId: "pane1",
     });
 
-    expect(mockWorkspaceState.setSurfaceUnread).toHaveBeenCalledWith(
-      "pane1",
-      true
-    );
+    expect(mockWorkspaceState.setSurfaceUnread).toHaveBeenCalledWith("pane1", true);
   });
 
   it("should not mark surface as unread if pane is focused in active workspace", () => {
@@ -159,7 +153,7 @@ describe("dispatchWorkspaceNotification", () => {
     expect(sendCustomNotification).toHaveBeenCalledWith(
       "echo 'test'",
       "Test Title",
-      "Test Body"
+      "Test Body",
     );
   });
 
@@ -187,7 +181,7 @@ describe("dispatchWorkspaceNotification", () => {
     expect(sendDesktopNotification).toHaveBeenCalledWith(
       "Test Title",
       "Test Body",
-      false
+      false,
     );
   });
 
@@ -203,7 +197,7 @@ describe("dispatchWorkspaceNotification", () => {
     expect(sendDesktopNotification).toHaveBeenCalledWith(
       "Test Title",
       "Test Body",
-      true
+      true,
     );
     expect(sendCustomNotification).not.toHaveBeenCalled();
   });
