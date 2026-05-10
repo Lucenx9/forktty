@@ -14,7 +14,7 @@ import {
 } from "../lib/pty-bridge";
 import { buildSessionPayload } from "../lib/session-persistence";
 
-const SESSION_SAVE_DEBOUNCE_MS = 2000;
+const SESSION_SAVE_DEBOUNCE_MS = 1000;
 
 function computeTotalUnread(): number {
   const { workspaces } = useWorkspaceStore.getState();
@@ -28,6 +28,14 @@ function computeTotalUnread(): number {
 export function startWorkspaceEffects(): () => void {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let lastUnread = computeTotalUnread();
+
+  function flushPendingSessionSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      saveSession(buildSessionPayload()).catch(logError);
+    }
+  }
 
   // Sync document title immediately
   document.title = lastUnread > 0 ? `ForkTTY (${lastUnread})` : "ForkTTY";
@@ -54,17 +62,13 @@ export function startWorkspaceEffects(): () => void {
   // This is fire-and-forget — the async IPC may not complete, but it
   // catches the common case where a debounced save is still pending.
   function handleBeforeUnload() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-      saveSession(buildSessionPayload()).catch(logError);
-    }
+    flushPendingSessionSave();
   }
   window.addEventListener("beforeunload", handleBeforeUnload);
 
   return () => {
     unsub();
     window.removeEventListener("beforeunload", handleBeforeUnload);
-    if (saveTimer) clearTimeout(saveTimer);
+    flushPendingSessionSave();
   };
 }
