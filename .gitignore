@@ -32,5 +32,9 @@ plans/
 # Local audit artifacts
 security_best_practices_report.md
 
+# OpenClaw/Codex local artifacts
+.omc/
+**/.omc/
+
 # ForkTTY runtime
 /tmp/forktty.sock

@@ -151,7 +151,7 @@ describe("workspace-effects", () => {
     expect(document.title).toBe("ForkTTY");
   });
 
-  it("cleans up subscriptions and timers on cleanup", async () => {
+  it("flushes pending session save and cleans up subscriptions on cleanup", async () => {
     const { saveSession } = await import("../lib/pty-bridge");
     cleanup = startWorkspaceEffects();
 
@@ -159,12 +159,21 @@ describe("workspace-effects", () => {
     const state = useWorkspaceStore.getState();
     state.createWorkspace("Workspace 2");
 
+    expect(saveSession).not.toHaveBeenCalled();
+
     cleanup();
     cleanup = null;
 
-    // Advance past debounce — save should NOT fire
+    expect(saveSession).toHaveBeenCalledOnce();
+    expect(saveSession).toHaveBeenCalledWith({
+      version: 1,
+      workspaces: [],
+      active_workspace_index: 0,
+    });
+
+    // Advance past debounce — the flushed timer should not fire again
     vi.advanceTimersByTime(3000);
-    expect(saveSession).not.toHaveBeenCalled();
+    expect(saveSession).toHaveBeenCalledOnce();
 
     // Further state changes should not update title
     document.title = "ForkTTY";
@@ -178,5 +187,18 @@ describe("workspace-effects", () => {
       },
     }));
     expect(document.title).toBe("ForkTTY"); // unchanged
+  });
+
+  it("does not save on cleanup when no session save is pending", async () => {
+    const { saveSession } = await import("../lib/pty-bridge");
+    cleanup = startWorkspaceEffects();
+
+    cleanup();
+    cleanup = null;
+
+    expect(saveSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(3000);
+    expect(saveSession).not.toHaveBeenCalled();
   });
 });
