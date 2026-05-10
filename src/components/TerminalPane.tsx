@@ -31,6 +31,7 @@ import {
   useWorkspaceStore,
   updateSurfaceActivity,
   getLastWorkspaceSwitchTime,
+  findWorkspaceIdByPane,
 } from "../stores/workspace";
 import { useConfigStore } from "../stores/config";
 import {
@@ -614,9 +615,8 @@ const TerminalPane = memo(function TerminalPane({
         // Handle OSC 9/99/777 notification events
         if (event.event_type === "notification") {
           const state = useWorkspaceStore.getState();
-          const wsId = Object.entries(state.workspaces).find(([, ws]) =>
-            Object.prototype.hasOwnProperty.call(ws.surfaces, paneId),
-          )?.[0];
+          // Use findWorkspaceIdByPane which is optimized with a for...in loop
+          const wsId = findWorkspaceIdByPane(state.workspaces, paneId);
           if (!wsId) return;
 
           // Debounce
@@ -632,9 +632,8 @@ const TerminalPane = memo(function TerminalPane({
 
         // Check if workspace containing this pane is unfocused
         const state = useWorkspaceStore.getState();
-        const wsId = Object.entries(state.workspaces).find(([, ws]) =>
-          Object.prototype.hasOwnProperty.call(ws.surfaces, paneId),
-        )?.[0];
+        // Use findWorkspaceIdByPane which is optimized with a for...in loop
+        const wsId = findWorkspaceIdByPane(state.workspaces, paneId);
         if (!wsId || wsId === state.activeWorkspaceId) return;
 
         // Suppress spurious prompt_detected events caused by terminal resize

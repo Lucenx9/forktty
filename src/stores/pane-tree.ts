@@ -403,8 +403,12 @@ export function findWorkspaceIdByPane(
   workspaces: Record<string, Workspace>,
   paneId: string,
 ): string | null {
-  for (const [wsId, ws] of Object.entries(workspaces)) {
-    if (ws.surfaces[paneId]) {
+  // Use for...in for performance over Object.entries() to avoid unnecessary array allocations
+  for (const wsId in workspaces) {
+    if (
+      Object.prototype.hasOwnProperty.call(workspaces, wsId) &&
+      Object.prototype.hasOwnProperty.call(workspaces[wsId].surfaces, paneId)
+    ) {
       return wsId;
     }
   }
