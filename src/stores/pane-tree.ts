@@ -405,11 +405,11 @@ export function findWorkspaceIdByPane(
 ): string | null {
   // Use for...in for performance over Object.entries() to avoid unnecessary array allocations
   for (const wsId in workspaces) {
-    if (
-      Object.prototype.hasOwnProperty.call(workspaces, wsId) &&
-      Object.prototype.hasOwnProperty.call(workspaces[wsId].surfaces, paneId)
-    ) {
-      return wsId;
+    if (Object.prototype.hasOwnProperty.call(workspaces, wsId)) {
+      const ws = workspaces[wsId];
+      if (ws && ws.surfaces && Object.prototype.hasOwnProperty.call(ws.surfaces, paneId)) {
+        return wsId;
+      }
     }
   }
   return null;
