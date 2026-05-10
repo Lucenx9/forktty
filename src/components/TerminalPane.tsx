@@ -73,9 +73,6 @@ function pruneNotificationMap() {
   }
 }
 
-// Periodically prune stale entries so the map doesn't grow in long sessions
-setInterval(pruneNotificationMap, 60_000);
-
 const MAX_PENDING_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_WRITE_BATCH_BYTES = 256 * 1024;
 const textEncoder = new TextEncoder();
@@ -177,22 +174,29 @@ function PaneContextMenu({
   const hasSelection = menu.hasSelection;
 
   return (
-    <div ref={menuRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
+    <div
+      ref={menuRef}
+      className="context-menu"
+      role="menu"
+      style={{ left: menu.x, top: menu.y }}
+    >
       <button
         className={`context-menu-item ${!hasSelection ? "context-menu-item-disabled" : ""}`}
+        role="menuitem"
         onClick={handleCopy}
         disabled={!hasSelection}
       >
         <span>Copy</span>
         <span className="context-menu-shortcut">Ctrl+Shift+C</span>
       </button>
-      <button className="context-menu-item" onClick={handlePaste}>
+      <button className="context-menu-item" role="menuitem" onClick={handlePaste}>
         <span>Paste</span>
         <span className="context-menu-shortcut">Ctrl+Shift+V</span>
       </button>
       <div className="context-menu-separator" />
       <button
         className="context-menu-item"
+        role="menuitem"
         onClick={() => {
           splitPaneWithInheritedCwd(paneId, "horizontal").catch(logError);
           onClose();
@@ -203,6 +207,7 @@ function PaneContextMenu({
       </button>
       <button
         className="context-menu-item"
+        role="menuitem"
         onClick={() => {
           splitPaneWithInheritedCwd(paneId, "vertical").catch(logError);
           onClose();
@@ -322,6 +327,7 @@ const TerminalPane = memo(function TerminalPane({
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
+  const [spawnError, setSpawnError] = useState<string | null>(null);
   const [flashBorder, setFlashBorder] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(
@@ -459,6 +465,8 @@ const TerminalPane = memo(function TerminalPane({
     let outputDrainRaf: number | null = null;
     let outputWriteInFlight = false;
     let droppedOutputBytes = 0;
+    let spawnFailed = false;
+    setSpawnError(null);
 
     function drainOutputQueue() {
       if (
@@ -713,6 +721,8 @@ const TerminalPane = memo(function TerminalPane({
           if (hasExited) {
             return;
           }
+          spawnFailed = false;
+          setSpawnError(null);
           runtime.ptyId = id;
           registerSurface(paneId, id);
 
@@ -729,7 +739,8 @@ const TerminalPane = memo(function TerminalPane({
             logError(err);
           }
           if (!isDisposed()) {
-            term.write(`\r\n\x1b[31mFailed to spawn PTY: ${message}\x1b[0m\r\n`);
+            spawnFailed = true;
+            setSpawnError(message);
           }
         });
     }
@@ -746,14 +757,29 @@ const TerminalPane = memo(function TerminalPane({
     // Skip when container is hidden (display:none → 0 dimensions) to avoid
     // spurious PTY resizes that cause the shell to redraw its prompt.
     let resizeRaf: number | null = null;
+    let resizeFitTimeout: number | null = null;
+    let lastFitWidth = 0;
+    let lastFitHeight = 0;
     const resizeObserver = new ResizeObserver(() => {
       if (resizeRaf !== null) return;
       resizeRaf = requestAnimationFrame(() => {
         resizeRaf = null;
-        if (!container.clientWidth || !container.clientHeight) return;
-        if (fitAddonRef.current) {
-          fitAddonRef.current.fit();
+        if (spawnFailed) return;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        if (!width || !height) return;
+        if (width === lastFitWidth && height === lastFitHeight) return;
+        lastFitWidth = width;
+        lastFitHeight = height;
+        if (resizeFitTimeout !== null) {
+          clearTimeout(resizeFitTimeout);
         }
+        resizeFitTimeout = window.setTimeout(() => {
+          resizeFitTimeout = null;
+          if (!isDisposed() && container.clientWidth && container.clientHeight) {
+            fitAddonRef.current?.fit();
+          }
+        }, 0);
       });
     });
     resizeObserver.observe(container);
@@ -780,6 +806,9 @@ const TerminalPane = memo(function TerminalPane({
       }
       if (resizeTimeout !== null) {
         clearTimeout(resizeTimeout);
+      }
+      if (resizeFitTimeout !== null) {
+        clearTimeout(resizeFitTimeout);
       }
       resizeObserver.disconnect();
       dataDisposable.dispose();
@@ -839,6 +868,12 @@ const TerminalPane = memo(function TerminalPane({
   ]
     .filter(Boolean)
     .join(" ");
+  const spawnErrorTitle = hasTauriRuntime()
+    ? "Terminal failed to start"
+    : "Terminal unavailable in browser preview";
+  const spawnErrorCopy = hasTauriRuntime()
+    ? "Check the configured shell or open a new pane after fixing the environment."
+    : "Run the Tauri app to attach a real PTY. The UI remains available for review.";
 
   return (
     <div
@@ -938,6 +973,14 @@ const TerminalPane = memo(function TerminalPane({
           minHeight: 0,
         }}
       >
+        {spawnError && (
+          <div className="terminal-pane-state terminal-pane-state-error" role="alert">
+            <span className="terminal-pane-state-badge">PTY unavailable</span>
+            <div className="terminal-pane-state-title">{spawnErrorTitle}</div>
+            <div className="terminal-pane-state-copy">{spawnErrorCopy}</div>
+            <div className="terminal-pane-state-hint">{spawnError}</div>
+          </div>
+        )}
         <div
           ref={containerRef}
           className="terminal-pane-surface"

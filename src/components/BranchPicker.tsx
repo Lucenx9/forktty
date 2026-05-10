@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, useId } from "react";
 import { gitListBranches } from "../lib/pty-bridge";
 import type { BranchInfo } from "../lib/pty-bridge";
 import { showToast } from "./ErrorToast";
@@ -17,35 +17,48 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
   const requestCwd = cwd ?? null;
   const [mode, setMode] = useState<"choose" | "new-branch-name">("choose");
   const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [loadedCwd, setLoadedCwd] = useState<string | null>(null);
+  const [loadedCwd, setLoadedCwd] = useState<string | null | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [newBranchName, setNewBranchName] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const isMounted = useRef(true);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const listboxId = useId();
+  const optionIdPrefix = useId();
 
   useEffect(() => {
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
     return () => {
-      isMounted.current = false;
+      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
+        previousFocusRef.current.focus();
+      }
     };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     gitListBranches(cwd)
       .then((result) => {
-        if (isMounted.current) {
+        if (!cancelled) {
           setBranches(result);
           setLoadedCwd(requestCwd);
         }
       })
       .catch((err) => {
-        if (isMounted.current) {
+        if (!cancelled) {
           setBranches([]);
           setLoadedCwd(requestCwd);
           showToast(`Failed to load branches: ${err}`, "error");
         }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [cwd, requestCwd]);
 
   useEffect(() => {
@@ -82,6 +95,10 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
 
   // Total items = 1 (synthetic) + filtered.length
   const totalItems = 1 + filtered.length;
+  const safeSelectedIndex = Math.min(selectedIndex, totalItems - 1);
+  const activeDescendant = loading
+    ? undefined
+    : `${optionIdPrefix}-option-${safeSelectedIndex}`;
 
   function handleChooseKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
@@ -91,17 +108,17 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex((i) => Math.min(i + 1, totalItems - 1));
+      setSelectedIndex(Math.min(safeSelectedIndex + 1, totalItems - 1));
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      setSelectedIndex((i) => Math.max(i - 1, 0));
+      setSelectedIndex(Math.max(safeSelectedIndex - 1, 0));
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      handleSelect(selectedIndex);
+      handleSelect(safeSelectedIndex);
       return;
     }
   }
@@ -137,7 +154,13 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
 
   if (mode === "new-branch-name") {
     return (
-      <div className="branch-picker-overlay" onClick={handleCancel}>
+      <div
+        className="branch-picker-overlay"
+        onClick={handleCancel}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create branch"
+      >
         <div
           className="branch-picker"
           onClick={(e) => e.stopPropagation()}
@@ -151,9 +174,12 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
               type="text"
               value={newBranchName}
               onChange={(e) => setNewBranchName(e.target.value)}
+              aria-describedby="branch-picker-create-hint"
+              aria-label="Branch name"
               placeholder="Branch name..."
             />
             <button
+              type="button"
               className="branch-picker-confirm-btn"
               onClick={() => {
                 const trimmed = newBranchName.trim();
@@ -166,13 +192,22 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
               Create
             </button>
           </div>
+          <div id="branch-picker-create-hint" className="branch-picker-hint">
+            Escape returns to branch selection.
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="branch-picker-overlay" onClick={handleCancel}>
+    <div
+      className="branch-picker-overlay"
+      onClick={handleCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose branch"
+    >
       <div
         className="branch-picker"
         onClick={(e) => e.stopPropagation()}
@@ -187,38 +222,59 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
             setQuery(e.target.value);
             setSelectedIndex(0);
           }}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls={listboxId}
+          aria-activedescendant={activeDescendant}
+          aria-label="Search branches"
           placeholder="Search branches or create new..."
         />
-        <div className="branch-picker-list">
+        <div id={listboxId} className="branch-picker-list" role="listbox">
           {loading && (
-            <div className="branch-picker-branch-meta">Loading branches...</div>
+            <div className="branch-picker-branch-meta" role="status">
+              Loading branches...
+            </div>
           )}
           {!loading && (
             <>
               {/* Synthetic "New branch from HEAD..." entry */}
-              <div
-                className={`branch-picker-item branch-picker-item-new ${selectedIndex === 0 ? "branch-picker-item-selected" : ""}`}
+              <button
+                id={`${optionIdPrefix}-option-0`}
+                type="button"
+                role="option"
+                aria-selected={safeSelectedIndex === 0}
+                className={`branch-picker-item branch-picker-item-new ${safeSelectedIndex === 0 ? "branch-picker-item-selected" : ""}`}
+                aria-current={safeSelectedIndex === 0 ? "true" : undefined}
                 onClick={() => handleSelect(0)}
                 onMouseMove={() => setSelectedIndex(0)}
               >
                 <span className="branch-picker-branch-name">
                   + New branch from HEAD...
                 </span>
-              </div>
+              </button>
 
               {filtered.length === 0 && (
-                <div className="branch-picker-branch-meta">No matching branches</div>
+                <div className="branch-picker-branch-meta" role="status">
+                  No matching branches
+                </div>
               )}
 
               {filtered.map((branch, i) => {
                 const itemIndex = i + 1;
-                const isSelected = selectedIndex === itemIndex;
+                const isSelected = safeSelectedIndex === itemIndex;
                 return (
-                  <div
+                  <button
                     key={branch.name}
+                    id={`${optionIdPrefix}-option-${itemIndex}`}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
                     className={`branch-picker-item ${isSelected ? "branch-picker-item-selected" : ""} ${branch.is_head ? "branch-picker-item-active" : ""}`}
+                    aria-current={isSelected ? "true" : undefined}
                     onClick={() => handleSelect(itemIndex)}
                     onMouseMove={() => setSelectedIndex(itemIndex)}
+                    disabled={branch.is_head}
                   >
                     <div>
                       <span className="branch-picker-branch-name">{branch.name}</span>
@@ -232,7 +288,7 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
                         <span> -- {formatTime(branch.last_commit_time)}</span>
                       )}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </>

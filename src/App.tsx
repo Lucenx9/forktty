@@ -91,6 +91,15 @@ const SIDEBAR_COLLAPSE_WIDTH_PX = 56;
 const SIDEBAR_EXPANDED_DEFAULT_PX = 232;
 const SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
 
+function AppLoadingState({ label = "Loading workspace..." }: { label?: string }) {
+  return (
+    <div className="app-loading-state" role="status" aria-live="polite">
+      <span className="app-loading-spinner" aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 export default function App() {
   const [sessionHydrated, setSessionHydrated] = useState(() => !hasTauriRuntime());
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -158,7 +167,7 @@ export default function App() {
 
   const toggleSettingsPanel = useCallback(() => {
     if (showSettings) {
-      toggleSettings();
+      window.dispatchEvent(new CustomEvent("forktty-request-close-settings"));
       return;
     }
     setShowCommandPalette(false);
@@ -205,15 +214,6 @@ export default function App() {
     if (!ws) return;
     splitPaneWithInheritedCwd(ws.focusedPaneId, direction).catch(logError);
   }, []);
-
-  const handleSplitRight = useCallback(
-    () => handleSplitFocusedPane("horizontal"),
-    [handleSplitFocusedPane],
-  );
-  const handleSplitDown = useCallback(
-    () => handleSplitFocusedPane("vertical"),
-    [handleSplitFocusedPane],
-  );
 
   const requestCloseWorkspace = useCallback(
     (workspaceId: string) => {
@@ -879,7 +879,9 @@ export default function App() {
   if (!sessionHydrated || !configLoaded) {
     return (
       <div className="app">
-        <div className="app-main" />
+        <div className="app-main">
+          <AppLoadingState />
+        </div>
       </div>
     );
   }
@@ -914,16 +916,7 @@ export default function App() {
 
   const mainPanel = (
     <Panel id="main">
-      <DashboardChrome
-        onCreateWorkspace={handleCreateWorkspace}
-        onOpenBranchPicker={openBranchPicker}
-        onOpenCommandPalette={openCommandPalette}
-        onOpenSettings={toggleSettingsPanel}
-        onToggleNotifications={toggleNotificationsDrawer}
-        onSplitRight={handleSplitRight}
-        onSplitDown={handleSplitDown}
-        showNotificationPanel={showNotificationPanel}
-      >
+      <DashboardChrome>
         <div className="workspace-container">
           {sessionHydrated
             ? workspaceOrder.map((id) => (
@@ -965,7 +958,7 @@ export default function App() {
       <ShortcutBar />
       {showNotificationPanel && <NotificationPanel />}
       <LazyErrorBoundary>
-        <Suspense fallback={null}>
+        <Suspense fallback={<AppLoadingState label="Loading panel..." />}>
           {showSettings && <SettingsPanel />}
           {showCommandPalette && (
             <CommandPalette commands={commands} onClose={closeCommandPalette} />
