@@ -242,10 +242,12 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
               <button
                 id={`${optionIdPrefix}-option-0`}
                 type="button"
+                tabIndex={-1}
                 role="option"
                 aria-selected={safeSelectedIndex === 0}
                 className={`branch-picker-item branch-picker-item-new ${safeSelectedIndex === 0 ? "branch-picker-item-selected" : ""}`}
                 aria-current={safeSelectedIndex === 0 ? "true" : undefined}
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleSelect(0)}
                 onMouseMove={() => setSelectedIndex(0)}
               >
@@ -268,10 +270,12 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
                     key={branch.name}
                     id={`${optionIdPrefix}-option-${itemIndex}`}
                     type="button"
+                    tabIndex={-1}
                     role="option"
                     aria-selected={isSelected}
                     className={`branch-picker-item ${isSelected ? "branch-picker-item-selected" : ""} ${branch.is_head ? "branch-picker-item-active" : ""}`}
                     aria-current={isSelected ? "true" : undefined}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => handleSelect(itemIndex)}
                     onMouseMove={() => setSelectedIndex(itemIndex)}
                     disabled={branch.is_head}

@@ -143,6 +143,7 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
               key={cmd.id}
               id={`${optionIdPrefix}-option-${i}`}
               type="button"
+              tabIndex={-1}
               role="option"
               aria-selected={i === safeSelectedIndex}
               aria-current={i === safeSelectedIndex ? "true" : undefined}

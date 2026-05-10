@@ -144,18 +144,27 @@ export default function App() {
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 
   const closeCommandPalette = useCallback(() => setShowCommandPalette(false), []);
+  const requestCloseSettings = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("forktty-request-close-settings"));
+  }, []);
 
   const openCommandPalette = useCallback(() => {
     setShowBranchPicker(false);
     setBranchPickerCwd(undefined);
     if (showSettings) {
-      toggleSettings();
+      requestCloseSettings();
+      return;
     }
     if (showNotificationPanel) {
       toggleNotificationPanel();
     }
     setShowCommandPalette(true);
-  }, [showSettings, showNotificationPanel, toggleSettings, toggleNotificationPanel]);
+  }, [
+    showSettings,
+    showNotificationPanel,
+    requestCloseSettings,
+    toggleNotificationPanel,
+  ]);
 
   const toggleCommandPalette = useCallback(() => {
     if (showCommandPalette) {
@@ -167,7 +176,7 @@ export default function App() {
 
   const toggleSettingsPanel = useCallback(() => {
     if (showSettings) {
-      window.dispatchEvent(new CustomEvent("forktty-request-close-settings"));
+      requestCloseSettings();
       return;
     }
     setShowCommandPalette(false);
@@ -177,7 +186,13 @@ export default function App() {
       toggleNotificationPanel();
     }
     toggleSettings();
-  }, [showSettings, showNotificationPanel, toggleNotificationPanel, toggleSettings]);
+  }, [
+    showSettings,
+    showNotificationPanel,
+    requestCloseSettings,
+    toggleNotificationPanel,
+    toggleSettings,
+  ]);
 
   const toggleNotificationsDrawer = useCallback(() => {
     if (showNotificationPanel) {
@@ -188,10 +203,16 @@ export default function App() {
     setShowBranchPicker(false);
     setBranchPickerCwd(undefined);
     if (showSettings) {
-      toggleSettings();
+      requestCloseSettings();
+      return;
     }
     toggleNotificationPanel();
-  }, [showNotificationPanel, showSettings, toggleNotificationPanel, toggleSettings]);
+  }, [
+    showNotificationPanel,
+    showSettings,
+    requestCloseSettings,
+    toggleNotificationPanel,
+  ]);
 
   const setSidebarCollapsedPersisted = useCallback((collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
@@ -259,7 +280,8 @@ export default function App() {
   const openBranchPicker = useCallback(() => {
     setShowCommandPalette(false);
     if (showSettings) {
-      toggleSettings();
+      requestCloseSettings();
+      return;
     }
     if (showNotificationPanel) {
       toggleNotificationPanel();
@@ -321,7 +343,12 @@ export default function App() {
       setBranchPickerCwd(undefined);
       setShowBranchPicker(true);
     }
-  }, [showSettings, showNotificationPanel, toggleSettings, toggleNotificationPanel]);
+  }, [
+    showSettings,
+    showNotificationPanel,
+    requestCloseSettings,
+    toggleNotificationPanel,
+  ]);
 
   const handleBranchPickerResult = useCallback(
     (result: BranchPickerResult) => {

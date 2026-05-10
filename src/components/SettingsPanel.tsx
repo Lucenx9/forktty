@@ -26,7 +26,9 @@ export default function SettingsPanel() {
   }, [config]);
 
   const isDirty =
-    config !== null && draft !== null && JSON.stringify(draft) !== JSON.stringify(config);
+    config !== null &&
+    draft !== null &&
+    JSON.stringify(draft) !== JSON.stringify(config);
   const fontSizeValid =
     draft !== null &&
     Number.isFinite(draft.appearance.font_size) &&
@@ -34,12 +36,13 @@ export default function SettingsPanel() {
     draft.appearance.font_size <= MAX_FONT_SIZE;
 
   const requestClose = useCallback(() => {
+    if (saving) return;
     if (isDirty) {
       setConfirmDiscard(true);
       return;
     }
     toggleSettings();
-  }, [isDirty, toggleSettings]);
+  }, [isDirty, saving, toggleSettings]);
 
   useEffect(() => {
     function handleRequestCloseSettings() {
@@ -152,6 +155,7 @@ export default function SettingsPanel() {
             type="button"
             className="settings-close-btn"
             onClick={requestClose}
+            disabled={saving}
             aria-label="Close settings"
           >
             <X size={14} />
@@ -322,11 +326,15 @@ export default function SettingsPanel() {
           confirmLabel="Discard"
           danger
           onConfirm={() => {
+            if (saving) return;
             setConfirmDiscard(false);
             handleReset();
             toggleSettings();
           }}
-          onCancel={() => setConfirmDiscard(false)}
+          onCancel={() => {
+            if (saving) return;
+            setConfirmDiscard(false);
+          }}
         />
       )}
     </div>

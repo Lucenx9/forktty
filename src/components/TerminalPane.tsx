@@ -767,7 +767,15 @@ const TerminalPane = memo(function TerminalPane({
         if (spawnFailed) return;
         const width = container.clientWidth;
         const height = container.clientHeight;
-        if (!width || !height) return;
+        if (!width || !height) {
+          lastFitWidth = 0;
+          lastFitHeight = 0;
+          if (resizeFitTimeout !== null) {
+            clearTimeout(resizeFitTimeout);
+            resizeFitTimeout = null;
+          }
+          return;
+        }
         if (width === lastFitWidth && height === lastFitHeight) return;
         lastFitWidth = width;
         lastFitHeight = height;

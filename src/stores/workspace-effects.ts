@@ -44,6 +44,7 @@ export function startWorkspaceEffects(): () => void {
     // --- Session persistence (debounced) ---
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      saveTimer = null;
       saveSession(buildSessionPayload()).catch(logError);
     }, SESSION_SAVE_DEBOUNCE_MS);
 

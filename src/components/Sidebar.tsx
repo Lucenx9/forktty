@@ -200,20 +200,15 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }
 
   return (
-    <div
-      ref={menuRef}
-      className="context-menu"
-      role="menu"
-      style={{ left: menu.x, top: menu.y }}
-    >
-      <button className="context-menu-item" role="menuitem" onClick={handleRename}>
+    <div ref={menuRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
+      <button className="context-menu-item" onClick={handleRename}>
         <span>Rename Workspace...</span>
       </button>
-      <button className="context-menu-item" role="menuitem" onClick={handleSplitRight}>
+      <button className="context-menu-item" onClick={handleSplitRight}>
         <span>Split Right</span>
         <span className="context-menu-shortcut">Ctrl+D</span>
       </button>
-      <button className="context-menu-item" role="menuitem" onClick={handleSplitDown}>
+      <button className="context-menu-item" onClick={handleSplitDown}>
         <span>Split Down</span>
         <span className="context-menu-shortcut">Ctrl+Shift+D</span>
       </button>
@@ -223,7 +218,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           <div className="context-menu-separator" />
           <button
             className={`context-menu-item ${isFirst ? "context-menu-item-disabled" : ""}`}
-            role="menuitem"
             onClick={handleMoveUp}
             disabled={isFirst}
           >
@@ -231,7 +225,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           </button>
           <button
             className={`context-menu-item ${isLast ? "context-menu-item-disabled" : ""}`}
-            role="menuitem"
             onClick={handleMoveDown}
             disabled={isLast}
           >
@@ -239,7 +232,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           </button>
           <button
             className={`context-menu-item ${isFirst ? "context-menu-item-disabled" : ""}`}
-            role="menuitem"
             onClick={handleMoveToTop}
             disabled={isFirst}
           >
@@ -251,12 +243,11 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
       {isWorktree && (
         <>
           <div className="context-menu-separator" />
-          <button className="context-menu-item" role="menuitem" onClick={handleMerge}>
+          <button className="context-menu-item" onClick={handleMerge}>
             <span>Merge Branch</span>
           </button>
           <button
             className="context-menu-item context-menu-item-danger"
-            role="menuitem"
             onClick={handleRemoveWorktree}
           >
             <span>Remove Worktree</span>
@@ -269,7 +260,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           <div className="context-menu-separator" />
           <button
             className="context-menu-item context-menu-item-danger"
-            role="menuitem"
             onClick={handleClose}
           >
             <span>Close Workspace</span>
@@ -277,14 +267,12 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           </button>
           <button
             className="context-menu-item context-menu-item-danger"
-            role="menuitem"
             onClick={handleCloseOthers}
           >
             <span>Close Other Workspaces</span>
           </button>
           <button
             className={`context-menu-item context-menu-item-danger ${isLast ? "context-menu-item-disabled" : ""}`}
-            role="menuitem"
             onClick={handleCloseBelow}
             disabled={isLast}
           >
@@ -292,7 +280,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
           </button>
           <button
             className={`context-menu-item context-menu-item-danger ${isFirst ? "context-menu-item-disabled" : ""}`}
-            role="menuitem"
             onClick={handleCloseAbove}
             disabled={isFirst}
           >
@@ -303,15 +290,11 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
 
       <div className="context-menu-separator" />
       {ws.unreadCount > 0 ? (
-        <button className="context-menu-item" role="menuitem" onClick={handleMarkRead}>
+        <button className="context-menu-item" onClick={handleMarkRead}>
           <span>Mark as Read</span>
         </button>
       ) : (
-        <button
-          className="context-menu-item context-menu-item-disabled"
-          role="menuitem"
-          disabled
-        >
+        <button className="context-menu-item context-menu-item-disabled" disabled>
           <span>Mark as Read</span>
         </button>
       )}

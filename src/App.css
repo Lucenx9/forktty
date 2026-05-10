@@ -179,7 +179,7 @@ textarea {
   font-weight: 600;
   line-height: 1.4;
   text-align: center;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .app-loading-spinner {
