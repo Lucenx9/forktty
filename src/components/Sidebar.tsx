@@ -48,6 +48,13 @@ function worktreeLabel(workspace: Workspace): string {
   return workspace.gitBranch || workspace.worktreeName;
 }
 
+function workspaceHasRecentActivity(surfaces: Workspace["surfaces"]): boolean {
+  return Object.keys(surfaces).some((id) => {
+    const activity = getLastActivity(id);
+    return activity > 0 && Date.now() - activity < ACTIVITY_THRESHOLD_MS;
+  });
+}
+
 // --- Context menu ---
 
 interface ContextMenuState {
@@ -402,24 +409,21 @@ function WorkspaceEntry({
       window.removeEventListener("forktty-rename-workspace", handleRenameEvent);
   }, [workspace.id, workspace.name]);
 
-  const [hasActivity, setHasActivity] = useState(false);
+  const [hasActivity, setHasActivity] = useState(() =>
+    workspaceHasRecentActivity(workspace.surfaces),
+  );
 
   // ⚡ Bolt: Pushed activity interval down to avoid 1Hz Sidebar re-renders
   useEffect(() => {
     function checkActivity() {
-      const isLive = Object.keys(workspace.surfaces).some((id) => {
-        const activity = getLastActivity(id);
-        return activity > 0 && Date.now() - activity < ACTIVITY_THRESHOLD_MS;
-      });
-      if (isLive !== hasActivity) {
-        setHasActivity(isLive);
-      }
+      const isLive = workspaceHasRecentActivity(workspace.surfaces);
+      setHasActivity((prev) => (isLive !== prev ? isLive : prev));
     }
 
     checkActivity();
     const interval = setInterval(checkActivity, 1000);
     return () => clearInterval(interval);
-  }, [workspace.surfaces, hasActivity]);
+  }, [workspace.surfaces]);
 
   const statusColor = hasActivity ? "var(--theme-green)" : "var(--theme-bright-black)";
   const activityLabel = hasActivity ? "Recent terminal activity" : "Idle";
