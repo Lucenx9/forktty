@@ -407,7 +407,11 @@ export function findWorkspaceIdByPane(
   for (const wsId in workspaces) {
     if (Object.prototype.hasOwnProperty.call(workspaces, wsId)) {
       const ws = workspaces[wsId];
-      if (ws && ws.surfaces && Object.prototype.hasOwnProperty.call(ws.surfaces, paneId)) {
+      if (
+        ws &&
+        ws.surfaces &&
+        Object.prototype.hasOwnProperty.call(ws.surfaces, paneId)
+      ) {
         return wsId;
       }
     }
