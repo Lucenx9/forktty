@@ -352,7 +352,6 @@ function ContextMenu({ menu, onClose }: ContextMenuProps) {
 function WorkspaceEntry({
   workspace,
   isActive,
-  now,
   index,
   onGripMouseDown,
   onEntryMouseEnter,
@@ -363,7 +362,6 @@ function WorkspaceEntry({
 }: {
   workspace: Workspace;
   isActive: boolean;
-  now: number;
   index: number;
   onGripMouseDown: (index: number) => void;
   onEntryMouseEnter: (index: number) => void;
@@ -404,10 +402,24 @@ function WorkspaceEntry({
       window.removeEventListener("forktty-rename-workspace", handleRenameEvent);
   }, [workspace.id, workspace.name]);
 
-  const hasActivity = Object.keys(workspace.surfaces).some((id) => {
-    const activity = getLastActivity(id);
-    return activity > 0 && now - activity < ACTIVITY_THRESHOLD_MS;
-  });
+  const [hasActivity, setHasActivity] = useState(false);
+
+  // ⚡ Bolt: Pushed activity interval down to avoid 1Hz Sidebar re-renders
+  useEffect(() => {
+    function checkActivity() {
+      const isLive = Object.keys(workspace.surfaces).some((id) => {
+        const activity = getLastActivity(id);
+        return activity > 0 && Date.now() - activity < ACTIVITY_THRESHOLD_MS;
+      });
+      if (isLive !== hasActivity) {
+        setHasActivity(isLive);
+      }
+    }
+
+    checkActivity();
+    const interval = setInterval(checkActivity, 1000);
+    return () => clearInterval(interval);
+  }, [workspace.surfaces, hasActivity]);
 
   const statusColor = hasActivity ? "var(--theme-green)" : "var(--theme-bright-black)";
   const activityLabel = hasActivity ? "Recent terminal activity" : "Idle";
@@ -661,13 +673,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
     }
     window.addEventListener("mouseup", handleGlobalMouseUp);
     return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
-  }, []);
-
-  // 1-second tick for status dot re-evaluation
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
   }, []);
 
   // Fetch CWD and git branch for new workspaces (those without workingDir)
@@ -928,7 +933,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
               key={id}
               workspace={ws}
               isActive={id === activeWorkspaceId}
-              now={now}
               index={index}
               onGripMouseDown={handleGripMouseDown}
               onEntryMouseEnter={handleEntryMouseEnter}
