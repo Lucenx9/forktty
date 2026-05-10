@@ -4,7 +4,7 @@ import type { TerminalTheme } from "./pty-bridge";
 
 describe("toXtermTheme", () => {
   it("applies default values when theme is empty", () => {
-    const emptyTheme: TerminalTheme = {};
+    const emptyTheme = {} as TerminalTheme;
     const result = toXtermTheme(emptyTheme);
 
     expect(result).toEqual({
@@ -35,7 +35,7 @@ describe("toXtermTheme", () => {
   });
 
   it("maps provided theme values correctly", () => {
-    const customTheme: TerminalTheme = {
+    const customTheme = {
       background: "#000000",
       foreground: "#ffffff",
       cursor: "#ff0000",
@@ -57,7 +57,7 @@ describe("toXtermTheme", () => {
       bright_magenta: "#eeeeee",
       bright_cyan: "#ffffff",
       bright_white: "#000000",
-    };
+    } as TerminalTheme;
 
     const result = toXtermTheme(customTheme);
 
@@ -88,20 +88,20 @@ describe("toXtermTheme", () => {
   });
 
   it("preserves alpha channel if already present in selection_background", () => {
-    const themeWithAlpha: TerminalTheme = {
+    const themeWithAlpha = {
       // 8-character hex, already has alpha channel
       selection_background: "#11223344",
-    };
+    } as TerminalTheme;
 
     const result = toXtermTheme(themeWithAlpha);
     expect(result.selectionBackground).toBe("#11223344");
   });
 
   it("handles 3-digit hex colors in selection_background", () => {
-    const themeWithShortHex: TerminalTheme = {
+    const themeWithShortHex = {
       // #abc is 3 digits, equivalent to #aabbcc
       selection_background: "#abc",
-    };
+    } as TerminalTheme;
 
     const result = toXtermTheme(themeWithShortHex);
     expect(result.selectionBackground).toBe("#aabbcc80");
