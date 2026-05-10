@@ -762,8 +762,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const ws: Workspace = {
         id: crypto.randomUUID(),
-        name:
-          stringOrEmpty(snap.name).trim() || generateWorkspaceName(newWorkspaces),
+        name: stringOrEmpty(snap.name).trim() || generateWorkspaceName(newWorkspaces),
         root: node,
         surfaces,
         focusedPaneId: leafIds[focusedLeafIndex] ?? firstLeafId(node),
@@ -800,7 +799,10 @@ export function getSessionData(): {
   activeIndex: number;
 } {
   const state = useWorkspaceStore.getState();
-  const workspaceOrder = normalizeWorkspaceOrder(state.workspaces, state.workspaceOrder);
+  const workspaceOrder = normalizeWorkspaceOrder(
+    state.workspaces,
+    state.workspaceOrder,
+  );
   const workspaces = workspaceOrder.map((id) => {
     const ws = state.workspaces[id]!;
     const leafIds = collectLeafIds(ws.root);
