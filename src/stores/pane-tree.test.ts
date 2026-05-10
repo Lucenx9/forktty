@@ -18,9 +18,10 @@ import {
   swapLeaves,
   rebuildPaneTree,
   snapshotPaneTree,
+  isValidPaneTreeSnap,
   MAX_SPLIT_DEPTH,
 } from "./pane-tree";
-import type { PaneLeaf, PaneSplit, PaneNode } from "./pane-tree";
+import type { PaneLeaf, PaneSplit, PaneNode, PaneTreeSnap } from "./pane-tree";
 
 // --- Helpers ---
 
@@ -242,6 +243,13 @@ describe("updateSplitSizes", () => {
     expect(result).toBe(root); // unchanged
   });
 
+  it("rejects non-finite or non-positive sizes", () => {
+    const root = hsplit("s1", [leaf("a"), leaf("b")], [50, 50]);
+    expect(updateSplitSizes(root, "s1", [0, 100])).toBe(root);
+    expect(updateSplitSizes(root, "s1", [Number.NaN, 100])).toBe(root);
+    expect(updateSplitSizes(root, "s1", [-10, 110])).toBe(root);
+  });
+
   it("returns same reference if sizes unchanged", () => {
     const root = hsplit("s1", [leaf("a"), leaf("b")], [50, 50]);
     const result = updateSplitSizes(root, "s1", [50, 50]);
@@ -434,6 +442,21 @@ describe("findWorkspaceIdByPane", () => {
     const ws = makeWorkspace("Test");
     expect(findWorkspaceIdByPane({ [ws.id]: ws }, "unknown")).toBeNull();
   });
+
+  it("ignores orphaned surfaces that are no longer in the pane tree", () => {
+    const ws = makeWorkspace("Test");
+    const workspaces = {
+      [ws.id]: {
+        ...ws,
+        surfaces: {
+          ...ws.surfaces,
+          orphan: makeSurface("orphan"),
+        },
+      },
+    };
+
+    expect(findWorkspaceIdByPane(workspaces, "orphan")).toBeNull();
+  });
 });
 
 // --- Session snapshot ---
@@ -472,6 +495,19 @@ describe("snapshotPaneTree / rebuildPaneTree", () => {
     const snap = snapshotPaneTree(leaf("original-id"));
     const rebuilt = rebuildPaneTree(snap);
     expect((rebuilt.node as PaneLeaf).id).not.toBe("original-id");
+  });
+
+  it("rejects persisted trees deeper than runtime split limits", () => {
+    let snap: PaneTreeSnap = { type: "leaf" };
+    for (let i = 0; i < MAX_SPLIT_DEPTH + 1; i++) {
+      snap = {
+        type: "horizontal",
+        children: [snap, { type: "leaf" }],
+        sizes: [50, 50],
+      };
+    }
+
+    expect(isValidPaneTreeSnap(snap)).toBe(false);
   });
 });
 

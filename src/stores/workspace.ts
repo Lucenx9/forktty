@@ -230,6 +230,43 @@ function disposePtys(ptyIds: number[]): void {
   }
 }
 
+function normalizeWorkspaceOrder(
+  workspaces: Record<string, Workspace>,
+  workspaceOrder: string[],
+): string[] {
+  const seen = new Set<string>();
+  const ordered = workspaceOrder.filter((id) => {
+    if (seen.has(id) || !workspaces[id]) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
+
+  for (const id of Object.keys(workspaces)) {
+    if (!seen.has(id)) {
+      ordered.push(id);
+    }
+  }
+
+  return ordered;
+}
+
+function clampIndex(index: number, length: number): number {
+  if (!Number.isInteger(index) || index < 0) {
+    return 0;
+  }
+  return Math.min(index, Math.max(0, length - 1));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function stringOrEmpty(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 // --- Store ---
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -707,31 +744,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   restoreSession: (snapshots, activeIndex) => {
-    if (snapshots.length === 0) return;
+    if (!Array.isArray(snapshots) || snapshots.length === 0) return;
 
     const newWorkspaces: Record<string, Workspace> = {};
     const newOrder: string[] = [];
 
     for (const snap of snapshots) {
-      if (!isValidPaneTreeSnap(snap.paneTree)) {
+      if (!isRecord(snap) || !isValidPaneTreeSnap(snap.paneTree as PaneTreeSnap)) {
         continue;
       }
 
-      const { node, surfaces } = rebuildPaneTree(snap.paneTree);
+      const { node, surfaces } = rebuildPaneTree(snap.paneTree as PaneTreeSnap);
       const leafIds = collectLeafIds(node);
-      const focusedLeafIndex = Number.isInteger(snap.focusedLeafIndex)
-        ? Math.max(0, Math.min(snap.focusedLeafIndex, leafIds.length - 1))
-        : 0;
+      const focusedLeafIndex = clampIndex(
+        Number(snap.focusedLeafIndex),
+        leafIds.length,
+      );
       const ws: Workspace = {
         id: crypto.randomUUID(),
-        name: snap.name,
+        name:
+          stringOrEmpty(snap.name).trim() || generateWorkspaceName(newWorkspaces),
         root: node,
         surfaces,
         focusedPaneId: leafIds[focusedLeafIndex] ?? firstLeafId(node),
-        workingDir: snap.workingDir,
-        gitBranch: snap.gitBranch,
-        worktreeDir: snap.worktreeDir,
-        worktreeName: snap.worktreeName,
+        workingDir: stringOrEmpty(snap.workingDir),
+        gitBranch: stringOrEmpty(snap.gitBranch),
+        worktreeDir: stringOrEmpty(snap.worktreeDir),
+        worktreeName: stringOrEmpty(snap.worktreeName),
         worktreeStatus: "",
         unreadCount: 0,
         lastNotificationText: "",
@@ -743,11 +782,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     if (newOrder.length === 0) return;
 
-    const safeIndex = Math.min(activeIndex, newOrder.length - 1);
+    const safeIndex = clampIndex(Number(activeIndex), newOrder.length);
     set({
       workspaces: newWorkspaces,
       workspaceOrder: newOrder,
       activeWorkspaceId: newOrder[safeIndex]!,
+      notifications: [],
+      showNotificationPanel: false,
     });
   },
 }));
@@ -759,8 +800,10 @@ export function getSessionData(): {
   activeIndex: number;
 } {
   const state = useWorkspaceStore.getState();
-  const workspaces = state.workspaceOrder.map((id) => {
+  const workspaceOrder = normalizeWorkspaceOrder(state.workspaces, state.workspaceOrder);
+  const workspaces = workspaceOrder.map((id) => {
     const ws = state.workspaces[id]!;
+    const leafIds = collectLeafIds(ws.root);
     return {
       name: ws.name,
       workingDir: ws.workingDir,
@@ -768,10 +811,10 @@ export function getSessionData(): {
       worktreeDir: ws.worktreeDir,
       worktreeName: ws.worktreeName,
       paneTree: snapshotPaneTree(ws.root),
-      focusedLeafIndex: Math.max(0, collectLeafIds(ws.root).indexOf(ws.focusedPaneId)),
+      focusedLeafIndex: Math.max(0, leafIds.indexOf(ws.focusedPaneId)),
     };
   });
-  const activeIndex = state.workspaceOrder.indexOf(state.activeWorkspaceId);
+  const activeIndex = workspaceOrder.indexOf(state.activeWorkspaceId);
   return { workspaces, activeIndex: Math.max(0, activeIndex) };
 }
 
