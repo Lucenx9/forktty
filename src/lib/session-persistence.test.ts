@@ -45,7 +45,9 @@ describe("buildSessionPayload", () => {
       ],
     };
 
-    vi.mocked(getSessionData).mockReturnValue(mockSessionData as ReturnType<typeof getSessionData>);
+    vi.mocked(getSessionData).mockReturnValue(
+      mockSessionData as ReturnType<typeof getSessionData>,
+    );
 
     const payload = buildSessionPayload();
 
@@ -89,7 +91,9 @@ describe("buildSessionPayload", () => {
       workspaces: [],
     };
 
-    vi.mocked(getSessionData).mockReturnValue(mockSessionData as ReturnType<typeof getSessionData>);
+    vi.mocked(getSessionData).mockReturnValue(
+      mockSessionData as ReturnType<typeof getSessionData>,
+    );
 
     const payload = buildSessionPayload();
 
