@@ -92,13 +92,25 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("parse_osc99_metadata");
 
-    group.bench_function("old_short", |b| b.iter(|| parse_osc99_metadata_old(black_box(metadata_short))));
-    group.bench_function("loop_find_short", |b| b.iter(|| parse_osc99_metadata_loop_find(black_box(metadata_short))));
-    group.bench_function("bytes_short", |b| b.iter(|| parse_osc99_metadata_bytes(black_box(metadata_short))));
+    group.bench_function("old_short", |b| {
+        b.iter(|| parse_osc99_metadata_old(black_box(metadata_short)))
+    });
+    group.bench_function("loop_find_short", |b| {
+        b.iter(|| parse_osc99_metadata_loop_find(black_box(metadata_short)))
+    });
+    group.bench_function("bytes_short", |b| {
+        b.iter(|| parse_osc99_metadata_bytes(black_box(metadata_short)))
+    });
 
-    group.bench_function("old_long", |b| b.iter(|| parse_osc99_metadata_old(black_box(metadata_long))));
-    group.bench_function("loop_find_long", |b| b.iter(|| parse_osc99_metadata_loop_find(black_box(metadata_long))));
-    group.bench_function("bytes_long", |b| b.iter(|| parse_osc99_metadata_bytes(black_box(metadata_long))));
+    group.bench_function("old_long", |b| {
+        b.iter(|| parse_osc99_metadata_old(black_box(metadata_long)))
+    });
+    group.bench_function("loop_find_long", |b| {
+        b.iter(|| parse_osc99_metadata_loop_find(black_box(metadata_long)))
+    });
+    group.bench_function("bytes_long", |b| {
+        b.iter(|| parse_osc99_metadata_bytes(black_box(metadata_long)))
+    });
 
     group.finish();
 }
