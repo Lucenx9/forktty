@@ -7,10 +7,18 @@ type TauriWindow = Window & {
   __TAURI_INTERNALS__?: unknown;
 };
 
+interface MockChannel<T> {
+  onmessage: ((message: T) => void) | null;
+}
+
+type PtyEofEvent = {
+  kind: "Eof";
+};
+
 vi.mock("@tauri-apps/api/core", () => {
   return {
     invoke: vi.fn(),
-    Channel: class MockChannel<T> {
+    Channel: class MockTauriChannel<T> implements MockChannel<T> {
       onmessage: ((message: T) => void) | null = null;
     },
   };
@@ -53,6 +61,26 @@ describe("pty-bridge", () => {
         }),
       );
       expect(result).toBe(42);
+    });
+
+    it("calls onExit when the output channel receives EOF", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(42);
+      const onExit = vi.fn();
+
+      await spawnPty({
+        onOutput: vi.fn(),
+        onExit,
+        rows: 24,
+        cols: 80,
+      });
+
+      const payload = vi.mocked(invoke).mock.calls[0]?.[1] as
+        | { onOutput: MockChannel<PtyEofEvent> }
+        | undefined;
+
+      payload?.onOutput.onmessage?.({ kind: "Eof" });
+
+      expect(onExit).toHaveBeenCalledOnce();
     });
 
     it("passes null for optional arguments when omitted", async () => {
