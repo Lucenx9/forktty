@@ -65,7 +65,7 @@ fn resolve_spawn_cwd(dir: &str) -> String {
     }
 
     let path = std::path::Path::new(trimmed);
-    if path.is_absolute() && path.exists() {
+    if path.is_absolute() && path.is_dir() {
         trimmed.to_string()
     } else {
         fallback_spawn_cwd()
@@ -270,5 +270,21 @@ mod tests {
         assert_ne!(resolved, missing);
         assert!(Path::new(&resolved).is_absolute());
         assert!(Path::new(&resolved).exists());
+    }
+
+    #[test]
+    fn resolve_spawn_cwd_falls_back_for_existing_file() {
+        let dir = std::env::temp_dir().join(format!("forktty-pty-file-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("not-a-directory");
+        fs::write(&file, "content").unwrap();
+
+        let resolved = resolve_spawn_cwd(file.to_str().unwrap());
+
+        assert_ne!(resolved, file.to_string_lossy());
+        assert!(Path::new(&resolved).is_absolute());
+        assert!(Path::new(&resolved).is_dir());
+
+        let _ = fs::remove_dir_all(dir);
     }
 }
