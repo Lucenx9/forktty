@@ -495,11 +495,7 @@ pub fn run() {
     // Ensure localhost is excluded from proxy.
     ensure_localhost_no_proxy_env();
 
-    // Spawn a background thread to prune logs, as it performs I/O and could block app startup
-    std::thread::spawn(|| {
-        let _ = session::prune_old_logs(30);
-    });
-
+    let _ = session::prune_old_logs(30);
     let _ = session::write_log("INFO", "ForkTTY starting");
 
     let (socket_path, socket_uses_default_parent_policy) =
