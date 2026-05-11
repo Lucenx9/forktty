@@ -55,6 +55,7 @@ export default function FindBar({
         placeholder="Find..."
       />
       <button
+        type="button"
         className={`find-bar-btn ${caseSensitive ? "find-bar-btn-active" : ""}`}
         onClick={() => setCaseSensitive(!caseSensitive)}
         title="Case sensitive"
@@ -64,6 +65,7 @@ export default function FindBar({
         <CaseSensitive size={14} />
       </button>
       <button
+        type="button"
         className="find-bar-btn"
         onClick={onFindPrevious}
         title="Previous (Shift+Enter)"
@@ -72,6 +74,7 @@ export default function FindBar({
         <ChevronUp size={14} />
       </button>
       <button
+        type="button"
         className="find-bar-btn"
         onClick={onFindNext}
         title="Next (Enter)"
@@ -80,6 +83,7 @@ export default function FindBar({
         <ChevronDown size={14} />
       </button>
       <button
+        type="button"
         className="find-bar-btn"
         onClick={onClose}
         title="Close (Esc)"

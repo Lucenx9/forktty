@@ -1,0 +1,275 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+tone_instructions: >-
+  Be concise and direct. Prioritize correctness, security, race conditions,
+  resource cleanup, and tests over style-only comments.
+early_access: false
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_instructions: >-
+    Summarize user-visible behavior changes, Tauri/Rust backend impact, frontend
+    UI impact, tests, and security/privacy considerations. Keep it short.
+  review_status: true
+  review_details: false
+  commit_status: true
+  fail_commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  labeling_instructions:
+    - label: frontend
+      instructions: >-
+        Apply when the PR changes React, TypeScript, CSS, Vite, or xterm.js code
+        under src/.
+    - label: rust
+      instructions: Apply when the PR changes Rust backend code under src-tauri/src/.
+    - label: tauri
+      instructions: >-
+        Apply when the PR changes Tauri configuration, capabilities, packaging,
+        or desktop integration.
+    - label: ci
+      instructions: >-
+        Apply when the PR changes GitHub Actions, Dependabot, CodeQL, audits, or
+        release automation.
+    - label: docs
+      instructions: >-
+        Apply when the PR primarily changes README, SPEC, ROADMAP, SECURITY,
+        PRIVACY, or other documentation.
+    - label: dependencies
+      instructions: >-
+        Apply when the PR changes package-lock.json, Cargo.lock, package.json, or
+        Cargo.toml dependencies.
+    - label: security
+      instructions: >-
+        Apply when the PR changes socket APIs, PTY/process handling,
+        notification command execution, worktree paths, permissions, audits, or
+        authentication/security policy.
+  auto_apply_labels: false
+  suggested_reviewers: true
+  auto_assign_reviewers: false
+  in_progress_fortune: false
+  poem: false
+  enable_prompt_for_ai_agents: true
+  path_filters:
+    - "!dist/**"
+    - "!node_modules/**"
+    - "!src-tauri/target/**"
+    - "!src-tauri/gen/schemas/**"
+    - "!src-tauri/icons/**"
+    - "!docs/assets/**"
+    - "!.playwright-cli/**"
+    - "!.omc/**"
+    - "!.claude/**"
+  path_instructions:
+    - path: "src/**/*.ts"
+      instructions: >-
+        This is TypeScript logic for a local Tauri terminal app. Review for
+        correct state ownership, stale closures, cleanup of timers/listeners and
+        xterm disposables, terminal lifecycle handling, keyboard shortcut
+        collisions, and focused Vitest coverage for changed logic.
+    - path: "src/**/*.tsx"
+      instructions: >-
+        This is React 19 UI for a terminal/workspace application. Review for
+        predictable keyboard interactions, accessibility of controls, resilient
+        pane/workspace state, correct effect cleanup, and avoiding UI changes
+        that obscure terminal content or break split-pane ergonomics.
+    - path: "src-tauri/src/**/*.rs"
+      instructions: >-
+        This Rust/Tauri backend manages PTYs, git worktrees, local sockets,
+        desktop notifications, and user shell commands. Prioritize shell
+        injection, path traversal, symlink/TOCTOU issues, process lifecycle,
+        async locking, backpressure, UTF-8/binary terminal output handling, and
+        preserving the local-only privacy model.
+    - path: "src-tauri/capabilities/**"
+      instructions: >-
+        Review Tauri capabilities for least privilege. Avoid broad permissions
+        unless they are required by a documented user workflow.
+    - path: "src-tauri/tauri.conf.json"
+      instructions: >-
+        Review bundle identifiers, permissions, window/tray behavior, and build
+        settings for Linux desktop compatibility and release consistency.
+    - path: "src-tauri/packaging/**"
+      instructions: >-
+        Review packaging scripts for shell safety, reproducibility, pinned
+        assumptions, and compatibility with the CI commands in .github/workflows.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Review GitHub Actions for pinned actions, least-privilege permissions,
+        reproducible dependency installation, audit coverage, and avoiding
+        secrets or release artifacts in logs.
+    - path: "package-lock.json"
+      instructions: >-
+        Review dependency changes for unexpected major upgrades, duplicate
+        package families, security-sensitive transitive changes, and alignment
+        with package.json.
+    - path: "src-tauri/Cargo.lock"
+      instructions: >-
+        Review dependency changes for unexpected major upgrades, yanked crates,
+        security-sensitive transitive changes, and alignment with Cargo.toml.
+    - path: "**/*.md"
+      instructions: >-
+        Keep documentation accurate with the current Linux/Tauri behavior,
+        command names, privacy claims, and security reporting guidance.
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    ignore_title_keywords:
+      - WIP
+      - Draft
+      - DNM
+    drafts: false
+    base_branches:
+      - main
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false
+  pre_merge_checks:
+    title:
+      mode: warning
+      requirements: >-
+        Use a concise, descriptive title. Include the affected area when useful,
+        for example: frontend, rust, tauri, ci, docs, or security.
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+    docstrings:
+      mode: "off"
+    custom_checks:
+      - name: Privacy boundary
+        mode: warning
+        instructions: >-
+          Pass if changed runtime code preserves ForkTTY's local-only privacy
+          model: no telemetry, remote network calls, or persistence of terminal
+          output outside documented local config/session state unless the PR
+          explicitly documents and gates it behind user action.
+      - name: Terminal command safety
+        mode: warning
+        instructions: >-
+          Pass if changes to PTY, socket API, worktree, shell, packaging scripts,
+          or notification command execution validate untrusted input, normalize
+          paths, handle process lifecycle, and avoid shell injection.
+  tools:
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
+    eslint:
+      enabled: true
+    clippy:
+      enabled: true
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    osvScanner:
+      enabled: true
+    opengrep:
+      enabled: true
+    semgrep:
+      enabled: true
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    stylelint:
+      enabled: false
+    languagetool:
+      enabled: false
+
+chat:
+  art: false
+  auto_reply: true
+  integrations:
+    jira:
+      usage: disabled
+    linear:
+      usage: disabled
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - README.md
+      - SPEC.md
+      - SECURITY.md
+      - PRIVACY.md
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+
+code_generation:
+  docstrings:
+    language: en-US
+    path_instructions:
+      - path: "src-tauri/src/**/*.rs"
+        instructions: >-
+          Prefer doc comments for public Tauri commands, socket API contracts,
+          process lifecycle behavior, and security-sensitive path/command
+          handling. Avoid restating obvious implementation details.
+      - path: "src/**/*.ts"
+        instructions: >-
+          Prefer comments only for exported helpers, store contracts, and
+          terminal lifecycle edge cases. Avoid noisy comments for local UI logic.
+  unit_tests:
+    path_instructions:
+      - path: "src/**/*.ts"
+        instructions: >-
+          Generate focused Vitest tests under src/**/*.test.ts. Mock browser,
+          Tauri, timer, and terminal boundaries where needed; avoid tests that
+          depend on the developer's shell, home directory, or display server.
+      - path: "src-tauri/src/**/*.rs"
+        instructions: >-
+          Generate Rust tests that can run with cargo test --manifest-path
+          src-tauri/Cargo.toml. Prefer temporary directories and mocked
+          dependencies; avoid spawning long-lived shells or requiring desktop
+          notification services.
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: true
+    auto_planning:
+      enabled: false
+  labeling:
+    auto_apply_labels: false
+    labeling_instructions:
+      - label: bug
+        instructions: >-
+          Something is broken, regressed, flaky, or behaves differently than
+          documented.
+      - label: enhancement
+        instructions: A new feature, workflow improvement, or planned roadmap item.
+      - label: security
+        instructions: >-
+          Security-sensitive behavior, vulnerability report, hardening work,
+          permissions, command execution, or dependency audit finding.
+      - label: docs
+        instructions: Documentation-only request or clarification.

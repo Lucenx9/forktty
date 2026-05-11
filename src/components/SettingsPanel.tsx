@@ -1,7 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useConfigStore } from "../stores/config";
 import type { AppConfig } from "../lib/pty-bridge";
 import { X } from "lucide-react";
+import { ConfirmModal } from "./InlineModal";
+
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 32;
 
 export default function SettingsPanel() {
   const config = useConfigStore((s) => s.config);
@@ -10,21 +14,59 @@ export default function SettingsPanel() {
 
   const [draft, setDraft] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   useEffect(() => {
     if (config) {
       setDraft(structuredClone(config));
+      setSaveError(null);
+      setConfirmDiscard(false);
     }
   }, [config]);
 
-  if (!draft) return null;
+  const isDirty =
+    config !== null &&
+    draft !== null &&
+    JSON.stringify(draft) !== JSON.stringify(config);
+  const fontSizeValid =
+    draft !== null &&
+    Number.isFinite(draft.appearance.font_size) &&
+    draft.appearance.font_size >= MIN_FONT_SIZE &&
+    draft.appearance.font_size <= MAX_FONT_SIZE;
 
-  const isDirty = config !== null && JSON.stringify(draft) !== JSON.stringify(config);
+  const requestClose = useCallback(() => {
+    if (saving) return;
+    if (isDirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    toggleSettings();
+  }, [isDirty, saving, toggleSettings]);
+
+  useEffect(() => {
+    function handleRequestCloseSettings() {
+      requestClose();
+    }
+
+    window.addEventListener(
+      "forktty-request-close-settings",
+      handleRequestCloseSettings,
+    );
+    return () =>
+      window.removeEventListener(
+        "forktty-request-close-settings",
+        handleRequestCloseSettings,
+      );
+  }, [requestClose]);
+
+  if (!draft) return null;
 
   function updateGeneral<K extends keyof AppConfig["general"]>(
     key: K,
     value: AppConfig["general"][K],
   ) {
+    setSaveError(null);
     setDraft((d) => (d ? { ...d, general: { ...d.general, [key]: value } } : d));
   }
 
@@ -32,6 +74,7 @@ export default function SettingsPanel() {
     key: K,
     value: AppConfig["appearance"][K],
   ) {
+    setSaveError(null);
     setDraft((d) => (d ? { ...d, appearance: { ...d.appearance, [key]: value } } : d));
   }
 
@@ -39,6 +82,7 @@ export default function SettingsPanel() {
     key: K,
     value: AppConfig["notifications"][K],
   ) {
+    setSaveError(null);
     setDraft((d) =>
       d ? { ...d, notifications: { ...d.notifications, [key]: value } } : d,
     );
@@ -46,19 +90,43 @@ export default function SettingsPanel() {
 
   async function handleSave() {
     if (!draft) return;
+    if (!fontSizeValid) {
+      setSaveError(`Font size must be between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}.`);
+      return;
+    }
+
     setSaving(true);
+    setSaveError(null);
     try {
       await saveConfig(draft);
+    } catch (err) {
+      setSaveError(`Failed to save settings: ${err}`);
     } finally {
       setSaving(false);
     }
   }
 
+  function handleReset() {
+    if (config) {
+      setDraft(structuredClone(config));
+      setSaveError(null);
+      setConfirmDiscard(false);
+    }
+  }
+
   return (
-    <div className="settings-panel">
+    <div
+      className="settings-panel"
+      data-dirty={isDirty ? "true" : "false"}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="settings-panel-title"
+    >
       <div className="settings-panel-header">
         <div className="settings-panel-heading">
-          <span className="settings-panel-title">Settings</span>
+          <span id="settings-panel-title" className="settings-panel-title">
+            Settings
+          </span>
           <span className="settings-panel-subtitle">
             Appearance, worktree behavior and notifications
           </span>
@@ -69,16 +137,25 @@ export default function SettingsPanel() {
           </span>
           <button
             type="button"
+            className="settings-secondary-btn"
+            onClick={handleReset}
+            disabled={saving || !isDirty}
+          >
+            Reset
+          </button>
+          <button
+            type="button"
             className="settings-save-btn"
             onClick={handleSave}
-            disabled={saving || !isDirty}
+            disabled={saving || !isDirty || !fontSizeValid}
           >
             {saving ? "Saving..." : "Save"}
           </button>
           <button
             type="button"
             className="settings-close-btn"
-            onClick={toggleSettings}
+            onClick={requestClose}
+            disabled={saving}
             aria-label="Close settings"
           >
             <X size={14} />
@@ -87,6 +164,11 @@ export default function SettingsPanel() {
       </div>
 
       <div className="settings-content">
+        {saveError && (
+          <div className="settings-error" role="alert">
+            {saveError}
+          </div>
+        )}
         {/* General */}
         <div className="settings-section">
           <h3 className="settings-section-title">General</h3>
@@ -178,10 +260,30 @@ export default function SettingsPanel() {
               min={8}
               max={32}
               value={draft.appearance.font_size}
-              onChange={(e) =>
-                updateAppearance("font_size", parseInt(e.target.value, 10) || 14)
-              }
+              aria-invalid={!fontSizeValid}
+              aria-describedby="settings-font-size-hint"
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                if (Number.isFinite(next)) {
+                  updateAppearance("font_size", next);
+                }
+              }}
+              onBlur={() => {
+                const clamped = Math.max(
+                  MIN_FONT_SIZE,
+                  Math.min(MAX_FONT_SIZE, draft.appearance.font_size),
+                );
+                if (clamped !== draft.appearance.font_size) {
+                  updateAppearance("font_size", clamped);
+                }
+              }}
             />
+            <span
+              id="settings-font-size-hint"
+              className={`settings-field-hint ${!fontSizeValid ? "settings-field-error" : ""}`}
+            >
+              Range {MIN_FONT_SIZE}-{MAX_FONT_SIZE}px.
+            </span>
           </label>
 
           <label className="settings-field">
@@ -217,6 +319,24 @@ export default function SettingsPanel() {
           {/* Sound and idle threshold controls hidden until backend support lands */}
         </div>
       </div>
+      {confirmDiscard && (
+        <ConfirmModal
+          title="Discard Settings Changes"
+          message="Close settings and discard unsaved changes?"
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => {
+            if (saving) return;
+            setConfirmDiscard(false);
+            handleReset();
+            toggleSettings();
+          }}
+          onCancel={() => {
+            if (saving) return;
+            setConfirmDiscard(false);
+          }}
+        />
+      )}
     </div>
   );
 }
