@@ -2,7 +2,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { useWorkspaceStore } from "./workspace";
 import { useMetadataStore } from "./metadata";
-import { makeWorkspace } from "./pane-tree";
+import { collectLeafIds, makeWorkspace } from "./pane-tree";
 import { startWorkspaceEffects } from "./workspace-effects";
 
 // Mock the pty-bridge module
@@ -108,6 +108,43 @@ describe("workspace-effects", () => {
     vi.advanceTimersByTime(2000);
 
     expect(saveSession).toHaveBeenCalledOnce();
+  });
+
+  it("saves after split, resize, pane close, and workspace close changes", async () => {
+    const { saveSession } = await import("../lib/pty-bridge");
+    cleanup = startWorkspaceEffects();
+
+    const initialState = useWorkspaceStore.getState();
+    const workspaceId = initialState.activeWorkspaceId;
+    const paneId = initialState.workspaces[workspaceId]!.focusedPaneId;
+
+    initialState.splitPane(paneId, "horizontal", "/tmp");
+    vi.advanceTimersByTime(2000);
+    expect(saveSession).toHaveBeenCalledTimes(1);
+
+    const splitState = useWorkspaceStore.getState();
+    const root = splitState.workspaces[workspaceId]!.root;
+    expect(root.type).toBe("horizontal");
+    if (root.type === "horizontal") {
+      splitState.updatePaneSizes(root.id, [35, 65]);
+    }
+    vi.advanceTimersByTime(2000);
+    expect(saveSession).toHaveBeenCalledTimes(2);
+
+    const resizedState = useWorkspaceStore.getState();
+    const leafToClose = collectLeafIds(resizedState.workspaces[workspaceId]!.root)[1]!;
+    resizedState.closePane(leafToClose);
+    vi.advanceTimersByTime(2000);
+    expect(saveSession).toHaveBeenCalledTimes(3);
+
+    const closeState = useWorkspaceStore.getState();
+    const workspaceToClose = closeState.createWorkspace("Workspace 2");
+    vi.advanceTimersByTime(2000);
+    expect(saveSession).toHaveBeenCalledTimes(4);
+
+    useWorkspaceStore.getState().closeWorkspace(workspaceToClose);
+    vi.advanceTimersByTime(2000);
+    expect(saveSession).toHaveBeenCalledTimes(5);
   });
 
   it("updates document title when unread count changes", () => {

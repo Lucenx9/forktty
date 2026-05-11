@@ -193,6 +193,10 @@ export function updateSplitSizes(
     }
 
     const nextSizes = sizes.map((size) => Number(size));
+    if (nextSizes.some((size) => !isFinitePositiveNumber(size))) {
+      return node;
+    }
+
     const changed = nextSizes.some((size, index) => size !== node.sizes[index]);
     return changed ? { ...node, sizes: nextSizes } : node;
   }
@@ -403,9 +407,13 @@ export function findWorkspaceIdByPane(
   workspaces: Record<string, Workspace>,
   paneId: string,
 ): string | null {
-  for (const [wsId, ws] of Object.entries(workspaces)) {
-    if (ws.surfaces[paneId]) {
-      return wsId;
+  // Use for...in for performance over Object.entries() to avoid unnecessary array allocations
+  for (const wsId in workspaces) {
+    if (Object.prototype.hasOwnProperty.call(workspaces, wsId)) {
+      const ws = workspaces[wsId];
+      if (ws && findLeaf(ws.root, paneId)) {
+        return wsId;
+      }
     }
   }
   return null;
@@ -459,6 +467,7 @@ export function snapshotPaneTree(node: PaneNode): PaneTreeSnap {
 /** Validate a persisted pane tree snapshot before attempting rehydration. */
 export function isValidPaneTreeSnap(
   snap: PaneTreeSnap | null | undefined,
+  depth = 0,
 ): snap is PaneTreeSnap {
   if (!snap || typeof snap !== "object") {
     return false;
@@ -469,6 +478,10 @@ export function isValidPaneTreeSnap(
   }
 
   if (snap.type !== "horizontal" && snap.type !== "vertical") {
+    return false;
+  }
+
+  if (depth >= MAX_SPLIT_DEPTH) {
     return false;
   }
 
@@ -484,5 +497,5 @@ export function isValidPaneTreeSnap(
     return false;
   }
 
-  return snap.children.every((child) => isValidPaneTreeSnap(child));
+  return snap.children.every((child) => isValidPaneTreeSnap(child, depth + 1));
 }
