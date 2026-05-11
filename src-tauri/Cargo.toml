@@ -44,6 +44,3 @@ opt-level = 2
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-
-[dev-dependencies]
-tempfile = "3.10.1"
