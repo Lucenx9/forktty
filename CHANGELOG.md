@@ -4,15 +4,28 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-11
+
 ### Documentation
 - Updated README, SPEC, ROADMAP, SECURITY, and PRIVACY to match current UI polish, session restore, config validation, notification, worktree, AppImage, and test coverage behavior
 - Clarified that `notification_command` still supports static argv arguments after the required absolute executable path; a no-arguments policy remains a future hardening item
 
-### Reliability & Security Documentation Notes
+### UI Polish
+- Refined WelcomeScreen, modal focus behavior, and empty/loading/error states across key frontend surfaces
+- Added safer focus defaults for destructive modals
+
+### Reliability & Security
 - Session restore now validates persisted pane trees and quarantines corrupt or invalid session files instead of failing startup
+- Restored sessions suppress spurious prompt notifications during startup
 - Config loading for ForkTTY's TOML config is bounded to regular files up to 1 MiB
+- Ghostty config and theme loading now ignores missing, non-regular, oversized, or unreadable files instead of reading them unbounded
+- Shell and notification command configuration now validate executable paths more defensively
 - AppImage packaging normalizes root desktop/icon symlinks, rejects unsafe icon values, and refuses absolute root symlinks
 - Socket request reading now enforces the 1 MiB line limit without relying on `BufReader::lines()`
+
+### Tests & Tooling
+- Added frontend and Rust coverage for restore, notification, config, and packaging hardening paths
+- Refreshed dependency and tooling versions where relevant
 
 ## [0.1.1] - 2026-04-23
 

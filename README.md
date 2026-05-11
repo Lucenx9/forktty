@@ -20,7 +20,7 @@ Run several coding agents in one desktop window. ForkTTY keeps their terminals a
 
 </div>
 
-> **Status**: Early development (v0.1.1). ForkTTY is usable on Linux, but the runtime surface is still changing. There are no macOS or Windows builds.
+> **Status**: Early development (v0.1.2). ForkTTY is usable on Linux, but the runtime surface is still changing. There are no macOS or Windows builds.
 
 ## Features
 
@@ -93,16 +93,16 @@ The packaging script normalizes AppImage root symlinks, rejects unsafe icon valu
 - Prefer the native `.deb` on Debian-family systems; use the AppImage as the portable fallback.
 
 ```bash
-# .deb example for the current 0.1.1 release
-curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.1_amd64.deb
-sudo dpkg -i ForkTTY_0.1.1_amd64.deb
+# .deb example for the current 0.1.2 release
+curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.2_amd64.deb
+sudo dpkg -i ForkTTY_0.1.2_amd64.deb
 ```
 
 ```bash
-# AppImage example for the current 0.1.1 release
-curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.1_amd64.AppImage
-chmod +x ForkTTY_0.1.1_amd64.AppImage
-./ForkTTY_0.1.1_amd64.AppImage
+# AppImage example for the current 0.1.2 release
+curl -LO https://github.com/Lucenx9/forktty/releases/latest/download/ForkTTY_0.1.2_amd64.AppImage
+chmod +x ForkTTY_0.1.2_amd64.AppImage
+./ForkTTY_0.1.2_amd64.AppImage
 ```
 
 ## Keyboard Shortcuts
