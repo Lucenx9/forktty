@@ -1,7 +1,4 @@
+
 ## 2024-05-18 - Optimize hot path string conversion and detached threads
 **Learning:** `OsStr::to_string_lossy()` can trigger heap allocations by returning a `Cow::Owned` string when invalid UTF-8 sequences exist, or unconditionally in older iterations. Using `OsStr::to_str()` is allocation-free as it yields a direct slice reference when the string is valid UTF-8. Moving synchronous blocking I/O off the main thread during Tauri app initialization using `std::thread::spawn` at the *call site* prevents altering the underlying synchronous error contract of functions.
 **Action:** Always prefer `to_str()` over `to_string_lossy()` inside loops traversing directories unless `Lossy` semantics are strictly required. Spawning unmanaged OS threads (`std::thread::spawn`) to execute synchronous functions asynchronously should be done by the caller, where the error can be intentionally ignored, rather than silently swallowed inside the function itself.
-
-## 2024-06-25 - Prevent 1Hz Sidebar Re-renders
-**Learning:** Found a 1-second `setInterval` in `Sidebar.tsx` that triggers a state update (`now`), causing the entire Sidebar and all workspace entries to re-render every second indefinitely just to check for activity, defeating the purpose of keeping activity tracking out of Zustand.
-**Action:** Extract the activity check into a local state inside `WorkspaceEntry` that only triggers a re-render when the `hasActivity` boolean actually changes, and only set up intervals where needed.
