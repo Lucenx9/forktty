@@ -251,7 +251,18 @@ export interface BranchInfo {
 }
 
 export function gitListBranches(cwd?: string): Promise<BranchInfo[]> {
-  return invoke<BranchInfo[]>("git_list_branches", { cwd: cwd ?? null });
+  if (!hasTauriRuntime()) {
+    return Promise.resolve([]);
+  }
+
+  return invoke<BranchInfo[]>("git_list_branches", { cwd: cwd ?? null }).catch(
+    (err) => {
+      if (isMissingTauriRuntimeError(err)) {
+        return [];
+      }
+      throw err;
+    },
+  );
 }
 
 export function worktreeAttach(
