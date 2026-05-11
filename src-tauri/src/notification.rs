@@ -25,22 +25,19 @@ pub fn send_desktop(title: &str, body: &str, play_sound: bool) -> Result<(), Str
 }
 
 /// Run a custom notification command with env vars.
-/// Uses argv splitting instead of sh -c to prevent command injection.
+/// Command must be an absolute path to an executable. Arguments are not supported to prevent injection.
 pub(crate) fn run_custom_command(command: &str, title: &str, body: &str) -> Result<(), String> {
     if command.is_empty() {
         return Ok(());
     }
 
-    let parts = shell_words::split(command).map_err(|e| e.to_string())?;
-    let (prog, args) = parts.split_first().ok_or("Empty command")?;
-    let prog_path = std::path::Path::new(prog);
+    let prog_path = std::path::Path::new(command);
     if !prog_path.is_absolute() || !prog_path.exists() {
         return Err(format!(
-            "notification_command must be an absolute path to an existing file: {prog}"
+            "notification_command must be an absolute path to an existing file: {command}"
         ));
     }
-    let mut child = std::process::Command::new(prog)
-        .args(args)
+    let mut child = std::process::Command::new(command)
         .env("FORKTTY_NOTIFICATION_TITLE", title)
         .env("FORKTTY_NOTIFICATION_BODY", body)
         .spawn()
@@ -106,21 +103,11 @@ mod tests {
     }
 
     #[test]
-    fn command_with_arguments_works() {
-        // "/bin/echo hello" should split into prog="/bin/echo", args=["hello"]
+    fn command_with_arguments_fails() {
         let result = run_custom_command("/bin/echo hello", "title", "body");
         assert!(
-            result.is_ok(),
-            "Expected Ok for '/bin/echo hello', got: {result:?}"
-        );
-    }
-
-    #[test]
-    fn quoted_arguments_are_parsed_correctly() {
-        let result = run_custom_command("/bin/echo 'hello world'", "title", "body");
-        assert!(
-            result.is_ok(),
-            "Expected quoted args to be parsed correctly, got: {result:?}"
+            result.is_err(),
+            "Expected Err for '/bin/echo hello' as arguments are not supported, got: {result:?}"
         );
     }
 }

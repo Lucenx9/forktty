@@ -216,18 +216,10 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
         return Ok(());
     }
 
-    let parts = shell_words::split(trimmed)
-        .map_err(|err| ConfigError::Invalid(format!("general.notification_command: {err}")))?;
-    let Some(program) = parts.first() else {
-        return Err(ConfigError::Invalid(
-            "general.notification_command must not be empty".to_string(),
-        ));
-    };
-
-    let program_path = Path::new(program);
+    let program_path = Path::new(trimmed);
     if !program_path.is_absolute() || !program_path.exists() {
         return Err(ConfigError::Invalid(format!(
-            "general.notification_command must start with an absolute path to an existing file: {program}"
+            "general.notification_command must be an absolute path to an existing file: {trimmed}"
         )));
     }
 
