@@ -782,6 +782,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (newOrder.length === 0) return;
 
     const safeIndex = clampIndex(Number(activeIndex), newOrder.length);
+    // Treat restore as a workspace switch so prompt_detected events emitted by
+    // freshly-spawned shells in inactive workspaces don't fire spurious
+    // "Prompt waiting" notifications during the initial render window.
+    lastWorkspaceSwitchTime = Date.now();
     set({
       workspaces: newWorkspaces,
       workspaceOrder: newOrder,
