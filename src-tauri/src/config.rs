@@ -124,15 +124,40 @@ fn config_path() -> Result<PathBuf, ConfigError> {
     Ok(config_dir()?.join("config.toml"))
 }
 
+/// Load ForkTTY config from a specific path.
+pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
+    let meta = match fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AppConfig::default()),
+        Err(e) => return Err(e.into()),
+    };
+
+    // Ensure it's a regular file (prevents reading directories or devices)
+    if !meta.is_file() {
+        return Err(ConfigError::Invalid(
+            "Config path is not a regular file".to_string(),
+        ));
+    }
+
+    // Limit read size to prevent DoS from infinitely large files (like /dev/zero if it slipped through)
+    let max_size = 1024 * 1024; // 1 MB limit
+    if meta.len() > max_size {
+        return Err(ConfigError::Invalid("Config file is too large".to_string()));
+    }
+
+    use std::io::Read;
+    let file = fs::File::open(path)?;
+    let mut content = String::new();
+    file.take(max_size).read_to_string(&mut content)?;
+
+    let config: AppConfig = toml::from_str(&content)?;
+    Ok(normalize_loaded_config(config))
+}
+
 /// Load ForkTTY config, returning defaults if file doesn't exist.
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     let path = config_path()?;
-    if !path.exists() {
-        return Ok(AppConfig::default());
-    }
-    let content = fs::read_to_string(&path)?;
-    let config: AppConfig = toml::from_str(&content)?;
-    Ok(normalize_loaded_config(config))
+    load_config_from_path(&path)
 }
 
 /// Save ForkTTY config to disk.
@@ -617,6 +642,21 @@ mod tests {
     #[test]
     fn empty_theme_name_is_rejected() {
         assert!(!is_valid_theme_name(""));
+    }
+
+    #[test]
+    fn load_config_rejects_large_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("large.toml");
+
+        // Create a file larger than 1MB
+        let large_content = vec![b'a'; 1024 * 1024 + 10];
+        fs::write(&target, large_content).unwrap();
+
+        let result = load_config_from_path(&target);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("too large"));
     }
 
     #[test]
