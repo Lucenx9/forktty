@@ -19,6 +19,7 @@ import PaneArea from "./components/PaneArea";
 import Sidebar from "./components/Sidebar";
 import DashboardChrome from "./components/DashboardChrome";
 import NotificationPanel from "./components/NotificationPanel";
+import WelcomeScreen from "./components/WelcomeScreen";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const CommandPalette = lazy(() => import("./components/CommandPalette"));
 const BranchPicker = lazy(() => import("./components/BranchPicker"));
@@ -90,6 +91,7 @@ const SIDEBAR_COLLAPSE_STORAGE_KEY = "forktty.sidebar-collapsed";
 const SIDEBAR_COLLAPSE_WIDTH_PX = 56;
 const SIDEBAR_EXPANDED_DEFAULT_PX = 232;
 const SIDEBAR_COLLAPSE_THRESHOLD_PX = 160;
+const WELCOME_SEEN_STORAGE_KEY = "forktty.welcome-seen";
 
 function AppLoadingState({ label = "Loading workspace..." }: { label?: string }) {
   return (
@@ -118,7 +120,18 @@ export default function App() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "1";
   });
+  const [showWelcome, setShowWelcome] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(WELCOME_SEEN_STORAGE_KEY) !== "1";
+  });
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
+
+  const dismissWelcome = useCallback(() => {
+    setShowWelcome(false);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(WELCOME_SEEN_STORAGE_KEY, "1");
+    }
+  }, []);
 
   const closePane = useWorkspaceStore((s) => s.closePane);
   const moveFocus = useWorkspaceStore((s) => s.moveFocus);
@@ -1022,6 +1035,12 @@ export default function App() {
         />
       )}
       <ErrorToast />
+      {showWelcome &&
+        !showSettings &&
+        !showCommandPalette &&
+        !showBranchPicker &&
+        !pendingCloseWs &&
+        !pendingRename && <WelcomeScreen onDismiss={dismissWelcome} />}
     </div>
   );
 }

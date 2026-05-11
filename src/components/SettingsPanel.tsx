@@ -140,6 +140,13 @@ export default function SettingsPanel() {
             className="settings-secondary-btn"
             onClick={handleReset}
             disabled={saving || !isDirty}
+            title={
+              saving
+                ? "Saving in progress…"
+                : !isDirty
+                  ? "No changes to discard"
+                  : undefined
+            }
           >
             Reset
           </button>
@@ -148,6 +155,15 @@ export default function SettingsPanel() {
             className="settings-save-btn"
             onClick={handleSave}
             disabled={saving || !isDirty || !fontSizeValid}
+            title={
+              saving
+                ? "Saving…"
+                : !isDirty
+                  ? "No changes to save"
+                  : !fontSizeValid
+                    ? `Font size must be between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}`
+                    : undefined
+            }
           >
             {saving ? "Saving..." : "Save"}
           </button>
@@ -282,7 +298,9 @@ export default function SettingsPanel() {
               id="settings-font-size-hint"
               className={`settings-field-hint ${!fontSizeValid ? "settings-field-error" : ""}`}
             >
-              Range {MIN_FONT_SIZE}-{MAX_FONT_SIZE}px.
+              {fontSizeValid
+                ? `Range ${MIN_FONT_SIZE}–${MAX_FONT_SIZE}px.`
+                : `Enter a value between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}.`}
             </span>
           </label>
 

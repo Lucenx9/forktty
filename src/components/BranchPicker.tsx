@@ -188,6 +188,9 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
                 }
               }}
               disabled={!newBranchName.trim()}
+              title={
+                !newBranchName.trim() ? "Enter a branch name to continue" : undefined
+              }
             >
               Create
             </button>
@@ -232,8 +235,19 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
         />
         <div id={listboxId} className="branch-picker-list" role="listbox">
           {loading && (
-            <div className="branch-picker-branch-meta" role="status">
-              Loading branches...
+            <div
+              className="branch-picker-branch-meta branch-picker-loading"
+              role="status"
+              aria-live="polite"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+              }}
+            >
+              <span className="app-loading-spinner" aria-hidden="true" />
+              <span>Loading branches…</span>
             </div>
           )}
           {!loading && (
@@ -258,7 +272,11 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
 
               {filtered.length === 0 && (
                 <div className="branch-picker-branch-meta" role="status">
-                  No matching branches
+                  {branches.length === 0
+                    ? "No branches found in this repository."
+                    : query.trim()
+                      ? `No branches match "${query.trim()}".`
+                      : "No matching branches."}
                 </div>
               )}
 

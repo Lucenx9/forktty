@@ -52,10 +52,10 @@ export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
 
         <div className="welcome-footer">
           <div className="welcome-hint">
-            Use the Shortcuts button in the sidebar for the full keymap.
+            Press Ctrl+Shift+P to open the command palette and discover every action.
           </div>
           <button className="welcome-dismiss" onClick={onDismiss}>
-            Open Workspace
+            Get started
           </button>
         </div>
       </div>
