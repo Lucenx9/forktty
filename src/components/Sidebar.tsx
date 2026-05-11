@@ -413,7 +413,6 @@ function WorkspaceEntry({
     workspaceHasRecentActivity(workspace.surfaces),
   );
 
-  // ⚡ Bolt: Pushed activity interval down to avoid 1Hz Sidebar re-renders
   useEffect(() => {
     function checkActivity() {
       const isLive = workspaceHasRecentActivity(workspace.surfaces);
