@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   closeWorkspaceEnsuringOneRemains,
+  getLastWorkspaceSwitchTime,
   getSessionData,
   useWorkspaceStore,
 } from "./workspace";
@@ -238,6 +239,28 @@ describe("workspace lifecycle state transitions", () => {
       "Workspace 1",
     ]);
     expect(session.activeIndex).toBe(1);
+  });
+
+  it("marks restoreSession as a workspace switch to suppress spurious prompt notifications", () => {
+    const snapshots: SessionSnapshot[] = [
+      {
+        name: "Restored",
+        workingDir: "/tmp",
+        gitBranch: "",
+        worktreeDir: "",
+        worktreeName: "",
+        paneTree: { type: "leaf" },
+        focusedLeafIndex: 0,
+      },
+    ];
+
+    const before = Date.now();
+    useWorkspaceStore.getState().restoreSession(snapshots, 0);
+    const after = Date.now();
+
+    const switchTime = getLastWorkspaceSwitchTime();
+    expect(switchTime).toBeGreaterThanOrEqual(before);
+    expect(switchTime).toBeLessThanOrEqual(after);
   });
 
   it("uses a safe fallback working dir when closing the last removed worktree workspace", () => {
