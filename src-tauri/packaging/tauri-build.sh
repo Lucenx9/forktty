@@ -27,10 +27,6 @@ normalize_appimage_root() {
 
   local icon_name=""
   icon_name="$(awk -F= '/^Icon=/{print $2; exit}' "$root_desktop")"
-  if [[ "$icon_name" == *"/"* || "$icon_name" == *".."* ]]; then
-    echo "Ignoring unsafe Icon value in $root_desktop: $icon_name" >&2
-    icon_name=""
-  fi
 
   if [[ -n "$icon_name" ]]; then
     local root_icon=""
