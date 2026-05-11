@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { dispatchWorkspaceNotification } from "./notification-dispatch";
 import { useConfigStore } from "../stores/config";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -25,8 +26,6 @@ vi.mock("./pty-bridge", () => ({
   sendDesktopNotification: vi.fn().mockResolvedValue(undefined),
   logError: vi.fn(),
 }));
-
-import type { Mock } from "vitest";
 
 describe("dispatchWorkspaceNotification", () => {
   let mockWorkspaceState: {
@@ -212,9 +211,8 @@ describe("dispatchWorkspaceNotification", () => {
       body: "Test Body",
     });
 
-    // Wait for promises to resolve
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(logError).toHaveBeenCalledWith(error);
+    await vi.waitFor(() => {
+      expect(logError).toHaveBeenCalledWith(error);
+    });
   });
 });
