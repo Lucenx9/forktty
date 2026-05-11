@@ -1,3 +1,7 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+
 /// Send a desktop notification via notify-rust (XDG/D-Bus).
 pub fn send_desktop(title: &str, body: &str, play_sound: bool) -> Result<(), String> {
     let mut notification = notify_rust::Notification::new();
@@ -33,10 +37,10 @@ pub(crate) fn run_custom_command(command: &str, title: &str, body: &str) -> Resu
 
     let parts = shell_words::split(command).map_err(|e| e.to_string())?;
     let (prog, args) = parts.split_first().ok_or("Empty command")?;
-    let prog_path = std::path::Path::new(prog);
-    if !prog_path.is_absolute() || !prog_path.exists() {
+    let prog_path = Path::new(prog);
+    if !is_executable_file(prog_path) {
         return Err(format!(
-            "notification_command must be an absolute path to an existing file: {prog}"
+            "notification_command must be an absolute path to an executable file: {prog}"
         ));
     }
     let mut child = std::process::Command::new(prog)
@@ -52,6 +56,29 @@ pub(crate) fn run_custom_command(command: &str, title: &str, body: &str) -> Resu
     });
 
     Ok(())
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +112,19 @@ mod tests {
             "body",
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn directory_absolute_path_returns_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = run_custom_command(&dir.path().to_string_lossy(), "title", "body");
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("executable file"),
+            "Error should mention 'executable file', got: {err}"
+        );
     }
 
     #[test]

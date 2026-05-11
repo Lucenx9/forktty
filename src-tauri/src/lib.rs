@@ -11,6 +11,8 @@ use output_scanner::{OutputScanner, ScanEvent};
 use pty_manager::{PtyError, PtyManager};
 use serde::Serialize;
 use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::tray::TrayIconBuilder;
@@ -32,6 +34,29 @@ enum PtyEvent {
     Scan(ScanEvent),
 }
 
+fn is_executable_file(path: &std::path::Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 #[tauri::command]
 fn pty_spawn(
     state: State<'_, AppState>,
@@ -50,7 +75,7 @@ fn pty_spawn(
         .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
 
     let shell_path = std::path::Path::new(&shell);
-    if !shell_path.is_absolute() || !shell_path.exists() {
+    if !is_executable_file(shell_path) {
         return Err(format!("Invalid shell path: {shell}"));
     }
 
