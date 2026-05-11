@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -130,8 +131,6 @@ fn config_path() -> Result<PathBuf, ConfigError> {
 }
 
 fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
-    use std::io::Read;
-
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AppConfig::default()),
@@ -287,6 +286,25 @@ fn is_executable_file(path: &Path) -> bool {
 
 // --- Ghostty theme parsing ---
 
+fn read_small_text_file(path: &Path) -> Option<String> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return None,
+    };
+
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_CONFIG_SIZE_BYTES {
+        return None;
+    }
+
+    let mut content = String::new();
+    file.take(MAX_CONFIG_SIZE_BYTES)
+        .read_to_string(&mut content)
+        .ok()?;
+    Some(content)
+}
+
 /// Parsed terminal theme colors.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TerminalTheme {
@@ -317,23 +335,11 @@ pub struct TerminalTheme {
 
 /// Parse a Ghostty config file (key = value format).
 fn parse_ghostty_file(path: &Path) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return map,
+    let Some(content) = read_small_text_file(path) else {
+        return HashMap::new();
     };
 
-    for line in content.lines() {
-        let line = line.trim();
-        // Skip comments and empty lines
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            map.insert(key.trim().to_string(), value.trim().to_string());
-        }
-    }
-    map
+    parse_ghostty_content(&content)
 }
 
 fn normalize_font_family(value: &str) -> String {
@@ -407,7 +413,12 @@ fn load_ghostty_theme() -> TerminalTheme {
     let ghostty_dir = dirs::config_dir()
         .map(|d| d.join("ghostty"))
         .unwrap_or_default();
+    let system_theme_dir = Path::new("/usr/share/ghostty/themes");
 
+    load_ghostty_theme_from_dirs(&ghostty_dir, system_theme_dir)
+}
+
+fn load_ghostty_theme_from_dirs(ghostty_dir: &Path, system_theme_dir: &Path) -> TerminalTheme {
     let config_path = ghostty_dir.join("config");
     let map = parse_ghostty_file(&config_path);
 
@@ -418,23 +429,12 @@ fn load_ghostty_theme() -> TerminalTheme {
         }
         let theme_file = ghostty_dir.join("themes").join(theme_name);
         if theme_file.exists() {
-            let theme_map = parse_ghostty_file(&theme_file);
-            let content = fs::read_to_string(&theme_file).unwrap_or_default();
-            let palette = parse_palette_from_content(&content);
-            let mut t = theme_from_ghostty_map(&theme_map);
-            // Apply palette entries from theme file
-            apply_palette(&mut t, &palette);
-            t
+            theme_from_ghostty_path(&theme_file)
         } else {
             // Also check system-wide Ghostty themes
-            let sys_theme = PathBuf::from("/usr/share/ghostty/themes").join(theme_name);
+            let sys_theme = system_theme_dir.join(theme_name);
             if sys_theme.exists() {
-                let theme_map = parse_ghostty_file(&sys_theme);
-                let content = fs::read_to_string(&sys_theme).unwrap_or_default();
-                let palette = parse_palette_from_content(&content);
-                let mut t = theme_from_ghostty_map(&theme_map);
-                apply_palette(&mut t, &palette);
-                t
+                theme_from_ghostty_path(&sys_theme)
             } else {
                 TerminalTheme::default()
             }
@@ -444,9 +444,10 @@ fn load_ghostty_theme() -> TerminalTheme {
     };
 
     // Override with entries from main config (config overrides theme file)
-    let content = fs::read_to_string(&config_path).unwrap_or_default();
-    let palette = parse_palette_from_content(&content);
-    apply_palette(&mut theme, &palette);
+    if let Some(content) = read_small_text_file(&config_path) {
+        let palette = parse_palette_from_content(&content);
+        apply_palette(&mut theme, &palette);
+    }
 
     // Non-palette overrides
     if let Some(v) = map.get("background") {
@@ -474,6 +475,35 @@ fn load_ghostty_theme() -> TerminalTheme {
     }
 
     theme
+}
+
+fn theme_from_ghostty_path(path: &Path) -> TerminalTheme {
+    let Some(content) = read_small_text_file(path) else {
+        return TerminalTheme::default();
+    };
+
+    let theme_map = parse_ghostty_content(&content);
+    let palette = parse_palette_from_content(&content);
+    let mut theme = theme_from_ghostty_map(&theme_map);
+    apply_palette(&mut theme, &palette);
+    theme
+}
+
+fn parse_ghostty_content(content: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+
+    map
 }
 
 fn apply_palette(theme: &mut TerminalTheme, palette: &HashMap<u8, String>) {
@@ -682,6 +712,59 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("too large"));
+    }
+
+    #[test]
+    fn ghostty_config_too_large_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let ghostty_dir = dir.path().join("ghostty");
+        let system_theme_dir = dir.path().join("system-themes");
+        fs::create_dir_all(&ghostty_dir).unwrap();
+
+        let config_path = ghostty_dir.join("config");
+        let large_content = vec![b'a'; MAX_CONFIG_SIZE_BYTES as usize + 1];
+        fs::write(config_path, large_content).unwrap();
+
+        let theme = load_ghostty_theme_from_dirs(&ghostty_dir, &system_theme_dir);
+
+        assert!(theme.background.is_none());
+        assert!(theme.foreground.is_none());
+        assert!(theme.font_size.is_none());
+    }
+
+    #[test]
+    fn ghostty_non_regular_config_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let ghostty_dir = dir.path().join("ghostty");
+        let system_theme_dir = dir.path().join("system-themes");
+        fs::create_dir_all(ghostty_dir.join("config")).unwrap();
+
+        let theme = load_ghostty_theme_from_dirs(&ghostty_dir, &system_theme_dir);
+
+        assert!(theme.background.is_none());
+        assert!(theme.foreground.is_none());
+        assert!(theme.font_size.is_none());
+    }
+
+    #[test]
+    fn ghostty_normal_config_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let ghostty_dir = dir.path().join("ghostty");
+        let system_theme_dir = dir.path().join("system-themes");
+        fs::create_dir_all(&ghostty_dir).unwrap();
+
+        fs::write(
+            ghostty_dir.join("config"),
+            "background = #303446\nforeground = #c6d0f5\nfont-size = 16\npalette = 1=#e78284\n",
+        )
+        .unwrap();
+
+        let theme = load_ghostty_theme_from_dirs(&ghostty_dir, &system_theme_dir);
+
+        assert_eq!(theme.background, Some("#303446".to_string()));
+        assert_eq!(theme.foreground, Some("#c6d0f5".to_string()));
+        assert_eq!(theme.font_size, Some(16));
+        assert_eq!(theme.red, Some("#e78284".to_string()));
     }
 
     #[test]
