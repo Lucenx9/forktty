@@ -564,7 +564,13 @@ export default function App() {
         document.querySelector(".modal-overlay, .branch-picker-overlay") !== null;
       const commandPaletteOpen =
         document.querySelector(".command-palette-overlay") !== null;
-      const blockingOverlayOpen = modalOrBranchPickerOpen || commandPaletteOpen;
+      // Welcome overlay should suppress workspace mutations (Ctrl+N, Ctrl+W,
+      // splits, navigation, zoom, workspace-jump) but NOT the panel toggles
+      // (Ctrl+Shift+P / Ctrl+, / Ctrl+Shift+I), so the welcome copy that points
+      // users to the command palette remains actionable.
+      const welcomeOverlayOpen = document.querySelector(".welcome-overlay") !== null;
+      const blockingOverlayOpen =
+        modalOrBranchPickerOpen || commandPaletteOpen || welcomeOverlayOpen;
 
       // NOTE: These shortcuts override terminal keys (Ctrl+D = EOF, Ctrl+W = delete word,
       // Ctrl+N = next history). This matches SPEC.md. Users can still exit shells via `exit`.
