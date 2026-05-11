@@ -82,6 +82,8 @@ fn default_true() -> bool {
     true
 }
 
+const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
@@ -124,15 +126,38 @@ fn config_path() -> Result<PathBuf, ConfigError> {
     Ok(config_dir()?.join("config.toml"))
 }
 
+fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
+    use std::io::Read;
+
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AppConfig::default()),
+        Err(e) => return Err(e.into()),
+    };
+
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(ConfigError::Invalid(
+            "Config path is not a regular file".to_string(),
+        ));
+    }
+
+    if meta.len() > MAX_CONFIG_SIZE_BYTES {
+        return Err(ConfigError::Invalid("Config file is too large".to_string()));
+    }
+
+    let mut content = String::new();
+    file.take(MAX_CONFIG_SIZE_BYTES)
+        .read_to_string(&mut content)?;
+
+    let config: AppConfig = toml::from_str(&content)?;
+    Ok(normalize_loaded_config(config))
+}
+
 /// Load ForkTTY config, returning defaults if file doesn't exist.
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     let path = config_path()?;
-    if !path.exists() {
-        return Ok(AppConfig::default());
-    }
-    let content = fs::read_to_string(&path)?;
-    let config: AppConfig = toml::from_str(&content)?;
-    Ok(normalize_loaded_config(config))
+    load_config_from_path(&path)
 }
 
 /// Save ForkTTY config to disk.
@@ -617,6 +642,20 @@ mod tests {
     #[test]
     fn empty_theme_name_is_rejected() {
         assert!(!is_valid_theme_name(""));
+    }
+
+    #[test]
+    fn load_config_rejects_large_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("large.toml");
+
+        let large_content = vec![b'a'; MAX_CONFIG_SIZE_BYTES as usize + 10];
+        fs::write(&target, large_content).unwrap();
+
+        let result = load_config_from_path(&target);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("too large"));
     }
 
     #[test]
