@@ -135,7 +135,9 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
         <div id={listboxId} className="command-palette-list" role="listbox">
           {filtered.length === 0 && (
             <div className="command-palette-empty" role="status">
-              No matching commands
+              {queryTrimmed
+                ? `No commands match "${queryTrimmed}".`
+                : "No commands available."}
             </div>
           )}
           {filtered.map((cmd, i) => (

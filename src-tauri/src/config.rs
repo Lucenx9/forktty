@@ -4,6 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("IO error: {0}")]
@@ -200,9 +203,9 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     let shell_path = Path::new(shell);
-    if !shell_path.is_absolute() || !shell_path.exists() {
+    if !is_executable_file(shell_path) {
         return Err(ConfigError::Invalid(format!(
-            "general.shell must be an absolute path to an existing file: {shell}"
+            "general.shell must be an absolute path to an executable file: {shell}"
         )));
     }
 
@@ -250,13 +253,36 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
     };
 
     let program_path = Path::new(program);
-    if !program_path.is_absolute() || !program_path.exists() {
+    if !is_executable_file(program_path) {
         return Err(ConfigError::Invalid(format!(
-            "general.notification_command must start with an absolute path to an existing file: {program}"
+            "general.notification_command must start with an absolute path to an executable file: {program}"
         )));
     }
 
     Ok(())
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 // --- Ghostty theme parsing ---
@@ -667,11 +693,34 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_rejects_directory_shell_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.general.shell = dir.path().to_string_lossy().to_string();
+
+        let err = validate_config(&config).unwrap_err().to_string();
+
+        assert!(err.contains("executable file"));
+    }
+
+    #[test]
     fn validate_config_rejects_relative_notification_command() {
         let mut config = AppConfig::default();
         config.general.notification_command = "notify-send done".to_string();
         let err = validate_config(&config).unwrap_err().to_string();
         assert!(err.contains("notification_command"));
+    }
+
+    #[test]
+    fn validate_config_rejects_directory_notification_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.general.notification_command = format!("{} --flag", dir.path().display());
+
+        let err = validate_config(&config).unwrap_err().to_string();
+
+        assert!(err.contains("notification_command"));
+        assert!(err.contains("executable file"));
     }
 
     #[test]

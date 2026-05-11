@@ -22,6 +22,9 @@ export function ConfirmModal({
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const messageId = useId();
+  // Default focus to Cancel for destructive prompts so Enter does not
+  // accidentally confirm a destructive action.
+  const focusConfirm = !danger;
 
   useEffect(() => {
     previousFocusRef.current =
@@ -65,6 +68,7 @@ export function ConfirmModal({
             type="button"
             className="modal-btn modal-btn-cancel"
             onClick={onCancel}
+            autoFocus={!focusConfirm}
           >
             {cancelLabel}
           </button>
@@ -72,7 +76,7 @@ export function ConfirmModal({
             type="button"
             className={`modal-btn ${danger ? "modal-btn-danger" : "modal-btn-confirm"}`}
             onClick={onConfirm}
-            autoFocus
+            autoFocus={focusConfirm}
           >
             {confirmLabel}
           </button>
@@ -154,14 +158,18 @@ export function PromptModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            className="modal-btn modal-btn-confirm"
-            onClick={handleSubmit}
-            disabled={!value.trim()}
-          >
-            {confirmLabel}
-          </button>
+          {/* Wrapper carries the title so the tooltip remains visible when
+              the disabled button can't reliably receive hover/focus events. */}
+          <span title={!value.trim() ? "Enter a name to continue" : undefined}>
+            <button
+              type="button"
+              className="modal-btn modal-btn-confirm"
+              onClick={handleSubmit}
+              disabled={!value.trim()}
+            >
+              {confirmLabel}
+            </button>
+          </span>
         </div>
       </div>
     </div>
