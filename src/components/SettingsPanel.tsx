@@ -135,11 +135,11 @@ export default function SettingsPanel() {
           <span className={`settings-status ${isDirty ? "settings-status-dirty" : ""}`}>
             {isDirty ? "Unsaved changes" : "Up to date"}
           </span>
-          <button
-            type="button"
-            className="settings-secondary-btn"
-            onClick={handleReset}
-            disabled={saving || !isDirty}
+          {/* Disabled <button> doesn't expose title tooltips reliably (it can't
+              receive focus and Firefox suppresses tooltips on disabled controls),
+              so the explanation is placed on a wrapping span that always receives
+              hover events. */}
+          <span
             title={
               saving
                 ? "Saving in progress…"
@@ -148,13 +148,16 @@ export default function SettingsPanel() {
                   : undefined
             }
           >
-            Reset
-          </button>
-          <button
-            type="button"
-            className="settings-save-btn"
-            onClick={handleSave}
-            disabled={saving || !isDirty || !fontSizeValid}
+            <button
+              type="button"
+              className="settings-secondary-btn"
+              onClick={handleReset}
+              disabled={saving || !isDirty}
+            >
+              Reset
+            </button>
+          </span>
+          <span
             title={
               saving
                 ? "Saving…"
@@ -165,8 +168,15 @@ export default function SettingsPanel() {
                     : undefined
             }
           >
-            {saving ? "Saving..." : "Save"}
-          </button>
+            <button
+              type="button"
+              className="settings-save-btn"
+              onClick={handleSave}
+              disabled={saving || !isDirty || !fontSizeValid}
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </span>
           <button
             type="button"
             className="settings-close-btn"

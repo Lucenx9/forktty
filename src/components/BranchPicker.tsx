@@ -178,22 +178,27 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
               aria-label="Branch name"
               placeholder="Branch name..."
             />
-            <button
-              type="button"
-              className="branch-picker-confirm-btn"
-              onClick={() => {
-                const trimmed = newBranchName.trim();
-                if (trimmed) {
-                  onResult({ kind: "new-branch", name: trimmed });
-                }
-              }}
-              disabled={!newBranchName.trim()}
+            {/* Wrapper carries the title so the tooltip remains visible when
+                the disabled button can't receive hover/focus reliably. */}
+            <span
               title={
                 !newBranchName.trim() ? "Enter a branch name to continue" : undefined
               }
             >
-              Create
-            </button>
+              <button
+                type="button"
+                className="branch-picker-confirm-btn"
+                onClick={() => {
+                  const trimmed = newBranchName.trim();
+                  if (trimmed) {
+                    onResult({ kind: "new-branch", name: trimmed });
+                  }
+                }}
+                disabled={!newBranchName.trim()}
+              >
+                Create
+              </button>
+            </span>
           </div>
           <div id="branch-picker-create-hint" className="branch-picker-hint">
             Escape returns to branch selection.

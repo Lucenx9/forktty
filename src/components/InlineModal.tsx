@@ -158,15 +158,18 @@ export function PromptModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            className="modal-btn modal-btn-confirm"
-            onClick={handleSubmit}
-            disabled={!value.trim()}
-            title={!value.trim() ? "Enter a name to continue" : undefined}
-          >
-            {confirmLabel}
-          </button>
+          {/* Wrapper carries the title so the tooltip remains visible when
+              the disabled button can't reliably receive hover/focus events. */}
+          <span title={!value.trim() ? "Enter a name to continue" : undefined}>
+            <button
+              type="button"
+              className="modal-btn modal-btn-confirm"
+              onClick={handleSubmit}
+              disabled={!value.trim()}
+            >
+              {confirmLabel}
+            </button>
+          </span>
         </div>
       </div>
     </div>
