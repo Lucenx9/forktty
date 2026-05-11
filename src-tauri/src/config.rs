@@ -82,6 +82,8 @@ fn default_true() -> bool {
     true
 }
 
+const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
@@ -124,31 +126,28 @@ fn config_path() -> Result<PathBuf, ConfigError> {
     Ok(config_dir()?.join("config.toml"))
 }
 
-/// Load ForkTTY config from a specific path.
-pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
+fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
     let meta = match fs::metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AppConfig::default()),
         Err(e) => return Err(e.into()),
     };
 
-    // Ensure it's a regular file (prevents reading directories or devices)
     if !meta.is_file() {
         return Err(ConfigError::Invalid(
             "Config path is not a regular file".to_string(),
         ));
     }
 
-    // Limit read size to prevent DoS from infinitely large files (like /dev/zero if it slipped through)
-    let max_size = 1024 * 1024; // 1 MB limit
-    if meta.len() > max_size {
+    if meta.len() > MAX_CONFIG_SIZE_BYTES {
         return Err(ConfigError::Invalid("Config file is too large".to_string()));
     }
 
     use std::io::Read;
     let file = fs::File::open(path)?;
     let mut content = String::new();
-    file.take(max_size).read_to_string(&mut content)?;
+    file.take(MAX_CONFIG_SIZE_BYTES)
+        .read_to_string(&mut content)?;
 
     let config: AppConfig = toml::from_str(&content)?;
     Ok(normalize_loaded_config(config))
@@ -649,8 +648,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("large.toml");
 
-        // Create a file larger than 1MB
-        let large_content = vec![b'a'; 1024 * 1024 + 10];
+        let large_content = vec![b'a'; MAX_CONFIG_SIZE_BYTES as usize + 10];
         fs::write(&target, large_content).unwrap();
 
         let result = load_config_from_path(&target);
