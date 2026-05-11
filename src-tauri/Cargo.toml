@@ -44,3 +44,10 @@ opt-level = 2
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "osc99"
+harness = false
