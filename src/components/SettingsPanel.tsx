@@ -135,22 +135,48 @@ export default function SettingsPanel() {
           <span className={`settings-status ${isDirty ? "settings-status-dirty" : ""}`}>
             {isDirty ? "Unsaved changes" : "Up to date"}
           </span>
-          <button
-            type="button"
-            className="settings-secondary-btn"
-            onClick={handleReset}
-            disabled={saving || !isDirty}
+          {/* Disabled <button> doesn't expose title tooltips reliably (it can't
+              receive focus and Firefox suppresses tooltips on disabled controls),
+              so the explanation is placed on a wrapping span that always receives
+              hover events. */}
+          <span
+            title={
+              saving
+                ? "Saving in progress…"
+                : !isDirty
+                  ? "No changes to discard"
+                  : undefined
+            }
           >
-            Reset
-          </button>
-          <button
-            type="button"
-            className="settings-save-btn"
-            onClick={handleSave}
-            disabled={saving || !isDirty || !fontSizeValid}
+            <button
+              type="button"
+              className="settings-secondary-btn"
+              onClick={handleReset}
+              disabled={saving || !isDirty}
+            >
+              Reset
+            </button>
+          </span>
+          <span
+            title={
+              saving
+                ? "Saving…"
+                : !isDirty
+                  ? "No changes to save"
+                  : !fontSizeValid
+                    ? `Font size must be between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}`
+                    : undefined
+            }
           >
-            {saving ? "Saving..." : "Save"}
-          </button>
+            <button
+              type="button"
+              className="settings-save-btn"
+              onClick={handleSave}
+              disabled={saving || !isDirty || !fontSizeValid}
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </span>
           <button
             type="button"
             className="settings-close-btn"
@@ -282,7 +308,9 @@ export default function SettingsPanel() {
               id="settings-font-size-hint"
               className={`settings-field-hint ${!fontSizeValid ? "settings-field-error" : ""}`}
             >
-              Range {MIN_FONT_SIZE}-{MAX_FONT_SIZE}px.
+              {fontSizeValid
+                ? `Range ${MIN_FONT_SIZE}–${MAX_FONT_SIZE}px.`
+                : `Enter a value between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}.`}
             </span>
           </label>
 
