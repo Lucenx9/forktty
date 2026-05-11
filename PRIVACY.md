@@ -2,42 +2,62 @@
 
 ## Data Collection
 
-**ForkTTY does not collect, transmit, or process any personal data.** All data remains entirely on your local machine. There is no telemetry, no analytics, no crash reporting, no update checking, and no network connections to external servers.
+ForkTTY does not collect, transmit, sell, or process personal data through any external service. It has no telemetry, analytics, crash reporting, update checks, or product network calls.
+
+## Network Activity
+
+ForkTTY makes no external network connections.
+
+The automation interface is a local Unix domain socket, normally at:
+
+```text
+$XDG_RUNTIME_DIR/forktty.sock
+```
+
+The socket is intended for same-machine, same-user automation and is removed on exit.
 
 ## Locally Stored Files
 
-ForkTTY creates the following files on your machine:
+ForkTTY stores local application data only:
 
 | File | Location | Purpose |
-|------|----------|---------|
-| Configuration | `~/.config/forktty/config.toml` | User preferences (theme, font, shell, notification settings) |
-| Session data | `~/.local/share/forktty/session.json` | Workspace layout for session restore on restart |
-| Application logs | `~/.local/share/forktty/logs/` | Structured logs for debugging (one file per day) |
-| IPC socket | `$XDG_RUNTIME_DIR/forktty.sock` | Ephemeral Unix socket for CLI communication (deleted on exit) |
+| ---- | -------- | ------- |
+| Configuration | `~/.config/forktty/config.toml` | Theme, font, shell, worktree, and notification settings |
+| Session data | `~/.local/share/forktty/session.json` | Workspace layout and metadata needed for session restore |
+| Quarantined sessions | `~/.local/share/forktty/session.json.bad-*` | Invalid/corrupt session files kept for debugging |
+| Logs | `~/.local/share/forktty/logs/` | Local structured logs for debugging |
+| IPC socket | `$XDG_RUNTIME_DIR/forktty.sock` | Ephemeral local socket for automation |
 
-These files may contain filesystem paths that include your username (e.g., `/home/yourname/project`). This data never leaves your machine.
+These files may contain local paths, usernames embedded in paths, workspace names, branch names, and notification text derived from terminal output. They remain on your machine unless you share them.
 
-## How to Delete Your Data
+## Desktop Notifications
 
-To remove all ForkTTY data from your machine:
+When desktop notifications are enabled, ForkTTY sends notification title/body text to the local desktop notification service through `notify-rust` / XDG D-Bus. Notification content can include terminal output or agent prompt text.
+
+If `notification_command` is configured, ForkTTY runs the configured local executable and provides the notification payload through:
+
+- `FORKTTY_NOTIFICATION_TITLE`
+- `FORKTTY_NOTIFICATION_BODY`
+
+Use a custom notification command only if you trust that executable with local terminal notification content.
+
+## Third-Party Components
+
+ForkTTY uses WebKitGTK, the system WebView on Linux, to render the UI. ForkTTY's Content Security Policy restricts the app to local content and does not load external URLs.
+
+## How to Delete Local Data
 
 ```bash
 rm -rf ~/.config/forktty
 rm -rf ~/.local/share/forktty
 ```
 
-## Third-Party Components
+The runtime socket is ephemeral and normally lives under `$XDG_RUNTIME_DIR`.
 
-ForkTTY uses the system WebView (WebKitGTK on Linux) to render its UI. WebKitGTK is a system component maintained by the GNOME project and does not collect telemetry. ForkTTY's Content Security Policy restricts the WebView to loading local content only — no external URLs are ever loaded.
+## EU/GDPR Note
 
-## Network Activity
-
-ForkTTY makes **zero network connections**. The only IPC mechanism is a local Unix domain socket restricted to the current user (permissions `0600`).
-
-## EU/GDPR Compliance
-
-As a local-only desktop application with no data collection, ForkTTY falls outside the scope of GDPR data processing obligations. You are the sole controller of any data stored on your machine.
+ForkTTY is local-only software with no external data collection by the application. You control any data stored on your machine and any local scripts you configure.
 
 ## Contact
 
-If you have privacy questions, open an issue at https://github.com/Lucenx9/forktty/issues or use [GitHub's private reporting](https://github.com/Lucenx9/forktty/security/advisories/new).
+For privacy questions, open an issue at https://github.com/Lucenx9/forktty/issues or use [GitHub private vulnerability reporting](https://github.com/Lucenx9/forktty/security/advisories/new).

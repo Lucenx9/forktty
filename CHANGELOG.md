@@ -4,6 +4,16 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Documentation
+- Updated README, SPEC, ROADMAP, SECURITY, and PRIVACY to match current UI polish, session restore, config validation, notification, worktree, AppImage, and test coverage behavior
+- Clarified that `notification_command` still supports static argv arguments after the required absolute executable path; a no-arguments policy remains a future hardening item
+
+### Reliability & Security Documentation Notes
+- Session restore now validates persisted pane trees and quarantines corrupt or invalid session files instead of failing startup
+- Config loading for ForkTTY's TOML config is bounded to regular files up to 1 MiB
+- AppImage packaging normalizes root desktop/icon symlinks, rejects unsafe icon values, and refuses absolute root symlinks
+- Socket request reading now enforces the 1 MiB line limit without relying on `BufReader::lines()`
+
 ## [0.1.1] - 2026-04-23
 
 ### UI Polish
@@ -59,11 +69,10 @@ All notable changes to ForkTTY are documented here.
 - Desktop notifications via notify-rust (XDG/D-Bus)
 - Notification panel (Ctrl+Shift+I), jump to unread (Ctrl+Shift+U)
 
-### Phase 6 — Socket API + CLI
+### Phase 6 — Socket API
 - Unix domain socket JSON-RPC server (tokio)
 - 22 methods: system.ping, workspace.*, surface.*, notification.*, worktree.*, metadata.*
-- 22 socket API methods: system.ping, workspace.*, surface.*, notification.*, worktree.*, metadata.*
-- Environment variables set in spawned shells (FORKTTY_WORKSPACE_ID, SURFACE_ID, SOCKET_PATH)
+- Environment variables set in spawned shells (`FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, `FORKTTY_SOCKET_PATH`)
 
 ### Phase 7 — Theming + Config
 - Ghostty config parser with theme file and palette support
@@ -73,7 +82,7 @@ All notable changes to ForkTTY are documented here.
 - Configurable sidebar position (left/right)
 
 ### Phase 8 — Polish + Release
-- Session persistence (auto-save every 30s, restore on startup)
+- Session persistence (auto-save and restore on startup)
 - Command palette (Ctrl+Shift+P) with keyboard navigation and inline filtering
 - Find in terminal (Ctrl+F) via xterm.js SearchAddon
 - Copy selection (Ctrl+Shift+C)
@@ -83,17 +92,16 @@ All notable changes to ForkTTY are documented here.
 - License: AGPL-3.0
 
 ### Security Hardening
-- Socket: owner-only permissions (0o600), XDG_RUNTIME_DIR default path, 1MiB request size limit
+- Socket: owner-only permissions (0o600), XDG_RUNTIME_DIR default path, 1 MiB request size limit
 - Notifications: argv splitting instead of sh -c (no command injection)
 - Worktree: path traversal protection via canonicalize + git-workdir boundary check
 - Worktree names: reject /, \, .., \0
-- Shell path: must be absolute and exist on disk
+- Shell path: must be absolute and point to an executable file
 - CSP: strict Content Security Policy in tauri.conf.json
 - Config: Ghostty theme path traversal guard
 - Logging: newline injection sanitization
 
 ### Known Limitations
-- `BufReader::lines()` buffers unboundedly before the 1MiB size check (tokio limitation)
 - `beforeunload` session save is fire-and-forget (async IPC may not complete)
 - No idle detection (`idle_threshold_ms` config field reserved but not active)
 - No dark/light mode toggle (dark theme only; CSS has a minimal system-preference fallback)
