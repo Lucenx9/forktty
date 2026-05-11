@@ -205,10 +205,15 @@ pub fn prune_old_logs(max_age_days: u32) -> Result<(), SessionError> {
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
         let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with("forktty-") && name_str.ends_with(".log") && *name_str < *cutoff_str
-        {
-            let _ = fs::remove_file(entry.path());
+        // Performance: Use to_str() instead of to_string_lossy() to prevent string allocation
+        // in the hot path. Log files will always be valid UTF-8.
+        if let Some(name_str) = name.to_str() {
+            if name_str.starts_with("forktty-")
+                && name_str.ends_with(".log")
+                && name_str < cutoff_str.as_str()
+            {
+                let _ = fs::remove_file(entry.path());
+            }
         }
     }
     Ok(())
@@ -352,12 +357,13 @@ mod tests {
         for entry in fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with("forktty-")
-                && name_str.ends_with(".log")
-                && *name_str < *cutoff_str
-            {
-                let _ = fs::remove_file(entry.path());
+            if let Some(name_str) = name.to_str() {
+                if name_str.starts_with("forktty-")
+                    && name_str.ends_with(".log")
+                    && name_str < cutoff_str.as_str()
+                {
+                    let _ = fs::remove_file(entry.path());
+                }
             }
         }
     }
