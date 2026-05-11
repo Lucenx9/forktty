@@ -127,6 +127,7 @@ const useConfigStore = create<ConfigState>((set, get) => ({
       set({ config, theme, xtermTheme });
     } catch (err) {
       showToast(`Failed to save config: ${err}`, "error");
+      throw err;
     }
   },
 
