@@ -1,5 +1,5 @@
 use adw::prelude::*;
-use forktty_core::{PaneNode, SplitAxis, WorkspaceModel};
+use forktty_core::{config, NotificationKind, PaneNode, SplitAxis, WorkspaceModel};
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
@@ -244,8 +244,23 @@ fn build_ui(app: &adw::Application) {
         .icon_name("view-split-top-bottom-symbolic")
         .tooltip_text("Split vertically")
         .build();
+    let command_palette = gtk::Button::builder()
+        .icon_name("system-search-symbolic")
+        .tooltip_text("Command palette")
+        .build();
+    let notifications = gtk::Button::builder()
+        .icon_name("preferences-system-notifications-symbolic")
+        .tooltip_text("Notifications")
+        .build();
+    let settings = gtk::Button::builder()
+        .icon_name("emblem-system-symbolic")
+        .tooltip_text("Settings")
+        .build();
     header.pack_start(&split_horizontal);
     header.pack_start(&split_vertical);
+    header.pack_end(&settings);
+    header.pack_end(&notifications);
+    header.pack_end(&command_palette);
 
     let sidebar = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
@@ -324,6 +339,23 @@ fn build_ui(app: &adw::Application) {
         eprintln!("Failed to bootstrap default workspace: {err}");
     }
 
+    let palette_parent = window.clone();
+    let palette_state = state.clone();
+    command_palette.connect_clicked(move |_| {
+        show_command_palette(&palette_parent, &palette_state);
+    });
+
+    let notifications_parent = window.clone();
+    let notifications_state = state.clone();
+    notifications.connect_clicked(move |_| {
+        show_notification_panel(&notifications_parent, &notifications_state);
+    });
+
+    let settings_parent = window.clone();
+    settings.connect_clicked(move |_| {
+        show_settings_dialog(&settings_parent);
+    });
+
     start_socket_server(state.clone());
 
     window.present();
@@ -361,6 +393,220 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
         extra_env: Vec::new(),
     }) {
         eprintln!("Failed to spawn split terminal: {err}");
+    }
+}
+
+fn show_command_palette(parent: &adw::ApplicationWindow, state: &SocketAppState) {
+    let dialog = gtk::Window::builder()
+        .title("Command Palette")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(360)
+        .default_height(260)
+        .build();
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+
+    append_command_button(&list, "Split Horizontally", {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            split_active_surface(&state, SplitAxis::Horizontal);
+            dialog.close();
+        }
+    });
+    append_command_button(&list, "Split Vertically", {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            split_active_surface(&state, SplitAxis::Vertical);
+            dialog.close();
+        }
+    });
+    append_command_button(&list, "New Workspace", {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            create_plain_workspace(&state);
+            dialog.close();
+        }
+    });
+    append_command_button(&list, "Mark Notification", {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            create_local_notification(&state, "ForkTTY", "Command palette notification");
+            dialog.close();
+        }
+    });
+
+    dialog.set_child(Some(&list));
+    dialog.present();
+}
+
+fn append_command_button<F>(list: &gtk::ListBox, label: &str, action: F)
+where
+    F: Fn() + 'static,
+{
+    let button = gtk::Button::builder()
+        .label(label)
+        .halign(gtk::Align::Fill)
+        .build();
+    button.connect_clicked(move |_| action());
+    list.append(&button);
+}
+
+fn show_notification_panel(parent: &adw::ApplicationWindow, state: &SocketAppState) {
+    let dialog = gtk::Window::builder()
+        .title("Notifications")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(420)
+        .default_height(360)
+        .build();
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+
+    let notifications = state
+        .model
+        .lock()
+        .ok()
+        .map(|model| model.list_notifications())
+        .unwrap_or_default();
+    if notifications.is_empty() {
+        list.append(&gtk::Label::new(Some("No notifications")));
+    } else {
+        for notification in notifications {
+            let label = gtk::Label::builder()
+                .label(format!(
+                    "{:?}  {}  {}",
+                    notification.kind, notification.title, notification.body
+                ))
+                .xalign(0.0)
+                .wrap(true)
+                .margin_top(8)
+                .margin_bottom(8)
+                .margin_start(8)
+                .margin_end(8)
+                .build();
+            list.append(&label);
+        }
+    }
+
+    dialog.set_child(Some(&list));
+    dialog.present();
+}
+
+fn show_settings_dialog(parent: &adw::ApplicationWindow) {
+    let dialog = gtk::Window::builder()
+        .title("Settings")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(460)
+        .default_height(260)
+        .build();
+    let loaded = config::load_config().unwrap_or_default();
+
+    let shell_entry = gtk::Entry::builder()
+        .text(&loaded.general.shell)
+        .hexpand(true)
+        .build();
+    let font_size = gtk::SpinButton::with_range(8.0, 64.0, 1.0);
+    font_size.set_value(f64::from(loaded.appearance.font_size));
+    let notification_command = gtk::Entry::builder()
+        .text(&loaded.general.notification_command)
+        .hexpand(true)
+        .build();
+    let status = gtk::Label::builder().xalign(0.0).build();
+    let save = gtk::Button::builder()
+        .icon_name("document-save-symbolic")
+        .tooltip_text("Save")
+        .build();
+
+    let grid = gtk::Grid::builder()
+        .column_spacing(12)
+        .row_spacing(12)
+        .margin_top(16)
+        .margin_bottom(16)
+        .margin_start(16)
+        .margin_end(16)
+        .build();
+    grid.attach(&gtk::Label::new(Some("Shell")), 0, 0, 1, 1);
+    grid.attach(&shell_entry, 1, 0, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Font size")), 0, 1, 1, 1);
+    grid.attach(&font_size, 1, 1, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Notification command")), 0, 2, 1, 1);
+    grid.attach(&notification_command, 1, 2, 1, 1);
+    grid.attach(&save, 1, 3, 1, 1);
+    grid.attach(&status, 0, 4, 2, 1);
+
+    save.connect_clicked(move |_| {
+        let mut next = config::load_config().unwrap_or_default();
+        next.general.shell = shell_entry.text().to_string();
+        next.appearance.font_size = font_size.value() as u16;
+        next.general.notification_command = notification_command.text().to_string();
+        match config::save_config(&next) {
+            Ok(()) => status.set_text("Saved"),
+            Err(err) => status.set_text(&err.to_string()),
+        }
+    });
+
+    dialog.set_child(Some(&grid));
+    dialog.present();
+}
+
+fn create_plain_workspace(state: &SocketAppState) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let workspace = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let count = model.list_workspaces().len() + 1;
+        model.create_workspace(format!("workspace-{count}"), cwd)
+    };
+    if let Err(err) = state.terminal.spawn(SpawnRequest {
+        surface_id: workspace.focused_surface_id,
+        workspace_id: workspace.id,
+        shell: state.shell.clone(),
+        cwd: workspace.working_dir,
+        socket_path: state.socket_path.clone(),
+        extra_env: Vec::new(),
+    }) {
+        eprintln!("Failed to create workspace terminal: {err}");
+    }
+}
+
+fn create_local_notification(state: &SocketAppState, title: &str, body: &str) {
+    let target = state.model.lock().ok().and_then(|model| {
+        model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+            .map(|workspace| (workspace.id, workspace.focused_surface_id))
+    });
+    let Some((workspace_id, surface_id)) = target else {
+        return;
+    };
+    if let Ok(mut model) = state.model.lock() {
+        model.create_notification(
+            title,
+            body,
+            NotificationKind::Info,
+            Some(workspace_id),
+            Some(surface_id),
+        );
     }
 }
 

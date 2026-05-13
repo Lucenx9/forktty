@@ -48,6 +48,8 @@ Tauri/React implementation.
 - GTK split panes are rendered from the core `PaneNode` tree. UI split buttons
   and socket `surface.split` both create real VTE-backed surfaces and rebuild
   the GTK `Paned` layout from the model.
+- GTK command palette, notification panel, and settings dialog have native
+  minimal implementations. Settings persist through `forktty-core` config.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.
@@ -100,6 +102,5 @@ progress.
 
 ## Remaining Parity Work
 
-- Port command palette, settings, notification panel, and quake window behavior
-  from the Tauri path.
+- Port quake window behavior and remaining shortcut coverage from the Tauri path.
 - Harden `.deb` metadata and add CI/release wiring for the GTK package.
