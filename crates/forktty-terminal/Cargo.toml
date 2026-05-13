@@ -18,4 +18,4 @@ forktty-core = { path = "../forktty-core" }
 serde.workspace = true
 thiserror.workspace = true
 gtk4 = { version = "0.11", optional = true }
-vte4 = { version = "0.10", optional = true }
+vte4 = { version = "0.10", features = ["v0_76"], optional = true }

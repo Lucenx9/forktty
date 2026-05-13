@@ -87,9 +87,11 @@ The GTK path starts from VTE owning the PTY. The previous `output_scanner.rs`
 was coupled to the portable-pty read loop, so it is not directly reusable when
 VTE owns the child process. The minimum migrated path keeps notification/unread
 state available via socket `notification.create` and VTE bell/child-exit
-signals. Byte-level pattern scanning and hook triggers from terminal output
-still need a VTE-specific implementation, likely through output signals or shell
-integration events where VTE exposes them.
+signals. GTK also scans VTE visible text changes for simple prompt patterns such
+as `>`, `❯`, `(Y/n)`, and `Do you want to proceed`, then emits prompt
+notifications. Byte-level OSC scanning and hook triggers from hidden terminal
+control sequences still need a VTE-specific implementation, likely through
+output signals or shell integration events where VTE exposes them.
 
 ## Native Dependencies
 

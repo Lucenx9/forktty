@@ -7,7 +7,7 @@ use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
 use forktty_terminal::vte::{
-    send_text as vte_send_text, spawn_vte_terminal, TerminalExt, VteTerminalWidget,
+    send_text as vte_send_text, spawn_vte_terminal, Format, TerminalExt, VteTerminalWidget,
 };
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
 use global_hotkey::{
@@ -236,6 +236,38 @@ fn attach_vte_signal_handlers(
 
     let surface_id = request.surface_id.clone();
     let workspace_id = request.workspace_id.clone();
+    let prompt_model = model.clone();
+    let last_visible_text = Rc::new(RefCell::new(String::new()));
+    widget.connect_contents_changed(move |terminal| {
+        let Some(text) = terminal.text_format(Format::Text) else {
+            return;
+        };
+        let text = text.to_string();
+        let mut previous = last_visible_text.borrow_mut();
+        let changed = text
+            .strip_prefix(previous.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| visible_text_tail(&text));
+        *previous = text;
+        drop(previous);
+
+        if !looks_like_prompt(&changed) {
+            return;
+        }
+        if let Ok(mut model) = prompt_model.lock() {
+            let notification = model.create_notification(
+                "Terminal prompt",
+                "A terminal appears to be waiting for input",
+                NotificationKind::Prompt,
+                Some(workspace_id.clone()),
+                Some(surface_id.clone()),
+            );
+            dispatch_notification_with_loaded_config(&notification);
+        }
+    });
+
+    let surface_id = request.surface_id.clone();
+    let workspace_id = request.workspace_id.clone();
     let bell_model = model.clone();
     widget.connect_bell(move |_| {
         if let Ok(mut model) = bell_model.lock() {
@@ -265,6 +297,24 @@ fn attach_vte_signal_handlers(
             dispatch_notification_with_loaded_config(&notification);
         }
     });
+}
+
+fn looks_like_prompt(text: &str) -> bool {
+    text.lines().rev().take(4).any(|line| {
+        let trimmed = line.trim();
+        trimmed == ">"
+            || trimmed == "❯"
+            || trimmed.contains("(Y/n)")
+            || trimmed.contains("(y/N)")
+            || trimmed.contains("Do you want to proceed")
+            || (trimmed.starts_with("? ") && trimmed.ends_with(':'))
+    })
+}
+
+fn visible_text_tail(text: &str) -> String {
+    let mut chars = text.chars().rev().take(4096).collect::<Vec<_>>();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 fn dispatch_notification_with_loaded_config(notification: &NotificationItem) {
@@ -1063,4 +1113,17 @@ fn start_socket_server(state: SocketAppState) {
             eprintln!("ForkTTY socket server stopped: {err}");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_visible_prompt_text() {
+        assert!(looks_like_prompt("build finished\n> "));
+        assert!(looks_like_prompt("? Continue (Y/n)"));
+        assert!(looks_like_prompt("Do you want to proceed?"));
+        assert!(!looks_like_prompt("ordinary terminal output"));
+    }
 }

@@ -6,6 +6,8 @@ use gtk4::glib;
 pub use vte4::prelude::TerminalExt;
 #[cfg(feature = "vte")]
 use vte4::prelude::*;
+#[cfg(feature = "vte")]
+pub use vte4::Format;
 
 #[cfg(feature = "vte")]
 pub type VteTerminalWidget = vte4::Terminal;
