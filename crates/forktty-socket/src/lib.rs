@@ -1,6 +1,6 @@
 use forktty_core::{
-    config, dispatch_notification, worktree, JsonRpcRequest, JsonRpcResponse, NotificationKind,
-    SplitAxis, WorkspaceModel, WorkspaceSelector,
+    config, dispatch_notification, worktree, JsonRpcRequest, JsonRpcResponse, LogLevel,
+    NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest};
 use serde_json::{json, Value};
@@ -507,6 +507,71 @@ pub async fn dispatch(
                 Err("Workspace not found".to_string())
             }
         }
+        "metadata.set_progress" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let key = required_string(&params, "key")?;
+            let label = required_string(&params, "label")?;
+            let value = required_f64(&params, "value")?;
+            let total = optional_f64(&params, "total")?;
+            if total.is_some_and(|total| total <= 0.0) {
+                return Err("Invalid parameter total: expected positive number".to_string());
+            }
+            let progress = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .set_progress(&workspace_id, key, label, value, total)
+                    .ok_or_else(|| "Workspace not found".to_string())?
+            };
+            Ok(json!(progress))
+        }
+        "metadata.clear_progress" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let key = params
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|key| !key.trim().is_empty());
+            let cleared = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.clear_progress(&workspace_id, key)
+            };
+            if cleared {
+                Ok(json!({"cleared": true}))
+            } else {
+                Err("Workspace not found".to_string())
+            }
+        }
+        "metadata.log" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let level = match params
+                .get("level")
+                .and_then(Value::as_str)
+                .unwrap_or("info")
+            {
+                "warn" => LogLevel::Warn,
+                "error" => LogLevel::Error,
+                "info" | "" => LogLevel::Info,
+                _ => {
+                    return Err("Invalid parameter level: expected info, warn, or error".to_string())
+                }
+            };
+            let message = required_string(&params, "message")?;
+            let log = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .append_log(&workspace_id, level, message)
+                    .ok_or_else(|| "Workspace not found".to_string())?
+            };
+            Ok(json!(log))
+        }
         _ => Err(format!("Unknown method: {method}")),
     }
 }
@@ -603,6 +668,23 @@ fn required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> 
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("Missing {key}"))
+}
+
+fn required_f64(params: &Value, key: &str) -> Result<f64, String> {
+    optional_f64(params, key)?.ok_or_else(|| format!("Missing {key}"))
+}
+
+fn optional_f64(params: &Value, key: &str) -> Result<Option<f64>, String> {
+    let Some(value) = params.get(key) else {
+        return Ok(None);
+    };
+    let value = value
+        .as_f64()
+        .ok_or_else(|| format!("Invalid parameter {key}: expected finite number"))?;
+    if !value.is_finite() {
+        return Err(format!("Invalid parameter {key}: expected finite number"));
+    }
+    Ok(Some(value))
 }
 
 fn resolve_workspace_id_for_metadata(
@@ -1015,6 +1097,42 @@ mod tests {
         .await
         .unwrap();
         assert!(statuses.as_array().unwrap().is_empty());
+
+        let progress = dispatch(
+            &state,
+            "metadata.set_progress",
+            json!({
+                "workspace_id": workspaces[0]["id"],
+                "key": "build",
+                "label": "Build",
+                "value": 12,
+                "total": 10
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(progress["value"], 10.0);
+
+        let log = dispatch(
+            &state,
+            "metadata.log",
+            json!({
+                "workspace_id": workspaces[0]["id"],
+                "level": "warn",
+                "message": "waiting"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(log["level"], "warn");
+
+        dispatch(
+            &state,
+            "metadata.clear_progress",
+            json!({"workspace_id": workspaces[0]["id"], "key": "build"}),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

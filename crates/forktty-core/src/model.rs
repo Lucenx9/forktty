@@ -84,6 +84,31 @@ pub struct StatusEntry {
     pub color: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProgressEntry {
+    pub key: String,
+    pub label: String,
+    pub value: f64,
+    #[serde(default)]
+    pub total: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogEntry {
+    pub id: String,
+    pub timestamp_ms: u128,
+    pub level: LogLevel,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationKind {
@@ -100,10 +125,15 @@ pub struct WorkspaceModel {
     workspace_order: Vec<WorkspaceId>,
     notifications: Vec<NotificationItem>,
     statuses: BTreeMap<WorkspaceId, Vec<StatusEntry>>,
+    progress: BTreeMap<WorkspaceId, Vec<ProgressEntry>>,
+    logs: BTreeMap<WorkspaceId, Vec<LogEntry>>,
     next_workspace: u64,
     next_surface: u64,
     next_notification: u64,
+    next_log: u64,
 }
+
+const MAX_LOG_ENTRIES: usize = 200;
 
 impl WorkspaceModel {
     pub fn new() -> Self {
@@ -237,6 +267,8 @@ impl WorkspaceModel {
         self.surfaces
             .retain(|_, surface| surface.workspace_id != removed.id);
         self.statuses.remove(&removed.id);
+        self.progress.remove(&removed.id);
+        self.logs.remove(&removed.id);
         if removed.active {
             if let Some(next_id) = self.workspace_order.first().cloned() {
                 if let Some(next) = self.workspaces.get_mut(&next_id) {
@@ -459,6 +491,89 @@ impl WorkspaceModel {
         true
     }
 
+    pub fn set_progress(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: f64,
+        total: Option<f64>,
+    ) -> Option<ProgressEntry> {
+        if !self.workspaces.contains_key(workspace_id) {
+            return None;
+        }
+        let total = total.filter(|total| *total > 0.0);
+        let value = total
+            .map(|total| value.min(total))
+            .unwrap_or(value)
+            .max(0.0);
+        let entry = ProgressEntry {
+            key: key.into(),
+            label: label.into(),
+            value,
+            total,
+        };
+        let entries = self.progress.entry(workspace_id.to_string()).or_default();
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|existing| existing.key == entry.key)
+        {
+            *existing = entry.clone();
+        } else {
+            entries.push(entry.clone());
+        }
+        Some(entry)
+    }
+
+    pub fn list_progress(&self, workspace_id: &str) -> Vec<ProgressEntry> {
+        self.progress.get(workspace_id).cloned().unwrap_or_default()
+    }
+
+    pub fn clear_progress(&mut self, workspace_id: &str, key: Option<&str>) -> bool {
+        let Some(entries) = self.progress.get_mut(workspace_id) else {
+            return self.workspaces.contains_key(workspace_id);
+        };
+        if let Some(key) = key {
+            entries.retain(|entry| entry.key != key);
+        } else {
+            entries.clear();
+        }
+        true
+    }
+
+    pub fn append_log(
+        &mut self,
+        workspace_id: &str,
+        level: LogLevel,
+        message: impl Into<String>,
+    ) -> Option<LogEntry> {
+        if !self.workspaces.contains_key(workspace_id) {
+            return None;
+        }
+        let entry = LogEntry {
+            id: self.next_log_id(),
+            timestamp_ms: now_ms(),
+            level,
+            message: message.into(),
+        };
+        let entries = self.logs.entry(workspace_id.to_string()).or_default();
+        entries.insert(0, entry.clone());
+        entries.truncate(MAX_LOG_ENTRIES);
+        Some(entry)
+    }
+
+    pub fn list_logs(&self, workspace_id: &str) -> Vec<LogEntry> {
+        self.logs.get(workspace_id).cloned().unwrap_or_default()
+    }
+
+    pub fn clear_logs(&mut self, workspace_id: &str) -> bool {
+        let Some(entries) = self.logs.get_mut(workspace_id) else {
+            return self.workspaces.contains_key(workspace_id);
+        };
+        entries.clear();
+        true
+    }
+
     fn next_workspace_id(&mut self) -> WorkspaceId {
         self.next_workspace += 1;
         format!("workspace-{}", self.next_workspace)
@@ -472,6 +587,11 @@ impl WorkspaceModel {
     fn next_notification_id(&mut self) -> String {
         self.next_notification += 1;
         format!("notification-{}", self.next_notification)
+    }
+
+    fn next_log_id(&mut self) -> String {
+        self.next_log += 1;
+        format!("log-{}", self.next_log)
     }
 
     fn resolve_workspace_id(&self, selector: WorkspaceSelector<'_>) -> Option<WorkspaceId> {
@@ -737,6 +857,32 @@ mod tests {
 
         assert!(model.clear_status(&workspace.id, Some("agent:codex")));
         assert!(model.list_status(&workspace.id).is_empty());
+    }
+
+    #[test]
+    fn can_set_clear_progress_and_append_logs() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        let progress = model
+            .set_progress(&workspace.id, "task", "Task", 150.0, Some(100.0))
+            .unwrap();
+        assert_eq!(progress.value, 100.0);
+        assert_eq!(model.list_progress(&workspace.id), vec![progress]);
+
+        let log = model
+            .append_log(&workspace.id, LogLevel::Warn, "waiting for input")
+            .unwrap();
+        assert_eq!(log.level, LogLevel::Warn);
+        assert_eq!(
+            model.list_logs(&workspace.id)[0].message,
+            "waiting for input"
+        );
+
+        assert!(model.clear_progress(&workspace.id, Some("task")));
+        assert!(model.list_progress(&workspace.id).is_empty());
+        assert!(model.clear_logs(&workspace.id));
+        assert!(model.list_logs(&workspace.id).is_empty());
     }
 
     #[test]

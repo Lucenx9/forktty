@@ -39,6 +39,9 @@ Tauri/React implementation.
 - `metadata.set_status`
 - `metadata.list_status`
 - `metadata.clear_status`
+- `metadata.set_progress`
+- `metadata.clear_progress`
+- `metadata.log`
 - `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`
   injection through the terminal backend adapter.
 - Worktree create, attach, list, remove, merge, status, and hook execution in

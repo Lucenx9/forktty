@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use forktty_core::{
     config, dispatch_notification, session, NotificationItem, NotificationKind, PaneNode,
-    SplitAxis, StatusEntry, WorkspaceModel,
+    ProgressEntry, SplitAxis, StatusEntry, WorkspaceModel,
 };
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
@@ -636,12 +636,14 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
                 .into_iter()
                 .map(|workspace| {
                     let statuses = model.list_status(&workspace.id);
-                    (workspace, statuses)
+                    let progress = model.list_progress(&workspace.id);
+                    let logs = model.list_logs(&workspace.id);
+                    (workspace, statuses, progress, logs)
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    for (workspace, statuses) in workspaces {
+    for (workspace, statuses, progress, logs) in workspaces {
         let branch = if workspace.git_branch.is_empty() {
             String::new()
         } else {
@@ -662,7 +664,7 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
             .label(format!(
                 "{active} {}{branch}{worktree}{attention}{}",
                 workspace.name,
-                format_status_summary(&statuses)
+                format_metadata_summary(&statuses, &progress, logs.first())
             ))
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -675,16 +677,31 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
     }
 }
 
-fn format_status_summary(statuses: &[StatusEntry]) -> String {
-    if statuses.is_empty() {
+fn format_metadata_summary(
+    statuses: &[StatusEntry],
+    progress: &[ProgressEntry],
+    latest_log: Option<&forktty_core::LogEntry>,
+) -> String {
+    if statuses.is_empty() && progress.is_empty() && latest_log.is_none() {
         return String::new();
     }
-    let summary = statuses
+    let mut parts = statuses
         .iter()
         .map(|status| format!("{}: {}", status.label, status.value))
-        .collect::<Vec<_>>()
-        .join("  ");
-    format!("\n  {summary}")
+        .collect::<Vec<_>>();
+    parts.extend(progress.iter().map(|progress| {
+        let total = progress.total.unwrap_or(100.0);
+        let percent = if total > 0.0 {
+            (progress.value / total * 100.0).round().clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        format!("{}: {percent:.0}%", progress.label)
+    }));
+    if let Some(log) = latest_log {
+        parts.push(format!("{:?}: {}", log.level, log.message));
+    }
+    format!("\n  {}", parts.join("  "))
 }
 
 fn add_action<F>(app: &adw::Application, name: &str, callback: F)
