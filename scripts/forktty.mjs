@@ -13,6 +13,7 @@ const HOOK_STATUS_TIMEOUT_MS = 5_000;
 const SOCKET_TIMEOUT_MS = 5_000;
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
 const VALID_STATUS_COLORS = new Set(["green", "yellow", "red", "blue", "muted"]);
+const VALID_LOG_LEVELS = new Set(["info", "warn", "error"]);
 
 const AGENT_SPECS = {
   codex: {
@@ -248,6 +249,68 @@ function buildTargetParams(options, env = process.env) {
   return params;
 }
 
+function parseFiniteNumber(value, optionName) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${optionName} requires a value`);
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid ${optionName}: expected finite number`);
+  }
+  return parsed;
+}
+
+function buildProgressParams(options, env = process.env) {
+  const key = typeof options.key === "string" ? options.key.trim() : "";
+  const label =
+    typeof options.label === "string" && options.label.trim() ? options.label.trim() : key;
+
+  if (!key) throw new Error("set-progress requires --key");
+  if (typeof options.value !== "string") throw new Error("set-progress requires --value");
+
+  const value = parseFiniteNumber(options.value, "--value");
+  const params = {
+    ...buildTargetParams(options, env),
+    key,
+    label,
+    value,
+  };
+
+  if (typeof options.total === "string") {
+    const total = parseFiniteNumber(options.total, "--total");
+    if (total <= 0) {
+      throw new Error("Invalid --total: expected positive number");
+    }
+    params.total = total;
+  }
+
+  return params;
+}
+
+function buildLogParams(options, positionals, stdinText = "", env = process.env) {
+  const level =
+    typeof options.level === "string" && options.level.trim() ? options.level.trim() : "info";
+  const message =
+    typeof options.message === "string"
+      ? options.message
+      : positionals.length > 0
+        ? positionals.join(" ")
+        : stdinText.trim();
+
+  if (!VALID_LOG_LEVELS.has(level)) {
+    throw new Error("Invalid --level: expected info, warn, or error");
+  }
+  if (!message.trim()) {
+    throw new Error("log requires --message, a positional message, or stdin");
+  }
+
+  return {
+    ...buildTargetParams(options, env),
+    level,
+    message,
+  };
+}
+
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -271,6 +334,9 @@ Usage:
   ./scripts/forktty.mjs set-status --key <key> --value <value> [--label <label>] [--color <color>]
   ./scripts/forktty.mjs list-status [--workspace-id <id>]
   ./scripts/forktty.mjs clear-status [--key <key>]
+  ./scripts/forktty.mjs set-progress --key <key> --value <number> [--label <label>] [--total <number>]
+  ./scripts/forktty.mjs clear-progress [--key <key>]
+  ./scripts/forktty.mjs log [message] [--message <message>] [--level info|warn|error]
   ./scripts/forktty.mjs notifications [--json]
   ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
   ./scripts/forktty.mjs hooks <agent> <event>
@@ -632,6 +698,45 @@ async function handleClearStatus(context, args) {
     printJson({ result: true });
   } else {
     process.stdout.write("Cleared status\n");
+  }
+}
+
+async function handleSetProgress(context, args) {
+  const { options } = parseFlags(args);
+  const params = buildProgressParams(options, context.env);
+  await sendSocketRequest(context.socketPath, "metadata.set_progress", params);
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write(`Updated progress ${params.key}\n`);
+  }
+}
+
+async function handleClearProgress(context, args) {
+  const { options } = parseFlags(args);
+  await sendSocketRequest(context.socketPath, "metadata.clear_progress", {
+    ...buildTargetParams(options, context.env),
+    ...(typeof options.key === "string" ? { key: options.key } : {}),
+  });
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Cleared progress\n");
+  }
+}
+
+async function handleLog(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const stdinText = await readStdinText();
+  const params = buildLogParams(options, positionals, stdinText, context.env);
+  await sendSocketRequest(context.socketPath, "metadata.log", params);
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write(`Appended ${params.level} log\n`);
   }
 }
 
@@ -1092,6 +1197,15 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "clear-status":
       await handleClearStatus(context, args);
       return;
+    case "set-progress":
+      await handleSetProgress(context, args);
+      return;
+    case "clear-progress":
+      await handleClearProgress(context, args);
+      return;
+    case "log":
+      await handleLog(context, args);
+      return;
     case "notifications":
       await handleNotifications(context);
       return;
@@ -1118,6 +1232,8 @@ export {
   HOOK_CONTINUE_RESPONSE,
   buildHookActions,
   buildHookShellCommand,
+  buildLogParams,
+  buildProgressParams,
   defaultSocketPath,
   mergeHookConfig,
   parseFlags,

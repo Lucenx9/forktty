@@ -49,6 +49,8 @@ Tauri/React implementation.
   worktree-backed workspaces.
 - CLI worktree commands: `worktree-list`, `worktree-create`, `worktree-attach`,
   `worktree-remove`, and `worktree-merge`.
+- CLI metadata commands: `set-status`, `list-status`, `clear-status`,
+  `set-progress`, `clear-progress`, and `log`.
 - GTK app startup now binds the local Unix socket and routes terminal backend
   commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
   VTE through this adapter.

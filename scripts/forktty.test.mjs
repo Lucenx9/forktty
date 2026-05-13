@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildHookActions,
   buildHookShellCommand,
+  buildLogParams,
+  buildProgressParams,
   defaultSocketPath,
   mergeHookConfig,
 } from "./forktty.mjs";
@@ -109,5 +111,53 @@ describe("forktty CLI helpers", () => {
         },
       },
     ]);
+  });
+
+  it("builds progress metadata params with workspace targeting", () => {
+    expect(
+      buildProgressParams(
+        {
+          key: "build",
+          label: "Build",
+          value: "12.5",
+          total: "100",
+        },
+        { FORKTTY_WORKSPACE_ID: "ws-1" },
+      ),
+    ).toEqual({
+      workspace_id: "ws-1",
+      key: "build",
+      label: "Build",
+      value: 12.5,
+      total: 100,
+    });
+  });
+
+  it("rejects invalid progress values", () => {
+    expect(() => buildProgressParams({ key: "build", value: "nan" })).toThrow(
+      "Invalid --value",
+    );
+    expect(() => buildProgressParams({ key: "build", value: "1", total: "0" })).toThrow(
+      "Invalid --total",
+    );
+  });
+
+  it("builds log metadata params from positional text", () => {
+    expect(
+      buildLogParams(
+        { level: "warn" },
+        ["waiting", "for", "input"],
+        "",
+        { FORKTTY_WORKSPACE_ID: "ws-2" },
+      ),
+    ).toEqual({
+      workspace_id: "ws-2",
+      level: "warn",
+      message: "waiting for input",
+    });
+  });
+
+  it("rejects invalid log levels", () => {
+    expect(() => buildLogParams({ level: "debug" }, ["hello"])).toThrow("Invalid --level");
   });
 });
