@@ -409,6 +409,14 @@ pub fn execute_remove(repo_path: &str, plan: &RemovePlan) -> Result<(), Worktree
         None
     };
 
+    if let Some(path) = &verified_wt_path {
+        let wt_repo = Repository::open(path)
+            .map_err(|_| WorktreeError::NotARepo(path.to_string_lossy().to_string()))?;
+        if has_uncommitted_changes(&wt_repo)? {
+            return Err(WorktreeError::WorktreeDirty(plan.worktree_name.clone()));
+        }
+    }
+
     // Prune the worktree (removes git reference)
     let mut prune_opts = git2::WorktreePruneOptions::new();
     prune_opts.valid(true);
@@ -968,6 +976,30 @@ mod tests {
             Err(WorktreeError::WorktreeDirty(name)) if name == "remove-guard"
         ));
 
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn execute_remove_rechecks_dirty_worktree_after_prepare() {
+        let (repo_path, _repo, _main_ref) = make_temp_repo("remove-race-dirty-worktree");
+        let info = create(repo_path.to_str().unwrap(), "remove-race-guard", "nested").unwrap();
+        let plan = prepare_remove(repo_path.to_str().unwrap(), "remove-race-guard", true).unwrap();
+
+        fs::write(
+            Path::new(&info.path).join("teardown-artifact.log"),
+            "new output\n",
+        )
+        .unwrap();
+
+        let result = execute_remove(repo_path.to_str().unwrap(), &plan);
+        assert!(matches!(
+            result,
+            Err(WorktreeError::WorktreeDirty(name)) if name == "remove-race-guard"
+        ));
+        assert!(Path::new(&info.path).exists());
+
+        fs::remove_file(Path::new(&info.path).join("teardown-artifact.log")).unwrap();
+        execute_remove(repo_path.to_str().unwrap(), &plan).unwrap();
         let _ = fs::remove_dir_all(&repo_path);
     }
 

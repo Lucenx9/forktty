@@ -2,6 +2,7 @@ import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { CanvasAddon } from "@xterm/addon-canvas";
 import type { SearchAddon } from "@xterm/addon-search";
+import { killPty, logError } from "./pty-bridge";
 
 // --- Active terminal map (for readScreen / socket API) ---
 
@@ -83,8 +84,12 @@ export function reconcileInstances(activeSurfaceIds: Set<string>): number {
     if (!activeSurfaceIds.has(id)) {
       const instance = savedInstances.get(id);
       if (instance) {
+        const ptyId = instance.runtime.ptyId;
         instance.runtime.disposed = true;
         instance.runtime.ptyId = null;
+        if (ptyId !== null) {
+          killPty(ptyId).catch(logError);
+        }
         instance.terminal.dispose();
         instance.wrapper.remove();
       }

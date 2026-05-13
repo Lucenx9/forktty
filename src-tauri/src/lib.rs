@@ -378,7 +378,9 @@ pub(crate) fn verify_repo_path(path: &str) -> Result<String, String> {
     let repo = git2::Repository::discover(canonical_str)
         .map_err(|_| "Path is not inside a git repository".to_string())?;
     let workdir = repo.workdir().ok_or("Bare repository")?;
-    if !canonical.starts_with(workdir) {
+    let canonical_workdir =
+        std::fs::canonicalize(workdir).map_err(|e| format!("Cannot resolve workdir: {e}"))?;
+    if !canonical.starts_with(&canonical_workdir) {
         return Err("Path is outside the repository working directory".to_string());
     }
     Ok(canonical_str.to_string())
@@ -625,7 +627,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_no_proxy_hosts, repo_commondir_for_path, repo_root_for_path,
+        append_no_proxy_hosts, repo_commondir_for_path, repo_root_for_path, verify_repo_path,
         LOCALHOST_NO_PROXY_ENTRIES,
     };
     use git2::Repository;
@@ -714,6 +716,27 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&worktree_path);
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn verify_repo_path_accepts_paths_reached_through_symlink() {
+        let (repo_path, _repo) = make_temp_repo("verify-symlink");
+        let link_path = repo_path.with_file_name(format!(
+            "{}-link",
+            repo_path.file_name().unwrap().to_string_lossy()
+        ));
+        let _ = fs::remove_file(&link_path);
+        std::os::unix::fs::symlink(&repo_path, &link_path).unwrap();
+
+        let verified = verify_repo_path(link_path.join("note.txt").to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            PathBuf::from(verified),
+            fs::canonicalize(repo_path.join("note.txt")).unwrap()
+        );
+
+        let _ = fs::remove_file(&link_path);
         let _ = fs::remove_dir_all(&repo_path);
     }
 }

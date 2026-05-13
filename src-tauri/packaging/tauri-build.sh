@@ -44,11 +44,13 @@ normalize_appimage_root() {
     done
 
     if [[ -z "$root_icon" ]]; then
-      candidate="$(
-        find "$APPDIR/usr/share/icons" -type f \
-          \( -name "${icon_name}.png" -o -name "${icon_name}.svg" -o -name "${icon_name}.xpm" \) \
-          | sort | head -n 1
-      )"
+      if [[ -d "$APPDIR/usr/share/icons" ]]; then
+        candidate="$(
+          find "$APPDIR/usr/share/icons" -type f \
+            \( -name "${icon_name}.png" -o -name "${icon_name}.svg" -o -name "${icon_name}.xpm" \) \
+            | sort | head -n 1
+        )"
+      fi
       if [[ -z "$candidate" && -f "$APPDIR/${PRODUCT_NAME}.png" ]]; then
         candidate="$APPDIR/${PRODUCT_NAME}.png"
       fi
@@ -133,4 +135,9 @@ rm -f "$APPIMAGE_DIR"/ForkTTY_*.AppImage "$APPIMAGE_DIR"/ForkTTY-*.AppImage
 
 if [[ -f "$APPIMAGE_DIR/${PRODUCT_NAME}-x86_64.AppImage" ]]; then
   mv "$APPIMAGE_DIR/${PRODUCT_NAME}-x86_64.AppImage" "$EXPECTED_APPIMAGE"
+fi
+
+if [[ ! -f "$EXPECTED_APPIMAGE" ]]; then
+  echo "Expected AppImage not produced: $EXPECTED_APPIMAGE" >&2
+  exit 1
 fi

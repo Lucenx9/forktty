@@ -597,11 +597,15 @@ async fn bridge_to_frontend(
         map.insert(req_id.clone(), tx);
     }
 
-    app.emit(
+    if let Err(e) = app.emit(
         "socket-request",
         json!({ "id": req_id, "method": method, "params": params }),
-    )
-    .map_err(|e| format!("Emit failed: {e}"))?;
+    ) {
+        if let Ok(mut map) = pending.lock() {
+            map.remove(&req_id);
+        }
+        return Err(format!("Emit failed: {e}"));
+    }
 
     match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
         Ok(Ok(result)) => {
