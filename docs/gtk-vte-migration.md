@@ -57,6 +57,8 @@ Tauri/React implementation.
 - Terminal backends now expose `close(surface_id)`. Socket `surface.close` and
   the GTK close-pane action remove VTE widgets and keep at least one focused
   surface alive.
+- The GTK sidebar refreshes from `WorkspaceModel`, including active workspace,
+  branch/worktree metadata, and unread/attention state.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.

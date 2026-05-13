@@ -296,15 +296,6 @@ fn build_ui(app: &adw::Application) {
         .width_request(240)
         .build();
     sidebar.add_css_class("navigation-sidebar");
-    let row = gtk::Label::builder()
-        .label("main")
-        .xalign(0.0)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(12)
-        .margin_end(12)
-        .build();
-    sidebar.append(&row);
 
     let terminal_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let terminal_stack = Rc::new(RefCell::new(terminal_stack));
@@ -373,6 +364,13 @@ fn build_ui(app: &adw::Application) {
         while let Ok(command) = terminal_rx.try_recv() {
             controller_for_timer.borrow_mut().handle(command);
         }
+        glib::ControlFlow::Continue
+    });
+    refresh_sidebar(&sidebar, &model);
+    let sidebar_for_timer = sidebar.clone();
+    let model_for_sidebar = model.clone();
+    glib::timeout_add_local(Duration::from_millis(500), move || {
+        refresh_sidebar(&sidebar_for_timer, &model_for_sidebar);
         glib::ControlFlow::Continue
     });
 
@@ -453,6 +451,48 @@ fn install_actions(
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
     app.set_accels_for_action("app.settings", &["<Control>comma"]);
     app.set_accels_for_action("app.toggle-quake", &["F12"]);
+}
+
+fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
+    while let Some(child) = sidebar.first_child() {
+        sidebar.remove(&child);
+    }
+    let workspaces = model
+        .lock()
+        .ok()
+        .map(|model| model.list_workspaces())
+        .unwrap_or_default();
+    for workspace in workspaces {
+        let branch = if workspace.git_branch.is_empty() {
+            String::new()
+        } else {
+            format!("  {}", workspace.git_branch)
+        };
+        let worktree = workspace
+            .worktree_name
+            .as_deref()
+            .map(|name| format!("  [{name}]"))
+            .unwrap_or_default();
+        let attention = if workspace.needs_attention {
+            "  unread"
+        } else {
+            ""
+        };
+        let active = if workspace.active { "*" } else { " " };
+        let label = gtk::Label::builder()
+            .label(format!(
+                "{active} {}{branch}{worktree}{attention}",
+                workspace.name
+            ))
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(12)
+            .margin_end(12)
+            .build();
+        sidebar.append(&label);
+    }
 }
 
 fn add_action<F>(app: &adw::Application, name: &str, callback: F)
