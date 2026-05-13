@@ -17,10 +17,15 @@ Tauri/React implementation.
 ## Implemented Migration Surface
 
 - `system.ping`
+- `workspace.create`
 - `workspace.list`
+- `workspace.select`
+- `workspace.close`
 - `surface.list`
 - `surface.send_text`
 - `surface.split`
+- `surface.focus`
+- `surface.close`
 - `notification.create`
 - `notification.list`
 - `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`
@@ -63,10 +68,9 @@ builds the GTK/VTE app once the VTE development package is installed.
 
 ## Remaining Parity Work
 
-- Replace split placeholders with model-driven VTE pane creation.
+- Replace GTK split placeholders with model-driven VTE pane creation.
 - Wire socket server lifetime into the GTK app startup.
 - Port command palette, settings, notification panel, and quake window behavior
   from the Tauri path.
 - Add session format migration from the existing Tauri `session.json`.
 - Add `.deb` packaging for the GTK binary.
-
