@@ -299,6 +299,11 @@ fn build_ui(app: &adw::Application) {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let app_config = config::load_config().unwrap_or_default();
     let quake_mode = app_config.appearance.window_mode == "quake";
+    let (default_width, default_height) = if quake_mode {
+        quake_default_size()
+    } else {
+        (1200, 760)
+    };
     let socket_path = std::env::var("FORKTTY_SOCKET_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_socket_path());
@@ -366,8 +371,8 @@ fn build_ui(app: &adw::Application) {
         } else {
             "ForkTTY GTK"
         })
-        .default_width(if quake_mode { 1280 } else { 1200 })
-        .default_height(if quake_mode { 520 } else { 760 })
+        .default_width(default_width)
+        .default_height(default_height)
         .content(&content)
         .build();
     if quake_mode {
@@ -449,6 +454,25 @@ fn build_ui(app: &adw::Application) {
     start_socket_server(state.clone());
 
     window.present();
+}
+
+fn quake_default_size() -> (i32, i32) {
+    const FALLBACK: (i32, i32) = (1280, 520);
+
+    let Some(display) = gtk::gdk::Display::default() else {
+        return FALLBACK;
+    };
+    let Some(object) = display.monitors().item(0) else {
+        return FALLBACK;
+    };
+    let Ok(monitor) = object.downcast::<gtk::gdk::Monitor>() else {
+        return FALLBACK;
+    };
+
+    let geometry = monitor.geometry();
+    let width = (geometry.width() - 80).clamp(720, 1800);
+    let height = (geometry.height() * 2 / 5).clamp(360, 640);
+    (width, height)
 }
 
 fn install_actions(

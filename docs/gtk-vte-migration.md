@@ -51,9 +51,9 @@ Tauri/React implementation.
 - GTK command palette, notification panel, and settings dialog have native
   minimal implementations. Settings persist through `forktty-core` config.
 - GTK quake/dropdown mode reads `appearance.window_mode = "quake"`, starts with
-  a shorter undecorated window where supported, and registers F12 to toggle the
-  window. Main GTK accelerators are wired for split, palette, notifications, and
-  settings.
+  an undecorated monitor-sized dropdown-style window where supported, and
+  registers F12 to toggle the window. Main GTK accelerators are wired for split,
+  palette, notifications, and settings.
 - Terminal backends now expose `close(surface_id)`. Socket `surface.close` and
   the GTK close-pane action remove VTE widgets and keep at least one focused
   surface alive.
@@ -117,5 +117,5 @@ published.
 
 ## Remaining Parity Work
 
-- Expand quake behavior with monitor-aware placement and global shortcut support
-  where the desktop portal/compositor permits it.
+- Expand quake behavior with global shortcut support and compositor-supported
+  top-edge placement where the desktop portal/compositor permits it.
