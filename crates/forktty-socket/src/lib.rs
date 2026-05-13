@@ -1,4 +1,6 @@
-use forktty_core::{JsonRpcRequest, JsonRpcResponse, NotificationKind, SplitAxis, WorkspaceModel};
+use forktty_core::{
+    JsonRpcRequest, JsonRpcResponse, NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
+};
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest};
 use serde_json::{json, Value};
 use std::fs::{self, DirBuilder};
@@ -120,6 +122,64 @@ pub async fn dispatch(
                 .map_err(|_| "Lock poisoned".to_string())?;
             Ok(json!(model.list_workspaces()))
         }
+        "workspace.create" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("workspace");
+            let cwd = params
+                .get("workingDir")
+                .or_else(|| params.get("working_dir"))
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+            let workspace = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.create_workspace(name, cwd)
+            };
+            state
+                .terminal
+                .spawn(SpawnRequest {
+                    surface_id: workspace.focused_surface_id.clone(),
+                    workspace_id: workspace.id.clone(),
+                    shell: state.shell.clone(),
+                    cwd: workspace.working_dir.clone(),
+                    socket_path: state.socket_path.clone(),
+                    extra_env: Vec::new(),
+                })
+                .map_err(|err| err.to_string())?;
+            Ok(json!(workspace))
+        }
+        "workspace.select" => {
+            let selector = workspace_selector_from_params(&params)?;
+            let workspace = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .select_workspace(selector)
+                    .ok_or_else(|| "Workspace not found".to_string())?
+            };
+            Ok(json!(workspace))
+        }
+        "workspace.close" => {
+            let selector = workspace_selector_from_params(&params)?;
+            let workspace = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .close_workspace(selector)
+                    .ok_or_else(|| "Workspace not found".to_string())?
+            };
+            Ok(json!(workspace))
+        }
         "surface.list" => {
             let workspace_id = params.get("workspace_id").and_then(Value::as_str);
             let model = state
@@ -176,6 +236,42 @@ pub async fn dispatch(
                 .map_err(|err| err.to_string())?;
             Ok(json!(surface))
         }
+        "surface.focus" => {
+            let surface_id = params
+                .get("surface_id")
+                .or_else(|| params.get("surfaceId"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing surface_id".to_string())?;
+            let focused = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.focus_surface(surface_id)
+            };
+            if focused {
+                Ok(json!({"focused": true}))
+            } else {
+                Err("Surface not found".to_string())
+            }
+        }
+        "surface.close" => {
+            let surface_id = params
+                .get("surface_id")
+                .or_else(|| params.get("surfaceId"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing surface_id".to_string())?;
+            let surface = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .close_surface(surface_id)
+                    .ok_or_else(|| "Surface not found".to_string())?
+            };
+            Ok(json!(surface))
+        }
         "notification.create" => {
             let title = params
                 .get("title")
@@ -215,6 +311,29 @@ pub async fn dispatch(
         }
         _ => Err(format!("Unknown method: {method}")),
     }
+}
+
+fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, String> {
+    if let Some(id) = params.get("id").and_then(Value::as_str) {
+        return Ok(WorkspaceSelector::Id(id));
+    }
+    if let Some(id) = params.get("workspace_id").and_then(Value::as_str) {
+        return Ok(WorkspaceSelector::Id(id));
+    }
+    if let Some(name) = params.get("name").and_then(Value::as_str) {
+        return Ok(WorkspaceSelector::Name(name));
+    }
+    if let Some(name) = params.get("workspace_name").and_then(Value::as_str) {
+        return Ok(WorkspaceSelector::Name(name));
+    }
+    if let Some(worktree_name) = params
+        .get("worktreeName")
+        .or_else(|| params.get("worktree_name"))
+        .and_then(Value::as_str)
+    {
+        return Ok(WorkspaceSelector::WorktreeName(worktree_name));
+    }
+    Err("Missing workspace selector".to_string())
 }
 
 pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -494,6 +613,45 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(notification["title"], "Prompt");
+    }
+
+    #[tokio::test]
+    async fn dispatches_workspace_and_surface_parity_methods() {
+        let (state, _backend) = test_state();
+        let created = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "feature", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created["name"], "feature");
+
+        let selected = dispatch(&state, "workspace.select", json!({"name": "main"}))
+            .await
+            .unwrap();
+        assert_eq!(selected["name"], "main");
+
+        let surface_id = selected["focused_surface_id"].as_str().unwrap();
+        let split = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap();
+        let split_id = split["id"].as_str().unwrap();
+        dispatch(&state, "surface.focus", json!({"surface_id": split_id}))
+            .await
+            .unwrap();
+        dispatch(&state, "surface.close", json!({"surface_id": split_id}))
+            .await
+            .unwrap();
+
+        let closed = dispatch(&state, "workspace.close", json!({"name": "feature"}))
+            .await
+            .unwrap();
+        assert_eq!(closed["name"], "feature");
     }
 
     #[tokio::test]

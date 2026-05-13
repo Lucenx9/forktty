@@ -7,6 +7,6 @@ pub mod worktree;
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig};
 pub use model::{
     NotificationItem, NotificationKind, PaneNode, SplitAxis, Surface, SurfaceId, Workspace,
-    WorkspaceId, WorkspaceModel,
+    WorkspaceId, WorkspaceModel, WorkspaceSelector,
 };
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};

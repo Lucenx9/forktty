@@ -10,6 +10,8 @@ pub type SurfaceId = String;
 pub struct Workspace {
     pub id: WorkspaceId,
     pub name: String,
+    #[serde(default)]
+    pub active: bool,
     pub working_dir: PathBuf,
     #[serde(default)]
     pub git_branch: String,
@@ -101,6 +103,9 @@ impl WorkspaceModel {
         name: impl Into<String>,
         working_dir: impl Into<PathBuf>,
     ) -> Workspace {
+        for workspace in self.workspaces.values_mut() {
+            workspace.active = false;
+        }
         let id = self.next_workspace_id();
         let surface_id = self.next_surface_id();
         let working_dir = working_dir.into();
@@ -115,6 +120,7 @@ impl WorkspaceModel {
         let workspace = Workspace {
             id: id.clone(),
             name: name.into(),
+            active: true,
             working_dir,
             git_branch: String::new(),
             worktree_dir: None,
@@ -129,6 +135,30 @@ impl WorkspaceModel {
         self.workspace_order.push(id.clone());
         self.workspaces.insert(id, workspace.clone());
         workspace
+    }
+
+    pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
+        let id = self.resolve_workspace_id(selector)?;
+        for workspace in self.workspaces.values_mut() {
+            workspace.active = workspace.id == id;
+        }
+        self.workspaces.get(&id).cloned()
+    }
+
+    pub fn close_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
+        let id = self.resolve_workspace_id(selector)?;
+        let removed = self.workspaces.remove(&id)?;
+        self.workspace_order.retain(|candidate| candidate != &id);
+        self.surfaces
+            .retain(|_, surface| surface.workspace_id != removed.id);
+        if removed.active {
+            if let Some(next_id) = self.workspace_order.first().cloned() {
+                if let Some(next) = self.workspaces.get_mut(&next_id) {
+                    next.active = true;
+                }
+            }
+        }
+        Some(removed)
     }
 
     pub fn list_workspaces(&self) -> Vec<Workspace> {
@@ -194,6 +224,37 @@ impl WorkspaceModel {
         true
     }
 
+    pub fn close_surface(&mut self, surface_id: &str) -> Option<Surface> {
+        let surface = self.surfaces.get(surface_id)?.clone();
+        let replacement_id = self.next_surface_id();
+        let workspace = self.workspaces.get_mut(&surface.workspace_id)?;
+        let removed_root = remove_leaf(&mut workspace.pane_tree, surface_id)?;
+        let removed = self.surfaces.remove(surface_id)?;
+        let next_focus = if removed_root {
+            None
+        } else {
+            first_leaf_surface_id(&workspace.pane_tree)
+        };
+        if let Some(next_focus) = next_focus {
+            workspace.focused_surface_id = next_focus;
+        } else {
+            let replacement = Surface {
+                id: replacement_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: workspace.working_dir.clone(),
+                title: String::from("shell"),
+                unread: false,
+                needs_attention: false,
+            };
+            workspace.pane_tree = PaneNode::Leaf {
+                surface_id: replacement_id.clone(),
+            };
+            workspace.focused_surface_id = replacement_id.clone();
+            self.surfaces.insert(replacement_id, replacement);
+        }
+        Some(removed)
+    }
+
     pub fn mark_surface_unread(&mut self, surface_id: &str, unread: bool) -> bool {
         let Some(surface) = self.surfaces.get_mut(surface_id) else {
             return false;
@@ -252,6 +313,29 @@ impl WorkspaceModel {
         self.next_notification += 1;
         format!("notification-{}", self.next_notification)
     }
+
+    fn resolve_workspace_id(&self, selector: WorkspaceSelector<'_>) -> Option<WorkspaceId> {
+        match selector {
+            WorkspaceSelector::Id(id) => self.workspaces.contains_key(id).then(|| id.to_string()),
+            WorkspaceSelector::Name(name) => self
+                .workspaces
+                .values()
+                .find(|workspace| workspace.name == name)
+                .map(|workspace| workspace.id.clone()),
+            WorkspaceSelector::WorktreeName(name) => self
+                .workspaces
+                .values()
+                .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
+                .map(|workspace| workspace.id.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum WorkspaceSelector<'a> {
+    Id(&'a str),
+    Name(&'a str),
+    WorktreeName(&'a str),
 }
 
 fn replace_leaf_with_split(
@@ -278,6 +362,41 @@ fn replace_leaf_with_split(
         PaneNode::Split { children, .. } => children
             .iter_mut()
             .any(|child| replace_leaf_with_split(child, target_surface_id, axis, new_leaf.clone())),
+    }
+}
+
+fn remove_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<bool> {
+    match node {
+        PaneNode::Leaf { surface_id } => Some(surface_id == target_surface_id),
+        PaneNode::Split {
+            children, sizes, ..
+        } => {
+            let mut remove_index = None;
+            for (index, child) in children.iter_mut().enumerate() {
+                match remove_leaf(child, target_surface_id) {
+                    Some(true) => {
+                        remove_index = Some(index);
+                        break;
+                    }
+                    Some(false) => {}
+                    None => return None,
+                }
+            }
+            let index = remove_index?;
+            children.remove(index);
+            sizes.remove(index);
+            if children.len() == 1 {
+                *node = children.remove(0);
+            }
+            Some(false)
+        }
+    }
+}
+
+fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
+    match node {
+        PaneNode::Leaf { surface_id } => Some(surface_id.clone()),
+        PaneNode::Split { children, .. } => children.iter().find_map(first_leaf_surface_id),
     }
 }
 
@@ -314,6 +433,40 @@ mod tests {
         assert_eq!(workspace.focused_surface_id, new_surface.id);
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
         assert!(matches!(workspace.pane_tree, PaneNode::Split { .. }));
+    }
+
+    #[test]
+    fn can_select_and_close_workspaces() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("main", "/tmp/main");
+        let second = model.create_workspace("feature", "/tmp/feature");
+
+        assert!(model.list_workspaces()[1].active);
+        model
+            .select_workspace(WorkspaceSelector::Id(&first.id))
+            .unwrap();
+        assert!(model.list_workspaces()[0].active);
+
+        let removed = model
+            .close_workspace(WorkspaceSelector::Name(&second.name))
+            .unwrap();
+        assert_eq!(removed.id, second.id);
+        assert_eq!(model.list_workspaces().len(), 1);
+    }
+
+    #[test]
+    fn can_close_a_split_surface() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let new_surface = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+
+        model.close_surface(&new_surface.id).unwrap();
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 1);
+        assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
     }
 
     #[test]
