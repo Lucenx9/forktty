@@ -100,6 +100,19 @@ Fedora:
 sudo dnf install webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel librsvg2-devel
 ```
 
+GTK/VTE preview dependencies:
+
+```bash
+# Debian / Ubuntu
+sudo apt install libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
+
+# Fedora
+sudo dnf install gtk4-devel libadwaita-devel vte291-gtk4-devel
+
+# Arch
+sudo pacman -S gtk4 libadwaita vte4
+```
+
 ### Build and Run
 
 ```bash
@@ -107,6 +120,14 @@ git clone https://github.com/Lucenx9/forktty.git
 cd forktty
 npm install
 npm run tauri:dev
+```
+
+The Linux-native GTK4/libadwaita/VTE path is available on the
+`migration/gtk-vte` branch while the Tauri path remains in place for comparison
+and fallback:
+
+```bash
+cargo run -p forktty-ui-gtk --features gtk-vte
 ```
 
 ### Work Inside an Isolated Ubuntu Container
@@ -141,6 +162,13 @@ The host-side footprint is limited to Docker itself, one image, a few named cach
 ```bash
 npm run tauri:build
 sudo dpkg -i src-tauri/target/release/bundle/deb/ForkTTY_*.deb
+```
+
+GTK/VTE preview package:
+
+```bash
+bash scripts/gtk-build-deb.sh
+sudo dpkg -i target/packaging/deb/forktty-gtk_*.deb
 ```
 
 The AppImage is emitted under `src-tauri/target/release/bundle/appimage/` when the AppImage bundle is produced:
@@ -323,6 +351,10 @@ npm run tauri:info                        # Tauri environment info
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
+cargo fmt --all --check                   # GTK/VTE workspace
+cargo test --workspace                    # GTK/VTE workspace
+cargo build -p forktty-ui-gtk --features gtk-vte
+bash scripts/gtk-build-deb.sh
 npx prettier --check src/
 ```
 
