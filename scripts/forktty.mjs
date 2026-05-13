@@ -331,6 +331,7 @@ Usage:
   ./scripts/forktty.mjs close-surface <surface-id>
   ./scripts/forktty.mjs send-text <text> [--surface-id <id>]
   ./scripts/forktty.mjs worktree-list [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-status [--path <worktree>] [--cwd <worktree>]
   ./scripts/forktty.mjs worktree-create <branch> [--cwd <repo>]
   ./scripts/forktty.mjs worktree-attach <branch> [--cwd <repo>]
   ./scripts/forktty.mjs worktree-remove <branch-or-worktree> [--cwd <repo>]
@@ -345,6 +346,7 @@ Usage:
   ./scripts/forktty.mjs logs [--workspace-id <id>]
   ./scripts/forktty.mjs clear-logs [--workspace-id <id>]
   ./scripts/forktty.mjs notifications [--json]
+  ./scripts/forktty.mjs clear-notifications
   ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
   ./scripts/forktty.mjs hooks <agent> <event>
   ./scripts/forktty.mjs ping
@@ -682,6 +684,24 @@ function worktreeParams(options, positionals, requireName = false) {
   return params;
 }
 
+function buildWorktreeStatusParams(options, positionals, env = process.env) {
+  const pathValue =
+    typeof options.path === "string" && options.path.trim()
+      ? options.path.trim()
+      : typeof options.cwd === "string" && options.cwd.trim()
+        ? options.cwd.trim()
+        : positionals[0]
+          ? positionals[0].trim()
+          : typeof env.PWD === "string" && env.PWD.trim()
+            ? env.PWD.trim()
+            : "";
+
+  if (!pathValue) {
+    throw new Error("worktree-status requires --path, --cwd, a path, or PWD");
+  }
+  return { path: pathValue };
+}
+
 function formatWorktreeLine(worktree) {
   const status = worktree.status ? ` ${worktree.status}` : "";
   return `${worktree.branch || worktree.name} [${worktree.worktree_name}] ${worktree.path}${status}`;
@@ -701,6 +721,20 @@ async function handleWorktreeList(context, args) {
   for (const worktree of result) {
     process.stdout.write(`${formatWorktreeLine(worktree)}\n`);
   }
+}
+
+async function handleWorktreeStatus(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.status",
+    buildWorktreeStatusParams(options, positionals, context.env),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${result.status || "unknown"}\n`);
 }
 
 async function handleWorktreeCreate(context, args, method) {
@@ -942,6 +976,16 @@ async function handleNotifications(context) {
 
   for (const notification of result) {
     process.stdout.write(`${formatNotificationLine(notification)}\n`);
+  }
+}
+
+async function handleClearNotifications(context) {
+  await sendSocketRequest(context.socketPath, "notification.clear", {});
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Cleared notifications\n");
   }
 }
 
@@ -1372,6 +1416,10 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "worktree:list":
       await handleWorktreeList(context, args);
       return;
+    case "worktree-status":
+    case "worktree:status":
+      await handleWorktreeStatus(context, args);
+      return;
     case "worktree-create":
     case "worktree:create":
       await handleWorktreeCreate(context, args, "worktree.create");
@@ -1419,6 +1467,11 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "notifications":
       await handleNotifications(context);
       return;
+    case "clear-notifications":
+    case "notifications-clear":
+    case "notification:clear":
+      await handleClearNotifications(context);
+      return;
     case "hooks":
       if (args[0] === "setup") {
         await handleHooksSetup(context, args.slice(1));
@@ -1446,6 +1499,7 @@ export {
   buildProgressParams,
   buildSurfaceActionParams,
   buildSurfaceSplitParams,
+  buildWorktreeStatusParams,
   defaultSocketPath,
   mergeHookConfig,
   parseFlags,

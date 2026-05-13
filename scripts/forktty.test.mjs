@@ -9,6 +9,7 @@ import {
   buildProgressParams,
   buildSurfaceActionParams,
   buildSurfaceSplitParams,
+  buildWorktreeStatusParams,
   defaultSocketPath,
   mergeHookConfig,
 } from "./forktty.mjs";
@@ -179,5 +180,14 @@ describe("forktty CLI helpers", () => {
     expect(() => buildSurfaceSplitParams({ axis: "diagonal" }, ["surface-2"])).toThrow(
       "Invalid --axis",
     );
+  });
+
+  it("builds worktree status params from path options and env fallback", () => {
+    expect(buildWorktreeStatusParams({ path: "/repo/wt" }, [], {})).toEqual({
+      path: "/repo/wt",
+    });
+    expect(buildWorktreeStatusParams({}, [], { PWD: "/repo/current" })).toEqual({
+      path: "/repo/current",
+    });
   });
 });
