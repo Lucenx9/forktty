@@ -39,6 +39,7 @@ import {
 } from "../lib/workspace-launch";
 import { dispatchWorkspaceNotification } from "../lib/notification-dispatch";
 import { buildTerminalFontFamily } from "../lib/terminal-fonts";
+import { truncatePath } from "../lib/path-utils";
 import { Columns2, Rows2, Search, GripVertical, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
@@ -223,12 +224,14 @@ function PaneContextMenu({
 function PaneToolbar({
   paneId,
   isFocused,
+  cwd,
   hasUnreadNotification,
   isFindOpen,
   onToggleFind,
 }: {
   paneId: string;
   isFocused: boolean;
+  cwd: string;
   hasUnreadNotification: boolean;
   isFindOpen: boolean;
   onToggleFind: () => void;
@@ -263,6 +266,11 @@ function PaneToolbar({
           <GripVertical size={12} />
         </span>
         <span className="pane-toolbar-title">{surfaceTitle}</span>
+        {cwd && (
+          <span className="pane-toolbar-cwd" title={cwd}>
+            {truncatePath(cwd, 36)}
+          </span>
+        )}
         {hasUnreadNotification && (
           <span className="pane-toolbar-badge pane-toolbar-badge-alert">
             Needs input
@@ -276,8 +284,8 @@ function PaneToolbar({
           onClick={() =>
             splitPaneWithInheritedCwd(paneId, "horizontal").catch(logError)
           }
-          title="Split Right (Ctrl+D)"
-          aria-label="Split Right"
+          title="Split right"
+          aria-label="Split right"
         >
           <Columns2 size={12} />
         </button>
@@ -285,8 +293,8 @@ function PaneToolbar({
           className="pane-toolbar-btn"
           type="button"
           onClick={() => splitPaneWithInheritedCwd(paneId, "vertical").catch(logError)}
-          title="Split Down (Ctrl+Shift+D)"
-          aria-label="Split Down"
+          title="Split down"
+          aria-label="Split down"
         >
           <Rows2 size={12} />
         </button>
@@ -294,8 +302,8 @@ function PaneToolbar({
           className={`pane-toolbar-btn ${isFindOpen ? "pane-toolbar-btn-active" : ""}`}
           type="button"
           onClick={onToggleFind}
-          title="Find (Ctrl+F)"
-          aria-label="Find in Terminal"
+          title="Find"
+          aria-label="Find"
           aria-pressed={isFindOpen}
         >
           <Search size={12} />
@@ -304,8 +312,8 @@ function PaneToolbar({
           className="pane-toolbar-btn pane-toolbar-btn-close"
           type="button"
           onClick={() => closePane(paneId)}
-          title="Close Pane (Ctrl+W)"
-          aria-label="Close Pane"
+          title="Close pane"
+          aria-label="Close pane"
         >
           <X size={12} />
         </button>
@@ -939,6 +947,7 @@ const TerminalPane = memo(function TerminalPane({
       <PaneToolbar
         paneId={paneId}
         isFocused={isFocused}
+        cwd={cwd}
         hasUnreadNotification={hasUnreadNotification}
         isFindOpen={showFind}
         onToggleFind={() => setShowFind((v) => !v)}

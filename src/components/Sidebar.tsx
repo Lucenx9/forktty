@@ -778,7 +778,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             className="sidebar-icon-btn"
             type="button"
             onClick={() => createWorkspaceWithInheritedCwd().catch(logError)}
-            title="New workspace (Ctrl+N)"
+            title="New workspace"
             aria-label="New workspace"
           >
             <Plus size={14} />
@@ -787,8 +787,8 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             className="sidebar-icon-btn sidebar-icon-btn-worktree"
             type="button"
             onClick={handleNewWorktree}
-            title="New worktree (Ctrl+Shift+N)"
-            aria-label="New worktree workspace"
+            title="New worktree"
+            aria-label="New worktree"
           >
             <GitBranch size={14} />
           </button>
@@ -798,8 +798,8 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             onClick={() =>
               window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
             }
-            title="Command palette (Ctrl+Shift+P)"
-            aria-label="Open command palette"
+            title="Command palette"
+            aria-label="Command palette"
           >
             <Command size={14} />
           </button>
@@ -809,8 +809,8 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             onClick={() =>
               window.dispatchEvent(new CustomEvent("forktty-toggle-notifications"))
             }
-            title="Notifications (Ctrl+Shift+I)"
-            aria-label="Toggle notifications"
+            title="Notifications"
+            aria-label="Notifications"
             aria-pressed={showNotificationPanel}
           >
             <Bell size={14} />
@@ -867,7 +867,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             className="sidebar-icon-btn"
             type="button"
             onClick={() => createWorkspaceWithInheritedCwd().catch(logError)}
-            title="New workspace (Ctrl+N)"
+            title="New workspace"
             aria-label="New workspace"
           >
             <Plus size={14} />
@@ -876,8 +876,8 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             className="sidebar-icon-btn sidebar-icon-btn-worktree"
             type="button"
             onClick={handleNewWorktree}
-            title="New worktree (Ctrl+Shift+N)"
-            aria-label="New worktree workspace"
+            title="New worktree"
+            aria-label="New worktree"
           >
             <GitBranch size={14} />
           </button>
@@ -887,8 +887,8 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             onClick={() =>
               window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
             }
-            title="Command palette (Ctrl+Shift+P)"
-            aria-label="Open command palette"
+            title="Command palette"
+            aria-label="Command palette"
           >
             <Command size={14} />
           </button>
@@ -896,7 +896,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             className="sidebar-icon-btn"
             type="button"
             onClick={handleSplitRight}
-            title="Split Right (Ctrl+D)"
+            title="Split right"
             aria-label="Split right"
           >
             <Columns2 size={14} />
@@ -905,7 +905,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             className="sidebar-icon-btn"
             type="button"
             onClick={handleSplitDown}
-            title="Split Down (Ctrl+Shift+D)"
+            title="Split down"
             aria-label="Split down"
           >
             <Rows2 size={14} />
@@ -916,8 +916,8 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             onClick={() =>
               window.dispatchEvent(new CustomEvent("forktty-toggle-notifications"))
             }
-            title="Notifications (Ctrl+Shift+I)"
-            aria-label="Toggle notifications"
+            title="Notifications"
+            aria-label="Notifications"
             aria-pressed={showNotificationPanel}
           >
             <Bell size={14} />
@@ -946,6 +946,21 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             />
           );
         })}
+      </div>
+      <div className="sidebar-footer" aria-label="Sidebar status">
+        <span className="sidebar-footer-status">Ready</span>
+        <button
+          className="sidebar-footer-command"
+          type="button"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
+          }
+          title="Command palette"
+          aria-label="Command palette"
+        >
+          <Command size={12} aria-hidden="true" />
+          <span>Ctrl+Shift+P</span>
+        </button>
       </div>
       {contextMenu &&
         createPortal(

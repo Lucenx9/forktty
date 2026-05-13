@@ -122,6 +122,7 @@ textarea {
 .sidebar-drag-handle,
 .sidebar-close-btn,
 .sidebar-new-btn,
+.sidebar-footer-command,
 .notification-clear-btn,
 .notification-close-btn,
 .settings-save-btn,
@@ -2203,6 +2204,19 @@ textarea {
   letter-spacing: 0.01em;
 }
 
+.pane-toolbar-cwd {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(34vw, 360px);
+  padding-right: 10px;
+  color: rgba(166, 173, 200, 0.72);
+  font-family: var(--mono-font-stack);
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .pane-toolbar-actions {
   display: flex;
   align-items: center;
@@ -2777,14 +2791,54 @@ body.pane-dragging * {
 /* --- Help button & shortcuts --- */
 
 .sidebar-footer {
-  padding: 10px 12px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px 11px;
   border-top: 1px solid var(--border-subtle);
+  color: var(--muted);
+  font-size: var(--text-2xs);
 }
 
 .sidebar-footer-collapsed {
   width: 100%;
   padding: 8px 0 0;
   border-top: 1px solid rgba(166, 173, 200, 0.08);
+}
+
+.sidebar-footer-status {
+  min-width: 0;
+  color: rgba(205, 214, 244, 0.68);
+  font-weight: 600;
+}
+
+.sidebar-footer-command {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid rgba(166, 173, 200, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(205, 214, 244, 0.025);
+  color: rgba(205, 214, 244, 0.7);
+  cursor: pointer;
+  font-family: var(--mono-font-stack);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sidebar-footer-command:hover {
+  background: rgba(205, 214, 244, 0.07);
+  border-color: rgba(166, 173, 200, 0.16);
+  color: var(--theme-fg);
 }
 
 .sidebar-help-wrapper {
@@ -2981,6 +3035,7 @@ body.pane-dragging * {
 .sidebar-drag-handle:focus-visible,
 .sidebar-close-btn:focus-visible,
 .sidebar-new-btn:focus-visible,
+.sidebar-footer-command:focus-visible,
 .notification-clear-btn:focus-visible,
 .notification-close-btn:focus-visible,
 .settings-save-btn:focus-visible,
@@ -4092,19 +4147,20 @@ body.pane-dragging * {
   border: 1px solid transparent;
   border-left: 2px solid transparent;
   border-radius: 5px;
-  background: transparent;
+  background: rgba(205, 214, 244, 0.018);
   box-shadow: none;
 }
 
 .sidebar-entry:hover {
-  border-color: rgba(166, 173, 200, 0.08);
+  border-color: rgba(166, 173, 200, 0.12);
+  background: rgba(205, 214, 244, 0.04);
   box-shadow: none;
 }
 
 .sidebar-entry-active {
-  border-color: rgba(137, 180, 250, 0.14);
-  border-left-color: rgba(137, 180, 250, 0.72);
-  background: rgba(137, 180, 250, 0.08);
+  border-color: rgba(137, 180, 250, 0.22);
+  border-left-color: rgba(137, 180, 250, 0.86);
+  background: rgba(137, 180, 250, 0.105);
   box-shadow: none;
 }
 
@@ -4129,7 +4185,12 @@ body.pane-dragging * {
 
 .sidebar-entry-name-text {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
+  color: rgba(239, 243, 255, 0.84);
+}
+
+.sidebar-entry-active .sidebar-entry-name-text {
+  color: rgba(248, 250, 255, 0.96);
 }
 
 .sidebar-entry-meta {
@@ -4142,7 +4203,13 @@ body.pane-dragging * {
 .sidebar-cwd,
 .sidebar-pane-count,
 .sidebar-wt-status {
-  color: rgba(205, 214, 244, 0.58);
+  color: rgba(205, 214, 244, 0.7);
+}
+
+.sidebar-entry-active .sidebar-cwd,
+.sidebar-entry-active .sidebar-pane-count,
+.sidebar-entry-active .sidebar-wt-status {
+  color: rgba(205, 214, 244, 0.82);
 }
 
 .sidebar-pane-count,
@@ -4154,9 +4221,25 @@ body.pane-dragging * {
 
 .sidebar-meta-view,
 .sidebar-notification-preview,
-.sidebar-entry-actions,
-.sidebar-footer {
+.sidebar-entry-actions {
   display: none;
+}
+
+.sidebar-footer {
+  padding: 8px 10px 10px;
+  border-top-color: rgba(166, 173, 200, 0.075);
+  background: #0f1118;
+}
+
+.sidebar-footer-status {
+  color: rgba(205, 214, 244, 0.58);
+}
+
+.sidebar-footer-command {
+  min-height: 24px;
+  border-color: rgba(166, 173, 200, 0.075);
+  background: rgba(205, 214, 244, 0.028);
+  color: rgba(205, 214, 244, 0.66);
 }
 
 .pane-toolbar {
@@ -4171,6 +4254,20 @@ body.pane-dragging * {
   font-size: 12px;
   font-weight: 500;
   color: rgba(239, 243, 255, 0.78);
+}
+
+.pane-toolbar-cwd {
+  max-width: min(30vw, 320px);
+  color: rgba(205, 214, 244, 0.54);
+  font-size: 10px;
+}
+
+.pane-toolbar-focused .pane-toolbar-cwd {
+  color: rgba(205, 214, 244, 0.68);
+}
+
+.pane-toolbar-actions {
+  opacity: 0.78;
 }
 
 .pane-toolbar-btn {
@@ -4251,6 +4348,7 @@ body.pane-dragging * {
   .sidebar-entry,
   .sidebar-icon-btn,
   .sidebar-action-btn,
+  .sidebar-footer-command,
   .sidebar-drag-handle,
   .sidebar-close-btn,
   .resize-handle,
