@@ -1303,7 +1303,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
         .transient_for(parent)
         .modal(true)
         .default_width(460)
-        .default_height(260)
+        .default_height(420)
         .build();
     let loaded = config::load_config().unwrap_or_default();
 
@@ -1316,6 +1316,24 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
     let notification_command = gtk::Entry::builder()
         .text(&loaded.general.notification_command)
         .hexpand(true)
+        .build();
+    let worktree_layout = combo_with_ids(
+        &[
+            ("nested", "Nested"),
+            ("sibling", "Sibling"),
+            ("outer-nested", "Outer nested"),
+        ],
+        &loaded.general.worktree_layout,
+    );
+    let window_mode = combo_with_ids(
+        &[("normal", "Normal"), ("quake", "Quake")],
+        &loaded.appearance.window_mode,
+    );
+    let desktop_notifications = gtk::CheckButton::builder()
+        .active(loaded.notifications.desktop)
+        .build();
+    let notification_sound = gtk::CheckButton::builder()
+        .active(loaded.notifications.sound)
         .build();
     let status = gtk::Label::builder().xalign(0.0).build();
     let save = gtk::Button::builder()
@@ -1337,14 +1355,30 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
     grid.attach(&font_size, 1, 1, 1, 1);
     grid.attach(&gtk::Label::new(Some("Notification command")), 0, 2, 1, 1);
     grid.attach(&notification_command, 1, 2, 1, 1);
-    grid.attach(&save, 1, 3, 1, 1);
-    grid.attach(&status, 0, 4, 2, 1);
+    grid.attach(&gtk::Label::new(Some("Worktree layout")), 0, 3, 1, 1);
+    grid.attach(&worktree_layout, 1, 3, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Window mode")), 0, 4, 1, 1);
+    grid.attach(&window_mode, 1, 4, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Desktop notifications")), 0, 5, 1, 1);
+    grid.attach(&desktop_notifications, 1, 5, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Notification sound")), 0, 6, 1, 1);
+    grid.attach(&notification_sound, 1, 6, 1, 1);
+    grid.attach(&save, 1, 7, 1, 1);
+    grid.attach(&status, 0, 8, 2, 1);
 
     save.connect_clicked(move |_| {
         let mut next = config::load_config().unwrap_or_default();
         next.general.shell = shell_entry.text().to_string();
         next.appearance.font_size = font_size.value() as u16;
         next.general.notification_command = notification_command.text().to_string();
+        if let Some(layout) = worktree_layout.active_id() {
+            next.general.worktree_layout = layout.to_string();
+        }
+        if let Some(mode) = window_mode.active_id() {
+            next.appearance.window_mode = mode.to_string();
+        }
+        next.notifications.desktop = desktop_notifications.is_active();
+        next.notifications.sound = notification_sound.is_active();
         match config::save_config(&next) {
             Ok(()) => status.set_text("Saved"),
             Err(err) => status.set_text(&err.to_string()),
@@ -1353,6 +1387,17 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
 
     dialog.set_child(Some(&grid));
     dialog.present();
+}
+
+fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText {
+    let combo = gtk::ComboBoxText::new();
+    for (id, label) in items {
+        combo.append(Some(id), label);
+    }
+    if !combo.set_active_id(Some(active_id)) {
+        combo.set_active(Some(0));
+    }
+    combo
 }
 
 fn create_plain_workspace(state: &SocketAppState) {
