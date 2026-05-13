@@ -123,6 +123,7 @@ textarea {
 .sidebar-close-btn,
 .sidebar-new-btn,
 .sidebar-footer-command,
+.sidebar-footer-icon,
 .notification-clear-btn,
 .notification-close-btn,
 .settings-save-btn,
@@ -2813,6 +2814,13 @@ body.pane-dragging * {
   font-weight: 600;
 }
 
+.sidebar-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .sidebar-footer-command {
   display: inline-flex;
   align-items: center;
@@ -2839,6 +2847,37 @@ body.pane-dragging * {
   background: rgba(205, 214, 244, 0.07);
   border-color: rgba(166, 173, 200, 0.16);
   color: var(--theme-fg);
+}
+
+.sidebar-footer-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(166, 173, 200, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(205, 214, 244, 0.025);
+  color: rgba(205, 214, 244, 0.68);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sidebar-footer-icon:hover,
+.sidebar-footer-icon-active {
+  background: rgba(205, 214, 244, 0.07);
+  border-color: rgba(166, 173, 200, 0.16);
+  color: var(--theme-fg);
+}
+
+.sidebar-rail-footer {
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid rgba(166, 173, 200, 0.08);
 }
 
 .sidebar-help-wrapper {
@@ -3036,6 +3075,7 @@ body.pane-dragging * {
 .sidebar-close-btn:focus-visible,
 .sidebar-new-btn:focus-visible,
 .sidebar-footer-command:focus-visible,
+.sidebar-footer-icon:focus-visible,
 .notification-clear-btn:focus-visible,
 .notification-close-btn:focus-visible,
 .settings-save-btn:focus-visible,
@@ -4242,6 +4282,21 @@ body.pane-dragging * {
   color: rgba(205, 214, 244, 0.66);
 }
 
+.sidebar-footer-icon {
+  width: 24px;
+  height: 24px;
+  border-color: rgba(166, 173, 200, 0.075);
+  background: rgba(205, 214, 244, 0.028);
+  color: rgba(205, 214, 244, 0.62);
+}
+
+.sidebar-footer-icon:hover,
+.sidebar-footer-icon-active {
+  border-color: rgba(166, 173, 200, 0.14);
+  background: rgba(205, 214, 244, 0.06);
+  color: rgba(239, 243, 255, 0.88);
+}
+
 .pane-toolbar {
   height: 32px;
   min-height: 32px;
@@ -4349,6 +4404,7 @@ body.pane-dragging * {
   .sidebar-icon-btn,
   .sidebar-action-btn,
   .sidebar-footer-command,
+  .sidebar-footer-icon,
   .sidebar-drag-handle,
   .sidebar-close-btn,
   .resize-handle,
