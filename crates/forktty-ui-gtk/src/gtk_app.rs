@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use forktty_core::{
     config, dispatch_notification, session, NotificationItem, NotificationKind, PaneNode,
-    ProgressEntry, SplitAxis, StatusEntry, WorkspaceModel,
+    ProgressEntry, SplitAxis, StatusEntry, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
@@ -646,6 +646,15 @@ fn build_ui(app: &adw::Application) {
         terminal_stack.borrow().clone(),
         model.clone(),
     )));
+    let state_for_sidebar_select = state.clone();
+    let controller_for_sidebar_select = controller.clone();
+    sidebar.connect_row_activated(move |_, row| {
+        select_sidebar_workspace(
+            &state_for_sidebar_select,
+            row.index(),
+            &controller_for_sidebar_select,
+        );
+    });
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
         while let Ok(command) = terminal_rx.try_recv() {
@@ -973,6 +982,43 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
             .build();
         sidebar.append(&label);
     }
+}
+
+fn select_sidebar_workspace(
+    state: &SocketAppState,
+    index: i32,
+    controller: &Rc<RefCell<VteController>>,
+) {
+    let workspace_id = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        workspace_id_at_index(&model, index)
+    };
+    let Some(workspace_id) = workspace_id else {
+        return;
+    };
+
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let _ = model.select_workspace(WorkspaceSelector::Id(&workspace_id));
+    }
+    if let Err(err) = spawn_focused_surface_if_needed(state) {
+        eprintln!("Failed to spawn selected workspace terminal: {err}");
+    }
+    controller.borrow().rebuild_layout();
+}
+
+fn workspace_id_at_index(model: &WorkspaceModel, index: i32) -> Option<String> {
+    let index = usize::try_from(index).ok()?;
+    model
+        .list_workspaces()
+        .get(index)
+        .map(|workspace| workspace.id.clone())
 }
 
 fn format_metadata_summary(
@@ -1390,5 +1436,23 @@ mod tests {
         config.general.shell = "/bin/zsh".to_string();
 
         assert_eq!(configured_shell(&config), "/bin/zsh");
+    }
+
+    #[test]
+    fn resolves_sidebar_workspace_by_visible_index() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("one", "/tmp/one");
+        let second = model.create_workspace("two", "/tmp/two");
+
+        assert_eq!(
+            workspace_id_at_index(&model, 0).as_deref(),
+            Some(first.id.as_str())
+        );
+        assert_eq!(
+            workspace_id_at_index(&model, 1).as_deref(),
+            Some(second.id.as_str())
+        );
+        assert!(workspace_id_at_index(&model, -1).is_none());
+        assert!(workspace_id_at_index(&model, 2).is_none());
     }
 }
