@@ -262,6 +262,7 @@ Usage:
   ./scripts/forktty.mjs focus --workspace-id <id>
   ./scripts/forktty.mjs close-workspace <selector>
   ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
+  ./scripts/forktty.mjs send-text <text> [--surface-id <id>]
   ./scripts/forktty.mjs set-status --key <key> --value <value> [--label <label>] [--color <color>]
   ./scripts/forktty.mjs list-status [--workspace-id <id>]
   ./scripts/forktty.mjs clear-status [--key <key>]
@@ -287,14 +288,31 @@ function formatWorkspaceLine(workspace) {
   parts.push(workspace.active ? "*" : " ");
   parts.push(workspace.name);
   parts.push(`[${workspace.id}]`);
-  if (workspace.gitBranch) {
-    parts.push(workspace.gitBranch);
+  const gitBranch = workspace.gitBranch || workspace.git_branch;
+  const workingDir = workspace.workingDir || workspace.working_dir;
+  const surfaceCount =
+    typeof workspace.surfaces === "number"
+      ? workspace.surfaces
+      : workspace.pane_tree
+        ? countPaneLeaves(workspace.pane_tree)
+        : 0;
+  if (gitBranch) {
+    parts.push(gitBranch);
   }
-  if (workspace.workingDir) {
-    parts.push(workspace.workingDir);
+  if (workingDir) {
+    parts.push(workingDir);
   }
-  parts.push(`${workspace.surfaces} surface${workspace.surfaces === 1 ? "" : "s"}`);
+  parts.push(`${surfaceCount} surface${surfaceCount === 1 ? "" : "s"}`);
   return parts.join("  ");
+}
+
+function countPaneLeaves(node) {
+  if (!node || typeof node !== "object") return 0;
+  if (node.type === "leaf") return 1;
+  if (Array.isArray(node.children)) {
+    return node.children.reduce((total, child) => total + countPaneLeaves(child), 0);
+  }
+  return 0;
 }
 
 async function handleList(context) {
@@ -426,6 +444,42 @@ async function handleNotify(context, args) {
     printJson({ result: true });
   } else {
     process.stdout.write(`Sent ${kind} notification\n`);
+  }
+}
+
+async function handleSendText(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const stdinText = await readStdinText();
+  const text =
+    typeof options.text === "string"
+      ? options.text
+      : positionals.length > 0
+        ? positionals.join(" ")
+        : stdinText;
+  const surfaceId =
+    typeof options["surface-id"] === "string" && options["surface-id"].trim()
+      ? options["surface-id"].trim()
+      : typeof context.env.FORKTTY_SURFACE_ID === "string" &&
+          context.env.FORKTTY_SURFACE_ID.trim()
+        ? context.env.FORKTTY_SURFACE_ID.trim()
+        : "";
+
+  if (!surfaceId) {
+    throw new Error("send-text requires --surface-id or FORKTTY_SURFACE_ID");
+  }
+  if (!text) {
+    throw new Error("send-text requires text or stdin");
+  }
+
+  await sendSocketRequest(context.socketPath, "surface.send_text", {
+    surface_id: surfaceId,
+    text,
+  });
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Sent text\n");
   }
 }
 
@@ -921,6 +975,10 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       return;
     case "notify":
       await handleNotify(context, args);
+      return;
+    case "send-text":
+    case "send_text":
+      await handleSendText(context, args);
       return;
     case "set-status":
       await handleSetStatus(context, args);
