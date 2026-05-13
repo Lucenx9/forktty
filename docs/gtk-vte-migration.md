@@ -50,6 +50,10 @@ Tauri/React implementation.
   the GTK `Paned` layout from the model.
 - GTK command palette, notification panel, and settings dialog have native
   minimal implementations. Settings persist through `forktty-core` config.
+- GTK quake/dropdown mode reads `appearance.window_mode = "quake"`, starts with
+  a shorter undecorated window where supported, and registers F12 to toggle the
+  window. Main GTK accelerators are wired for split, palette, notifications, and
+  settings.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.
@@ -102,5 +106,6 @@ progress.
 
 ## Remaining Parity Work
 
-- Port quake window behavior and remaining shortcut coverage from the Tauri path.
+- Expand quake behavior with monitor-aware placement and global shortcut support
+  where the desktop portal/compositor permits it.
 - Harden `.deb` metadata and add CI/release wiring for the GTK package.

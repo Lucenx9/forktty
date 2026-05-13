@@ -5,6 +5,7 @@ use forktty_socket::{
 };
 use forktty_terminal::vte::{send_text as vte_send_text, spawn_vte_terminal, VteTerminalWidget};
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
+use gtk::gio;
 use gtk::glib;
 use gtk4 as gtk;
 use std::cell::RefCell;
@@ -226,6 +227,8 @@ pub fn run() {
 fn build_ui(app: &adw::Application) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let app_config = config::load_config().unwrap_or_default();
+    let quake_mode = app_config.appearance.window_mode == "quake";
     let socket_path = std::env::var("FORKTTY_SOCKET_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_socket_path());
@@ -292,11 +295,18 @@ fn build_ui(app: &adw::Application) {
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("ForkTTY GTK")
-        .default_width(1200)
-        .default_height(760)
+        .title(if quake_mode {
+            "ForkTTY GTK Quake"
+        } else {
+            "ForkTTY GTK"
+        })
+        .default_width(if quake_mode { 1280 } else { 1200 })
+        .default_height(if quake_mode { 520 } else { 760 })
         .content(&content)
         .build();
+    if quake_mode {
+        window.set_decorated(false);
+    }
 
     let state_for_horizontal = state.clone();
     split_horizontal.connect_clicked(move |_| {
@@ -356,9 +366,66 @@ fn build_ui(app: &adw::Application) {
         show_settings_dialog(&settings_parent);
     });
 
+    install_actions(app, &window, &state);
+
     start_socket_server(state.clone());
 
     window.present();
+}
+
+fn install_actions(
+    app: &adw::Application,
+    window: &adw::ApplicationWindow,
+    state: &SocketAppState,
+) {
+    add_action(app, "split-horizontal", {
+        let state = state.clone();
+        move || split_active_surface(&state, SplitAxis::Horizontal)
+    });
+    add_action(app, "split-vertical", {
+        let state = state.clone();
+        move || split_active_surface(&state, SplitAxis::Vertical)
+    });
+    add_action(app, "command-palette", {
+        let window = window.clone();
+        let state = state.clone();
+        move || show_command_palette(&window, &state)
+    });
+    add_action(app, "notifications", {
+        let window = window.clone();
+        let state = state.clone();
+        move || show_notification_panel(&window, &state)
+    });
+    add_action(app, "settings", {
+        let window = window.clone();
+        move || show_settings_dialog(&window)
+    });
+    add_action(app, "toggle-quake", {
+        let window = window.clone();
+        move || {
+            if window.is_visible() {
+                window.hide();
+            } else {
+                window.present();
+            }
+        }
+    });
+
+    app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
+    app.set_accels_for_action("app.split-vertical", &["<Control><Shift>V"]);
+    app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);
+    app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
+    app.set_accels_for_action("app.settings", &["<Control>comma"]);
+    app.set_accels_for_action("app.toggle-quake", &["F12"]);
+}
+
+fn add_action<F>(app: &adw::Application, name: &str, callback: F)
+where
+    F: Fn() + 'static,
+{
+    let action = gio::SimpleAction::new(name, None);
+    action.connect_activate(move |_, _| callback());
+    app.add_action(&action);
 }
 
 fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
