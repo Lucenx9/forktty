@@ -42,6 +42,9 @@ Tauri/React implementation.
   worktree-backed workspaces.
 - CLI worktree commands: `worktree-list`, `worktree-create`, `worktree-attach`,
   `worktree-remove`, and `worktree-merge`.
+- GTK app startup now binds the local Unix socket and routes terminal backend
+  commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
+  VTE through this adapter.
 
 ## VTE Owning PTY Gap
 
@@ -87,7 +90,6 @@ current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
 ## Remaining Parity Work
 
 - Replace GTK split placeholders with model-driven VTE pane creation.
-- Wire socket server lifetime into the GTK app startup.
 - Port command palette, settings, notification panel, and quake window behavior
   from the Tauri path.
 - Add session format migration from the existing Tauri `session.json`.
