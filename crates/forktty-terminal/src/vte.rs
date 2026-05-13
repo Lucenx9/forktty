@@ -18,6 +18,7 @@ pub fn spawn_vte_terminal(request: &SpawnRequest) -> Result<VteTerminalWidget, T
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
     terminal.set_scrollback_lines(20_000);
+    terminal.set_enable_legacy_osc777(true);
 
     let env_storage = request
         .forktty_env()

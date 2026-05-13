@@ -121,8 +121,10 @@ sudo pacman -S gtk4 libadwaita vte4
 ```
 
 The GTK/VTE preview currently requires VTE 0.80 or newer for shell-integration
-and progress termprops. For compositor-anchored quake/dropdown placement on
-Wayland, install the optional `gtk4-layer-shell` runtime as well:
+and progress termprops, and enables VTE's legacy OSC 777 translation path for
+terminal notification/progress metadata that VTE exposes as termprops. For
+compositor-anchored quake/dropdown placement on Wayland, install the optional
+`gtk4-layer-shell` runtime as well:
 
 ```bash
 # Debian / Ubuntu

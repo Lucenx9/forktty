@@ -101,14 +101,15 @@ The GTK path starts from VTE owning the PTY. The previous `output_scanner.rs`
 was coupled to the portable-pty read loop, so it is not directly reusable when
 VTE owns the child process. The migrated path keeps notification/unread state
 available via socket `notification.create`, VTE bell/child-exit signals, VTE
-shell-integration termprops, and visible prompt scanning for simple prompt
-patterns such as `>`, `❯`, `(Y/n)`, and `Do you want to proceed`.
+shell-integration termprops, VTE legacy OSC 777-to-termprop translation, and
+visible prompt scanning for simple prompt patterns such as `>`, `❯`, `(Y/n)`,
+and `Do you want to proceed`.
 
-Byte-level OSC 9/99/777 notification parsing is still not fully ported because
-the GTK app does not receive the raw PTY byte stream when VTE owns the PTY.
-Where VTE exposes higher-level termprops, the GTK path now consumes them; hidden
-control sequences that VTE does not surface still need either VTE API support or
-shell integration events.
+Byte-level OSC 9/99 notification parsing is still not fully ported because the
+GTK app does not receive the raw PTY byte stream when VTE owns the PTY. Legacy
+OSC 777 is enabled through VTE's translation path, but only the termprops that
+VTE surfaces are visible to the GTK app. Hidden control sequences that VTE does
+not surface still need either VTE API support or shell integration events.
 
 ## Native Dependencies
 
@@ -163,7 +164,8 @@ problems.
 
 ## Known Limits
 
-- Byte-level OSC 9/99/777 parsing remains limited by VTE-owned PTY access, as
+- Byte-level OSC 9/99 parsing remains limited by VTE-owned PTY access, and OSC
+  777 support depends on the termprops surfaced by VTE's legacy translation, as
   described above.
 - Quake top-edge anchoring requires Wayland plus the optional
   `gtk4-layer-shell` runtime library. Other desktops fall back to the normal
