@@ -16,9 +16,12 @@ use global_hotkey::{
 };
 use gtk::gio;
 use gtk::glib;
+use gtk::glib::translate::ToGlibPtr;
 use gtk4 as gtk;
+use libloading::Library;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::ffi::CString;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
@@ -602,6 +605,11 @@ fn build_ui(app: &adw::Application) {
         .build();
     if quake_mode {
         window.set_decorated(false);
+        if !configure_quake_layer_shell(&window) {
+            eprintln!(
+                "GTK layer-shell unavailable; quake mode will use a normal undecorated window"
+            );
+        }
     }
 
     let state_for_horizontal = state.clone();
@@ -750,6 +758,81 @@ fn quake_default_size() -> (i32, i32) {
     let width = (geometry.width() - 80).clamp(720, 1800);
     let height = (geometry.height() * 2 / 5).clamp(360, 640);
     (width, height)
+}
+
+fn configure_quake_layer_shell(window: &adw::ApplicationWindow) -> bool {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return false;
+    }
+
+    const GTK_LAYER_SHELL_EDGE_LEFT: i32 = 0;
+    const GTK_LAYER_SHELL_EDGE_RIGHT: i32 = 1;
+    const GTK_LAYER_SHELL_EDGE_TOP: i32 = 2;
+    const GTK_LAYER_SHELL_EDGE_BOTTOM: i32 = 3;
+    const GTK_LAYER_SHELL_LAYER_TOP: i32 = 2;
+    const GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND: i32 = 2;
+
+    type InitForWindow = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow);
+    type SetLayer = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, i32);
+    type SetAnchor = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, i32, i32);
+    type SetMargin = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, i32, i32);
+    type SetKeyboardMode = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, i32);
+    type SetNamespace = unsafe extern "C" fn(*mut gtk::ffi::GtkWindow, *const std::ffi::c_char);
+
+    let library = unsafe {
+        Library::new("libgtk4-layer-shell.so.0").or_else(|_| Library::new("libgtk4-layer-shell.so"))
+    };
+    let Ok(library) = library else {
+        return false;
+    };
+    let library = Box::leak(Box::new(library));
+    let namespace = CString::new("forktty-quake").expect("static namespace has no nulls");
+    let gtk_window = window.upcast_ref::<gtk::Window>();
+    let window_ptr = gtk_window.to_glib_none().0;
+
+    unsafe {
+        let init = library
+            .get::<InitForWindow>(b"gtk_layer_init_for_window\0")
+            .ok();
+        let set_layer = library.get::<SetLayer>(b"gtk_layer_set_layer\0").ok();
+        let set_anchor = library.get::<SetAnchor>(b"gtk_layer_set_anchor\0").ok();
+        let set_margin = library.get::<SetMargin>(b"gtk_layer_set_margin\0").ok();
+        let set_keyboard_mode = library
+            .get::<SetKeyboardMode>(b"gtk_layer_set_keyboard_mode\0")
+            .ok();
+        let set_namespace = library
+            .get::<SetNamespace>(b"gtk_layer_set_namespace\0")
+            .ok();
+        let (
+            Some(init),
+            Some(set_layer),
+            Some(set_anchor),
+            Some(set_margin),
+            Some(set_keyboard_mode),
+            Some(set_namespace),
+        ) = (
+            init,
+            set_layer,
+            set_anchor,
+            set_margin,
+            set_keyboard_mode,
+            set_namespace,
+        )
+        else {
+            return false;
+        };
+
+        init(window_ptr);
+        set_namespace(window_ptr, namespace.as_ptr());
+        set_layer(window_ptr, GTK_LAYER_SHELL_LAYER_TOP);
+        set_keyboard_mode(window_ptr, GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+        set_anchor(window_ptr, GTK_LAYER_SHELL_EDGE_TOP, 1);
+        set_anchor(window_ptr, GTK_LAYER_SHELL_EDGE_LEFT, 1);
+        set_anchor(window_ptr, GTK_LAYER_SHELL_EDGE_RIGHT, 1);
+        set_anchor(window_ptr, GTK_LAYER_SHELL_EDGE_BOTTOM, 0);
+        set_margin(window_ptr, GTK_LAYER_SHELL_EDGE_TOP, 0);
+        true
+    }
 }
 
 fn toggle_quake_window(window: &adw::ApplicationWindow) {

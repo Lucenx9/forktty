@@ -66,11 +66,12 @@ Tauri/React implementation.
 - GTK command palette, notification panel, and settings dialog have native
   minimal implementations. Settings persist through `forktty-core` config.
 - GTK quake/dropdown mode reads `appearance.window_mode = "quake"`, starts with
-  an undecorated monitor-sized dropdown-style window where supported, and
-  registers F12 to toggle the window. It also attempts to register a global F12
-  shortcut on desktops supported by `global-hotkey` and degrades to the in-app
-  accelerator otherwise. Main GTK accelerators are wired for split, palette,
-  notifications, and settings.
+  an undecorated monitor-sized dropdown-style window, and uses
+  `gtk4-layer-shell` at runtime when available on Wayland to anchor the window
+  to the top edge. It also attempts to register a global F12 shortcut on
+  desktops supported by `global-hotkey` and degrades to the in-app accelerator
+  otherwise. Main GTK accelerators are wired for split, palette, notifications,
+  and settings.
 - Terminal backends now expose `close(surface_id)`. Socket `surface.close` and
   the GTK close-pane action remove VTE widgets and keep at least one focused
   surface alive.
@@ -128,6 +129,12 @@ Arch-style names:
 - `libadwaita`
 - `vte4`
 
+Optional quake top-edge anchoring dependency:
+
+- Debian/Ubuntu: `libgtk4-layer-shell-dev` / runtime library package
+- Fedora: `gtk4-layer-shell-devel`
+- Arch: `gtk4-layer-shell`
+
 Build commands:
 
 ```sh
@@ -153,7 +160,10 @@ preview artifact for now; AppImage remains deferred until the GTK/VTE runtime
 dependency story is stable enough to bundle without hiding system integration
 problems.
 
-## Remaining Parity Work
+## Known Limits
 
-- Expand quake behavior with compositor-supported top-edge placement where the
-  desktop portal/compositor permits it.
+- Byte-level OSC 9/99/777 parsing remains limited by VTE-owned PTY access, as
+  described above.
+- Quake top-edge anchoring requires Wayland plus the optional
+  `gtk4-layer-shell` runtime library. Other desktops fall back to the normal
+  undecorated GTK quake window.

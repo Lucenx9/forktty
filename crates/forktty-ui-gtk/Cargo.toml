@@ -11,7 +11,7 @@ description = "ForkTTY GTK4/libadwaita application shell"
 
 [features]
 default = []
-gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "forktty-terminal/vte"]
+gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/vte"]
 
 [dependencies]
 forktty-core = { path = "../forktty-core" }
@@ -20,4 +20,5 @@ forktty-terminal = { path = "../forktty-terminal" }
 adw = { package = "libadwaita", version = "0.9", optional = true }
 global-hotkey = { version = "0.7", optional = true }
 gtk4 = { version = "0.11", optional = true }
+libloading = { version = "0.8", optional = true }
 tokio.workspace = true
