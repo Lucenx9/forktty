@@ -50,6 +50,8 @@ Tauri/React implementation.
 - Worktree create, attach, list, remove, merge, status, and hook execution in
   `forktty-core`, with direct socket dispatch that opens/closes matching
   worktree-backed workspaces.
+- CLI surface commands: `surfaces`, `split-surface`, `focus-surface`, and
+  `close-surface`.
 - CLI worktree commands: `worktree-list`, `worktree-create`, `worktree-attach`,
   `worktree-remove`, and `worktree-merge`.
 - CLI metadata commands: `set-status`, `list-status`, `clear-status`,

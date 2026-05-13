@@ -325,6 +325,10 @@ Usage:
   ./scripts/forktty.mjs focus --workspace-id <id>
   ./scripts/forktty.mjs close-workspace <selector>
   ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
+  ./scripts/forktty.mjs surfaces [--workspace-id <id>] [--json]
+  ./scripts/forktty.mjs split-surface [--surface-id <id>] [--axis horizontal|vertical]
+  ./scripts/forktty.mjs focus-surface <surface-id>
+  ./scripts/forktty.mjs close-surface <surface-id>
   ./scripts/forktty.mjs send-text <text> [--surface-id <id>]
   ./scripts/forktty.mjs worktree-list [--cwd <repo>]
   ./scripts/forktty.mjs worktree-create <branch> [--cwd <repo>]
@@ -554,6 +558,112 @@ async function handleSendText(context, args) {
     printJson({ result: true });
   } else {
     process.stdout.write("Sent text\n");
+  }
+}
+
+function surfaceIdFromArgs(options, positionals, env = process.env) {
+  if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
+    return options["surface-id"].trim();
+  }
+  if (positionals[0]) {
+    return positionals[0].trim();
+  }
+  if (typeof env.FORKTTY_SURFACE_ID === "string" && env.FORKTTY_SURFACE_ID.trim()) {
+    return env.FORKTTY_SURFACE_ID.trim();
+  }
+  return "";
+}
+
+function buildSurfaceActionParams(options, positionals, env = process.env, command = "surface") {
+  const surfaceId = surfaceIdFromArgs(options, positionals, env);
+  if (!surfaceId) {
+    throw new Error(`${command} requires --surface-id, a surface id, or FORKTTY_SURFACE_ID`);
+  }
+  return { surface_id: surfaceId };
+}
+
+function buildSurfaceSplitParams(options, positionals, env = process.env) {
+  const axis =
+    typeof options.axis === "string" && options.axis.trim() ? options.axis.trim() : "horizontal";
+  if (axis !== "horizontal" && axis !== "vertical") {
+    throw new Error("Invalid --axis: expected horizontal or vertical");
+  }
+  return {
+    ...buildSurfaceActionParams(options, positionals, env, "split-surface"),
+    axis,
+  };
+}
+
+function formatSurfaceLine(surface) {
+  const state = surface.unread || surface.needs_attention ? "unread" : "read";
+  const title = surface.title ? ` ${surface.title}` : "";
+  const cwd = surface.cwd ? ` ${surface.cwd}` : "";
+  return `${surface.id} [${surface.workspace_id}] ${state}${title}${cwd}`;
+}
+
+async function handleSurfaces(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "surface.list", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No surfaces\n");
+    return;
+  }
+
+  for (const surface of result) {
+    process.stdout.write(`${formatSurfaceLine(surface)}\n`);
+  }
+}
+
+async function handleSplitSurface(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "surface.split",
+    buildSurfaceSplitParams(options, positionals, context.env),
+  );
+
+  if (context.json) {
+    printJson(result);
+  } else {
+    process.stdout.write(`Created surface ${result.id}\n`);
+  }
+}
+
+async function handleFocusSurface(context, args) {
+  const { options, positionals } = parseFlags(args);
+  await sendSocketRequest(
+    context.socketPath,
+    "surface.focus",
+    buildSurfaceActionParams(options, positionals, context.env, "focus-surface"),
+  );
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Focused surface\n");
+  }
+}
+
+async function handleCloseSurface(context, args) {
+  const { options, positionals } = parseFlags(args);
+  await sendSocketRequest(
+    context.socketPath,
+    "surface.close",
+    buildSurfaceActionParams(options, positionals, context.env, "close-surface"),
+  );
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Closed surface\n");
   }
 }
 
@@ -1234,6 +1344,26 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "notify":
       await handleNotify(context, args);
       return;
+    case "surfaces":
+    case "surface-list":
+    case "surface:list":
+      await handleSurfaces(context, args);
+      return;
+    case "split-surface":
+    case "surface-split":
+    case "surface:split":
+      await handleSplitSurface(context, args);
+      return;
+    case "focus-surface":
+    case "surface-focus":
+    case "surface:focus":
+      await handleFocusSurface(context, args);
+      return;
+    case "close-surface":
+    case "surface-close":
+    case "surface:close":
+      await handleCloseSurface(context, args);
+      return;
     case "send-text":
     case "send_text":
       await handleSendText(context, args);
@@ -1314,6 +1444,8 @@ export {
   buildHookShellCommand,
   buildLogParams,
   buildProgressParams,
+  buildSurfaceActionParams,
+  buildSurfaceSplitParams,
   defaultSocketPath,
   mergeHookConfig,
   parseFlags,

@@ -7,6 +7,8 @@ import {
   buildHookShellCommand,
   buildLogParams,
   buildProgressParams,
+  buildSurfaceActionParams,
+  buildSurfaceSplitParams,
   defaultSocketPath,
   mergeHookConfig,
 } from "./forktty.mjs";
@@ -159,5 +161,23 @@ describe("forktty CLI helpers", () => {
 
   it("rejects invalid log levels", () => {
     expect(() => buildLogParams({ level: "debug" }, ["hello"])).toThrow("Invalid --level");
+  });
+
+  it("builds surface action params from env fallback", () => {
+    expect(
+      buildSurfaceActionParams({}, [], { FORKTTY_SURFACE_ID: "surface-1" }, "focus-surface"),
+    ).toEqual({
+      surface_id: "surface-1",
+    });
+  });
+
+  it("builds surface split params with axis validation", () => {
+    expect(buildSurfaceSplitParams({ axis: "vertical" }, ["surface-2"])).toEqual({
+      surface_id: "surface-2",
+      axis: "vertical",
+    });
+    expect(() => buildSurfaceSplitParams({ axis: "diagonal" }, ["surface-2"])).toThrow(
+      "Invalid --axis",
+    );
   });
 });

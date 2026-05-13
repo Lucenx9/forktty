@@ -36,6 +36,8 @@ ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
 ```bash
 ./scripts/forktty.mjs list
 ./scripts/forktty.mjs focus "Workspace 2"
+./scripts/forktty.mjs surfaces
+./scripts/forktty.mjs split-surface --axis vertical
 ./scripts/forktty.mjs notify --title "Input needed" --kind prompt "Blocked on test fixture"
 ./scripts/forktty.mjs set-status --key agent:codex --label Codex --value Running --color blue
 ./scripts/forktty.mjs set-progress --key build --label Build --value 42 --total 100
