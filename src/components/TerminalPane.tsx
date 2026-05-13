@@ -43,6 +43,7 @@ import {
 import { dispatchWorkspaceNotification } from "../lib/notification-dispatch";
 import { buildTerminalFontFamily } from "../lib/terminal-fonts";
 import { truncatePath } from "../lib/path-utils";
+import { showToast } from "./ErrorToast";
 import { Columns2, Rows2, Search, GripVertical, Settings, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
@@ -102,10 +103,14 @@ function isTargetInsideXterm(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && !!target.closest(".xterm");
 }
 
-function shouldUseCanvasRenderer(): boolean {
+function isLinuxTauriRuntime(): boolean {
   if (typeof navigator === "undefined") return false;
   const platformFingerprint = `${navigator.userAgent} ${navigator.platform}`;
-  return !(hasTauriRuntime() && /linux/i.test(platformFingerprint));
+  return hasTauriRuntime() && /linux/i.test(platformFingerprint);
+}
+
+function shouldUseCanvasRenderer(): boolean {
+  return !isLinuxTauriRuntime();
 }
 
 type TerminalRendererSetting = "auto" | "dom" | "canvas" | "webgl";
@@ -130,6 +135,17 @@ function resolveRequestedRenderer(
 ): TerminalRendererKind {
   const renderer = normalizeTerminalRenderer(value);
   return renderer === "auto" ? resolveAutoRenderer() : renderer;
+}
+
+let hasShownWebglLinuxWarning = false;
+
+function maybeWarnAboutUnsupportedWebglRuntime() {
+  if (hasShownWebglLinuxWarning || !isLinuxTauriRuntime()) return;
+  hasShownWebglLinuxWarning = true;
+  showToast(
+    "WebGL is slower on Linux/WebKitGTK right now. ForkTTY is using the safer renderer instead.",
+    "warn",
+  );
 }
 
 interface PaneContextMenuState {
@@ -635,6 +651,12 @@ const TerminalPane = memo(function TerminalPane({
       };
 
       const loadWebglRenderer = () => {
+        if (isLinuxTauriRuntime()) {
+          maybeWarnAboutUnsupportedWebglRuntime();
+          logError("WebGL renderer disabled on Linux/WebKitGTK, falling back automatically");
+          return loadDefaultFallbackRenderer("WebGL is disabled on Linux/WebKitGTK");
+        }
+
         if (typeof WebGL2RenderingContext === "undefined") {
           logError("WebGL renderer unavailable, falling back automatically");
           return loadDefaultFallbackRenderer("WebGL2 is not available in this runtime");

@@ -1,11 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { useConfigStore } from "../stores/config";
-import type { AppConfig } from "../lib/pty-bridge";
+import { hasTauriRuntime, type AppConfig } from "../lib/pty-bridge";
 import { X } from "lucide-react";
 import { ConfirmModal } from "./InlineModal";
 
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 32;
+
+function isLinuxTauriRuntime(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const platformFingerprint = `${navigator.userAgent} ${navigator.platform}`;
+  return hasTauriRuntime() && /linux/i.test(platformFingerprint);
+}
 
 export default function SettingsPanel() {
   const config = useConfigStore((s) => s.config);
@@ -34,6 +40,7 @@ export default function SettingsPanel() {
     Number.isFinite(draft.appearance.font_size) &&
     draft.appearance.font_size >= MIN_FONT_SIZE &&
     draft.appearance.font_size <= MAX_FONT_SIZE;
+  const webglDisabled = isLinuxTauriRuntime();
 
   const requestClose = useCallback(() => {
     if (saving) return;
@@ -336,11 +343,14 @@ export default function SettingsPanel() {
               <option value="auto">Auto (recommended)</option>
               <option value="dom">DOM</option>
               <option value="canvas">Canvas</option>
-              <option value="webgl">WebGL (experimental)</option>
+              <option value="webgl" disabled={webglDisabled}>
+                WebGL (experimental)
+              </option>
             </select>
             <span className="settings-field-hint">
-              Existing panes keep their current renderer. New panes apply this
-              setting, with automatic fallback if acceleration is unavailable.
+              {webglDisabled
+                ? "WebGL is currently disabled on Linux/WebKitGTK because it is slower than DOM on many systems. Existing panes keep their current renderer."
+                : "Existing panes keep their current renderer. New panes apply this setting, with automatic fallback if acceleration is unavailable."}
             </span>
           </label>
         </div>
