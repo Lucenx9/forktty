@@ -74,9 +74,13 @@ Tauri/React implementation.
   surface alive.
 - The GTK sidebar refreshes from `WorkspaceModel`, including active workspace,
   branch/worktree metadata, agent status metadata, and unread/attention state.
-- VTE `window-title-changed`, `bell`, and `child-exited` signals now update the
-  core model: terminal titles are mirrored onto surfaces, and bell/exit events
-  create notifications that drive unread/attention state.
+- VTE `bell` and `child-exited` signals now update the core model, creating
+  notifications that drive unread/attention state.
+- VTE termprop events are wired for `xterm.title`, `vte.shell.precmd`,
+  `vte.shell.preexec`, `vte.shell.postexec`, `vte.progress.value`, and
+  `vte.progress.hint`. These drive terminal titles, prompt notifications,
+  terminal running/done status, command-finished logs, and sidebar progress
+  metadata without taking PTY ownership away from VTE.
 - Notification dispatch now runs through the GTK/core path as well: socket,
   local GTK, and VTE signal notifications can emit desktop notifications and
   invoke `general.notification_command` with `FORKTTY_NOTIFICATION_*`
@@ -91,13 +95,16 @@ Tauri/React implementation.
 
 The GTK path starts from VTE owning the PTY. The previous `output_scanner.rs`
 was coupled to the portable-pty read loop, so it is not directly reusable when
-VTE owns the child process. The minimum migrated path keeps notification/unread
-state available via socket `notification.create` and VTE bell/child-exit
-signals. GTK also scans VTE visible text changes for simple prompt patterns such
-as `>`, `❯`, `(Y/n)`, and `Do you want to proceed`, then emits prompt
-notifications. Byte-level OSC scanning and hook triggers from hidden terminal
-control sequences still need a VTE-specific implementation, likely through
-output signals or shell integration events where VTE exposes them.
+VTE owns the child process. The migrated path keeps notification/unread state
+available via socket `notification.create`, VTE bell/child-exit signals, VTE
+shell-integration termprops, and visible prompt scanning for simple prompt
+patterns such as `>`, `❯`, `(Y/n)`, and `Do you want to proceed`.
+
+Byte-level OSC 9/99/777 notification parsing is still not fully ported because
+the GTK app does not receive the raw PTY byte stream when VTE owns the PTY.
+Where VTE exposes higher-level termprops, the GTK path now consumes them; hidden
+control sequences that VTE does not surface still need either VTE API support or
+shell integration events.
 
 ## Native Dependencies
 
@@ -130,7 +137,8 @@ bash scripts/gtk-build-deb.sh
 The first command builds the dependency-safe headless binary. The second command
 builds the GTK/VTE app once the VTE development package is installed. On the
 current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
-`0.84.0` and the GTK/VTE feature build passes.
+`0.84.0` and the GTK/VTE feature build passes. The GTK/VTE feature currently
+requires VTE 0.80 or newer for shell-integration and progress termprops.
 
 `scripts/gtk-build-deb.sh` creates a preview package named `forktty-gtk` so it
 does not replace the existing Tauri package while the migration is still in

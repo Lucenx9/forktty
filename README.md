@@ -116,6 +116,9 @@ sudo dnf install gtk4-devel libadwaita-devel vte291-gtk4-devel
 sudo pacman -S gtk4 libadwaita vte4
 ```
 
+The GTK/VTE preview currently requires VTE 0.80 or newer for shell-integration
+and progress termprops.
+
 ### Build and Run
 
 ```bash

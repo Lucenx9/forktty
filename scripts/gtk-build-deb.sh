@@ -48,7 +48,7 @@ Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://github.com/Lucenx9/forktty
-Depends: libc6, libgtk-4-1, libadwaita-1-0, libvte-2.91-gtk4-0
+Depends: libc6, libgtk-4-1, libadwaita-1-0, libvte-2.91-gtk4-0 (>= 0.80)
 Description: Linux-native ForkTTY GTK/VTE preview
  ForkTTY GTK/VTE preview for multi-agent terminal workflows.
  This package intentionally installs as forktty-gtk while the Tauri path remains available.
