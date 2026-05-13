@@ -96,6 +96,12 @@ You can also run one-off commands without entering an interactive shell:
 
 The host-side footprint is limited to Docker itself, one image, a few named cache volumes, and the repository files/artifacts you explicitly create.
 
+For security, `./scripts/ubuntu-dev.sh` does **not** forward your host desktop/session sockets by default. If you explicitly need host Wayland/X11/DBus/Xauthority and `XDG_RUNTIME_DIR` access inside the container, opt in:
+
+```bash
+FORKTTY_UBUNTU_ENABLE_HOST_SESSION_BRIDGES=1 ./scripts/ubuntu-dev.sh
+```
+
 ### Build Installers Locally
 
 ```bash

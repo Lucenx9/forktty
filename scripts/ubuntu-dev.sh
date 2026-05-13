@@ -46,33 +46,35 @@ docker_args=(
   -w "$CONTAINER_WORKDIR"
 )
 
-if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
-  docker_args+=(
-    -e XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
-    -v "${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
-  )
-fi
+if [[ "${FORKTTY_UBUNTU_ENABLE_HOST_SESSION_BRIDGES:-0}" == "1" ]]; then
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
+    docker_args+=(
+      -e XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
+      -v "${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
+    )
+  fi
 
-if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-  docker_args+=(-e WAYLAND_DISPLAY="$WAYLAND_DISPLAY")
-fi
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    docker_args+=(-e WAYLAND_DISPLAY="$WAYLAND_DISPLAY")
+  fi
 
-if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-  docker_args+=(-e DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS")
-fi
+  if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    docker_args+=(-e DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS")
+  fi
 
-if [[ -n "${DISPLAY:-}" ]]; then
-  docker_args+=(
-    -e DISPLAY="$DISPLAY"
-    -v /tmp/.X11-unix:/tmp/.X11-unix:ro
-  )
-fi
+  if [[ -n "${DISPLAY:-}" ]]; then
+    docker_args+=(
+      -e DISPLAY="$DISPLAY"
+      -v /tmp/.X11-unix:/tmp/.X11-unix:ro
+    )
+  fi
 
-if [[ -n "${XAUTHORITY:-}" && -f "${XAUTHORITY}" ]]; then
-  docker_args+=(
-    -e XAUTHORITY="$XAUTHORITY"
-    -v "${XAUTHORITY}:${XAUTHORITY}:ro"
-  )
+  if [[ -n "${XAUTHORITY:-}" && -f "${XAUTHORITY}" ]]; then
+    docker_args+=(
+      -e XAUTHORITY="$XAUTHORITY"
+      -v "${XAUTHORITY}:${XAUTHORITY}:ro"
+    )
+  fi
 fi
 
 if [[ -d /dev/dri ]]; then
