@@ -45,6 +45,9 @@ Tauri/React implementation.
 - GTK app startup now binds the local Unix socket and routes terminal backend
   commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
   VTE through this adapter.
+- Session restore can load the current Tauri v1 `session.json` shape and migrate
+  workspace order, active workspace, pane tree, focused pane, cwd, branch, and
+  worktree metadata into the new v2 core schema.
 
 ## VTE Owning PTY Gap
 
@@ -92,5 +95,4 @@ current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
 - Replace GTK split placeholders with model-driven VTE pane creation.
 - Port command palette, settings, notification panel, and quake window behavior
   from the Tauri path.
-- Add session format migration from the existing Tauri `session.json`.
 - Add `.deb` packaging for the GTK binary.
