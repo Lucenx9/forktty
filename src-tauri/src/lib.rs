@@ -719,6 +719,7 @@ mod tests {
         let _ = fs::remove_dir_all(&repo_path);
     }
 
+    #[cfg(unix)]
     #[test]
     fn verify_repo_path_accepts_paths_reached_through_symlink() {
         let (repo_path, _repo) = make_temp_repo("verify-symlink");
