@@ -83,6 +83,7 @@ Build commands:
 ```sh
 cargo build -p forktty-ui-gtk
 cargo build -p forktty-ui-gtk --features gtk-vte
+bash scripts/gtk-build-deb.sh
 ```
 
 The first command builds the dependency-safe headless binary. The second command
@@ -90,9 +91,13 @@ builds the GTK/VTE app once the VTE development package is installed. On the
 current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
 `0.84.0` and the GTK/VTE feature build passes.
 
+`scripts/gtk-build-deb.sh` creates a preview package named `forktty-gtk` so it
+does not replace the existing Tauri package while the migration is still in
+progress.
+
 ## Remaining Parity Work
 
 - Replace GTK split placeholders with model-driven VTE pane creation.
 - Port command palette, settings, notification panel, and quake window behavior
   from the Tauri path.
-- Add `.deb` packaging for the GTK binary.
+- Harden `.deb` metadata and add CI/release wiring for the GTK package.
