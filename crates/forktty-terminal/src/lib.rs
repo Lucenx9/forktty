@@ -61,6 +61,7 @@ pub trait TerminalBackend: Send + Sync {
     fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError>;
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError>;
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError>;
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError>;
 }
 
@@ -156,6 +157,17 @@ impl TerminalBackend for HeadlessTerminalBackend {
         Ok(())
     }
 
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        surfaces
+            .remove(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(())
+    }
+
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
         let surfaces = self
             .surfaces
@@ -198,5 +210,10 @@ mod tests {
             "/tmp/forktty.sock".to_string()
         )));
         assert_eq!(backend.sent_text("surface-1").unwrap(), vec!["echo ok\n"]);
+        backend.close("surface-1").unwrap();
+        assert!(matches!(
+            backend.sent_text("surface-1"),
+            Err(TerminalError::NotFound(_))
+        ));
     }
 }

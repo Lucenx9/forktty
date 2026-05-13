@@ -22,6 +22,7 @@ enum GtkTerminalCommand {
     Spawn(SpawnRequest),
     SendText { surface_id: String, text: String },
     Resize,
+    Close { surface_id: String },
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +96,20 @@ impl TerminalBackend for GtkVteBackend {
         self.send_command(GtkTerminalCommand::Resize)
     }
 
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        surfaces
+            .remove(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        drop(surfaces);
+        self.send_command(GtkTerminalCommand::Close {
+            surface_id: surface_id.to_string(),
+        })
+    }
+
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
         let surfaces = self
             .surfaces
@@ -128,6 +143,12 @@ impl VteController {
                 }
             }
             GtkTerminalCommand::Resize => {}
+            GtkTerminalCommand::Close { surface_id } => {
+                if let Some(widget) = self.widgets.remove(&surface_id) {
+                    widget.unparent();
+                }
+                self.rebuild_layout();
+            }
         }
     }
 
@@ -247,6 +268,10 @@ fn build_ui(app: &adw::Application) {
         .icon_name("view-split-top-bottom-symbolic")
         .tooltip_text("Split vertically")
         .build();
+    let close_pane = gtk::Button::builder()
+        .icon_name("window-close-symbolic")
+        .tooltip_text("Close pane")
+        .build();
     let command_palette = gtk::Button::builder()
         .icon_name("system-search-symbolic")
         .tooltip_text("Command palette")
@@ -261,6 +286,7 @@ fn build_ui(app: &adw::Application) {
         .build();
     header.pack_start(&split_horizontal);
     header.pack_start(&split_vertical);
+    header.pack_start(&close_pane);
     header.pack_end(&settings);
     header.pack_end(&notifications);
     header.pack_end(&command_palette);
@@ -316,6 +342,11 @@ fn build_ui(app: &adw::Application) {
     let state_for_vertical = state.clone();
     split_vertical.connect_clicked(move |_| {
         split_active_surface(&state_for_vertical, SplitAxis::Vertical);
+    });
+
+    let state_for_close = state.clone();
+    close_pane.connect_clicked(move |_| {
+        close_active_surface(&state_for_close);
     });
 
     let provider = gtk::CssProvider::new();
@@ -400,6 +431,10 @@ fn install_actions(
         let window = window.clone();
         move || show_settings_dialog(&window)
     });
+    add_action(app, "close-pane", {
+        let state = state.clone();
+        move || close_active_surface(&state)
+    });
     add_action(app, "toggle-quake", {
         let window = window.clone();
         move || {
@@ -414,6 +449,7 @@ fn install_actions(
     app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
     app.set_accels_for_action("app.split-vertical", &["<Control><Shift>V"]);
     app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);
+    app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
     app.set_accels_for_action("app.settings", &["<Control>comma"]);
     app.set_accels_for_action("app.toggle-quake", &["F12"]);
@@ -463,6 +499,71 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
     }
 }
 
+fn close_active_surface(state: &SocketAppState) {
+    let focused = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+            .map(|workspace| workspace.focused_surface_id)
+    };
+    let Some(focused) = focused else {
+        return;
+    };
+
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let _ = model.close_surface(&focused);
+    }
+    if let Err(err) = state.terminal.close(&focused) {
+        eprintln!("Failed to close terminal surface: {err}");
+    }
+    if let Err(err) = spawn_focused_surface_if_needed(state) {
+        eprintln!("Failed to keep focused terminal alive: {err}");
+    }
+}
+
+fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), TerminalError> {
+    let workspace = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+    };
+    let Some(workspace) = workspace else {
+        return Ok(());
+    };
+    if state
+        .terminal
+        .surfaces()?
+        .iter()
+        .any(|surface| surface.surface_id == workspace.focused_surface_id)
+    {
+        return Ok(());
+    }
+    state.terminal.spawn(SpawnRequest {
+        surface_id: workspace.focused_surface_id,
+        workspace_id: workspace.id,
+        shell: state.shell.clone(),
+        cwd: workspace.working_dir,
+        socket_path: state.socket_path.clone(),
+        extra_env: Vec::new(),
+    })
+}
+
 fn show_command_palette(parent: &adw::ApplicationWindow, state: &SocketAppState) {
     let dialog = gtk::Window::builder()
         .title("Command Palette")
@@ -500,6 +601,14 @@ fn show_command_palette(parent: &adw::ApplicationWindow, state: &SocketAppState)
         let dialog = dialog.clone();
         move || {
             create_plain_workspace(&state);
+            dialog.close();
+        }
+    });
+    append_command_button(&list, "Close Pane", {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            close_active_surface(&state);
             dialog.close();
         }
     });

@@ -363,6 +363,11 @@ pub async fn dispatch(
                     .close_surface(surface_id)
                     .ok_or_else(|| "Surface not found".to_string())?
             };
+            state
+                .terminal
+                .close(surface_id)
+                .map_err(|err| err.to_string())?;
+            ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(surface))
         }
         "notification.create" => {

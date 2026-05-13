@@ -54,6 +54,9 @@ Tauri/React implementation.
   a shorter undecorated window where supported, and registers F12 to toggle the
   window. Main GTK accelerators are wired for split, palette, notifications, and
   settings.
+- Terminal backends now expose `close(surface_id)`. Socket `surface.close` and
+  the GTK close-pane action remove VTE widgets and keep at least one focused
+  surface alive.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.
