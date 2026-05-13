@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::session::{SessionData, SESSION_FORMAT_VERSION};
+
 pub type WorkspaceId = String;
 pub type SurfaceId = String;
 
@@ -161,6 +163,63 @@ impl WorkspaceModel {
         self.workspaces
             .insert(workspace.id.clone(), workspace.clone());
         workspace
+    }
+
+    pub fn restore_session(&mut self, data: SessionData) {
+        *self = WorkspaceModel::new();
+        let active_id = data
+            .active_workspace_id
+            .or_else(|| {
+                data.workspaces
+                    .iter()
+                    .find(|workspace| workspace.active)
+                    .map(|workspace| workspace.id.clone())
+            })
+            .or_else(|| {
+                data.workspaces
+                    .first()
+                    .map(|workspace| workspace.id.clone())
+            });
+
+        for mut workspace in data.workspaces {
+            workspace.active = active_id.as_deref() == Some(workspace.id.as_str());
+            let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
+            if !leaf_ids.contains(&workspace.focused_surface_id) {
+                if let Some(first_leaf) = leaf_ids.first() {
+                    workspace.focused_surface_id = first_leaf.clone();
+                }
+            }
+            for surface_id in leaf_ids {
+                let surface = Surface {
+                    id: surface_id,
+                    workspace_id: workspace.id.clone(),
+                    cwd: workspace.working_dir.clone(),
+                    title: String::from("shell"),
+                    unread: false,
+                    needs_attention: false,
+                };
+                self.next_surface = self.next_surface.max(numeric_suffix(&surface.id));
+                self.surfaces.insert(surface.id.clone(), surface);
+            }
+            self.next_workspace = self.next_workspace.max(numeric_suffix(&workspace.id));
+            self.workspace_order.push(workspace.id.clone());
+            self.workspaces.insert(workspace.id.clone(), workspace);
+        }
+        if !self.workspaces.values().any(|workspace| workspace.active) {
+            if let Some(first_id) = self.workspace_order.first() {
+                if let Some(workspace) = self.workspaces.get_mut(first_id) {
+                    workspace.active = true;
+                }
+            }
+        }
+    }
+
+    pub fn to_session_data(&self) -> SessionData {
+        SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: self.list_workspaces(),
+            active_workspace_id: self.active_workspace_id(),
+        }
     }
 
     pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
@@ -493,6 +552,29 @@ fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
     }
 }
 
+fn leaf_surface_ids(node: &PaneNode) -> Vec<SurfaceId> {
+    let mut ids = Vec::new();
+    collect_leaf_surface_ids(node, &mut ids);
+    ids
+}
+
+fn collect_leaf_surface_ids(node: &PaneNode, ids: &mut Vec<SurfaceId>) {
+    match node {
+        PaneNode::Leaf { surface_id } => ids.push(surface_id.clone()),
+        PaneNode::Split { children, .. } => {
+            for child in children {
+                collect_leaf_surface_ids(child, ids);
+            }
+        }
+    }
+}
+
+fn numeric_suffix(id: &str) -> u64 {
+    id.rsplit_once('-')
+        .and_then(|(_, suffix)| suffix.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -628,5 +710,25 @@ mod tests {
 
         assert!(model.clear_status(&workspace.id, Some("agent:codex")));
         assert!(model.list_status(&workspace.id).is_empty());
+    }
+
+    #[test]
+    fn can_restore_model_from_session_data() {
+        let mut source = WorkspaceModel::new();
+        let workspace = source.create_workspace("main", "/tmp");
+        let split = source
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let mut session = source.to_session_data();
+        session.active_workspace_id = Some("missing-workspace".to_string());
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(session);
+
+        assert_eq!(restored.list_workspaces().len(), 1);
+        assert!(restored.list_workspaces()[0].active);
+        assert_eq!(restored.list_surfaces(None).len(), 2);
+        assert!(restored.surface(&split.id).is_some());
+        assert_eq!(restored.to_session_data().workspaces[0].name, "main");
     }
 }

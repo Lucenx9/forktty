@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use forktty_core::{
-    config, dispatch_notification, NotificationItem, NotificationKind, PaneNode, SplitAxis,
-    StatusEntry, WorkspaceModel,
+    config, dispatch_notification, session, NotificationItem, NotificationKind, PaneNode,
+    SplitAxis, StatusEntry, WorkspaceModel,
 };
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
@@ -447,8 +447,8 @@ fn build_ui(app: &adw::Application) {
         glib::ControlFlow::Continue
     });
 
-    if let Err(err) = bootstrap_default_workspace(&state, cwd) {
-        eprintln!("Failed to bootstrap default workspace: {err}");
+    if let Err(err) = restore_or_bootstrap_workspaces(&state, cwd) {
+        eprintln!("Failed to restore workspace session: {err}");
     }
 
     let palette_parent = window.clone();
@@ -472,10 +472,59 @@ fn build_ui(app: &adw::Application) {
     if quake_mode {
         install_global_quake_shortcut(&window);
     }
+    let state_for_close = state.clone();
+    window.connect_close_request(move |_| {
+        save_session_from_state(&state_for_close);
+        glib::Propagation::Proceed
+    });
 
     start_socket_server(state.clone());
 
     window.present();
+}
+
+fn restore_or_bootstrap_workspaces(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
+    match session::load_session() {
+        Ok(Some(data)) if !data.workspaces.is_empty() => {
+            let surfaces = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.restore_session(data);
+                model.list_surfaces(None)
+            };
+            for surface in surfaces {
+                state
+                    .terminal
+                    .spawn(SpawnRequest {
+                        surface_id: surface.id,
+                        workspace_id: surface.workspace_id,
+                        shell: state.shell.clone(),
+                        cwd: surface.cwd,
+                        socket_path: state.socket_path.clone(),
+                        extra_env: Vec::new(),
+                    })
+                    .map_err(|err| err.to_string())?;
+            }
+            Ok(())
+        }
+        Ok(_) => bootstrap_default_workspace(state, cwd),
+        Err(err) => {
+            eprintln!("Failed to load GTK session, bootstrapping a new workspace: {err}");
+            bootstrap_default_workspace(state, cwd)
+        }
+    }
+}
+
+fn save_session_from_state(state: &SocketAppState) {
+    let data = match state.model.lock() {
+        Ok(model) => model.to_session_data(),
+        Err(_) => return,
+    };
+    if let Err(err) = session::save_session(&data) {
+        eprintln!("Failed to save GTK session: {err}");
+    }
 }
 
 fn quake_default_size() -> (i32, i32) {

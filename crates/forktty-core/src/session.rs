@@ -75,7 +75,11 @@ pub fn save_session(data: &SessionData) -> Result<(), SessionError> {
 }
 
 pub fn load_session() -> Result<Option<SessionData>, SessionError> {
-    load_session_from_path(&session_path()?)
+    let current_path = session_path()?;
+    if let Some(data) = load_session_from_path(&current_path)? {
+        return Ok(Some(data));
+    }
+    load_session_from_path(&legacy_session_path()?)
 }
 
 pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), SessionError> {
@@ -337,6 +341,10 @@ fn data_dir() -> Result<PathBuf, SessionError> {
 
 fn session_path() -> Result<PathBuf, SessionError> {
     Ok(data_dir()?.join("session-v2.json"))
+}
+
+fn legacy_session_path() -> Result<PathBuf, SessionError> {
+    Ok(data_dir()?.join("session.json"))
 }
 
 fn quarantine_corrupt_session(path: &Path) -> Result<(), SessionError> {
