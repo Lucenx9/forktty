@@ -1,5 +1,6 @@
 import { useConfigStore } from "../stores/config";
 import { useWorkspaceStore } from "../stores/workspace";
+import type { AppNotificationKind } from "../stores/workspace";
 import {
   sendCustomNotification,
   sendDesktopNotification,
@@ -11,6 +12,7 @@ interface WorkspaceNotificationOptions {
   title: string;
   body: string;
   paneId?: string;
+  kind?: AppNotificationKind;
 }
 
 export function dispatchWorkspaceNotification({
@@ -18,6 +20,7 @@ export function dispatchWorkspaceNotification({
   title,
   body,
   paneId,
+  kind = "info",
 }: WorkspaceNotificationOptions): void {
   const workspaceState = useWorkspaceStore.getState();
   const workspace = workspaceState.workspaces[workspaceId];
@@ -27,7 +30,7 @@ export function dispatchWorkspaceNotification({
   const playSound = config?.notifications.sound ?? true;
   const notificationCommand = config?.general.notification_command.trim() ?? "";
 
-  workspaceState.addNotification(workspaceId, title, body);
+  workspaceState.addNotification(workspaceId, title, body, kind);
 
   if (
     paneId &&

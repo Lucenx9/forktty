@@ -1,20 +1,22 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs::{self, DirBuilder};
-use std::io;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::io::{self, BufRead, BufReader as StdBufReader, Write};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
+use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixListener;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
+use tokio::net::UnixListener as TokioUnixListener;
 use tokio::sync::{oneshot, Notify};
 
 use crate::pty_manager::PtyManager;
 
 /// Maximum request size (1 MiB).
 const MAX_REQUEST_SIZE: usize = 1_048_576;
+const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
 fn effective_uid() -> u32 {
     // SAFETY: libc::geteuid has no preconditions and cannot violate memory safety.
@@ -99,48 +101,121 @@ pub fn resolve_request(pending: &PendingRequests, id: &str, result: Value) {
     }
 }
 
-/// Start the Unix socket JSON-RPC server.
-pub async fn run(
-    socket_path: String,
+enum ExistingSocketOccupant {
+    Stale,
+    ForkTTY,
+    Other,
+}
+
+fn probe_forktty_socket(stream: StdUnixStream) -> io::Result<bool> {
+    stream.set_read_timeout(Some(SOCKET_PROBE_TIMEOUT))?;
+    stream.set_write_timeout(Some(SOCKET_PROBE_TIMEOUT))?;
+
+    let mut stream = stream;
+    stream.write_all(br#"{"id":"probe","method":"system.ping","params":{}}"#)?;
+    stream.write_all(b"\n")?;
+    stream.flush()?;
+
+    let mut reader = StdBufReader::new(stream);
+    let mut response = String::new();
+    if reader.read_line(&mut response)? == 0 {
+        return Ok(false);
+    }
+
+    let value: Value = serde_json::from_str(response.trim_end())
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    Ok(value.get("ok").and_then(Value::as_bool) == Some(true)
+        && value.get("result").and_then(Value::as_str) == Some("pong"))
+}
+
+fn inspect_existing_socket(path: &Path) -> ExistingSocketOccupant {
+    match StdUnixStream::connect(path) {
+        Ok(stream) => match probe_forktty_socket(stream) {
+            Ok(true) => ExistingSocketOccupant::ForkTTY,
+            Ok(false) | Err(_) => ExistingSocketOccupant::Other,
+        },
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            ExistingSocketOccupant::Stale
+        }
+        Err(_) => ExistingSocketOccupant::Other,
+    }
+}
+
+pub fn bind_socket_listener(
+    socket_path: &str,
     enforce_private_parent: bool,
+) -> io::Result<StdUnixListener> {
+    let socket_path = PathBuf::from(socket_path);
+    prepare_socket_parent(&socket_path, enforce_private_parent)?;
+
+    if socket_path.exists() {
+        let metadata = fs::symlink_metadata(&socket_path)?;
+        if !metadata.file_type().is_socket() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!(
+                    "refusing to replace non-socket path at {}",
+                    socket_path.display()
+                ),
+            ));
+        }
+
+        match inspect_existing_socket(&socket_path) {
+            ExistingSocketOccupant::ForkTTY => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "another ForkTTY instance is already using {}. Set FORKTTY_SOCKET_PATH to run a separate instance.",
+                        socket_path.display()
+                    ),
+                ));
+            }
+            ExistingSocketOccupant::Other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "socket path {} is already in use by another process",
+                        socket_path.display()
+                    ),
+                ));
+            }
+            ExistingSocketOccupant::Stale => {
+                fs::remove_file(&socket_path)?;
+            }
+        }
+    }
+
+    let listener = StdUnixListener::bind(&socket_path)?;
+    listener.set_nonblocking(true)?;
+
+    if let Err(err) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
+        let _ = fs::remove_file(&socket_path);
+        return Err(err);
+    }
+
+    Ok(listener)
+}
+
+/// Start the Unix socket JSON-RPC server on a pre-bound listener.
+pub async fn serve(
+    listener: StdUnixListener,
     app_handle: tauri::AppHandle,
     pty_manager: Arc<Mutex<PtyManager>>,
     pending: PendingRequests,
     frontend: Arc<FrontendState>,
 ) {
-    let socket_path = PathBuf::from(socket_path);
-    if let Err(e) = prepare_socket_parent(&socket_path, enforce_private_parent) {
-        eprintln!(
-            "Failed to prepare socket parent directory for {}: {e}",
-            socket_path.display()
-        );
-        return;
-    }
-
-    // Remove stale socket file
-    if socket_path.exists() {
-        if let Err(e) = fs::remove_file(&socket_path) {
-            eprintln!(
-                "Warning: could not remove stale socket at {}: {e}",
-                socket_path.display()
-            );
-        }
-    }
-
-    let listener = match UnixListener::bind(&socket_path) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("Failed to bind socket at {}: {e}", socket_path.display());
+    let listener = match TokioUnixListener::from_std(listener) {
+        Ok(listener) => listener,
+        Err(err) => {
+            eprintln!("Failed to adopt pre-bound socket listener: {err}");
             return;
         }
     };
-
-    // Restrict socket to owner only (mode 0600) — security invariant
-    if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
-        eprintln!("CRITICAL: Failed to set socket permissions, removing socket: {e}");
-        let _ = fs::remove_file(&socket_path);
-        return;
-    }
 
     loop {
         match listener.accept().await {
@@ -229,7 +304,7 @@ async fn handle_connection(
     frontend: Arc<FrontendState>,
 ) {
     let (reader, mut writer) = stream.into_split();
-    let mut buf_reader = BufReader::new(reader);
+    let mut buf_reader = TokioBufReader::new(reader);
 
     loop {
         let line = match read_limited_line(&mut buf_reader, MAX_REQUEST_SIZE).await {
@@ -639,8 +714,9 @@ mod tests {
     use super::*;
     use git2::Repository;
     use std::fs;
-    use std::io::Cursor;
+    use std::io::{BufReader as StdTestBufReader, Cursor};
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener as StdUnixListener;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::BufReader;
@@ -815,6 +891,76 @@ mod tests {
         let metadata = fs::metadata(&dir).unwrap();
         assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bind_socket_listener_rejects_existing_non_socket_path() {
+        let dir =
+            std::env::temp_dir().join(format!("forktty-socket-bind-file-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let socket_path = dir.join("forktty.sock");
+        fs::write(&socket_path, "not a socket").unwrap();
+
+        let err = bind_socket_listener(socket_path.to_str().unwrap(), true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AddrInUse);
+        assert!(err.to_string().contains("non-socket path"));
+
+        let _ = fs::remove_file(&socket_path);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bind_socket_listener_reclaims_a_stale_socket_file() {
+        let dir = std::env::temp_dir().join(format!("forktty-socket-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let socket_path = dir.join("forktty.sock");
+        {
+            let _listener = StdUnixListener::bind(&socket_path).unwrap();
+        }
+        assert!(socket_path.exists());
+
+        let listener = bind_socket_listener(socket_path.to_str().unwrap(), true).unwrap();
+        drop(listener);
+
+        let _ = fs::remove_file(&socket_path);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bind_socket_listener_rejects_a_live_forktty_socket() {
+        let dir = std::env::temp_dir().join(format!("forktty-socket-live-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let socket_path = dir.join("forktty.sock");
+        let listener = StdUnixListener::bind(&socket_path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            let mut reader = StdTestBufReader::new(stream.try_clone().unwrap());
+            reader.read_line(&mut line).unwrap();
+            assert!(line.contains("\"system.ping\""));
+            stream
+                .write_all(br#"{"id":"probe","ok":true,"result":"pong"}"#)
+                .unwrap();
+            stream.write_all(b"\n").unwrap();
+            stream.flush().unwrap();
+        });
+
+        let err = bind_socket_listener(socket_path.to_str().unwrap(), true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AddrInUse);
+        assert!(err.to_string().contains("another ForkTTY instance"));
+
+        server.join().unwrap();
+        let _ = fs::remove_file(&socket_path);
         let _ = fs::remove_dir_all(&dir);
     }
 

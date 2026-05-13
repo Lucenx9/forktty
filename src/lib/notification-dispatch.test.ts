@@ -93,6 +93,7 @@ describe("dispatchWorkspaceNotification", () => {
       "workspace1",
       "Test Title",
       "Test Body",
+      "info",
     );
     expect(sendDesktopNotification).toHaveBeenCalledWith(
       "Test Title",
@@ -153,6 +154,22 @@ describe("dispatchWorkspaceNotification", () => {
       "echo 'test'",
       "Test Title",
       "Test Body",
+    );
+  });
+
+  it("should pass through an explicit notification kind", () => {
+    dispatchWorkspaceNotification({
+      workspaceId: "workspace1",
+      title: "Prompt waiting",
+      body: "Workspace needs attention",
+      kind: "prompt",
+    });
+
+    expect(mockWorkspaceState.addNotification).toHaveBeenCalledWith(
+      "workspace1",
+      "Prompt waiting",
+      "Workspace needs attention",
+      "prompt",
     );
   });
 

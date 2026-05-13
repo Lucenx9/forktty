@@ -530,15 +530,28 @@ pub fn run() {
             Ok(path) => (path, false),
             Err(_) => (socket_api::default_socket_path(), true),
         };
+    let socket_listener =
+        match socket_api::bind_socket_listener(&socket_path, socket_uses_default_parent_policy) {
+            Ok(listener) => listener,
+            Err(err) => {
+                let message = format!(
+                    "Failed to initialize the local socket at {}: {err}",
+                    socket_path
+                );
+                eprintln!("{message}");
+                let _ = session::write_log("ERROR", &message);
+                std::process::exit(1);
+            }
+        };
 
     let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
     let socket_pending = socket_api::PendingRequests::default();
     let socket_frontend = Arc::new(socket_api::FrontendState::default());
 
+    let socket_path_for_cleanup = socket_path.clone();
     let pty_mgr_for_socket = pty_manager.clone();
     let pending_for_socket = socket_pending.clone();
     let frontend_for_socket = socket_frontend.clone();
-    let socket_path_clone = socket_path.clone();
 
     tauri::Builder::default()
         .manage(AppState {
@@ -574,9 +587,8 @@ pub fn run() {
             // Start socket server in background thread with its own tokio runtime
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-                rt.block_on(socket_api::run(
-                    socket_path_clone,
-                    socket_uses_default_parent_policy,
+                rt.block_on(socket_api::serve(
+                    socket_listener,
                     handle,
                     pty_mgr_for_socket,
                     pending_for_socket,
@@ -618,9 +630,7 @@ pub fn run() {
         .expect("error while running tauri application");
 
     // Cleanup: remove socket file on exit
-    let socket_cleanup =
-        std::env::var("FORKTTY_SOCKET_PATH").unwrap_or_else(|_| socket_api::default_socket_path());
-    let _ = std::fs::remove_file(&socket_cleanup);
+    let _ = std::fs::remove_file(&socket_path_for_cleanup);
     let _ = session::write_log("INFO", "ForkTTY shutdown complete");
 }
 

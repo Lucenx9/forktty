@@ -4,6 +4,7 @@ import { useMetadataStore } from "../stores/metadata";
 import { makeWorkspace } from "../stores/pane-tree";
 import { useWorkspaceStore } from "../stores/workspace";
 import { handleSocketRequest } from "./socket-handler";
+import { dispatchWorkspaceNotification } from "./notification-dispatch";
 import { socketRespond, writePty } from "./pty-bridge";
 
 vi.mock("./pty-bridge", () => ({
@@ -91,6 +92,41 @@ describe("handleSocketRequest", () => {
     ).toBeUndefined();
     expect(socketRespond).toHaveBeenCalledWith("r1", {
       error: "Error: write failed",
+    });
+  });
+
+  it("forwards explicit notification kinds", async () => {
+    const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+
+    await handleSocketRequest("r2", "notification.create", {
+      workspace_id: workspaceId,
+      title: "Prompt waiting",
+      body: "Workspace needs attention",
+      kind: "prompt",
+    });
+
+    expect(dispatchWorkspaceNotification).toHaveBeenCalledWith({
+      workspaceId,
+      title: "Prompt waiting",
+      body: "Workspace needs attention",
+      kind: "prompt",
+    });
+    expect(socketRespond).toHaveBeenCalledWith("r2", { result: true });
+  });
+
+  it("rejects invalid metadata progress payloads", async () => {
+    const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+
+    await handleSocketRequest("r3", "metadata.set_progress", {
+      workspace_id: workspaceId,
+      key: "build",
+      label: "Build",
+      value: "bad",
+    });
+
+    expect(useMetadataStore.getState().metadata[workspaceId]).toBeUndefined();
+    expect(socketRespond).toHaveBeenCalledWith("r3", {
+      error: 'Error: Invalid parameter "value": expected finite number',
     });
   });
 });

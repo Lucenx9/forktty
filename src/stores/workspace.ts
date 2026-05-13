@@ -77,9 +77,12 @@ interface AppNotification {
   workspaceName: string;
   title: string;
   body: string;
+  kind: AppNotificationKind;
   timestamp: number;
   read: boolean;
 }
+
+type AppNotificationKind = "prompt" | "error" | "info" | "custom";
 
 // --- Store interface ---
 
@@ -126,7 +129,12 @@ interface WorkspaceState {
   setSurfaceUnread: (surfaceId: string, unread: boolean) => void;
 
   // Notification actions
-  addNotification: (workspaceId: string, title: string, body: string) => void;
+  addNotification: (
+    workspaceId: string,
+    title: string,
+    body: string,
+    kind?: AppNotificationKind,
+  ) => void;
   markWorkspaceRead: (workspaceId: string) => void;
   markAllNotificationsRead: () => void;
   clearNotifications: () => void;
@@ -629,7 +637,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   // --- Notification actions ---
 
-  addNotification: (workspaceId, title, body) => {
+  addNotification: (workspaceId, title, body, kind = "info") => {
     const { workspaces, notifications, activeWorkspaceId, workspaceOrder } = get();
     const ws = workspaces[workspaceId];
     if (!ws) return;
@@ -641,6 +649,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       workspaceName: ws.name,
       title,
       body,
+      kind,
       timestamp: Date.now(),
       read: isActiveWorkspace,
     };
@@ -880,4 +889,4 @@ export function closeWorkspaceEnsuringOneRemains(
   useWorkspaceStore.getState().closeWorkspace(id);
 }
 
-export type { WorkspaceState, AppNotification };
+export type { WorkspaceState, AppNotification, AppNotificationKind };

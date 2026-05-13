@@ -271,7 +271,9 @@ function PaneToolbar({
             {truncatePath(cwd, 36)}
           </span>
         )}
-        {isFocused && <span className="pane-toolbar-badge pane-toolbar-badge-focus">Active</span>}
+        {isFocused && (
+          <span className="pane-toolbar-badge pane-toolbar-badge-focus">Active</span>
+        )}
         {hasUnreadNotification && (
           <span className="pane-toolbar-badge pane-toolbar-badge-alert">
             Needs input
@@ -613,8 +615,13 @@ const TerminalPane = memo(function TerminalPane({
       // Debounce notifications: at most one per 5 seconds per pane
       let lastNotifyTime = 0;
 
-      function fireNotification(wsId: string, title: string, body: string) {
-        const dedupeKey = `${wsId}:${title}:${body}`;
+      function fireNotification(
+        wsId: string,
+        title: string,
+        body: string,
+        kind: "prompt" | "info" | "custom" = "info",
+      ) {
+        const dedupeKey = `${wsId}:${kind}:${title}:${body}`;
         const now = Date.now();
         const lastSeen = recentNotificationMap.get(dedupeKey) ?? 0;
 
@@ -624,7 +631,7 @@ const TerminalPane = memo(function TerminalPane({
         recentNotificationMap.set(dedupeKey, now);
         pruneNotificationMap();
 
-        dispatchWorkspaceNotification({ workspaceId: wsId, title, body, paneId });
+        dispatchWorkspaceNotification({ workspaceId: wsId, title, body, paneId, kind });
       }
 
       function handleScanEvent(event: ScanEventData) {
@@ -643,7 +650,7 @@ const TerminalPane = memo(function TerminalPane({
           if (now - lastNotifyTime < 5000) return;
           lastNotifyTime = now;
 
-          fireNotification(wsId, event.title, event.body);
+          fireNotification(wsId, event.title, event.body, "custom");
           return;
         }
 
@@ -672,7 +679,7 @@ const TerminalPane = memo(function TerminalPane({
         lastNotifyTime = now;
         const title = "Prompt waiting";
         const body = `${ws.name} needs attention`;
-        fireNotification(wsId, title, body);
+        fireNotification(wsId, title, body, "prompt");
       }
 
       resolveWorkspaceSpawnCwd(workspaceId, cwd)
@@ -1015,7 +1022,9 @@ const TerminalPane = memo(function TerminalPane({
               <button
                 type="button"
                 className="terminal-pane-state-btn"
-                onClick={() => navigator.clipboard.writeText(spawnError).catch(logError)}
+                onClick={() =>
+                  navigator.clipboard.writeText(spawnError).catch(logError)
+                }
               >
                 Copy error
               </button>

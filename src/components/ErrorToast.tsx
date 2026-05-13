@@ -5,7 +5,6 @@ interface Toast {
   id: string;
   message: string;
   level: "error" | "warn" | "info";
-  createdAt: number;
 }
 
 const toasts: Toast[] = [];
@@ -53,7 +52,6 @@ export function showToast(message: string, level: "error" | "warn" | "info" = "e
     id: crypto.randomUUID(),
     message: normalizedMessage,
     level,
-    createdAt: Date.now(),
   };
 
   toasts.unshift(toast);
@@ -121,7 +119,6 @@ export default function ErrorToast() {
             className="toast-progress"
             style={{
               animationDuration: `${TOAST_DURATION_MS}ms`,
-              animationDelay: `-${Math.min(Date.now() - t.createdAt, TOAST_DURATION_MS)}ms`,
             }}
           />
         </div>

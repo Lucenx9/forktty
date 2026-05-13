@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -18,6 +20,8 @@ pub enum SessionError {
 }
 
 pub const SESSION_FORMAT_VERSION: u32 = 1;
+const MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
+const MAX_SESSION_SPLIT_DEPTH: usize = 5;
 
 fn default_session_version() -> u32 {
     SESSION_FORMAT_VERSION
@@ -66,11 +70,16 @@ pub enum PaneTreeSnapshot {
     },
 }
 
-fn validate_pane_tree(node: &PaneTreeSnapshot) -> Result<(), SessionError> {
+fn validate_pane_tree(node: &PaneTreeSnapshot, split_depth: usize) -> Result<usize, SessionError> {
     match node {
-        PaneTreeSnapshot::Leaf => Ok(()),
+        PaneTreeSnapshot::Leaf => Ok(1),
         PaneTreeSnapshot::Horizontal { children, sizes }
         | PaneTreeSnapshot::Vertical { children, sizes } => {
+            if split_depth > MAX_SESSION_SPLIT_DEPTH {
+                return Err(SessionError::InvalidData(format!(
+                    "pane tree exceeds max split depth of {MAX_SESSION_SPLIT_DEPTH}"
+                )));
+            }
             if children.len() < 2 {
                 return Err(SessionError::InvalidData(
                     "pane split must have at least 2 children".to_string(),
@@ -86,10 +95,11 @@ fn validate_pane_tree(node: &PaneTreeSnapshot) -> Result<(), SessionError> {
                     "pane split sizes must be finite positive numbers".to_string(),
                 ));
             }
+            let mut leaf_count = 0;
             for child in children {
-                validate_pane_tree(child)?;
+                leaf_count += validate_pane_tree(child, split_depth + 1)?;
             }
-            Ok(())
+            Ok(leaf_count)
         }
     }
 }
@@ -106,7 +116,12 @@ fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
     }
 
     for workspace in &data.workspaces {
-        validate_pane_tree(&workspace.pane_tree)?;
+        let leaf_count = validate_pane_tree(&workspace.pane_tree, 0)?;
+        if workspace.focused_leaf_index >= leaf_count {
+            return Err(SessionError::InvalidData(
+                "focused leaf index is out of bounds".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -123,12 +138,23 @@ fn session_path() -> Result<PathBuf, SessionError> {
 }
 
 fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), SessionError> {
+    validate_session_data(data)?;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(data)?;
-    let tmp_path = path.with_extension("json.tmp");
-    fs::write(&tmp_path, json)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_path = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+    let mut tmp_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    tmp_file.write_all(json.as_bytes())?;
+    tmp_file.sync_all()?;
     fs::rename(&tmp_path, path)?;
     Ok(())
 }
@@ -145,6 +171,11 @@ fn quarantine_corrupt_session(path: &Path) -> Result<(), SessionError> {
 
 fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionError> {
     if !path.exists() {
+        return Ok(None);
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_SESSION_SIZE_BYTES {
+        quarantine_corrupt_session(path)?;
         return Ok(None);
     }
     let content = fs::read_to_string(path)?;
@@ -164,6 +195,7 @@ fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionErr
 }
 
 pub fn save_session(data: &SessionData) -> Result<(), SessionError> {
+    validate_session_data(data)?;
     save_session_to_path(&session_path()?, data)
 }
 
@@ -220,7 +252,6 @@ pub fn write_log(level: &str, message: &str) -> Result<(), SessionError> {
     let safe_level = level.replace(['\n', '\r'], "_");
     let safe_message = message.replace(['\n', '\r'], " ");
     let line = format!("[{timestamp}] [{safe_level}] {safe_message}\n");
-    use std::io::Write;
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -232,6 +263,7 @@ pub fn write_log(level: &str, message: &str) -> Result<(), SessionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_session_roundtrip() {
@@ -339,6 +371,75 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn oversized_session_is_quarantined_and_ignored() {
+        let tmp_dir = tempdir().unwrap();
+        let session_file = tmp_dir.path().join("session.json");
+        fs::write(
+            &session_file,
+            vec![b'x'; (MAX_SESSION_SIZE_BYTES + 1) as usize],
+        )
+        .unwrap();
+
+        let loaded = load_session_from_path(&session_file).unwrap();
+        assert!(loaded.is_none(), "Oversized session should be ignored");
+        assert!(
+            !session_file.exists(),
+            "Oversized session should be quarantined"
+        );
+    }
+
+    #[test]
+    fn save_session_rejects_trees_that_exceed_max_split_depth() {
+        fn nested_split(depth: usize) -> PaneTreeSnapshot {
+            if depth == 0 {
+                return PaneTreeSnapshot::Leaf;
+            }
+            PaneTreeSnapshot::Horizontal {
+                children: vec![nested_split(depth - 1), PaneTreeSnapshot::Leaf],
+                sizes: vec![50.0, 50.0],
+            }
+        }
+
+        let data = SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: vec![WorkspaceSnapshot {
+                name: "Deep".to_string(),
+                working_dir: "/tmp".to_string(),
+                git_branch: String::new(),
+                worktree_dir: String::new(),
+                worktree_name: String::new(),
+                pane_tree: nested_split(MAX_SESSION_SPLIT_DEPTH + 2),
+                focused_leaf_index: 0,
+            }],
+            active_workspace_index: 0,
+        };
+
+        let err = save_session_to_path(&tempdir().unwrap().path().join("session.json"), &data)
+            .unwrap_err();
+        assert!(err.to_string().contains("max split depth"));
+    }
+
+    #[test]
+    fn save_session_rejects_focused_leaf_index_out_of_bounds() {
+        let data = SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: vec![WorkspaceSnapshot {
+                name: "Broken".to_string(),
+                working_dir: "/tmp".to_string(),
+                git_branch: String::new(),
+                worktree_dir: String::new(),
+                worktree_name: String::new(),
+                pane_tree: PaneTreeSnapshot::Leaf,
+                focused_leaf_index: 1,
+            }],
+            active_workspace_index: 0,
+        };
+
+        let err = validate_session_data(&data).unwrap_err();
+        assert!(err.to_string().contains("focused leaf index"));
     }
 
     // --- Test 3: prune_old_logs date comparison ---

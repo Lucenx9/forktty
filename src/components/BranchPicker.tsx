@@ -1,5 +1,13 @@
 import { ArrowLeft, Check, GitBranch, Plus } from "lucide-react";
-import { useState, useEffect, useRef, useMemo, useCallback, useId, Fragment } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+  useId,
+  Fragment,
+} from "react";
 import { gitListBranches } from "../lib/pty-bridge";
 import type { BranchInfo } from "../lib/pty-bridge";
 import { useOverlayFocus } from "../lib/overlay-focus";
@@ -28,6 +36,7 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const listboxId = useId();
   const optionIdPrefix = useId();
   const queryTrimmed = query.trim();
@@ -102,6 +111,7 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
     containerRef: dialogRef,
     initialFocusRef: mode === "choose" ? inputRef : nameInputRef,
     onClose: handleCancel,
+    closeOnEscape: mode === "choose",
   });
 
   function handleSelect(index: number) {
@@ -119,16 +129,16 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
   // Total items = 1 (synthetic) + filtered.length
   const totalItems = 1 + filtered.length;
   const safeSelectedIndex = Math.min(selectedIndex, totalItems - 1);
-  const activeDescendant = loading
-    ? undefined
-    : `${optionIdPrefix}-option-${safeSelectedIndex}`;
+  const activeDescendant = `${optionIdPrefix}-option-${safeSelectedIndex}`;
 
-  function handleChooseKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      handleCancel();
+  useEffect(() => {
+    if (mode !== "choose" || loading) {
       return;
     }
+    itemRefs.current[safeSelectedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [loading, mode, safeSelectedIndex]);
+
+  function handleChooseKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedIndex(Math.min(safeSelectedIndex + 1, totalItems - 1));
@@ -280,26 +290,36 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
           aria-label="Search branches"
           placeholder="Search branches or create new..."
         />
-        <button
-          type="button"
-          className={`branch-picker-action ${safeSelectedIndex === 0 ? "branch-picker-action-selected" : ""}`}
-          onMouseDown={(e) => e.preventDefault()}
-          onMouseMove={() => setSelectedIndex(0)}
-          onClick={() => handleSelect(0)}
-        >
-          <span className="branch-picker-action-icon" aria-hidden="true">
-            <Plus size={15} />
-          </span>
-          <span className="branch-picker-action-copy">
-            <span className="branch-picker-action-title">
-              {queryTrimmed ? `Create "${queryTrimmed}" from HEAD` : "Create new branch from HEAD"}
-            </span>
-            <span className="branch-picker-action-body">
-              Start an isolated worktree without leaving the picker.
-            </span>
-          </span>
-        </button>
         <div id={listboxId} className="branch-picker-list" role="listbox">
+          <button
+            id={`${optionIdPrefix}-option-0`}
+            ref={(element) => {
+              itemRefs.current[0] = element;
+            }}
+            type="button"
+            tabIndex={-1}
+            role="option"
+            aria-selected={safeSelectedIndex === 0}
+            aria-current={safeSelectedIndex === 0 ? "true" : undefined}
+            className={`branch-picker-action ${safeSelectedIndex === 0 ? "branch-picker-action-selected" : ""}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseMove={() => setSelectedIndex(0)}
+            onClick={() => handleSelect(0)}
+          >
+            <span className="branch-picker-action-icon" aria-hidden="true">
+              <Plus size={15} />
+            </span>
+            <span className="branch-picker-action-copy">
+              <span className="branch-picker-action-title">
+                {queryTrimmed
+                  ? `Create "${queryTrimmed}" from HEAD`
+                  : "Create new branch from HEAD"}
+              </span>
+              <span className="branch-picker-action-body">
+                Start an isolated worktree without leaving the picker.
+              </span>
+            </span>
+          </button>
           {loading && (
             <div
               className="branch-picker-branch-meta branch-picker-loading"
@@ -344,6 +364,9 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
                   <button
                     key={branch.name}
                     id={`${optionIdPrefix}-option-${itemIndex}`}
+                    ref={(element) => {
+                      itemRefs.current[itemIndex] = element;
+                    }}
                     type="button"
                     tabIndex={-1}
                     role="option"

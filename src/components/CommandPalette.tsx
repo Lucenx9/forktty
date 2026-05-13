@@ -1,4 +1,4 @@
-import { Fragment, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useOverlayFocus } from "../lib/overlay-focus";
 import {
   buildHighlightParts,
@@ -47,6 +47,7 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
   const [selectedIndex, setSelectedIndex] = useState(0);
   const paletteRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const listboxId = useId();
   const optionIdPrefix = useId();
 
@@ -123,7 +124,9 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
         const groupDelta =
           (groupRank.get(a.group) ?? Number.MAX_SAFE_INTEGER) -
           (groupRank.get(b.group) ?? Number.MAX_SAFE_INTEGER);
-        return groupDelta || a.score - b.score || a.cmd.label.localeCompare(b.cmd.label);
+        return (
+          groupDelta || a.score - b.score || a.cmd.label.localeCompare(b.cmd.label)
+        );
       });
   }, [query, commands]);
 
@@ -165,12 +168,14 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
   const activeDescendant =
     filtered.length > 0 ? `${optionIdPrefix}-option-${safeSelectedIndex}` : undefined;
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
+  useEffect(() => {
+    if (filtered.length === 0) {
       return;
     }
+    itemRefs.current[safeSelectedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [filtered.length, safeSelectedIndex]);
+
+  function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       if (filtered.length > 0) {
@@ -248,6 +253,9 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
                 <button
                   key={cmd.id}
                   id={`${optionIdPrefix}-option-${flatIndex}`}
+                  ref={(element) => {
+                    itemRefs.current[flatIndex] = element;
+                  }}
                   type="button"
                   tabIndex={-1}
                   role="option"
@@ -275,7 +283,10 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
                     )}
                   </div>
                   {cmd.shortcut && (
-                    <span className="command-palette-shortcut" aria-label={cmd.shortcut}>
+                    <span
+                      className="command-palette-shortcut"
+                      aria-label={cmd.shortcut}
+                    >
                       {renderShortcutKeycaps(cmd.shortcut)}
                     </span>
                   )}

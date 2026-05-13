@@ -19,7 +19,11 @@ function sectionLabel(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const target = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
   const diffDays = Math.round((today - target) / 86400000);
 
   if (diffDays === 0) return "Today";
@@ -33,13 +37,6 @@ function sectionLabel(timestamp: number): string {
     day: "numeric",
     year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
   }).format(date);
-}
-
-function notificationKind(title: string, body: string): "prompt" | "error" | "info" {
-  const text = `${title} ${body}`.toLowerCase();
-  if (text.includes("error") || text.includes("fail")) return "error";
-  if (text.includes("prompt") || text.includes("attention")) return "prompt";
-  return "info";
 }
 
 export default function NotificationPanel() {
@@ -125,7 +122,7 @@ export default function NotificationPanel() {
             <section key={label} className="notification-section">
               <div className="notification-section-title">{label}</div>
               {items.map((n) => {
-                const kind = notificationKind(n.title, n.body);
+                const kind = n.kind === "custom" ? "info" : n.kind;
                 return (
                   <button
                     key={n.id}
@@ -151,7 +148,9 @@ export default function NotificationPanel() {
                             : "Agent update"}
                       </span>
                       <span className="notification-workspace">{n.workspaceName}</span>
-                      <span className="notification-time">{formatTime(n.timestamp)}</span>
+                      <span className="notification-time">
+                        {formatTime(n.timestamp)}
+                      </span>
                     </div>
                     <div className="notification-title">{n.title}</div>
                     {n.body && n.body !== n.title && (

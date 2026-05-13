@@ -141,7 +141,6 @@ export function PromptModal({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmit();
-            if (e.key === "Escape") onCancel();
           }}
           placeholder={placeholder}
         />

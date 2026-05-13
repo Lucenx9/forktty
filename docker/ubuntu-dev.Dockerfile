@@ -56,7 +56,8 @@ ENV CARGO_HOME=/home/${USERNAME}/.cargo
 ENV RUSTUP_HOME=/home/${USERNAME}/.rustup
 ENV PATH=/home/${USERNAME}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal --default-toolchain stable
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal --default-toolchain stable && \
+    rustup component add clippy rustfmt
 
 WORKDIR /workspace
 
