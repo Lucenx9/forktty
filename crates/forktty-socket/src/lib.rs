@@ -177,15 +177,46 @@ pub async fn dispatch(
         }
         "workspace.close" => {
             let selector = workspace_selector_from_params(&params)?;
-            let workspace = {
+            let (workspace, surface_ids) = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model
+                let workspace_id = match selector {
+                    WorkspaceSelector::Id(id) => id.to_string(),
+                    WorkspaceSelector::Name(name) => model
+                        .list_workspaces()
+                        .into_iter()
+                        .find(|workspace| workspace.name == name)
+                        .map(|workspace| workspace.id)
+                        .ok_or_else(|| "Workspace not found".to_string())?,
+                    WorkspaceSelector::WorktreeName(name) => model
+                        .list_workspaces()
+                        .into_iter()
+                        .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
+                        .map(|workspace| workspace.id)
+                        .ok_or_else(|| "Workspace not found".to_string())?,
+                };
+                let surface_ids = model
+                    .list_surfaces(Some(&workspace_id))
+                    .into_iter()
+                    .map(|surface| surface.id)
+                    .collect::<Vec<_>>();
+                let workspace = model
                     .close_workspace(selector)
-                    .ok_or_else(|| "Workspace not found".to_string())?
+                    .ok_or_else(|| "Workspace not found".to_string())?;
+                if model.list_workspaces().is_empty() {
+                    model.create_workspace(
+                        "main",
+                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+                    );
+                }
+                (workspace, surface_ids)
             };
+            for surface_id in surface_ids {
+                let _ = state.terminal.close(&surface_id);
+            }
+            ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(workspace))
         }
         "worktree.list" => {
@@ -971,7 +1002,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatches_workspace_and_surface_parity_methods() {
-        let (state, _backend) = test_state();
+        let (state, backend) = test_state();
         let created = dispatch(
             &state,
             "workspace.create",
@@ -980,6 +1011,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(created["name"], "feature");
+        let feature_surface_id = created["focused_surface_id"].as_str().unwrap();
 
         let selected = dispatch(&state, "workspace.select", json!({"name": "main"}))
             .await
@@ -1006,6 +1038,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(closed["name"], "feature");
+        assert!(matches!(
+            backend.sent_text(feature_surface_id),
+            Err(forktty_terminal::TerminalError::NotFound(_))
+        ));
     }
 
     #[tokio::test]
