@@ -257,11 +257,15 @@ function printHelp() {
 
 Usage:
   ./scripts/forktty.mjs list [--json]
+  ./scripts/forktty.mjs create-workspace [--name <name>] [--working-dir <path>] [--json]
   ./scripts/forktty.mjs focus <selector>
   ./scripts/forktty.mjs focus --workspace-id <id>
+  ./scripts/forktty.mjs close-workspace <selector>
   ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
   ./scripts/forktty.mjs set-status --key <key> --value <value> [--label <label>] [--color <color>]
+  ./scripts/forktty.mjs list-status [--workspace-id <id>]
   ./scripts/forktty.mjs clear-status [--key <key>]
+  ./scripts/forktty.mjs notifications [--json]
   ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
   ./scripts/forktty.mjs hooks <agent> <event>
   ./scripts/forktty.mjs ping
@@ -305,6 +309,29 @@ async function handleList(context) {
   }
 }
 
+async function handleCreateWorkspace(context, args) {
+  const { options } = parseFlags(args);
+  const params = {};
+
+  if (typeof options.name === "string" && options.name.trim()) {
+    params.name = options.name.trim();
+  }
+  if (typeof options["working-dir"] === "string" && options["working-dir"].trim()) {
+    params.workingDir = options["working-dir"].trim();
+  }
+
+  const result = await sendSocketRequest(context.socketPath, "workspace.create", params);
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  process.stdout.write(
+    `Created workspace ${result.id}${params.name ? ` (${params.name})` : ""}\n`,
+  );
+}
+
 async function tryWorkspaceSelect(context, params) {
   return sendSocketRequest(context.socketPath, "workspace.select", params);
 }
@@ -333,6 +360,42 @@ async function handleFocus(context, args) {
     printJson({ result: true });
   } else {
     process.stdout.write("Focused workspace\n");
+  }
+}
+
+function resolveSelectorParams(options, positionals, env = process.env) {
+  if (typeof options["workspace-id"] === "string") {
+    return { id: options["workspace-id"] };
+  }
+  if (typeof options["workspace-name"] === "string") {
+    return { name: options["workspace-name"] };
+  }
+  if (typeof options["worktree-name"] === "string") {
+    return { worktreeName: options["worktree-name"] };
+  }
+  if (positionals[0]) {
+    const selector = positionals[0];
+    return selector.includes("-") ? { id: selector } : { name: selector };
+  }
+  if (typeof env.FORKTTY_WORKSPACE_ID === "string" && env.FORKTTY_WORKSPACE_ID.trim()) {
+    return { id: env.FORKTTY_WORKSPACE_ID.trim() };
+  }
+  return null;
+}
+
+async function handleCloseWorkspace(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const selectorParams = resolveSelectorParams(options, positionals, context.env);
+  if (!selectorParams) {
+    throw new Error("close-workspace requires a selector or --workspace-id");
+  }
+
+  await sendSocketRequest(context.socketPath, "workspace.close", selectorParams);
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Closed workspace\n");
   }
 }
 
@@ -395,6 +458,32 @@ async function handleSetStatus(context, args) {
   }
 }
 
+function formatStatusLine(status) {
+  const color = status.color ? ` (${status.color})` : "";
+  return `${status.label}: ${status.value}${color}`;
+}
+
+async function handleListStatus(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "metadata.list_status", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No status entries\n");
+    return;
+  }
+
+  for (const status of result) {
+    process.stdout.write(`${formatStatusLine(status)}\n`);
+  }
+}
+
 async function handleClearStatus(context, args) {
   const { options } = parseFlags(args);
   await sendSocketRequest(context.socketPath, "metadata.clear_status", {
@@ -406,6 +495,31 @@ async function handleClearStatus(context, args) {
     printJson({ result: true });
   } else {
     process.stdout.write("Cleared status\n");
+  }
+}
+
+function formatNotificationLine(notification) {
+  const state = notification.read ? "read" : "unread";
+  const title = notification.title || "ForkTTY";
+  const body = notification.body ? ` — ${notification.body}` : "";
+  return `[${state}] ${notification.workspaceName} · ${notification.kind} · ${title}${body}`;
+}
+
+async function handleNotifications(context) {
+  const result = await sendSocketRequest(context.socketPath, "notification.list", {});
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No notifications\n");
+    return;
+  }
+
+  for (const notification of result) {
+    process.stdout.write(`${formatNotificationLine(notification)}\n`);
   }
 }
 
@@ -796,8 +910,14 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "list":
       await handleList(context);
       return;
+    case "create-workspace":
+      await handleCreateWorkspace(context, args);
+      return;
     case "focus":
       await handleFocus(context, args);
+      return;
+    case "close-workspace":
+      await handleCloseWorkspace(context, args);
       return;
     case "notify":
       await handleNotify(context, args);
@@ -805,8 +925,14 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "set-status":
       await handleSetStatus(context, args);
       return;
+    case "list-status":
+      await handleListStatus(context, args);
+      return;
     case "clear-status":
       await handleClearStatus(context, args);
+      return;
+    case "notifications":
+      await handleNotifications(context);
       return;
     case "hooks":
       if (args[0] === "setup") {
