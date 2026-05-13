@@ -132,6 +132,11 @@ progress. The CI workflow builds that package on pull requests and pushes, and
 uploads `target/packaging/deb/*.deb` to GitHub releases when a release is
 published.
 
+No GTK AppImage is produced in this branch. The native `.deb` is the supported
+preview artifact for now; AppImage remains deferred until the GTK/VTE runtime
+dependency story is stable enough to bundle without hiding system integration
+problems.
+
 ## Remaining Parity Work
 
 - Expand quake behavior with compositor-supported top-edge placement where the
