@@ -45,6 +45,9 @@ Tauri/React implementation.
 - GTK app startup now binds the local Unix socket and routes terminal backend
   commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
   VTE through this adapter.
+- GTK split panes are rendered from the core `PaneNode` tree. UI split buttons
+  and socket `surface.split` both create real VTE-backed surfaces and rebuild
+  the GTK `Paned` layout from the model.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.
@@ -97,7 +100,6 @@ progress.
 
 ## Remaining Parity Work
 
-- Replace GTK split placeholders with model-driven VTE pane creation.
 - Port command palette, settings, notification panel, and quake window behavior
   from the Tauri path.
 - Harden `.deb` metadata and add CI/release wiring for the GTK package.

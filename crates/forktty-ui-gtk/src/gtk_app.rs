@@ -1,5 +1,5 @@
 use adw::prelude::*;
-use forktty_core::WorkspaceModel;
+use forktty_core::{PaneNode, SplitAxis, WorkspaceModel};
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
@@ -105,13 +105,15 @@ impl TerminalBackend for GtkVteBackend {
 
 struct VteController {
     container: gtk::Box,
+    model: Arc<Mutex<WorkspaceModel>>,
     widgets: BTreeMap<String, VteTerminalWidget>,
 }
 
 impl VteController {
-    fn new(container: gtk::Box) -> Self {
+    fn new(container: gtk::Box, model: Arc<Mutex<WorkspaceModel>>) -> Self {
         Self {
             container,
+            model,
             widgets: BTreeMap::new(),
         }
     }
@@ -137,10 +139,82 @@ impl VteController {
                 widget.grab_focus();
                 self.container.append(&widget);
                 self.widgets.insert(request.surface_id, widget);
+                self.rebuild_layout();
             }
             Err(err) => eprintln!("Failed to spawn VTE terminal: {err}"),
         }
     }
+
+    fn rebuild_layout(&self) {
+        while let Some(child) = self.container.first_child() {
+            self.container.remove(&child);
+        }
+        for widget in self.widgets.values() {
+            widget.unparent();
+        }
+
+        let pane_tree = self.model.lock().ok().and_then(|model| {
+            model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.active)
+                .or_else(|| model.list_workspaces().into_iter().next())
+                .map(|workspace| workspace.pane_tree)
+        });
+        let Some(pane_tree) = pane_tree else {
+            return;
+        };
+        let widget = self.widget_for_pane(&pane_tree);
+        self.container.append(&widget);
+    }
+
+    fn widget_for_pane(&self, node: &PaneNode) -> gtk::Widget {
+        match node {
+            PaneNode::Leaf { surface_id } => self
+                .widgets
+                .get(surface_id)
+                .map(|widget| widget.clone().upcast::<gtk::Widget>())
+                .unwrap_or_else(|| missing_surface_label(surface_id).upcast()),
+            PaneNode::Split { axis, children, .. } => {
+                let orientation = match axis {
+                    SplitAxis::Horizontal => gtk::Orientation::Horizontal,
+                    SplitAxis::Vertical => gtk::Orientation::Vertical,
+                };
+                build_paned_chain(orientation, children, |child| self.widget_for_pane(child))
+                    .upcast()
+            }
+        }
+    }
+}
+
+fn build_paned_chain<F>(
+    orientation: gtk::Orientation,
+    children: &[PaneNode],
+    build: F,
+) -> gtk::Paned
+where
+    F: Fn(&PaneNode) -> gtk::Widget + Copy,
+{
+    let paned = gtk::Paned::new(orientation);
+    paned.set_wide_handle(true);
+    if let Some(first) = children.first() {
+        paned.set_start_child(Some(&build(first)));
+    }
+    match children.len() {
+        0 | 1 => {}
+        2 => paned.set_end_child(Some(&build(&children[1]))),
+        _ => {
+            let nested = build_paned_chain(orientation, &children[1..], build);
+            paned.set_end_child(Some(&nested));
+        }
+    }
+    paned
+}
+
+fn missing_surface_label(surface_id: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(&format!("Missing terminal surface {surface_id}")));
+    label.add_css_class("dim-label");
+    label
 }
 
 pub fn run() {
@@ -209,32 +283,14 @@ fn build_ui(app: &adw::Application) {
         .content(&content)
         .build();
 
-    let stack_for_horizontal = terminal_stack.clone();
+    let state_for_horizontal = state.clone();
     split_horizontal.connect_clicked(move |_| {
-        let current = stack_for_horizontal.borrow();
-        let nested = gtk::Paned::new(gtk::Orientation::Horizontal);
-        let placeholder = gtk::Label::new(Some("New VTE pane will attach through surface.split"));
-        placeholder.add_css_class("dim-label");
-        if let Some(child) = current.first_child() {
-            child.unparent();
-            nested.set_start_child(Some(&child));
-            nested.set_end_child(Some(&placeholder));
-            current.append(&nested);
-        }
+        split_active_surface(&state_for_horizontal, SplitAxis::Horizontal);
     });
 
-    let stack_for_vertical = terminal_stack.clone();
+    let state_for_vertical = state.clone();
     split_vertical.connect_clicked(move |_| {
-        let current = stack_for_vertical.borrow();
-        let nested = gtk::Paned::new(gtk::Orientation::Vertical);
-        let placeholder = gtk::Label::new(Some("New VTE pane will attach through surface.split"));
-        placeholder.add_css_class("dim-label");
-        if let Some(child) = current.first_child() {
-            child.unparent();
-            nested.set_start_child(Some(&child));
-            nested.set_end_child(Some(&placeholder));
-            current.append(&nested);
-        }
+        split_active_surface(&state_for_vertical, SplitAxis::Vertical);
     });
 
     let provider = gtk::CssProvider::new();
@@ -254,6 +310,7 @@ fn build_ui(app: &adw::Application) {
 
     let controller = Rc::new(RefCell::new(VteController::new(
         terminal_stack.borrow().clone(),
+        model.clone(),
     )));
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -270,6 +327,41 @@ fn build_ui(app: &adw::Application) {
     start_socket_server(state.clone());
 
     window.present();
+}
+
+fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
+    let surface = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => {
+                eprintln!("Failed to split pane: workspace model lock poisoned");
+                return;
+            }
+        };
+        let Some(workspace) = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+        else {
+            return;
+        };
+        model.split_surface(&workspace.focused_surface_id, axis)
+    };
+
+    let Some(surface) = surface else {
+        return;
+    };
+    if let Err(err) = state.terminal.spawn(SpawnRequest {
+        surface_id: surface.id,
+        workspace_id: surface.workspace_id,
+        shell: state.shell.clone(),
+        cwd: surface.cwd,
+        socket_path: state.socket_path.clone(),
+        extra_env: Vec::new(),
+    }) {
+        eprintln!("Failed to spawn split terminal: {err}");
+    }
 }
 
 fn start_socket_server(state: SocketAppState) {
