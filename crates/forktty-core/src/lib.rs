@@ -1,5 +1,6 @@
 pub mod config;
 pub mod model;
+pub mod notification;
 pub mod protocol;
 pub mod session;
 pub mod worktree;
@@ -9,4 +10,5 @@ pub use model::{
     NotificationItem, NotificationKind, PaneNode, SplitAxis, Surface, SurfaceId, Workspace,
     WorkspaceId, WorkspaceModel, WorkspaceSelector,
 };
+pub use notification::{dispatch_notification, NotificationDispatchError};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};

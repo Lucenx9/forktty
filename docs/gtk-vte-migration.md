@@ -64,6 +64,10 @@ Tauri/React implementation.
 - VTE `window-title-changed`, `bell`, and `child-exited` signals now update the
   core model: terminal titles are mirrored onto surfaces, and bell/exit events
   create notifications that drive unread/attention state.
+- Notification dispatch now runs through the GTK/core path as well: socket,
+  local GTK, and VTE signal notifications can emit desktop notifications and
+  invoke `general.notification_command` with `FORKTTY_NOTIFICATION_*`
+  environment variables.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.

@@ -1,6 +1,6 @@
 use forktty_core::{
-    config, worktree, JsonRpcRequest, JsonRpcResponse, NotificationKind, SplitAxis, WorkspaceModel,
-    WorkspaceSelector,
+    config, dispatch_notification, worktree, JsonRpcRequest, JsonRpcResponse, NotificationKind,
+    SplitAxis, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest};
 use serde_json::{json, Value};
@@ -34,6 +34,7 @@ pub struct SocketAppState {
     pub terminal: SharedTerminalBackend,
     pub shell: String,
     pub socket_path: PathBuf,
+    pub notification_dispatch: bool,
 }
 
 impl SocketAppState {
@@ -48,7 +49,13 @@ impl SocketAppState {
             terminal,
             shell: shell.into(),
             socket_path: socket_path.into(),
+            notification_dispatch: true,
         }
+    }
+
+    pub fn with_notification_dispatch(mut self, enabled: bool) -> Self {
+        self.notification_dispatch = enabled;
+        self
     }
 }
 
@@ -398,6 +405,9 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model.create_notification(title, body, kind, workspace_id, surface_id)
             };
+            if state.notification_dispatch {
+                dispatch_notification_with_loaded_config(&item);
+            }
             Ok(json!(item))
         }
         "notification.list" => {
@@ -408,6 +418,16 @@ pub async fn dispatch(
             Ok(json!(model.list_notifications()))
         }
         _ => Err(format!("Unknown method: {method}")),
+    }
+}
+
+fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
+    let config = config::load_config().unwrap_or_default();
+    for error in dispatch_notification(&config, notification) {
+        eprintln!(
+            "Failed to dispatch {} notification: {}",
+            error.channel, error.message
+        );
     }
 }
 
@@ -756,7 +776,8 @@ mod tests {
             backend.clone(),
             "/bin/sh",
             PathBuf::from("/tmp/forktty.sock"),
-        );
+        )
+        .with_notification_dispatch(false);
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
     }

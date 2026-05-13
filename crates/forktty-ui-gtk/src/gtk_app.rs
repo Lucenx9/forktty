@@ -1,5 +1,8 @@
 use adw::prelude::*;
-use forktty_core::{config, NotificationKind, PaneNode, SplitAxis, WorkspaceModel};
+use forktty_core::{
+    config, dispatch_notification, NotificationItem, NotificationKind, PaneNode, SplitAxis,
+    WorkspaceModel,
+};
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
@@ -236,13 +239,14 @@ fn attach_vte_signal_handlers(
     let bell_model = model.clone();
     widget.connect_bell(move |_| {
         if let Ok(mut model) = bell_model.lock() {
-            model.create_notification(
+            let notification = model.create_notification(
                 "Terminal bell",
                 "A terminal requested attention",
                 NotificationKind::Info,
                 Some(workspace_id.clone()),
                 Some(surface_id.clone()),
             );
+            dispatch_notification_with_loaded_config(&notification);
         }
     });
 
@@ -251,15 +255,26 @@ fn attach_vte_signal_handlers(
     let exit_model = model.clone();
     widget.connect_child_exited(move |_, status| {
         if let Ok(mut model) = exit_model.lock() {
-            model.create_notification(
+            let notification = model.create_notification(
                 "Terminal exited",
                 format!("Process exited with status {status}"),
                 NotificationKind::Info,
                 Some(workspace_id.clone()),
                 Some(surface_id.clone()),
             );
+            dispatch_notification_with_loaded_config(&notification);
         }
     });
+}
+
+fn dispatch_notification_with_loaded_config(notification: &NotificationItem) {
+    let config = config::load_config().unwrap_or_default();
+    for error in dispatch_notification(&config, notification) {
+        eprintln!(
+            "Failed to dispatch {} notification: {}",
+            error.channel, error.message
+        );
+    }
 }
 
 fn build_paned_chain<F>(
@@ -922,13 +937,14 @@ fn create_local_notification(state: &SocketAppState, title: &str, body: &str) {
         return;
     };
     if let Ok(mut model) = state.model.lock() {
-        model.create_notification(
+        let notification = model.create_notification(
             title,
             body,
             NotificationKind::Info,
             Some(workspace_id),
             Some(surface_id),
         );
+        dispatch_notification_with_loaded_config(&notification);
     }
 }
 

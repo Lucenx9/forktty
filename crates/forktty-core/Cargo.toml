@@ -13,6 +13,7 @@ description = "Core ForkTTY workspace, pane, config, session, notification, work
 chrono.workspace = true
 dirs.workspace = true
 git2.workspace = true
+notify-rust.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
@@ -21,4 +22,3 @@ toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
