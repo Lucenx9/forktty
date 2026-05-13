@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks gemini session-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks gemini prompt-submit || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks gemini stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks gemini session-end || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

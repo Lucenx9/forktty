@@ -49,11 +49,121 @@ function worktreeLabel(workspace: Workspace): string {
   return workspace.gitBranch || workspace.worktreeName;
 }
 
+function workspaceRailMonogram(name: string, index: number): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.replace(/[^A-Za-z0-9]/g, ""))
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    return `${parts[0]![0]}${parts[1]![0]}`.toUpperCase();
+  }
+
+  if (parts.length === 1) {
+    const token = parts[0]!;
+    if (token.length >= 2) {
+      return token.slice(0, 2).toUpperCase();
+    }
+    return `${token.toUpperCase()}${index + 1}`;
+  }
+
+  return String(index + 1);
+}
+
 function workspaceHasRecentActivity(surfaces: Workspace["surfaces"]): boolean {
   return Object.keys(surfaces).some((id) => {
     const activity = getLastActivity(id);
     return activity > 0 && Date.now() - activity < ACTIVITY_THRESHOLD_MS;
   });
+}
+
+interface SidebarRailEntryProps {
+  workspace: Workspace;
+  index: number;
+  isActive: boolean;
+  onSelect: (workspaceId: string) => void;
+}
+
+function SidebarRailEntry({
+  workspace,
+  index,
+  isActive,
+  onSelect,
+}: SidebarRailEntryProps) {
+  const [hasActivity, setHasActivity] = useState(false);
+
+  useEffect(() => {
+    function checkActivity() {
+      const isLive = workspaceHasRecentActivity(workspace.surfaces);
+      setHasActivity((prev) => (isLive !== prev ? isLive : prev));
+    }
+
+    checkActivity();
+    const interval = window.setInterval(checkActivity, 1000);
+    return () => window.clearInterval(interval);
+  }, [workspace.surfaces]);
+
+  const paneCount = Object.keys(workspace.surfaces).length;
+  const monogram = workspaceRailMonogram(workspace.name, index);
+  const previewText = workspace.lastNotificationText.replace(/\s+/g, " ").trim();
+  const hasUnread = workspace.unreadCount > 0;
+  const hasWorktreeAttention =
+    workspace.worktreeDir !== "" &&
+    workspace.worktreeStatus !== "" &&
+    workspace.worktreeStatus !== "clean";
+  const railClassName = [
+    "sidebar-rail-entry",
+    isActive ? "sidebar-rail-entry-active" : "",
+    hasUnread ? "sidebar-rail-entry-unread" : "",
+    hasActivity ? "sidebar-rail-entry-live" : "",
+    hasWorktreeAttention ? "sidebar-rail-entry-problem" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const titleParts = [
+    `${index + 1}. ${workspace.name}`,
+    `${paneCount} pane${paneCount === 1 ? "" : "s"}`,
+    hasUnread ? `${workspace.unreadCount} unread` : "",
+    hasActivity ? "Recent terminal activity" : "",
+    hasWorktreeAttention
+      ? `${workspace.worktreeStatus}${worktreeStatusWarning(workspace.worktreeStatus)}`
+      : "",
+    previewText ? `Latest: ${previewText}` : "",
+  ].filter(Boolean);
+  const ariaLabel = [
+    `${index + 1}. ${workspace.name}`,
+    isActive ? "active workspace" : "",
+    `${paneCount} pane${paneCount === 1 ? "" : "s"}`,
+    hasUnread ? `${workspace.unreadCount} unread alerts` : "",
+    hasActivity ? "recent terminal activity" : "",
+    hasWorktreeAttention ? `worktree ${workspace.worktreeStatus}` : "",
+    previewText ? `latest alert ${previewText}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <button
+      type="button"
+      className={railClassName}
+      onClick={() => onSelect(workspace.id)}
+      title={titleParts.join(" · ")}
+      aria-label={ariaLabel}
+    >
+      <span className="sidebar-rail-accent" aria-hidden="true" />
+      <span className="sidebar-rail-monogram" aria-hidden="true">
+        {monogram}
+      </span>
+      <span className="sidebar-rail-index" aria-hidden="true">
+        {index + 1}
+      </span>
+      {(hasUnread || hasActivity || hasWorktreeAttention) && (
+        <span className="sidebar-rail-state" aria-hidden="true" />
+      )}
+      {hasUnread && <span className="sidebar-rail-badge">{workspace.unreadCount}</span>}
+    </button>
+  );
 }
 
 // --- Context menu ---
@@ -468,6 +578,7 @@ function WorkspaceEntry({
     isWorktree &&
     workspace.worktreeStatus !== "" &&
     workspace.worktreeStatus !== "clean";
+  const previewText = workspace.lastNotificationText.replace(/\s+/g, " ").trim();
   const truncatedCwd = workspace.workingDir
     ? truncatePath(workspace.workingDir, workspace.gitBranch ? 20 : 28)
     : "";
@@ -490,6 +601,7 @@ function WorkspaceEntry({
       ? `worktree ${workspace.worktreeStatus}`
       : "",
     workspace.unreadCount > 0 ? `${workspace.unreadCount} unread alerts` : "",
+    previewText ? `latest alert ${previewText}` : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -575,6 +687,11 @@ function WorkspaceEntry({
             </button>
           )}
         </div>
+        {previewText && (
+          <div className="sidebar-entry-preview" title={previewText}>
+            <span className="sidebar-entry-preview-text">{previewText}</span>
+          </div>
+        )}
         {(workspace.gitBranch || workspace.workingDir || showWorktreeStatus || paneCount > 1) && (
           <div className="sidebar-entry-meta sidebar-entry-meta-compact">
             {(workspace.gitBranch || workspace.workingDir) && (
@@ -837,19 +954,13 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             const ws = workspaces[id];
             if (!ws) return null;
             return (
-              <button
+              <SidebarRailEntry
                 key={id}
-                type="button"
-                className={`sidebar-rail-entry ${id === activeWorkspaceId ? "sidebar-rail-entry-active" : ""}`}
-                onClick={() => switchWorkspace(id)}
-                title={`${index + 1}. ${ws.name}${ws.unreadCount > 0 ? ` • ${ws.unreadCount} unread` : ""}`}
-                aria-label={`${index + 1}. ${ws.name}${id === activeWorkspaceId ? ", active workspace" : ""}${ws.unreadCount > 0 ? `, ${ws.unreadCount} unread alerts` : ""}`}
-              >
-                <span className="sidebar-rail-index">{index + 1}</span>
-                {ws.unreadCount > 0 && (
-                  <span className="sidebar-rail-badge">{ws.unreadCount}</span>
-                )}
-              </button>
+                workspace={ws}
+                index={index}
+                isActive={id === activeWorkspaceId}
+                onSelect={switchWorkspace}
+              />
             );
           })}
         </div>

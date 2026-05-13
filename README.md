@@ -223,6 +223,53 @@ Worktree workspaces are optional. `Ctrl+Shift+N` opens the branch picker, which 
 
 Socket-driven `worktree.*` operations validate caller-provided `cwd` values against repositories already open in the frontend. Subdirectories and linked worktrees in the same open repository are accepted; unrelated repositories are rejected. Removing the last worktree-backed workspace creates a replacement plain workspace rooted at the repository fallback path before closing the worktree workspace.
 
+## CLI And Hooks
+
+ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
+
+```bash
+./scripts/forktty.mjs list
+./scripts/forktty.mjs focus "Workspace 2"
+./scripts/forktty.mjs notify --title "Input needed" --kind prompt "Blocked on test fixture"
+./scripts/forktty.mjs set-status --key agent:codex --label Codex --value Running --color blue
+./scripts/forktty.mjs clear-status --key agent:codex
+```
+
+You can also invoke it through npm:
+
+```bash
+npm run forktty:cli -- list
+```
+
+Inside a ForkTTY terminal, spawned shells already receive:
+
+- `FORKTTY_WORKSPACE_ID`
+- `FORKTTY_SURFACE_ID`
+- `FORKTTY_SOCKET_PATH`
+
+That lets notifications, status updates, and hook events auto-target the current workspace without extra flags.
+
+Agent hook templates and an installer live under [`hooks/`](hooks/) and [`scripts/forktty.mjs`](scripts/forktty.mjs):
+
+```bash
+./scripts/forktty.mjs hooks setup
+./scripts/forktty.mjs hooks setup codex claude
+```
+
+The installer merges hook commands into:
+
+- Codex: `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`
+- Claude Code: `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`
+- Gemini CLI: `~/.gemini/settings.json`
+
+Current hook behavior is intentionally small and reliable:
+
+- `session-start` -> status pill `Ready`
+- `prompt-submit` -> status pill `Running`
+- `notification` -> status pill `Needs input` plus a prompt notification
+- `stop` -> status pill `Ready`
+- `session-end` -> clears the agent status pill
+
 ## Architecture
 
 ```text

@@ -408,28 +408,13 @@ async fn dispatch(
     method: &str,
     params: Value,
     app: &tauri::AppHandle,
-    pty_manager: &Arc<Mutex<PtyManager>>,
+    _pty_manager: &Arc<Mutex<PtyManager>>,
     pending: &PendingRequests,
     frontend: &Arc<FrontendState>,
 ) -> Result<Value, String> {
     match method {
         // --- Direct backend handlers ---
         "system.ping" => Ok(json!("pong")),
-
-        "surface.send_text" => {
-            let pty_id: u32 = params
-                .get("pty_id")
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing pty_id")?
-                .try_into()
-                .map_err(|_| "pty_id exceeds u32 range")?;
-            let text = params
-                .get("text")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing text")?;
-            write_surface_text(pty_manager, pty_id, text)?;
-            Ok(json!(true))
-        }
 
         "worktree.create" => {
             wait_for_frontend_ready(frontend).await?;
@@ -553,6 +538,7 @@ async fn dispatch(
         | "workspace.select"
         | "workspace.close"
         | "surface.list"
+        | "surface.send_text"
         | "surface.split"
         | "surface.close"
         | "surface.read_screen"
@@ -634,19 +620,6 @@ async fn resolve_socket_cwd(
             .filter_map(|ws| ws.get("workingDir").and_then(|v| v.as_str()))
             .filter(|dir| !dir.is_empty()),
     )
-}
-
-fn write_surface_text(
-    pty_manager: &Arc<Mutex<PtyManager>>,
-    pty_id: u32,
-    text: &str,
-) -> Result<(), String> {
-    if text.len() > MAX_REQUEST_SIZE {
-        return Err("Text exceeds 1 MiB".to_string());
-    }
-    let mgr = pty_manager.lock().map_err(|e| format!("Lock: {e}"))?;
-    mgr.write(pty_id, text.as_bytes())
-        .map_err(|e| e.to_string())
 }
 
 /// Forward a request to the frontend via Tauri events, wait for response.

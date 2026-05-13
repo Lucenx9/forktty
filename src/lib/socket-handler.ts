@@ -567,6 +567,7 @@ export async function handleSocketRequest(
             workspaceName: n.workspaceName,
             title: n.title,
             body: n.body,
+            kind: n.kind,
             timestamp: n.timestamp,
             read: n.read,
           })),

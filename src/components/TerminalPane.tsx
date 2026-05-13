@@ -99,6 +99,12 @@ function isTargetInsideXterm(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && !!target.closest(".xterm");
 }
 
+function shouldUseCanvasRenderer(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const platformFingerprint = `${navigator.userAgent} ${navigator.platform}`;
+  return !(hasTauriRuntime() && /linux/i.test(platformFingerprint));
+}
+
 interface PaneContextMenuState {
   x: number;
   y: number;
@@ -559,13 +565,17 @@ const TerminalPane = memo(function TerminalPane({
       fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
 
-      try {
-        const canvasAddon = new CanvasAddon();
-        canvasAddonRef.current = canvasAddon;
-        term.loadAddon(canvasAddon);
-      } catch (err) {
+      if (shouldUseCanvasRenderer()) {
+        try {
+          const canvasAddon = new CanvasAddon();
+          canvasAddonRef.current = canvasAddon;
+          term.loadAddon(canvasAddon);
+        } catch (err) {
+          canvasAddonRef.current = null;
+          logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
+        }
+      } else {
         canvasAddonRef.current = null;
-        logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
       }
 
       // Use an intermediary wrapper so xterm DOM survives React unmount

@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks codex session-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks codex prompt-submit || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks codex stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

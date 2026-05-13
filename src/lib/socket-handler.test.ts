@@ -129,4 +129,55 @@ describe("handleSocketRequest", () => {
       error: 'Error: Invalid parameter "value": expected finite number',
     });
   });
+
+  it("includes notification kinds in notification.list", async () => {
+    const state = useWorkspaceStore.getState();
+    state.addNotification(
+      state.activeWorkspaceId,
+      "Prompt waiting",
+      "Workspace needs attention",
+      "prompt",
+    );
+
+    await handleSocketRequest("r4", "notification.list", {});
+
+    expect(socketRespond).toHaveBeenCalledWith("r4", {
+      result: [
+        expect.objectContaining({
+          workspaceName: "Workspace 1",
+          title: "Prompt waiting",
+          body: "Workspace needs attention",
+          kind: "prompt",
+          read: true,
+        }),
+      ],
+    });
+  });
+
+  it("sends text by surface id", async () => {
+    const state = useWorkspaceStore.getState();
+    const paneId = state.workspaces[state.activeWorkspaceId]!.focusedPaneId;
+    state.registerSurface(paneId, 42);
+    vi.mocked(writePty).mockResolvedValueOnce(undefined);
+
+    await handleSocketRequest("r5", "surface.send_text", {
+      surface_id: paneId,
+      text: "ls\n",
+    });
+
+    expect(writePty).toHaveBeenCalledWith(42, "ls\n");
+    expect(socketRespond).toHaveBeenCalledWith("r5", { result: true });
+  });
+
+  it("sends text by pty id", async () => {
+    vi.mocked(writePty).mockResolvedValueOnce(undefined);
+
+    await handleSocketRequest("r6", "surface.send_text", {
+      pty_id: 7,
+      text: "pwd\n",
+    });
+
+    expect(writePty).toHaveBeenCalledWith(7, "pwd\n");
+    expect(socketRespond).toHaveBeenCalledWith("r6", { result: true });
+  });
 });
