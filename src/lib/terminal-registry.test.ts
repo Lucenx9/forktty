@@ -93,7 +93,8 @@ describe("terminal-registry: readScreen", () => {
         disposed: false,
       },
       fitAddon: {} as never,
-      canvasAddon: null,
+      rendererAddon: null,
+      rendererKind: "dom",
       searchAddon: {} as never,
     });
 

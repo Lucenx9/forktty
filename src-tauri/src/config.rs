@@ -54,6 +54,8 @@ pub struct AppearanceConfig {
     pub font_size: u16,
     #[serde(default = "default_sidebar_position")]
     pub sidebar_position: String,
+    #[serde(default = "default_terminal_renderer")]
+    pub terminal_renderer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +84,9 @@ fn default_font_size() -> u16 {
 fn default_sidebar_position() -> String {
     "left".to_string()
 }
+fn default_terminal_renderer() -> String {
+    "auto".to_string()
+}
 fn default_true() -> bool {
     true
 }
@@ -105,6 +110,7 @@ impl Default for AppearanceConfig {
             font_family: default_font_family(),
             font_size: default_font_size(),
             sidebar_position: default_sidebar_position(),
+            terminal_renderer: default_terminal_renderer(),
         }
     }
 }
@@ -188,6 +194,12 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     ) {
         config.appearance.sidebar_position = default_sidebar_position();
     }
+    if !matches!(
+        config.appearance.terminal_renderer.as_str(),
+        "auto" | "dom" | "canvas" | "webgl"
+    ) {
+        config.appearance.terminal_renderer = default_terminal_renderer();
+    }
     if config.appearance.font_size == 0 {
         config.appearance.font_size = default_font_size();
     }
@@ -229,6 +241,15 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
     if !(8..=64).contains(&config.appearance.font_size) {
         return Err(ConfigError::Invalid(
             "appearance.font_size must be between 8 and 64".to_string(),
+        ));
+    }
+
+    if !matches!(
+        config.appearance.terminal_renderer.as_str(),
+        "auto" | "dom" | "canvas" | "webgl"
+    ) {
+        return Err(ConfigError::Invalid(
+            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl".to_string(),
         ));
     }
 
@@ -617,6 +638,7 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.general.theme_source, "auto");
         assert_eq!(config.appearance.font_size, 14);
+        assert_eq!(config.appearance.terminal_renderer, "auto");
         assert!(config.notifications.desktop);
     }
 
@@ -776,6 +798,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_rejects_invalid_terminal_renderer() {
+        let mut config = AppConfig::default();
+        config.appearance.terminal_renderer = "vulkan".to_string();
+        let err = validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("terminal_renderer"));
+    }
+
+    #[test]
     fn validate_config_rejects_directory_shell_path() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
@@ -811,10 +841,12 @@ mod tests {
         let mut config = AppConfig::default();
         config.general.worktree_layout = "bogus".to_string();
         config.appearance.sidebar_position = "middle".to_string();
+        config.appearance.terminal_renderer = "wayland".to_string();
         config.appearance.font_size = 0;
         let normalized = normalize_loaded_config(config);
         assert_eq!(normalized.general.worktree_layout, "nested");
         assert_eq!(normalized.appearance.sidebar_position, "left");
+        assert_eq!(normalized.appearance.terminal_renderer, "auto");
         assert_eq!(normalized.appearance.font_size, 14);
     }
 }

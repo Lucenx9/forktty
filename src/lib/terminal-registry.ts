@@ -1,6 +1,7 @@
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { CanvasAddon } from "@xterm/addon-canvas";
+import type { WebglAddon } from "@xterm/addon-webgl";
 import type { SearchAddon } from "@xterm/addon-search";
 import { killPty, logError } from "./pty-bridge";
 
@@ -47,12 +48,16 @@ export interface SavedTerminalRuntime {
   disposed: boolean;
 }
 
+export type TerminalRendererKind = "dom" | "canvas" | "webgl";
+export type TerminalRendererAddon = CanvasAddon | WebglAddon;
+
 export interface SavedTerminalInstance {
   terminal: Terminal;
   wrapper: HTMLDivElement;
   runtime: SavedTerminalRuntime;
   fitAddon: FitAddon;
-  canvasAddon: CanvasAddon | null;
+  rendererAddon: TerminalRendererAddon | null;
+  rendererKind: TerminalRendererKind;
   searchAddon: SearchAddon;
 }
 

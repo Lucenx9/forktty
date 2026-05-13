@@ -328,6 +328,7 @@ export interface AppConfig {
     font_family: string;
     font_size: number;
     sidebar_position: string;
+    terminal_renderer: string;
   };
   notifications: {
     desktop: boolean;

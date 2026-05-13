@@ -325,6 +325,24 @@ export default function SettingsPanel() {
               <option value="right">Right</option>
             </select>
           </label>
+
+          <label className="settings-field">
+            <span className="settings-label">Terminal renderer</span>
+            <select
+              className="settings-select"
+              value={draft.appearance.terminal_renderer}
+              onChange={(e) => updateAppearance("terminal_renderer", e.target.value)}
+            >
+              <option value="auto">Auto (recommended)</option>
+              <option value="dom">DOM</option>
+              <option value="canvas">Canvas</option>
+              <option value="webgl">WebGL (experimental)</option>
+            </select>
+            <span className="settings-field-hint">
+              Existing panes keep their current renderer. New panes apply this
+              setting, with automatic fallback if acceleration is unavailable.
+            </span>
+          </label>
         </div>
 
         {/* Notifications */}

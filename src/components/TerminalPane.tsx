@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { SearchAddon } from "@xterm/addon-search";
 import FindBar from "./FindBar";
 import {
@@ -19,6 +20,8 @@ import {
   getSavedInstance,
   saveInstance,
   removeSavedInstance,
+  type TerminalRendererAddon,
+  type TerminalRendererKind,
 } from "../lib/terminal-registry";
 import {
   concatUint8Arrays,
@@ -103,6 +106,30 @@ function shouldUseCanvasRenderer(): boolean {
   if (typeof navigator === "undefined") return false;
   const platformFingerprint = `${navigator.userAgent} ${navigator.platform}`;
   return !(hasTauriRuntime() && /linux/i.test(platformFingerprint));
+}
+
+type TerminalRendererSetting = "auto" | "dom" | "canvas" | "webgl";
+
+function normalizeTerminalRenderer(value: string | null | undefined): TerminalRendererSetting {
+  switch (value) {
+    case "dom":
+    case "canvas":
+    case "webgl":
+      return value;
+    default:
+      return "auto";
+  }
+}
+
+function resolveAutoRenderer(): TerminalRendererKind {
+  return shouldUseCanvasRenderer() ? "canvas" : "dom";
+}
+
+function resolveRequestedRenderer(
+  value: string | null | undefined,
+): TerminalRendererKind {
+  const renderer = normalizeTerminalRenderer(value);
+  return renderer === "auto" ? resolveAutoRenderer() : renderer;
 }
 
 interface PaneContextMenuState {
@@ -340,7 +367,8 @@ const TerminalPane = memo(function TerminalPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const canvasAddonRef = useRef<CanvasAddon | null>(null);
+  const rendererAddonRef = useRef<TerminalRendererAddon | null>(null);
+  const rendererKindRef = useRef<TerminalRendererKind>("dom");
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const lastActivityCallRef = useRef(0);
   const [showFind, setShowFind] = useState(false);
@@ -533,7 +561,8 @@ const TerminalPane = memo(function TerminalPane({
       wrapper = saved.wrapper;
       termRef.current = term;
       fitAddonRef.current = saved.fitAddon;
-      canvasAddonRef.current = saved.canvasAddon;
+      rendererAddonRef.current = saved.rendererAddon;
+      rendererKindRef.current = saved.rendererKind;
       searchAddonRef.current = saved.searchAddon;
       container.appendChild(wrapper);
       registerTerminal(paneId, term);
@@ -565,25 +594,86 @@ const TerminalPane = memo(function TerminalPane({
       fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
 
-      if (shouldUseCanvasRenderer()) {
-        try {
-          const canvasAddon = new CanvasAddon();
-          canvasAddonRef.current = canvasAddon;
-          term.loadAddon(canvasAddon);
-        } catch (err) {
-          canvasAddonRef.current = null;
-          logError(`Canvas renderer unavailable, falling back to DOM: ${err}`);
-        }
-      } else {
-        canvasAddonRef.current = null;
-      }
-
       // Use an intermediary wrapper so xterm DOM survives React unmount
       wrapper = document.createElement("div");
       wrapper.style.width = "100%";
       wrapper.style.height = "100%";
       container.appendChild(wrapper);
       term.open(wrapper);
+
+      const requestedRenderer = resolveRequestedRenderer(
+        cfgStore.config?.appearance.terminal_renderer,
+      );
+
+      const loadDomRenderer = () => {
+        rendererAddonRef.current = null;
+        rendererKindRef.current = "dom";
+        return "dom" as const;
+      };
+
+      const loadCanvasRenderer = (reason?: unknown) => {
+        try {
+          const canvasAddon = new CanvasAddon();
+          term.loadAddon(canvasAddon);
+          rendererAddonRef.current = canvasAddon;
+          rendererKindRef.current = "canvas";
+          return "canvas" as const;
+        } catch (err) {
+          rendererAddonRef.current = null;
+          rendererKindRef.current = "dom";
+          logError(
+            `Canvas renderer unavailable, falling back to DOM: ${reason ?? err}`,
+          );
+          return "dom" as const;
+        }
+      };
+
+      const loadDefaultFallbackRenderer = (reason: unknown) => {
+        return resolveAutoRenderer() === "canvas"
+          ? loadCanvasRenderer(reason)
+          : loadDomRenderer();
+      };
+
+      const loadWebglRenderer = () => {
+        if (typeof WebGL2RenderingContext === "undefined") {
+          logError("WebGL renderer unavailable, falling back automatically");
+          return loadDefaultFallbackRenderer("WebGL2 is not available in this runtime");
+        }
+
+        try {
+          const webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => {
+            if (isDisposed() || rendererAddonRef.current !== webglAddon) return;
+            rendererAddonRef.current = null;
+            rendererKindRef.current = "dom";
+            webglAddon.dispose();
+            logError("WebGL renderer lost context, falling back automatically");
+            loadDefaultFallbackRenderer("WebGL context loss");
+          });
+          term.loadAddon(webglAddon);
+          rendererAddonRef.current = webglAddon;
+          rendererKindRef.current = "webgl";
+          return "webgl" as const;
+        } catch (err) {
+          rendererAddonRef.current = null;
+          rendererKindRef.current = "dom";
+          logError(`WebGL renderer unavailable, falling back automatically: ${err}`);
+          return loadDefaultFallbackRenderer(err);
+        }
+      };
+
+      switch (requestedRenderer) {
+        case "webgl":
+          loadWebglRenderer();
+          break;
+        case "canvas":
+          loadCanvasRenderer();
+          break;
+        case "dom":
+          loadDomRenderer();
+          break;
+      }
+
       registerTerminal(paneId, term);
 
       // Let Ctrl+F, Ctrl+Shift+C, and Ctrl+Shift+V bubble up to React
@@ -865,7 +955,8 @@ const TerminalPane = memo(function TerminalPane({
           wrapper,
           runtime,
           fitAddon: fitAddonRef.current!,
-          canvasAddon: canvasAddonRef.current,
+          rendererAddon: rendererAddonRef.current,
+          rendererKind: rendererKindRef.current,
           searchAddon: searchAddonRef.current!,
         });
       } else {
@@ -878,8 +969,9 @@ const TerminalPane = memo(function TerminalPane({
         if (outputDrainRaf !== null) {
           cancelAnimationFrame(outputDrainRaf);
         }
-        canvasAddonRef.current?.dispose();
-        canvasAddonRef.current = null;
+        rendererAddonRef.current?.dispose();
+        rendererAddonRef.current = null;
+        rendererKindRef.current = "dom";
         term.dispose();
 
         const id = runtime.ptyId;
