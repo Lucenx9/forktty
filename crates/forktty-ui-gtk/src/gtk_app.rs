@@ -524,8 +524,8 @@ pub fn run() {
 
 fn build_ui(app: &adw::Application) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let app_config = config::load_config().unwrap_or_default();
+    let shell = configured_shell(&app_config);
     let quake_mode = app_config.appearance.window_mode == "quake";
     let (default_width, default_height) = if quake_mode {
         quake_default_size()
@@ -695,6 +695,15 @@ fn build_ui(app: &adw::Application) {
     start_socket_server(state.clone());
 
     window.present();
+}
+
+fn configured_shell(config: &config::AppConfig) -> String {
+    let shell = config.general.shell.trim();
+    if shell.is_empty() {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+    } else {
+        shell.to_string()
+    }
 }
 
 fn restore_or_bootstrap_workspaces(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -1373,5 +1382,13 @@ mod tests {
             surface_progress_key("surface-1"),
             "surface:surface-1:progress"
         );
+    }
+
+    #[test]
+    fn uses_configured_shell_for_gtk_spawn() {
+        let mut config = config::AppConfig::default();
+        config.general.shell = "/bin/zsh".to_string();
+
+        assert_eq!(configured_shell(&config), "/bin/zsh");
     }
 }
