@@ -111,10 +111,11 @@ current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
 
 `scripts/gtk-build-deb.sh` creates a preview package named `forktty-gtk` so it
 does not replace the existing Tauri package while the migration is still in
-progress.
+progress. The CI workflow builds that package on pull requests and pushes, and
+uploads `target/packaging/deb/*.deb` to GitHub releases when a release is
+published.
 
 ## Remaining Parity Work
 
 - Expand quake behavior with monitor-aware placement and global shortcut support
   where the desktop portal/compositor permits it.
-- Add release artifact publishing for the GTK package.
