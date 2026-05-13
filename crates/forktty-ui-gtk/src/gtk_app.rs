@@ -7,6 +7,10 @@ use forktty_terminal::vte::{
     send_text as vte_send_text, spawn_vte_terminal, TerminalExt, VteTerminalWidget,
 };
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
+use global_hotkey::{
+    hotkey::{Code, HotKey},
+    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
+};
 use gtk::gio;
 use gtk::glib;
 use gtk4 as gtk;
@@ -450,6 +454,9 @@ fn build_ui(app: &adw::Application) {
     });
 
     install_actions(app, &window, &state);
+    if quake_mode {
+        install_global_quake_shortcut(&window);
+    }
 
     start_socket_server(state.clone());
 
@@ -473,6 +480,38 @@ fn quake_default_size() -> (i32, i32) {
     let width = (geometry.width() - 80).clamp(720, 1800);
     let height = (geometry.height() * 2 / 5).clamp(360, 640);
     (width, height)
+}
+
+fn toggle_quake_window(window: &adw::ApplicationWindow) {
+    if window.is_visible() {
+        window.hide();
+    } else {
+        window.present();
+    }
+}
+
+fn install_global_quake_shortcut(window: &adw::ApplicationWindow) {
+    let hotkey = HotKey::new(None, Code::F12);
+    let Ok(manager) = GlobalHotKeyManager::new() else {
+        eprintln!("Global F12 quake shortcut is not available on this desktop session");
+        return;
+    };
+    if let Err(err) = manager.register(hotkey) {
+        eprintln!("Failed to register global F12 quake shortcut: {err}");
+        return;
+    }
+
+    let window = window.clone();
+    let hotkey_id = hotkey.id();
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        let _keep_manager_alive = &manager;
+        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+            if event.id() == hotkey_id && event.state() == HotKeyState::Pressed {
+                toggle_quake_window(&window);
+            }
+        }
+        glib::ControlFlow::Continue
+    });
 }
 
 fn install_actions(
@@ -508,13 +547,7 @@ fn install_actions(
     });
     add_action(app, "toggle-quake", {
         let window = window.clone();
-        move || {
-            if window.is_visible() {
-                window.hide();
-            } else {
-                window.present();
-            }
-        }
+        move || toggle_quake_window(&window)
     });
 
     app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
