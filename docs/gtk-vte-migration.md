@@ -113,4 +113,4 @@ progress.
 
 - Expand quake behavior with monitor-aware placement and global shortcut support
   where the desktop portal/compositor permits it.
-- Harden `.deb` metadata and add CI/release wiring for the GTK package.
+- Add release artifact publishing for the GTK package.

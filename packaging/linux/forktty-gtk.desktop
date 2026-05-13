@@ -4,8 +4,7 @@ Name=ForkTTY GTK
 Comment=Linux-native multi-agent terminal
 Exec=forktty-gtk
 Icon=forktty
-Categories=Development;TerminalEmulator;
+Categories=System;TerminalEmulator;
 Terminal=false
 StartupNotify=true
 StartupWMClass=forktty-gtk
-

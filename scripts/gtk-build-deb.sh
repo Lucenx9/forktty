@@ -24,6 +24,10 @@ command -v dpkg-deb >/dev/null || {
   exit 1
 }
 
+if command -v desktop-file-validate >/dev/null; then
+  desktop-file-validate "$ROOT_DIR/packaging/linux/forktty-gtk.desktop"
+fi
+
 cargo build -p forktty-ui-gtk --features gtk-vte --release
 
 rm -rf "$PKG_ROOT"
@@ -34,12 +38,14 @@ install -Dm644 "$ROOT_DIR/src-tauri/icons/128x128.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
+INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"
 cat > "$PKG_ROOT/DEBIAN/control" <<CONTROL
 Package: $PKG_NAME
 Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
+Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://github.com/Lucenx9/forktty
 Depends: libc6, libgtk-4-1, libadwaita-1-0, libvte-2.91-gtk4-0
@@ -48,6 +54,5 @@ Description: Linux-native ForkTTY GTK/VTE preview
  This package intentionally installs as forktty-gtk while the Tauri path remains available.
 CONTROL
 
-dpkg-deb --build "$PKG_ROOT" "$DEB_PATH"
+dpkg-deb --build --root-owner-group "$PKG_ROOT" "$DEB_PATH"
 echo "$DEB_PATH"
-
