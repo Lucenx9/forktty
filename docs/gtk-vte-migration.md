@@ -40,8 +40,11 @@ Tauri/React implementation.
 - `metadata.list_status`
 - `metadata.clear_status`
 - `metadata.set_progress`
+- `metadata.list_progress`
 - `metadata.clear_progress`
 - `metadata.log`
+- `metadata.list_logs`
+- `metadata.clear_logs`
 - `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`
   injection through the terminal backend adapter.
 - Worktree create, attach, list, remove, merge, status, and hook execution in
@@ -50,7 +53,8 @@ Tauri/React implementation.
 - CLI worktree commands: `worktree-list`, `worktree-create`, `worktree-attach`,
   `worktree-remove`, and `worktree-merge`.
 - CLI metadata commands: `set-status`, `list-status`, `clear-status`,
-  `set-progress`, `clear-progress`, and `log`.
+  `set-progress`, `list-progress`, `clear-progress`, `log`, `logs`, and
+  `clear-logs`.
 - GTK app startup now binds the local Unix socket and routes terminal backend
   commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
   VTE through this adapter.

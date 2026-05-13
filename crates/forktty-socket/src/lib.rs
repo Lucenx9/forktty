@@ -527,6 +527,17 @@ pub async fn dispatch(
             };
             Ok(json!(progress))
         }
+        "metadata.list_progress" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let progress = {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.list_progress(&workspace_id)
+            };
+            Ok(json!(progress))
+        }
         "metadata.clear_progress" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = params
@@ -571,6 +582,32 @@ pub async fn dispatch(
                     .ok_or_else(|| "Workspace not found".to_string())?
             };
             Ok(json!(log))
+        }
+        "metadata.list_logs" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let logs = {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.list_logs(&workspace_id)
+            };
+            Ok(json!(logs))
+        }
+        "metadata.clear_logs" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let cleared = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.clear_logs(&workspace_id)
+            };
+            if cleared {
+                Ok(json!({"cleared": true}))
+            } else {
+                Err("Workspace not found".to_string())
+            }
         }
         _ => Err(format!("Unknown method: {method}")),
     }
@@ -1112,6 +1149,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(progress["value"], 10.0);
+        let progress_entries = dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(progress_entries.as_array().unwrap().len(), 1);
 
         let log = dispatch(
             &state,
@@ -1125,6 +1170,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(log["level"], "warn");
+        let logs = dispatch(
+            &state,
+            "metadata.list_logs",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(logs.as_array().unwrap().len(), 1);
 
         dispatch(
             &state,
@@ -1133,6 +1186,30 @@ mod tests {
         )
         .await
         .unwrap();
+        let progress_entries = dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert!(progress_entries.as_array().unwrap().is_empty());
+
+        dispatch(
+            &state,
+            "metadata.clear_logs",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        let logs = dispatch(
+            &state,
+            "metadata.list_logs",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert!(logs.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

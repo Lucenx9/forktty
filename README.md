@@ -40,6 +40,7 @@ ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
 ./scripts/forktty.mjs set-status --key agent:codex --label Codex --value Running --color blue
 ./scripts/forktty.mjs set-progress --key build --label Build --value 42 --total 100
 ./scripts/forktty.mjs log --level warn "Waiting for reviewer input"
+./scripts/forktty.mjs logs
 ```
 
 Inside a ForkTTY terminal, spawned shells already receive:

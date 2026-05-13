@@ -335,8 +335,11 @@ Usage:
   ./scripts/forktty.mjs list-status [--workspace-id <id>]
   ./scripts/forktty.mjs clear-status [--key <key>]
   ./scripts/forktty.mjs set-progress --key <key> --value <number> [--label <label>] [--total <number>]
+  ./scripts/forktty.mjs list-progress [--workspace-id <id>]
   ./scripts/forktty.mjs clear-progress [--key <key>]
   ./scripts/forktty.mjs log [message] [--message <message>] [--level info|warn|error]
+  ./scripts/forktty.mjs logs [--workspace-id <id>]
+  ./scripts/forktty.mjs clear-logs [--workspace-id <id>]
   ./scripts/forktty.mjs notifications [--json]
   ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
   ./scripts/forktty.mjs hooks <agent> <event>
@@ -349,7 +352,7 @@ Selector flags:
 
 Notes:
   - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
-  - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify/status commands.
+  - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
 `);
 }
@@ -713,6 +716,35 @@ async function handleSetProgress(context, args) {
   }
 }
 
+function formatProgressLine(progress) {
+  const label = progress.label || progress.key;
+  if (typeof progress.total === "number") {
+    return `${label}: ${progress.value}/${progress.total}`;
+  }
+  return `${label}: ${progress.value}`;
+}
+
+async function handleListProgress(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "metadata.list_progress", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No progress entries\n");
+    return;
+  }
+
+  for (const progress of result) {
+    process.stdout.write(`${formatProgressLine(progress)}\n`);
+  }
+}
+
 async function handleClearProgress(context, args) {
   const { options } = parseFlags(args);
   await sendSocketRequest(context.socketPath, "metadata.clear_progress", {
@@ -727,6 +759,10 @@ async function handleClearProgress(context, args) {
   }
 }
 
+function formatLogLine(log) {
+  return `[${log.level || "info"}] ${log.message || ""}`;
+}
+
 async function handleLog(context, args) {
   const { options, positionals } = parseFlags(args);
   const stdinText = await readStdinText();
@@ -737,6 +773,40 @@ async function handleLog(context, args) {
     printJson({ result: true });
   } else {
     process.stdout.write(`Appended ${params.level} log\n`);
+  }
+}
+
+async function handleLogs(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "metadata.list_logs", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No logs\n");
+    return;
+  }
+
+  for (const log of result) {
+    process.stdout.write(`${formatLogLine(log)}\n`);
+  }
+}
+
+async function handleClearLogs(context, args) {
+  const { options } = parseFlags(args);
+  await sendSocketRequest(context.socketPath, "metadata.clear_logs", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Cleared logs\n");
   }
 }
 
@@ -1200,11 +1270,21 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "set-progress":
       await handleSetProgress(context, args);
       return;
+    case "list-progress":
+      await handleListProgress(context, args);
+      return;
     case "clear-progress":
       await handleClearProgress(context, args);
       return;
     case "log":
       await handleLog(context, args);
+      return;
+    case "logs":
+    case "list-logs":
+      await handleLogs(context, args);
+      return;
+    case "clear-logs":
+      await handleClearLogs(context, args);
       return;
     case "notifications":
       await handleNotifications(context);
