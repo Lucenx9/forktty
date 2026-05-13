@@ -3,7 +3,9 @@ use forktty_core::{config, NotificationKind, PaneNode, SplitAxis, WorkspaceModel
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
-use forktty_terminal::vte::{send_text as vte_send_text, spawn_vte_terminal, VteTerminalWidget};
+use forktty_terminal::vte::{
+    send_text as vte_send_text, spawn_vte_terminal, TerminalExt, VteTerminalWidget,
+};
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
 use gtk::gio;
 use gtk::glib;
@@ -158,6 +160,7 @@ impl VteController {
         }
         match spawn_vte_terminal(&request) {
             Ok(widget) => {
+                attach_vte_signal_handlers(&widget, &self.model, &request);
                 widget.grab_focus();
                 self.container.append(&widget);
                 self.widgets.insert(request.surface_id, widget);
@@ -207,6 +210,52 @@ impl VteController {
             }
         }
     }
+}
+
+fn attach_vte_signal_handlers(
+    widget: &VteTerminalWidget,
+    model: &Arc<Mutex<WorkspaceModel>>,
+    request: &SpawnRequest,
+) {
+    let surface_id = request.surface_id.clone();
+    let title_model = model.clone();
+    widget.connect_window_title_changed(move |terminal| {
+        if let Some(title) = terminal.window_title() {
+            if let Ok(mut model) = title_model.lock() {
+                let _ = model.set_surface_title(&surface_id, title.to_string());
+            }
+        }
+    });
+
+    let surface_id = request.surface_id.clone();
+    let workspace_id = request.workspace_id.clone();
+    let bell_model = model.clone();
+    widget.connect_bell(move |_| {
+        if let Ok(mut model) = bell_model.lock() {
+            model.create_notification(
+                "Terminal bell",
+                "A terminal requested attention",
+                NotificationKind::Info,
+                Some(workspace_id.clone()),
+                Some(surface_id.clone()),
+            );
+        }
+    });
+
+    let surface_id = request.surface_id.clone();
+    let workspace_id = request.workspace_id.clone();
+    let exit_model = model.clone();
+    widget.connect_child_exited(move |_, status| {
+        if let Ok(mut model) = exit_model.lock() {
+            model.create_notification(
+                "Terminal exited",
+                format!("Process exited with status {status}"),
+                NotificationKind::Info,
+                Some(workspace_id.clone()),
+                Some(surface_id.clone()),
+            );
+        }
+    });
 }
 
 fn build_paned_chain<F>(

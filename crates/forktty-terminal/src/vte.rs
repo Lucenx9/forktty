@@ -3,6 +3,8 @@ use crate::{SpawnRequest, TerminalError};
 #[cfg(feature = "vte")]
 use gtk4::glib;
 #[cfg(feature = "vte")]
+pub use vte4::prelude::TerminalExt;
+#[cfg(feature = "vte")]
 use vte4::prelude::*;
 
 #[cfg(feature = "vte")]

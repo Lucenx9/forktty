@@ -286,6 +286,14 @@ impl WorkspaceModel {
         true
     }
 
+    pub fn set_surface_title(&mut self, surface_id: &str, title: impl Into<String>) -> bool {
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        surface.title = title.into();
+        true
+    }
+
     pub fn create_notification(
         &mut self,
         title: impl Into<String>,
@@ -511,5 +519,18 @@ mod tests {
         let surface = model.surface(&workspace.focused_surface_id).unwrap();
         assert!(surface.unread);
         assert!(model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn can_update_surface_title() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        assert!(model.set_surface_title(&workspace.focused_surface_id, "build"));
+
+        assert_eq!(
+            model.surface(&workspace.focused_surface_id).unwrap().title,
+            "build"
+        );
     }
 }

@@ -59,6 +59,9 @@ Tauri/React implementation.
   surface alive.
 - The GTK sidebar refreshes from `WorkspaceModel`, including active workspace,
   branch/worktree metadata, and unread/attention state.
+- VTE `window-title-changed`, `bell`, and `child-exited` signals now update the
+  core model: terminal titles are mirrored onto surfaces, and bell/exit events
+  create notifications that drive unread/attention state.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema.
@@ -68,9 +71,10 @@ Tauri/React implementation.
 The GTK path starts from VTE owning the PTY. The previous `output_scanner.rs`
 was coupled to the portable-pty read loop, so it is not directly reusable when
 VTE owns the child process. The minimum migrated path keeps notification/unread
-state available via socket `notification.create`; the next VTE-specific step is
-to attach scanning to VTE output signals or shell integration events where VTE
-exposes them.
+state available via socket `notification.create` and VTE bell/child-exit
+signals. Byte-level pattern scanning and hook triggers from terminal output
+still need a VTE-specific implementation, likely through output signals or shell
+integration events where VTE exposes them.
 
 ## Native Dependencies
 
