@@ -35,6 +35,9 @@ Tauri/React implementation.
 - `worktree.merge`
 - `notification.create`
 - `notification.list`
+- `metadata.set_status`
+- `metadata.list_status`
+- `metadata.clear_status`
 - `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`
   injection through the terminal backend adapter.
 - Worktree create, attach, list, remove, merge, status, and hook execution in
@@ -60,7 +63,7 @@ Tauri/React implementation.
   the GTK close-pane action remove VTE widgets and keep at least one focused
   surface alive.
 - The GTK sidebar refreshes from `WorkspaceModel`, including active workspace,
-  branch/worktree metadata, and unread/attention state.
+  branch/worktree metadata, agent status metadata, and unread/attention state.
 - VTE `window-title-changed`, `bell`, and `child-exited` signals now update the
   core model: terminal titles are mirrored onto surfaces, and bell/exit events
   create notifications that drive unread/attention state.

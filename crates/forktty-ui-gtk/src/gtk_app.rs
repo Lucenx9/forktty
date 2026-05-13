@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use forktty_core::{
     config, dispatch_notification, NotificationItem, NotificationKind, PaneNode, SplitAxis,
-    WorkspaceModel,
+    StatusEntry, WorkspaceModel,
 };
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
@@ -581,9 +581,18 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
     let workspaces = model
         .lock()
         .ok()
-        .map(|model| model.list_workspaces())
+        .map(|model| {
+            model
+                .list_workspaces()
+                .into_iter()
+                .map(|workspace| {
+                    let statuses = model.list_status(&workspace.id);
+                    (workspace, statuses)
+                })
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
-    for workspace in workspaces {
+    for (workspace, statuses) in workspaces {
         let branch = if workspace.git_branch.is_empty() {
             String::new()
         } else {
@@ -602,8 +611,9 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
         let active = if workspace.active { "*" } else { " " };
         let label = gtk::Label::builder()
             .label(format!(
-                "{active} {}{branch}{worktree}{attention}",
-                workspace.name
+                "{active} {}{branch}{worktree}{attention}{}",
+                workspace.name,
+                format_status_summary(&statuses)
             ))
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -614,6 +624,18 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
             .build();
         sidebar.append(&label);
     }
+}
+
+fn format_status_summary(statuses: &[StatusEntry]) -> String {
+    if statuses.is_empty() {
+        return String::new();
+    }
+    let summary = statuses
+        .iter()
+        .map(|status| format!("{}: {}", status.label, status.value))
+        .collect::<Vec<_>>()
+        .join("  ");
+    format!("\n  {summary}")
 }
 
 fn add_action<F>(app: &adw::Application, name: &str, callback: F)

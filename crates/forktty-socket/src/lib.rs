@@ -417,6 +417,57 @@ pub async fn dispatch(
                 .map_err(|_| "Lock poisoned".to_string())?;
             Ok(json!(model.list_notifications()))
         }
+        "metadata.set_status" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let key = required_string(&params, "key")?;
+            let label = required_string(&params, "label")?;
+            let value = required_string(&params, "value")?;
+            let color = params
+                .get("color")
+                .and_then(Value::as_str)
+                .filter(|color| !color.trim().is_empty())
+                .map(String::from);
+            let status = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .set_status(&workspace_id, key, label, value, color)
+                    .ok_or_else(|| "Workspace not found".to_string())?
+            };
+            Ok(json!(status))
+        }
+        "metadata.list_status" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let statuses = {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.list_status(&workspace_id)
+            };
+            Ok(json!(statuses))
+        }
+        "metadata.clear_status" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let key = params
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|key| !key.trim().is_empty());
+            let cleared = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.clear_status(&workspace_id, key)
+            };
+            if cleared {
+                Ok(json!({"cleared": true}))
+            } else {
+                Err("Workspace not found".to_string())
+            }
+        }
         _ => Err(format!("Unknown method: {method}")),
     }
 }
@@ -507,6 +558,49 @@ fn worktree_layout() -> String {
         .unwrap_or_else(|| "nested".to_string())
 }
 
+fn required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("Missing {key}"))
+}
+
+fn resolve_workspace_id_for_metadata(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<String, String> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if let Ok(selector) = workspace_selector_from_params(params) {
+        return match selector {
+            WorkspaceSelector::Id(id) => model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.id == id)
+                .map(|workspace| workspace.id)
+                .ok_or_else(|| "Workspace not found".to_string()),
+            WorkspaceSelector::Name(name) => model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.name == name)
+                .map(|workspace| workspace.id)
+                .ok_or_else(|| "Workspace not found".to_string()),
+            WorkspaceSelector::WorktreeName(name) => model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
+                .map(|workspace| workspace.id)
+                .ok_or_else(|| "Workspace not found".to_string()),
+        };
+    }
+    model
+        .active_workspace_id()
+        .ok_or_else(|| "Workspace not found".to_string())
+}
+
 fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, String> {
     if let Some(id) = params.get("id").and_then(Value::as_str) {
         return Ok(WorkspaceSelector::Id(id));
@@ -514,10 +608,16 @@ fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_
     if let Some(id) = params.get("workspace_id").and_then(Value::as_str) {
         return Ok(WorkspaceSelector::Id(id));
     }
+    if let Some(id) = params.get("workspaceId").and_then(Value::as_str) {
+        return Ok(WorkspaceSelector::Id(id));
+    }
     if let Some(name) = params.get("name").and_then(Value::as_str) {
         return Ok(WorkspaceSelector::Name(name));
     }
     if let Some(name) = params.get("workspace_name").and_then(Value::as_str) {
+        return Ok(WorkspaceSelector::Name(name));
+    }
+    if let Some(name) = params.get("workspaceName").and_then(Value::as_str) {
         return Ok(WorkspaceSelector::Name(name));
     }
     if let Some(worktree_name) = params
@@ -827,6 +927,46 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(notification["title"], "Prompt");
+
+        let status = dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspaces[0]["id"],
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "color": "blue"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status["value"], "Running");
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses.as_array().unwrap().len(), 1);
+
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({"workspace_id": workspaces[0]["id"], "key": "agent:codex"}),
+        )
+        .await
+        .unwrap();
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

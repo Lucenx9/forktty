@@ -73,6 +73,15 @@ pub struct NotificationItem {
     pub surface_id: Option<SurfaceId>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatusEntry {
+    pub key: String,
+    pub label: String,
+    pub value: String,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationKind {
@@ -88,6 +97,7 @@ pub struct WorkspaceModel {
     surfaces: BTreeMap<SurfaceId, Surface>,
     workspace_order: Vec<WorkspaceId>,
     notifications: Vec<NotificationItem>,
+    statuses: BTreeMap<WorkspaceId, Vec<StatusEntry>>,
     next_workspace: u64,
     next_surface: u64,
     next_notification: u64,
@@ -167,6 +177,7 @@ impl WorkspaceModel {
         self.workspace_order.retain(|candidate| candidate != &id);
         self.surfaces
             .retain(|_, surface| surface.workspace_id != removed.id);
+        self.statuses.remove(&removed.id);
         if removed.active {
             if let Some(next_id) = self.workspace_order.first().cloned() {
                 if let Some(next) = self.workspaces.get_mut(&next_id) {
@@ -182,6 +193,19 @@ impl WorkspaceModel {
             .iter()
             .filter_map(|id| self.workspaces.get(id).cloned())
             .collect()
+    }
+
+    pub fn active_workspace_id(&self) -> Option<WorkspaceId> {
+        self.workspace_order
+            .iter()
+            .find(|id| {
+                self.workspaces
+                    .get(*id)
+                    .map(|workspace| workspace.active)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .or_else(|| self.workspace_order.first().cloned())
     }
 
     pub fn list_surfaces(&self, workspace_id: Option<&str>) -> Vec<Surface> {
@@ -321,6 +345,51 @@ impl WorkspaceModel {
 
     pub fn list_notifications(&self) -> Vec<NotificationItem> {
         self.notifications.clone()
+    }
+
+    pub fn set_status(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        color: Option<String>,
+    ) -> Option<StatusEntry> {
+        if !self.workspaces.contains_key(workspace_id) {
+            return None;
+        }
+        let entry = StatusEntry {
+            key: key.into(),
+            label: label.into(),
+            value: value.into(),
+            color,
+        };
+        let entries = self.statuses.entry(workspace_id.to_string()).or_default();
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|existing| existing.key == entry.key)
+        {
+            *existing = entry.clone();
+        } else {
+            entries.push(entry.clone());
+        }
+        Some(entry)
+    }
+
+    pub fn list_status(&self, workspace_id: &str) -> Vec<StatusEntry> {
+        self.statuses.get(workspace_id).cloned().unwrap_or_default()
+    }
+
+    pub fn clear_status(&mut self, workspace_id: &str, key: Option<&str>) -> bool {
+        let Some(entries) = self.statuses.get_mut(workspace_id) else {
+            return self.workspaces.contains_key(workspace_id);
+        };
+        if let Some(key) = key {
+            entries.retain(|entry| entry.key != key);
+        } else {
+            entries.clear();
+        }
+        true
     }
 
     fn next_workspace_id(&mut self) -> WorkspaceId {
@@ -532,5 +601,32 @@ mod tests {
             model.surface(&workspace.focused_surface_id).unwrap().title,
             "build"
         );
+    }
+
+    #[test]
+    fn can_set_list_and_clear_workspace_status() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        let status = model
+            .set_status(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+            )
+            .unwrap();
+
+        assert_eq!(status.value, "Running");
+        assert_eq!(model.list_status(&workspace.id), vec![status]);
+
+        model
+            .set_status(&workspace.id, "agent:codex", "Codex", "Ready", None)
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Ready");
+
+        assert!(model.clear_status(&workspace.id, Some("agent:codex")));
+        assert!(model.list_status(&workspace.id).is_empty());
     }
 }
