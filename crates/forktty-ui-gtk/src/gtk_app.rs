@@ -236,6 +236,20 @@ fn attach_vte_signal_handlers(
     request: &SpawnRequest,
 ) {
     let surface_id = request.surface_id.clone();
+    let focus_model = model.clone();
+    widget.connect_has_focus_notify(move |terminal| {
+        if terminal.has_focus() {
+            terminal.add_css_class("focused-terminal");
+            if let Ok(mut model) = focus_model.lock() {
+                let _ = model.focus_surface(&surface_id);
+                let _ = model.mark_surface_unread(&surface_id, false);
+            }
+        } else {
+            terminal.remove_css_class("focused-terminal");
+        }
+    });
+
+    let surface_id = request.surface_id.clone();
     let title_model = model.clone();
     widget.connect_termprop_changed(Some(VTE_TERMPROP_XTERM_TITLE), move |terminal, _| {
         let (title, _) = terminal.termprop_string(VTE_TERMPROP_XTERM_TITLE);
@@ -632,6 +646,7 @@ fn build_ui(app: &adw::Application) {
         "
         window { background: @window_bg_color; }
         .navigation-sidebar { padding: 6px; }
+        .focused-terminal { outline: 2px solid @accent_color; outline-offset: -2px; }
         ",
     );
     if let Some(display) = gtk::gdk::Display::default() {

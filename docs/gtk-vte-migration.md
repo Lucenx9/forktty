@@ -64,6 +64,8 @@ Tauri/React implementation.
 - GTK split panes are rendered from the core `PaneNode` tree. UI split buttons
   and socket `surface.split` both create real VTE-backed surfaces and rebuild
   the GTK `Paned` layout from the model.
+- VTE focus events update the core focused surface, clear that surface's unread
+  marker, and apply a focused terminal CSS indicator for split-pane workflows.
 - GTK command palette, notification panel, and settings dialog have native
   implementations. The notification panel can clear unread/attention state, and
   settings persist shell, font size, notification command, worktree layout,
