@@ -4,9 +4,9 @@
 
 # ForkTTY
 
-**Linux-only multi-agent terminal with split panes, git worktree workspaces, session restore, and prompt-aware notifications.**
+**Linux-first multi-agent terminal with a programmable local socket API, first-class git worktrees, and prompt-aware notifications.**
 
-Run several coding agents in one desktop window. ForkTTY keeps their terminals and workspace state separated, can place agents in isolated git worktrees, and surfaces unread prompts when a background workspace needs attention.
+Run several coding agents in one desktop window. ForkTTY keeps their terminals and workspace state separated, can place agents in isolated git worktrees, exposes a user-local Unix socket for automation, and surfaces unread prompts when a background workspace needs attention.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
@@ -22,20 +22,60 @@ Run several coding agents in one desktop window. ForkTTY keeps their terminals a
 
 > **Status**: Early development (v0.1.2). ForkTTY is usable on Linux, but the runtime surface is still changing. There are no macOS or Windows builds.
 
+## Why ForkTTY
+
+- **Agent-agnostic automation**: one local socket API and one CLI flow for Codex, Claude Code, and Gemini CLI instead of a UI tied to a single agent vendor.
+- **First-class worktree workflows**: spawn isolated worktree workspaces, keep branch/cwd metadata visible, and run optional `.forktty/setup` / `.forktty/teardown` hooks inside verified worktrees.
+- **Local-first and privacy-first**: no telemetry, no update checks, no external network dependency, user-private Unix socket permissions, strict path validation, and CSP-locked app content.
+- **Practical Linux desktop UX**: split panes, sidebar attention states, prompt-aware notifications, session restore, command palette, and tray integration in one app.
+
+## 30-Second Automation
+
+ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
+
+```bash
+./scripts/forktty.mjs list
+./scripts/forktty.mjs focus "Workspace 2"
+./scripts/forktty.mjs notify --title "Input needed" --kind prompt "Blocked on test fixture"
+./scripts/forktty.mjs set-status --key agent:codex --label Codex --value Running --color blue
+```
+
+Inside a ForkTTY terminal, spawned shells already receive:
+
+- `FORKTTY_WORKSPACE_ID`
+- `FORKTTY_SURFACE_ID`
+- `FORKTTY_SOCKET_PATH`
+
+That means hooks and scripts can target the current workspace without extra flags.
+
+Supported hook templates and installer flow:
+
+```bash
+./scripts/forktty.mjs hooks setup
+./scripts/forktty.mjs hooks setup codex claude
+```
+
+The installer merges hook commands into:
+
+- Codex: `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`
+- Claude Code: `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`
+- Gemini CLI: `~/.gemini/settings.json`
+
 ## Features
 
 - **Linux desktop app** built with Tauri v2, Rust, React 19, TypeScript, and Vite.
-- **xterm.js terminals** using `@xterm/xterm` 5.5 with Fit, Search, and Canvas addons.
+- **Local socket API and CLI** for workspace, surface, notification, worktree, and metadata automation.
+- **Agent-agnostic hook templates** for Codex, Claude Code, and Gemini CLI, with status pills and prompt notifications routed through the same local pipeline.
+- **Git worktree workspaces** using native `git2` operations, configurable nested/sibling/outer-nested layouts, and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Split panes** powered by `react-resizable-panels`, with horizontal/vertical splits, drag resize, and `Alt+Arrow` navigation.
 - **Workspace sidebar** with branch, directory, worktree status, unread counts, notification previews, drag reorder, and optional collapsed/right-side layouts.
-- **Git worktree workspaces** using native `git2` operations, configurable nested/sibling/outer-nested layouts, and optional `.forktty/setup` / `.forktty/teardown` hooks.
+- **xterm.js terminals** using `@xterm/xterm` 5.5 with Fit, Search, and Canvas addons.
 - **Session persistence** for workspace order, active workspace, pane tree, focused pane, names, working directories, branches, and worktree metadata. PTYs and scrollback are not persisted.
 - **Session restore hardening**: malformed or unsupported session files are ignored and quarantined; pane trees are validated before restore.
 - **Prompt-aware notifications** from OSC 133, Claude-style prompt patterns, and OSC 9/99/777 terminal notification sequences.
 - **Noise controls** for notifications: switch/restore suppression, short-window dedupe, and no repeated prompt notifications while a workspace is already unread.
 - **Welcome/onboarding and polished dialogs**: first-run welcome overlay, safer focus defaults for destructive modals, and improved empty/loading/error states in settings, branch picker, command palette, notification panel, and pane spawn failures.
 - **Ghostty theme compatibility** for local colors, font family, font size, and palettes, with explicit ForkTTY config taking precedence.
-- **Local socket API** over a user-private Unix domain socket for workspace, surface, notification, worktree, and metadata automation.
 - **System tray integration** with unread-count tooltip and click-to-focus behavior when the desktop environment supports it.
 - **Privacy-first defaults**: no telemetry, no update checks, no external network calls. See [PRIVACY.md](PRIVACY.md).
 
@@ -222,53 +262,6 @@ Prompt notifications are suppressed briefly during restore and workspace switche
 Worktree workspaces are optional. `Ctrl+Shift+N` opens the branch picker, which can create a new branch from `HEAD` or attach a worktree to an existing branch. Layout is controlled by `general.worktree_layout`.
 
 Socket-driven `worktree.*` operations validate caller-provided `cwd` values against repositories already open in the frontend. Subdirectories and linked worktrees in the same open repository are accepted; unrelated repositories are rejected. Removing the last worktree-backed workspace creates a replacement plain workspace rooted at the repository fallback path before closing the worktree workspace.
-
-## CLI And Hooks
-
-ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
-
-```bash
-./scripts/forktty.mjs list
-./scripts/forktty.mjs focus "Workspace 2"
-./scripts/forktty.mjs notify --title "Input needed" --kind prompt "Blocked on test fixture"
-./scripts/forktty.mjs set-status --key agent:codex --label Codex --value Running --color blue
-./scripts/forktty.mjs clear-status --key agent:codex
-```
-
-You can also invoke it through npm:
-
-```bash
-npm run forktty:cli -- list
-```
-
-Inside a ForkTTY terminal, spawned shells already receive:
-
-- `FORKTTY_WORKSPACE_ID`
-- `FORKTTY_SURFACE_ID`
-- `FORKTTY_SOCKET_PATH`
-
-That lets notifications, status updates, and hook events auto-target the current workspace without extra flags.
-
-Agent hook templates and an installer live under [`hooks/`](hooks/) and [`scripts/forktty.mjs`](scripts/forktty.mjs):
-
-```bash
-./scripts/forktty.mjs hooks setup
-./scripts/forktty.mjs hooks setup codex claude
-```
-
-The installer merges hook commands into:
-
-- Codex: `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`
-- Claude Code: `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`
-- Gemini CLI: `~/.gemini/settings.json`
-
-Current hook behavior is intentionally small and reliable:
-
-- `session-start` -> status pill `Ready`
-- `prompt-submit` -> status pill `Running`
-- `notification` -> status pill `Needs input` plus a prompt notification
-- `stop` -> status pill `Ready`
-- `session-end` -> clears the agent status pill
 
 ## Architecture
 
