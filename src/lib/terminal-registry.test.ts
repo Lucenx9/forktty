@@ -1,8 +1,20 @@
-import { describe, expect, it, afterEach } from "vitest";
-import { registerTerminal, unregisterTerminal, readScreen } from "./terminal-registry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { killPty } from "./pty-bridge";
+import {
+  readScreen,
+  reconcileInstances,
+  registerTerminal,
+  saveInstance,
+  unregisterTerminal,
+} from "./terminal-registry";
 import type { Terminal, IBufferLine } from "@xterm/xterm";
 
-function createMockTerminal(lines: (string | null)[]): Terminal {
+vi.mock("./pty-bridge", () => ({
+  killPty: vi.fn().mockResolvedValue(undefined),
+  logError: vi.fn(),
+}));
+
+function createMockTerminal(lines: (string | null)[] = []): Terminal {
   const buffer = {
     active: {
       length: lines.length,
@@ -18,6 +30,7 @@ function createMockTerminal(lines: (string | null)[]): Terminal {
 
   return {
     buffer,
+    dispose: vi.fn(),
   } as unknown as Terminal;
 }
 
@@ -25,6 +38,7 @@ describe("terminal-registry: readScreen", () => {
   afterEach(() => {
     // Unregister terminals used in tests
     unregisterTerminal("test-pane-1");
+    vi.clearAllMocks();
   });
 
   it("returns null if paneId is falsy", () => {
@@ -63,5 +77,30 @@ describe("terminal-registry: readScreen", () => {
     registerTerminal("test-pane-1", mockTerminal);
 
     expect(readScreen("test-pane-1")).toBe("Line 1\nLine 3");
+  });
+
+  it("kills PTYs for orphaned saved instances during reconciliation", async () => {
+    const wrapper = {
+      remove: vi.fn(),
+    } as unknown as HTMLDivElement;
+    saveInstance("orphan-pane", {
+      terminal: createMockTerminal(),
+      wrapper,
+      runtime: {
+        ptyId: 42,
+        lastCols: null,
+        lastRows: null,
+        disposed: false,
+      },
+      fitAddon: {} as never,
+      canvasAddon: null,
+      searchAddon: {} as never,
+    });
+
+    expect(reconcileInstances(new Set())).toBe(1);
+    await Promise.resolve();
+
+    expect(killPty).toHaveBeenCalledWith(42);
+    expect(wrapper.remove).toHaveBeenCalled();
   });
 });
