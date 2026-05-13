@@ -35,6 +35,7 @@ Tauri/React implementation.
 - `worktree.merge`
 - `notification.create`
 - `notification.list`
+- `notification.clear`
 - `metadata.set_status`
 - `metadata.list_status`
 - `metadata.clear_status`

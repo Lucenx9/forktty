@@ -448,6 +448,14 @@ pub async fn dispatch(
                 .map_err(|_| "Lock poisoned".to_string())?;
             Ok(json!(model.list_notifications()))
         }
+        "notification.clear" => {
+            let mut model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            model.clear_notifications();
+            Ok(json!({"cleared": true}))
+        }
         "metadata.set_status" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_string(&params, "key")?;
@@ -958,6 +966,15 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(notification["title"], "Prompt");
+        dispatch(&state, "notification.clear", json!({}))
+            .await
+            .unwrap();
+        assert!(dispatch(&state, "notification.list", json!({}))
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty());
 
         let status = dispatch(
             &state,

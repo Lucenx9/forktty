@@ -406,6 +406,14 @@ impl WorkspaceModel {
         self.notifications.clone()
     }
 
+    pub fn clear_notifications(&mut self) {
+        self.notifications.clear();
+        let surface_ids = self.surfaces.keys().cloned().collect::<Vec<_>>();
+        for surface_id in surface_ids {
+            let _ = self.mark_surface_unread(&surface_id, false);
+        }
+    }
+
     pub fn set_status(
         &mut self,
         workspace_id: &str,
@@ -670,6 +678,25 @@ mod tests {
         let surface = model.surface(&workspace.focused_surface_id).unwrap();
         assert!(surface.unread);
         assert!(model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn clear_notifications_resets_attention_state() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+
+        model.clear_notifications();
+
+        assert!(model.list_notifications().is_empty());
+        assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
+        assert!(!model.list_workspaces()[0].needs_attention);
     }
 
     #[test]
