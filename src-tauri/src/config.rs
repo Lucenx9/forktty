@@ -56,6 +56,8 @@ pub struct AppearanceConfig {
     pub sidebar_position: String,
     #[serde(default = "default_terminal_renderer")]
     pub terminal_renderer: String,
+    #[serde(default = "default_window_mode")]
+    pub window_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +89,9 @@ fn default_sidebar_position() -> String {
 fn default_terminal_renderer() -> String {
     "auto".to_string()
 }
+fn default_window_mode() -> String {
+    "normal".to_string()
+}
 fn default_true() -> bool {
     true
 }
@@ -111,6 +116,7 @@ impl Default for AppearanceConfig {
             font_size: default_font_size(),
             sidebar_position: default_sidebar_position(),
             terminal_renderer: default_terminal_renderer(),
+            window_mode: default_window_mode(),
         }
     }
 }
@@ -200,6 +206,9 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     ) {
         config.appearance.terminal_renderer = default_terminal_renderer();
     }
+    if !matches!(config.appearance.window_mode.as_str(), "normal" | "quake") {
+        config.appearance.window_mode = default_window_mode();
+    }
     if config.appearance.font_size == 0 {
         config.appearance.font_size = default_font_size();
     }
@@ -250,6 +259,12 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
     ) {
         return Err(ConfigError::Invalid(
             "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl".to_string(),
+        ));
+    }
+
+    if !matches!(config.appearance.window_mode.as_str(), "normal" | "quake") {
+        return Err(ConfigError::Invalid(
+            "appearance.window_mode must be one of: normal, quake".to_string(),
         ));
     }
 
@@ -639,6 +654,7 @@ mod tests {
         assert_eq!(config.general.theme_source, "auto");
         assert_eq!(config.appearance.font_size, 14);
         assert_eq!(config.appearance.terminal_renderer, "auto");
+        assert_eq!(config.appearance.window_mode, "normal");
         assert!(config.notifications.desktop);
     }
 
@@ -806,6 +822,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_rejects_invalid_window_mode() {
+        let mut config = AppConfig::default();
+        config.appearance.window_mode = "dropdown".to_string();
+        let err = validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("window_mode"));
+    }
+
+    #[test]
     fn validate_config_rejects_directory_shell_path() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
@@ -842,11 +866,13 @@ mod tests {
         config.general.worktree_layout = "bogus".to_string();
         config.appearance.sidebar_position = "middle".to_string();
         config.appearance.terminal_renderer = "wayland".to_string();
+        config.appearance.window_mode = "overlay".to_string();
         config.appearance.font_size = 0;
         let normalized = normalize_loaded_config(config);
         assert_eq!(normalized.general.worktree_layout, "nested");
         assert_eq!(normalized.appearance.sidebar_position, "left");
         assert_eq!(normalized.appearance.terminal_renderer, "auto");
+        assert_eq!(normalized.appearance.window_mode, "normal");
         assert_eq!(normalized.appearance.font_size, 14);
     }
 }

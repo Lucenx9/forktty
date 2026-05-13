@@ -41,6 +41,8 @@ import {
   getPtyCwd,
   hasTauriRuntime,
   signalFrontendReady,
+  syncWindowMode,
+  toggleQuakeWindow,
 } from "./lib/pty-bridge";
 import { handleSocketRequest } from "./lib/socket-handler";
 import {
@@ -153,6 +155,9 @@ export default function App() {
   );
   const worktreeLayout = useConfigStore(
     (s) => s.config?.general.worktree_layout ?? "nested",
+  );
+  const windowMode = useConfigStore(
+    (s) => s.config?.appearance.window_mode ?? "normal",
   );
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
 
@@ -519,6 +524,17 @@ export default function App() {
     toggleSettingsPanel,
     toggleNotificationsDrawer,
   ]);
+
+  useEffect(() => {
+    if (!hasTauriRuntime() || !configLoaded) {
+      return;
+    }
+
+    syncWindowMode(windowMode).catch((err) => {
+      logError(err);
+      showToast(`Failed to apply window mode: ${err}`, "warn");
+    });
+  }, [configLoaded, windowMode]);
 
   // Listen for socket API bridge events.
   // Empty deps is intentional: handleSocketRequest reads all state via
@@ -890,6 +906,18 @@ export default function App() {
         aliases: ["sidebar"],
         action: toggleSidebarCollapsed,
       },
+      ...(windowMode === "quake"
+        ? [
+            {
+              id: "toggle-quake-window",
+              label: "Toggle Quake Window",
+              shortcut: "F12",
+              group: "View",
+              aliases: ["quake", "dropdown", "dropdown terminal"],
+              action: () => toggleQuakeWindow().catch(logError),
+            } satisfies CommandEntry,
+          ]
+        : []),
       {
         id: "next-workspace",
         label: "Next Workspace",
@@ -964,6 +992,7 @@ export default function App() {
       toggleSettingsPanel,
       openCommandPalette,
       sidebarCollapsed,
+      windowMode,
       switchWorkspace,
       toggleSidebarCollapsed,
       moveFocus,

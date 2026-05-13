@@ -7,6 +7,7 @@ mod socket_api;
 mod worktree;
 
 use base64::Engine;
+use dpi::{PhysicalPosition, PhysicalSize};
 use output_scanner::{OutputScanner, ScanEvent};
 use pty_manager::{PtyError, PtyManager};
 use serde::Serialize;
@@ -17,12 +18,61 @@ use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State};
+#[cfg(desktop)]
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct AppState {
     pty_manager: Arc<Mutex<PtyManager>>,
     socket_pending: socket_api::PendingRequests,
     socket_frontend: Arc<socket_api::FrontendState>,
     socket_path: String,
+    quake_state: Arc<Mutex<QuakeWindowState>>,
+}
+
+const QUAKE_SHORTCUT_LABEL: &str = "F12";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowMode {
+    Normal,
+    Quake,
+}
+
+impl WindowMode {
+    fn from_config_value(value: &str) -> Self {
+        match value {
+            "quake" => Self::Quake,
+            _ => Self::Normal,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WindowBounds {
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    maximized: bool,
+}
+
+#[derive(Debug)]
+struct QuakeWindowState {
+    mode: WindowMode,
+    restore_bounds: Option<WindowBounds>,
+    shortcut_registered: bool,
+}
+
+impl Default for QuakeWindowState {
+    fn default() -> Self {
+        Self {
+            mode: WindowMode::Normal,
+            restore_bounds: None,
+            shortcut_registered: false,
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn quake_shortcut() -> Shortcut {
+    Shortcut::new(None, Code::F12)
 }
 
 #[derive(Clone, Serialize)]
@@ -55,6 +105,186 @@ fn is_executable_file(path: &std::path::Path) -> bool {
     {
         true
     }
+}
+
+#[cfg(desktop)]
+fn capture_window_bounds(window: &tauri::WebviewWindow) -> Result<WindowBounds, String> {
+    Ok(WindowBounds {
+        position: window.outer_position().map_err(|e| e.to_string())?,
+        size: window.outer_size().map_err(|e| e.to_string())?,
+        maximized: window.is_maximized().map_err(|e| e.to_string())?,
+    })
+}
+
+#[cfg(desktop)]
+fn resolve_quake_bounds(window: &tauri::WebviewWindow) -> Result<WindowBounds, String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "No monitor available for quake mode".to_string())?;
+
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let horizontal_margin = ((monitor_size.width as f64) * 0.02).round() as i32;
+    let width = monitor_size
+        .width
+        .saturating_sub((horizontal_margin.max(0) as u32).saturating_mul(2))
+        .max(960);
+    let height = ((monitor_size.height as f64) * 0.62).round() as u32;
+
+    Ok(WindowBounds {
+        position: PhysicalPosition::new(monitor_position.x + horizontal_margin, monitor_position.y),
+        size: PhysicalSize::new(width, height.max(420)),
+        maximized: false,
+    })
+}
+
+#[cfg(desktop)]
+fn apply_window_bounds(
+    window: &tauri::WebviewWindow,
+    bounds: WindowBounds,
+    always_on_top: bool,
+    skip_taskbar: bool,
+) -> Result<(), String> {
+    if window.is_maximized().map_err(|e| e.to_string())? {
+        window.unmaximize().map_err(|e| e.to_string())?;
+    }
+
+    window
+        .set_always_on_top(always_on_top)
+        .map_err(|e| e.to_string())?;
+    window
+        .set_skip_taskbar(skip_taskbar)
+        .map_err(|e| e.to_string())?;
+    window.set_size(bounds.size).map_err(|e| e.to_string())?;
+    window
+        .set_position(bounds.position)
+        .map_err(|e| e.to_string())?;
+
+    if bounds.maximized {
+        window.maximize().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn ensure_quake_shortcut_registration(
+    app: &tauri::AppHandle,
+    quake_state: &Arc<Mutex<QuakeWindowState>>,
+    should_register: bool,
+) {
+    let Ok(mut state) = quake_state.lock() else {
+        return;
+    };
+
+    if should_register == state.shortcut_registered {
+        return;
+    }
+
+    let manager = app.global_shortcut();
+    let shortcut = quake_shortcut();
+    let result = if should_register {
+        manager.register(shortcut)
+    } else {
+        manager.unregister(shortcut)
+    };
+
+    match result {
+        Ok(()) => state.shortcut_registered = should_register,
+        Err(err) => {
+            let _ = session::write_log(
+                "WARN",
+                &format!("Quake shortcut {QUAKE_SHORTCUT_LABEL} unavailable: {err}"),
+            );
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn sync_window_mode_internal(
+    app: &tauri::AppHandle,
+    quake_state: &Arc<Mutex<QuakeWindowState>>,
+    next_mode: WindowMode,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+
+    {
+        let mut state = quake_state.lock().map_err(|e| e.to_string())?;
+        if state.mode == next_mode {
+            if next_mode == WindowMode::Quake {
+                let bounds = resolve_quake_bounds(&window)?;
+                apply_window_bounds(&window, bounds, true, true)?;
+            }
+        } else {
+            match next_mode {
+                WindowMode::Quake => {
+                    if state.restore_bounds.is_none() {
+                        state.restore_bounds = Some(capture_window_bounds(&window)?);
+                    }
+                    let quake_bounds = resolve_quake_bounds(&window)?;
+                    apply_window_bounds(&window, quake_bounds, true, true)?;
+                }
+                WindowMode::Normal => {
+                    window.set_always_on_top(false).map_err(|e| e.to_string())?;
+                    window.set_skip_taskbar(false).map_err(|e| e.to_string())?;
+                    if let Some(bounds) = state.restore_bounds.take() {
+                        apply_window_bounds(&window, bounds, false, false)?;
+                    }
+                }
+            }
+
+            state.mode = next_mode;
+        }
+    }
+
+    ensure_quake_shortcut_registration(app, quake_state, next_mode == WindowMode::Quake);
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+fn sync_window_mode_internal(
+    _app: &tauri::AppHandle,
+    _quake_state: &Arc<Mutex<QuakeWindowState>>,
+    _next_mode: WindowMode,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn toggle_quake_window_internal(
+    app: &tauri::AppHandle,
+    quake_state: &Arc<Mutex<QuakeWindowState>>,
+) -> Result<(), String> {
+    let state = quake_state.lock().map_err(|e| e.to_string())?;
+    if state.mode != WindowMode::Quake {
+        return Ok(());
+    }
+    drop(state);
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+
+    if window.is_visible().map_err(|e| e.to_string())? {
+        window.hide().map_err(|e| e.to_string())
+    } else {
+        let quake_bounds = resolve_quake_bounds(&window)?;
+        apply_window_bounds(&window, quake_bounds, true, true)?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(not(desktop))]
+fn toggle_quake_window_internal(
+    _app: &tauri::AppHandle,
+    _quake_state: &Arc<Mutex<QuakeWindowState>>,
+) -> Result<(), String> {
+    Ok(())
 }
 
 #[tauri::command]
@@ -433,6 +663,21 @@ fn get_theme() -> Result<config::TerminalTheme, String> {
     Ok(config::resolve_theme(&cfg))
 }
 
+#[tauri::command]
+fn sync_window_mode(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    window_mode: String,
+) -> Result<(), String> {
+    let mode = WindowMode::from_config_value(&window_mode);
+    sync_window_mode_internal(&app, &state.quake_state, mode)
+}
+
+#[tauri::command]
+fn toggle_quake_window(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    toggle_quake_window_internal(&app, &state.quake_state)
+}
+
 // --- Session commands ---
 
 #[tauri::command]
@@ -547,11 +792,13 @@ pub fn run() {
     let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
     let socket_pending = socket_api::PendingRequests::default();
     let socket_frontend = Arc::new(socket_api::FrontendState::default());
+    let quake_state = Arc::new(Mutex::new(QuakeWindowState::default()));
 
     let socket_path_for_cleanup = socket_path.clone();
     let pty_mgr_for_socket = pty_manager.clone();
     let pending_for_socket = socket_pending.clone();
     let frontend_for_socket = socket_frontend.clone();
+    let quake_state_for_setup = quake_state.clone();
 
     tauri::Builder::default()
         .manage(AppState {
@@ -559,8 +806,27 @@ pub fn run() {
             socket_pending,
             socket_frontend,
             socket_path,
+            quake_state,
         })
         .setup(move |app| {
+            #[cfg(desktop)]
+            {
+                let quake_state_for_shortcut = quake_state_for_setup.clone();
+                let shortcut = quake_shortcut();
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |app, pressed_shortcut, event| {
+                            if pressed_shortcut == &shortcut
+                                && event.state() == ShortcutState::Pressed
+                            {
+                                let _ =
+                                    toggle_quake_window_internal(app, &quake_state_for_shortcut);
+                            }
+                        })
+                        .build(),
+                )?;
+            }
+
             // Build system tray icon (best-effort: may fail on Wayland without appindicator)
             match TrayIconBuilder::with_id("main-tray")
                 .tooltip("ForkTTY")
@@ -581,6 +847,16 @@ pub fn run() {
             {
                 Ok(_tray) => {}
                 Err(e) => eprintln!("Tray icon unavailable (Wayland?): {e}"),
+            }
+
+            if let Ok(cfg) = config::load_config() {
+                let initial_window_mode =
+                    WindowMode::from_config_value(&cfg.appearance.window_mode);
+                let _ = sync_window_mode_internal(
+                    &app.handle().clone(),
+                    &quake_state_for_setup,
+                    initial_window_mode,
+                );
             }
 
             let handle = app.handle().clone();
@@ -621,6 +897,8 @@ pub fn run() {
             get_config,
             save_config,
             get_theme,
+            sync_window_mode,
+            toggle_quake_window,
             save_session,
             load_session,
             write_log,

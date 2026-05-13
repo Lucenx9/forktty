@@ -329,6 +329,7 @@ export interface AppConfig {
     font_size: number;
     sidebar_position: string;
     terminal_renderer: string;
+    window_mode: string;
   };
   notifications: {
     desktop: boolean;
@@ -372,6 +373,14 @@ export function saveConfig(configData: AppConfig): Promise<void> {
 
 export function getTheme(): Promise<TerminalTheme> {
   return invoke<TerminalTheme>("get_theme");
+}
+
+export function syncWindowMode(windowMode: string): Promise<void> {
+  return invoke("sync_window_mode", { windowMode });
+}
+
+export function toggleQuakeWindow(): Promise<void> {
+  return invoke("toggle_quake_window");
 }
 
 // --- Session commands ---

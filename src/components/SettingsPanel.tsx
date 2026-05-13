@@ -334,6 +334,22 @@ export default function SettingsPanel() {
           </label>
 
           <label className="settings-field">
+            <span className="settings-label">Window mode</span>
+            <select
+              className="settings-select"
+              value={draft.appearance.window_mode}
+              onChange={(e) => updateAppearance("window_mode", e.target.value)}
+            >
+              <option value="normal">Normal window</option>
+              <option value="quake">Quake dropdown</option>
+            </select>
+            <span className="settings-field-hint">
+              Quake mode keeps the window top-anchored and enables the global
+              F12 toggle.
+            </span>
+          </label>
+
+          <label className="settings-field">
             <span className="settings-label">Terminal renderer</span>
             <select
               className="settings-select"

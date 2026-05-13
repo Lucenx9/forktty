@@ -41,6 +41,7 @@ function makeDefaultConfig(): AppConfig {
       font_size: 14,
       sidebar_position: "left",
       terminal_renderer: "auto",
+      window_mode: "normal",
     },
     notifications: {
       desktop: true,
