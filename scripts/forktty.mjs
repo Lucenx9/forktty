@@ -263,6 +263,11 @@ Usage:
   ./scripts/forktty.mjs close-workspace <selector>
   ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
   ./scripts/forktty.mjs send-text <text> [--surface-id <id>]
+  ./scripts/forktty.mjs worktree-list [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-create <branch> [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-attach <branch> [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-remove <branch-or-worktree> [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-merge <branch-or-worktree> [--cwd <repo>]
   ./scripts/forktty.mjs set-status --key <key> --value <value> [--label <label>] [--color <color>]
   ./scripts/forktty.mjs list-status [--workspace-id <id>]
   ./scripts/forktty.mjs clear-status [--key <key>]
@@ -481,6 +486,84 @@ async function handleSendText(context, args) {
   } else {
     process.stdout.write("Sent text\n");
   }
+}
+
+function worktreeParams(options, positionals, requireName = false) {
+  const params = {};
+  const name = positionals[0] || options.name || options.branch;
+  if (requireName && (!name || typeof name !== "string")) {
+    throw new Error("worktree command requires a branch or worktree name");
+  }
+  if (typeof name === "string" && name.trim()) {
+    params.name = name.trim();
+  }
+  if (typeof options.cwd === "string" && options.cwd.trim()) {
+    params.cwd = options.cwd.trim();
+  }
+  return params;
+}
+
+function formatWorktreeLine(worktree) {
+  const status = worktree.status ? ` ${worktree.status}` : "";
+  return `${worktree.branch || worktree.name} [${worktree.worktree_name}] ${worktree.path}${status}`;
+}
+
+async function handleWorktreeList(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.list",
+    worktreeParams(options, []),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  for (const worktree of result) {
+    process.stdout.write(`${formatWorktreeLine(worktree)}\n`);
+  }
+}
+
+async function handleWorktreeCreate(context, args, method) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    method,
+    worktreeParams(options, positionals, true),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`Opened worktree ${result.branch || result.name} at ${result.path}\n`);
+}
+
+async function handleWorktreeRemove(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.remove",
+    worktreeParams(options, positionals, true),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`Removed worktree ${result.removed}\n`);
+}
+
+async function handleWorktreeMerge(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.merge",
+    worktreeParams(options, positionals, true),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${result}\n`);
 }
 
 async function handleSetStatus(context, args) {
@@ -979,6 +1062,26 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "send-text":
     case "send_text":
       await handleSendText(context, args);
+      return;
+    case "worktree-list":
+    case "worktree:list":
+      await handleWorktreeList(context, args);
+      return;
+    case "worktree-create":
+    case "worktree:create":
+      await handleWorktreeCreate(context, args, "worktree.create");
+      return;
+    case "worktree-attach":
+    case "worktree:attach":
+      await handleWorktreeCreate(context, args, "worktree.attach");
+      return;
+    case "worktree-remove":
+    case "worktree:remove":
+      await handleWorktreeRemove(context, args);
+      return;
+    case "worktree-merge":
+    case "worktree:merge":
+      await handleWorktreeMerge(context, args);
       return;
     case "set-status":
       await handleSetStatus(context, args);

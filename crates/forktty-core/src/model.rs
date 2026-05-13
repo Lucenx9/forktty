@@ -137,6 +137,22 @@ impl WorkspaceModel {
         workspace
     }
 
+    pub fn create_worktree_workspace(
+        &mut self,
+        name: impl Into<String>,
+        working_dir: impl Into<PathBuf>,
+        git_branch: impl Into<String>,
+        worktree_name: impl Into<String>,
+    ) -> Workspace {
+        let mut workspace = self.create_workspace(name, working_dir);
+        workspace.git_branch = git_branch.into();
+        workspace.worktree_dir = Some(workspace.working_dir.clone());
+        workspace.worktree_name = Some(worktree_name.into());
+        self.workspaces
+            .insert(workspace.id.clone(), workspace.clone());
+        workspace
+    }
+
     pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
         let id = self.resolve_workspace_id(selector)?;
         for workspace in self.workspaces.values_mut() {
@@ -467,6 +483,17 @@ mod tests {
         let workspace = model.list_workspaces().remove(0);
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 1);
         assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
+    }
+
+    #[test]
+    fn worktree_workspace_keeps_branch_and_worktree_metadata() {
+        let mut model = WorkspaceModel::new();
+        let workspace =
+            model.create_worktree_workspace("feature", "/tmp/feature", "feature", "feature");
+
+        assert_eq!(workspace.git_branch, "feature");
+        assert_eq!(workspace.worktree_name.as_deref(), Some("feature"));
+        assert_eq!(workspace.worktree_dir, Some(PathBuf::from("/tmp/feature")));
     }
 
     #[test]

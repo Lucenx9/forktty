@@ -208,6 +208,7 @@ version = "0.1.2"
 dependencies = [
  "forktty-core",
  "forktty-terminal",
+ "git2",
  "libc",
  "serde_json",
  "tempfile",

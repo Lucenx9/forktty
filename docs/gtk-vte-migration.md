@@ -12,7 +12,8 @@ Tauri/React implementation.
 - `forktty-socket`: Unix socket JSON-RPC line server that dispatches directly to
   the Rust model and terminal backend.
 - `forktty-ui-gtk`: GTK4/libadwaita shell. The VTE UI is behind
-  `--features gtk-vte` because this machine is missing `vte-2.91-gtk4.pc`.
+  `--features gtk-vte` so dependency-light checks can still run on systems that
+  do not have VTE development files installed.
 
 ## Implemented Migration Surface
 
@@ -26,12 +27,21 @@ Tauri/React implementation.
 - `surface.split`
 - `surface.focus`
 - `surface.close`
+- `worktree.list`
+- `worktree.status`
+- `worktree.create`
+- `worktree.attach`
+- `worktree.remove`
+- `worktree.merge`
 - `notification.create`
 - `notification.list`
 - `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`
   injection through the terminal backend adapter.
 - Worktree create, attach, list, remove, merge, status, and hook execution in
-  `forktty-core`.
+  `forktty-core`, with direct socket dispatch that opens/closes matching
+  worktree-backed workspaces.
+- CLI worktree commands: `worktree-list`, `worktree-create`, `worktree-attach`,
+  `worktree-remove`, and `worktree-merge`.
 
 ## VTE Owning PTY Gap
 
@@ -56,6 +66,12 @@ Debian/Ubuntu-style names:
 - `libadwaita-1-dev`
 - `libvte-2.91-gtk4-dev`
 
+Arch-style names:
+
+- `gtk4`
+- `libadwaita`
+- `vte4`
+
 Build commands:
 
 ```sh
@@ -64,7 +80,9 @@ cargo build -p forktty-ui-gtk --features gtk-vte
 ```
 
 The first command builds the dependency-safe headless binary. The second command
-builds the GTK/VTE app once the VTE development package is installed.
+builds the GTK/VTE app once the VTE development package is installed. On the
+current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
+`0.84.0` and the GTK/VTE feature build passes.
 
 ## Remaining Parity Work
 

@@ -1,5 +1,6 @@
 use forktty_core::{
-    JsonRpcRequest, JsonRpcResponse, NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
+    config, worktree, JsonRpcRequest, JsonRpcResponse, NotificationKind, SplitAxis, WorkspaceModel,
+    WorkspaceSelector,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest};
 use serde_json::{json, Value};
@@ -180,6 +181,98 @@ pub async fn dispatch(
             };
             Ok(json!(workspace))
         }
+        "worktree.list" => {
+            let cwd = resolve_cwd_param(&params)?;
+            let worktrees = worktree::list(&cwd).map_err(|err| err.to_string())?;
+            Ok(json!(worktrees))
+        }
+        "worktree.status" => {
+            let path = params
+                .get("path")
+                .or_else(|| params.get("cwd"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing path".to_string())?;
+            let status = worktree::status(path).map_err(|err| err.to_string())?;
+            Ok(json!({"status": status}))
+        }
+        "worktree.create" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing name".to_string())?;
+            let cwd = resolve_cwd_param(&params)?;
+            let layout = worktree_layout();
+            let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
+            let workspace = open_worktree_workspace(state, &info).await?;
+            let _ = worktree::run_hook(&info.path, "setup");
+            Ok(json!({
+                "id": workspace.id,
+                "name": info.name,
+                "path": info.path,
+                "branch": info.branch,
+                "worktree_name": info.worktree_name,
+            }))
+        }
+        "worktree.attach" => {
+            let name = params
+                .get("name")
+                .or_else(|| params.get("branch"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing name".to_string())?;
+            let cwd = resolve_cwd_param(&params)?;
+            let layout = worktree_layout();
+            let info = worktree::attach(&cwd, name, &layout).map_err(|err| err.to_string())?;
+            let workspace = open_worktree_workspace(state, &info).await?;
+            let _ = worktree::run_hook(&info.path, "setup");
+            Ok(json!({
+                "id": workspace.id,
+                "name": info.name,
+                "path": info.path,
+                "branch": info.branch,
+                "worktree_name": info.worktree_name,
+            }))
+        }
+        "worktree.remove" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing name".to_string())?;
+            let cwd = resolve_cwd_param(&params)?;
+            let mut workspace_worktree_name = name.to_string();
+            if let Ok(existing) = worktree::list(&cwd) {
+                if let Some(info) = existing
+                    .iter()
+                    .find(|info| info.worktree_name == name || info.branch == name)
+                {
+                    workspace_worktree_name = info.worktree_name.clone();
+                    let _ = worktree::run_hook(&info.path, "teardown");
+                }
+            }
+            worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
+            {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let _ = model.close_workspace(WorkspaceSelector::WorktreeName(
+                    workspace_worktree_name.as_str(),
+                ));
+                if model.list_workspaces().is_empty() {
+                    model.create_workspace("main", PathBuf::from(&cwd));
+                }
+            }
+            ensure_terminal_for_active_workspace(state).await?;
+            Ok(json!({"removed": name}))
+        }
+        "worktree.merge" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Missing name".to_string())?;
+            let cwd = resolve_cwd_param(&params)?;
+            let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
+            Ok(json!(result))
+        }
         "surface.list" => {
             let workspace_id = params.get("workspace_id").and_then(Value::as_str);
             let model = state
@@ -311,6 +404,82 @@ pub async fn dispatch(
         }
         _ => Err(format!("Unknown method: {method}")),
     }
+}
+
+async fn open_worktree_workspace(
+    state: &SocketAppState,
+    info: &worktree::WorktreeInfo,
+) -> Result<forktty_core::Workspace, String> {
+    let workspace = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.create_worktree_workspace(
+            &info.branch,
+            PathBuf::from(&info.path),
+            &info.branch,
+            &info.worktree_name,
+        )
+    };
+    state
+        .terminal
+        .spawn(SpawnRequest {
+            surface_id: workspace.focused_surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            shell: state.shell.clone(),
+            cwd: workspace.working_dir.clone(),
+            socket_path: state.socket_path.clone(),
+            extra_env: Vec::new(),
+        })
+        .map_err(|err| err.to_string())?;
+    Ok(workspace)
+}
+
+async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<(), String> {
+    let workspace = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+    };
+    let Some(workspace) = workspace else {
+        return Ok(());
+    };
+    state
+        .terminal
+        .spawn(SpawnRequest {
+            surface_id: workspace.focused_surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            shell: state.shell.clone(),
+            cwd: workspace.working_dir.clone(),
+            socket_path: state.socket_path.clone(),
+            extra_env: Vec::new(),
+        })
+        .map_err(|err| err.to_string())
+}
+
+fn resolve_cwd_param(params: &Value) -> Result<String, String> {
+    let path = params
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn worktree_layout() -> String {
+    config::load_config()
+        .ok()
+        .map(|config| config.general.worktree_layout)
+        .filter(|layout| !layout.is_empty())
+        .unwrap_or_else(|| "nested".to_string())
 }
 
 fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, String> {
@@ -569,6 +738,8 @@ fn effective_uid() -> u32 {
 mod tests {
     use super::*;
     use forktty_terminal::HeadlessTerminalBackend;
+    use git2::Repository;
+    use std::fs;
     use std::sync::Arc;
     use tokio::io::BufReader;
 
@@ -583,6 +754,23 @@ mod tests {
         );
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
+    }
+
+    fn make_temp_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        fs::write(dir.path().join("note.txt"), "base\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("note.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+        drop(tree);
+        drop(repo);
+        dir
     }
 
     #[tokio::test]
@@ -652,6 +840,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(closed["name"], "feature");
+    }
+
+    #[tokio::test]
+    async fn dispatches_worktree_lifecycle_methods_and_updates_workspace_model() {
+        let repo_dir = make_temp_repo();
+        let (state, backend) = test_state();
+
+        let created = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": "topic/socket", "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(created["branch"], "topic/socket");
+        assert_ne!(created["worktree_name"], "topic/socket");
+        let workspace_id = created["id"].as_str().unwrap();
+        assert!(backend
+            .env("surface-2")
+            .unwrap()
+            .contains(&("FORKTTY_WORKSPACE_ID".to_string(), workspace_id.to_string())));
+
+        let listed = dispatch(&state, "worktree.list", json!({"cwd": repo_dir.path()}))
+            .await
+            .unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+
+        let status = dispatch(&state, "worktree.status", json!({"path": created["path"]}))
+            .await
+            .unwrap();
+        assert_eq!(status["status"], "clean");
+
+        dispatch(
+            &state,
+            "worktree.remove",
+            json!({"name": "topic/socket", "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert!(!workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|workspace| workspace["git_branch"] == "topic/socket"));
     }
 
     #[tokio::test]
