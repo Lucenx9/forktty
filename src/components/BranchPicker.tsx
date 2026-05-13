@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef, useMemo, useCallback, useId } from "react";
+import { ArrowLeft, Check, GitBranch, Plus } from "lucide-react";
+import { useState, useEffect, useRef, useMemo, useCallback, useId, Fragment } from "react";
 import { gitListBranches } from "../lib/pty-bridge";
 import type { BranchInfo } from "../lib/pty-bridge";
+import { useOverlayFocus } from "../lib/overlay-focus";
+import { buildHighlightParts, findSearchMatch } from "../lib/search-match";
 import { showToast } from "./ErrorToast";
 
 type BranchPickerResult =
@@ -18,25 +21,16 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
   const [mode, setMode] = useState<"choose" | "new-branch-name">("choose");
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [loadedCwd, setLoadedCwd] = useState<string | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [newBranchName, setNewBranchName] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
   const listboxId = useId();
   const optionIdPrefix = useId();
-
-  useEffect(() => {
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    return () => {
-      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
-  }, []);
+  const queryTrimmed = query.trim();
 
   useEffect(() => {
     let cancelled = false;
@@ -46,12 +40,14 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
         if (!cancelled) {
           setBranches(result);
           setLoadedCwd(requestCwd);
+          setLoadError("");
         }
       })
       .catch((err) => {
         if (!cancelled) {
           setBranches([]);
           setLoadedCwd(requestCwd);
+          setLoadError(String(err));
           showToast(`Failed to load branches: ${err}`, "error");
         }
       });
@@ -69,17 +65,44 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
     }
   }, [mode]);
 
-  // Filtered list: synthetic "New branch" entry at index 0, then matching branches.
+  function renderHighlightedText(text: string, queryValue: string) {
+    const match = findSearchMatch(text, queryValue) ?? { score: 0, matchedIndices: [] };
+    return buildHighlightParts(text, match.matchedIndices).map((part, index) =>
+      part.matched ? (
+        <mark key={`${text}-${index}`} className="branch-picker-highlight">
+          {part.text}
+        </mark>
+      ) : (
+        <Fragment key={`${text}-${index}`}>{part.text}</Fragment>
+      ),
+    );
+  }
+
   const filtered = useMemo(() => {
-    if (!query.trim()) return branches;
-    const lower = query.toLowerCase();
-    return branches.filter((b) => b.name.toLowerCase().includes(lower));
-  }, [query, branches]);
+    if (!queryTrimmed) {
+      return branches;
+    }
+
+    return branches
+      .map((branch) => {
+        const nameMatch = findSearchMatch(branch.name, queryTrimmed);
+        const summaryMatch = findSearchMatch(branch.last_commit_summary, queryTrimmed);
+        if (!nameMatch && !summaryMatch) return null;
+        return branch;
+      })
+      .filter((item): item is BranchInfo => item !== null);
+  }, [queryTrimmed, branches]);
   const loading = loadedCwd !== requestCwd;
 
   const handleCancel = useCallback(() => {
     onResult({ kind: "cancel" });
   }, [onResult]);
+
+  useOverlayFocus({
+    containerRef: dialogRef,
+    initialFocusRef: mode === "choose" ? inputRef : nameInputRef,
+    onClose: handleCancel,
+  });
 
   function handleSelect(index: number) {
     if (index === 0) {
@@ -162,11 +185,28 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
         aria-label="Create branch"
       >
         <div
+          ref={dialogRef}
           className="branch-picker"
+          tabIndex={-1}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={handleNameKeyDown}
         >
-          <div className="branch-picker-header">New branch from HEAD</div>
+          <div className="branch-picker-header">
+            <button
+              type="button"
+              className="branch-picker-back-btn"
+              onClick={() => setMode("choose")}
+              aria-label="Back to branch selection"
+            >
+              <ArrowLeft size={14} />
+            </button>
+            <div>
+              <div className="branch-picker-header-title">New branch from HEAD</div>
+              <div className="branch-picker-header-subtitle">
+                Create a new worktree-backed branch from the current checkout.
+              </div>
+            </div>
+          </div>
           <div className="branch-picker-name-form">
             <input
               ref={nameInputRef}
@@ -217,7 +257,9 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
       aria-label="Choose branch"
     >
       <div
+        ref={dialogRef}
         className="branch-picker"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleChooseKeyDown}
       >
@@ -238,6 +280,25 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
           aria-label="Search branches"
           placeholder="Search branches or create new..."
         />
+        <button
+          type="button"
+          className={`branch-picker-action ${safeSelectedIndex === 0 ? "branch-picker-action-selected" : ""}`}
+          onMouseDown={(e) => e.preventDefault()}
+          onMouseMove={() => setSelectedIndex(0)}
+          onClick={() => handleSelect(0)}
+        >
+          <span className="branch-picker-action-icon" aria-hidden="true">
+            <Plus size={15} />
+          </span>
+          <span className="branch-picker-action-copy">
+            <span className="branch-picker-action-title">
+              {queryTrimmed ? `Create "${queryTrimmed}" from HEAD` : "Create new branch from HEAD"}
+            </span>
+            <span className="branch-picker-action-body">
+              Start an isolated worktree without leaving the picker.
+            </span>
+          </span>
+        </button>
         <div id={listboxId} className="branch-picker-list" role="listbox">
           {loading && (
             <div
@@ -257,31 +318,22 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
           )}
           {!loading && (
             <>
-              {/* Synthetic "New branch from HEAD..." entry */}
-              <button
-                id={`${optionIdPrefix}-option-0`}
-                type="button"
-                tabIndex={-1}
-                role="option"
-                aria-selected={safeSelectedIndex === 0}
-                className={`branch-picker-item branch-picker-item-new ${safeSelectedIndex === 0 ? "branch-picker-item-selected" : ""}`}
-                aria-current={safeSelectedIndex === 0 ? "true" : undefined}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => handleSelect(0)}
-                onMouseMove={() => setSelectedIndex(0)}
-              >
-                <span className="branch-picker-branch-name">
-                  + New branch from HEAD...
-                </span>
-              </button>
-
               {filtered.length === 0 && (
-                <div className="branch-picker-branch-meta" role="status">
-                  {branches.length === 0
-                    ? "No branches found in this repository."
-                    : query.trim()
-                      ? `No branches match "${query.trim()}".`
-                      : "No matching branches."}
+                <div className="branch-picker-empty" role="status">
+                  <div className="branch-picker-empty-title">
+                    {loadError
+                      ? "Could not inspect branches"
+                      : branches.length === 0
+                        ? "No repository branches available"
+                        : "No matching branches"}
+                  </div>
+                  <div className="branch-picker-empty-body">
+                    {loadError
+                      ? loadError
+                      : branches.length === 0
+                        ? "Open a terminal in a Git repository to create or attach a worktree from this picker."
+                        : `No branches match "${query.trim()}".`}
+                  </div>
                 </div>
               )}
 
@@ -303,16 +355,23 @@ export default function BranchPicker({ cwd, onResult }: BranchPickerProps) {
                     onMouseMove={() => setSelectedIndex(itemIndex)}
                     disabled={branch.is_head}
                   >
-                    <div>
-                      <span className="branch-picker-branch-name">{branch.name}</span>
+                    <div className="branch-picker-branch-header">
+                      <span className="branch-picker-branch-icon" aria-hidden="true">
+                        {branch.is_head ? <Check size={14} /> : <GitBranch size={14} />}
+                      </span>
+                      <span className="branch-picker-branch-name">
+                        {renderHighlightedText(branch.name, queryTrimmed)}
+                      </span>
                       {branch.is_head && (
-                        <span className="branch-picker-badge">[active]</span>
+                        <span className="branch-picker-badge">Checked out</span>
                       )}
                     </div>
                     <div className="branch-picker-branch-meta">
-                      {branch.last_commit_summary}
+                      {renderHighlightedText(branch.last_commit_summary, queryTrimmed)}
                       {branch.last_commit_time > 0 && (
-                        <span> -- {formatTime(branch.last_commit_time)}</span>
+                        <span className="branch-picker-branch-time">
+                          {formatTime(branch.last_commit_time)}
+                        </span>
                       )}
                     </div>
                   </button>

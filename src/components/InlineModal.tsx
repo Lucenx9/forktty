@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { useOverlayFocus } from "../lib/overlay-focus";
 
 interface ConfirmModalProps {
   title: string;
@@ -19,42 +20,32 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
-  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const messageId = useId();
+  const hintId = useId();
   // Default focus to Cancel for destructive prompts so Enter does not
   // accidentally confirm a destructive action.
   const focusConfirm = !danger;
 
-  useEffect(() => {
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    return () => {
-      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
-  }, []);
-
-  // Only handle Escape at document level. Enter is handled by the autoFocus button's
-  // native click-on-Enter behavior, avoiding double-trigger when both fire.
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [onCancel]);
+  useOverlayFocus({
+    containerRef: dialogRef,
+    initialFocusRef: focusConfirm ? confirmButtonRef : cancelButtonRef,
+    onClose: onCancel,
+  });
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
+        ref={dialogRef}
         className="modal-dialog"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={messageId}
+        aria-describedby={`${messageId} ${hintId}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="modal-title">
@@ -63,20 +54,23 @@ export function ConfirmModal({
         <div id={messageId} className="modal-message">
           {message}
         </div>
+        <div id={hintId} className="modal-hint">
+          Esc to cancel
+        </div>
         <div className="modal-actions">
           <button
+            ref={cancelButtonRef}
             type="button"
             className="modal-btn modal-btn-cancel"
             onClick={onCancel}
-            autoFocus={!focusConfirm}
           >
             {cancelLabel}
           </button>
           <button
+            ref={confirmButtonRef}
             type="button"
             className={`modal-btn ${danger ? "modal-btn-danger" : "modal-btn-confirm"}`}
             onClick={onConfirm}
-            autoFocus={focusConfirm}
           >
             {confirmLabel}
           </button>
@@ -105,20 +99,18 @@ export function PromptModal({
 }: PromptModalProps) {
   const [value, setValue] = useState(defaultValue);
   const inputRef = useRef<HTMLInputElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const hintId = useId();
+
+  useOverlayFocus({
+    containerRef: dialogRef,
+    initialFocusRef: inputRef,
+    onClose: onCancel,
+  });
 
   useEffect(() => {
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    inputRef.current?.focus();
     inputRef.current?.select();
-
-    return () => {
-      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
   }, []);
 
   function handleSubmit() {
@@ -129,10 +121,13 @@ export function PromptModal({
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
+        ref={dialogRef}
         className="modal-dialog"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={hintId}
         onClick={(e) => e.stopPropagation()}
       >
         <div id={titleId} className="modal-title">
@@ -150,6 +145,9 @@ export function PromptModal({
           }}
           placeholder={placeholder}
         />
+        <div id={hintId} className="modal-hint">
+          Esc to cancel
+        </div>
         <div className="modal-actions">
           <button
             type="button"

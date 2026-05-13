@@ -1,4 +1,6 @@
-import { useEffect, useId, useRef } from "react";
+import { ArrowRight, Columns2, Command, GitBranch, Plus, Settings, Terminal } from "lucide-react";
+import { useId, useRef } from "react";
+import { useOverlayFocus } from "../lib/overlay-focus";
 
 interface WelcomeScreenProps {
   onDismiss: () => void;
@@ -6,36 +8,76 @@ interface WelcomeScreenProps {
 
 export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const dismissBtnRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dismissBtnRef.current?.focus();
+  useOverlayFocus({
+    containerRef: dialogRef,
+    initialFocusRef: dismissBtnRef,
+    onClose: onDismiss,
+  });
 
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onDismiss();
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
-  }, [onDismiss]);
+  const actions = [
+    {
+      icon: Plus,
+      title: "New workspace",
+      shortcut: "Ctrl+N",
+      body: "Spin up another workspace without leaving the current flow.",
+    },
+    {
+      icon: GitBranch,
+      title: "Create worktree",
+      shortcut: "Ctrl+Shift+N",
+      body: "Branch into an isolated worktree when changes need full git separation.",
+    },
+    {
+      icon: Columns2,
+      title: "Split the active pane",
+      shortcut: "Ctrl+D",
+      body: "Keep build, test and agent output visible side by side.",
+    },
+    {
+      icon: Command,
+      title: "Open the command palette",
+      shortcut: "Ctrl+Shift+P",
+      body: "Jump to every workspace, pane and settings action from one place.",
+    },
+    {
+      icon: Settings,
+      title: "Adjust defaults",
+      shortcut: "Ctrl+,",
+      body: "Tune fonts, notifications and worktree behavior before the session gets busy.",
+    },
+  ] as const;
+
+  function openCommandPalette() {
+    onDismiss();
+    window.dispatchEvent(new CustomEvent("forktty-open-command-palette"));
+  }
+
+  function openBranchPicker() {
+    onDismiss();
+    window.dispatchEvent(new CustomEvent("forktty-open-branch-picker"));
+  }
 
   return (
     <div className="welcome-overlay" onClick={onDismiss}>
       <div
+        ref={dialogRef}
         className="welcome-dialog"
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="welcome-header">
+          <div className="welcome-eyebrow">
+            <span className="welcome-eyebrow-icon" aria-hidden="true">
+              <Terminal size={14} />
+            </span>
+            Ready for parallel terminal work
+          </div>
           <div id={titleId} className="welcome-title">
             Welcome to ForkTTY
           </div>
@@ -44,36 +86,48 @@ export default function WelcomeScreen({ onDismiss }: WelcomeScreenProps) {
           </div>
         </div>
         <div className="welcome-copy">
-          One workspace is already ready. Split it for quick parallelism, or create a
-          dedicated worktree when you want full git isolation.
+          One workspace is already ready. Start with a quick split for immediate
+          parallelism, or launch a dedicated worktree when a task deserves isolated git
+          history.
         </div>
 
         <div className="welcome-actions">
-          <div className="welcome-action">
-            <span className="welcome-shortcut">Ctrl+N</span>
-            <span>Spin up another workspace without leaving the current flow</span>
-          </div>
-          <div className="welcome-action">
-            <span className="welcome-shortcut">Ctrl+Shift+N</span>
-            <span>Create a worktree-backed workspace for isolated changes</span>
-          </div>
-          <div className="welcome-action">
-            <span className="welcome-shortcut">Ctrl+D</span>
-            <span>Split the active pane when one task needs multiple terminals</span>
-          </div>
-          <div className="welcome-action">
-            <span className="welcome-shortcut">Ctrl+Shift+P</span>
-            <span>Open the command palette for every action in one place</span>
-          </div>
-          <div className="welcome-action">
-            <span className="welcome-shortcut">Ctrl+,</span>
-            <span>Adjust fonts, notifications and worktree defaults</span>
-          </div>
+          {actions.map(({ icon: Icon, title, shortcut, body }) => (
+            <div key={title} className="welcome-action">
+              <span className="welcome-action-icon" aria-hidden="true">
+                <Icon size={16} />
+              </span>
+              <div className="welcome-action-copy">
+                <div className="welcome-action-title-row">
+                  <span className="welcome-action-title">{title}</span>
+                  <span className="welcome-shortcut">{shortcut}</span>
+                </div>
+                <span>{body}</span>
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className="welcome-footer">
-          <div className="welcome-hint">
-            Press Ctrl+Shift+P to open the command palette and discover every action.
+          <div className="welcome-footer-copy">
+            <div className="welcome-hint">Start with a high-signal next action.</div>
+            <div className="welcome-footer-actions">
+              <button
+                type="button"
+                className="welcome-cta welcome-cta-primary"
+                onClick={openBranchPicker}
+              >
+                Create worktree
+                <ArrowRight size={14} />
+              </button>
+              <button
+                type="button"
+                className="welcome-cta welcome-cta-secondary"
+                onClick={openCommandPalette}
+              >
+                Open palette
+              </button>
+            </div>
           </div>
           <button
             ref={dismissBtnRef}

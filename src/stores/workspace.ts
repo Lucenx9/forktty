@@ -128,6 +128,7 @@ interface WorkspaceState {
   // Notification actions
   addNotification: (workspaceId: string, title: string, body: string) => void;
   markWorkspaceRead: (workspaceId: string) => void;
+  markAllNotificationsRead: () => void;
   clearNotifications: () => void;
   toggleNotificationPanel: () => void;
   jumpToUnread: () => void;
@@ -692,6 +693,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             n.workspaceId === workspaceId && !n.read ? { ...n, read: true } : n,
           )
         : notifications,
+    });
+  },
+
+  markAllNotificationsRead: () => {
+    const { workspaces, notifications } = get();
+    if (notifications.every((notification) => notification.read)) {
+      return;
+    }
+
+    const clearedWorkspaces: Record<string, Workspace> = {};
+    for (const [id, workspace] of Object.entries(workspaces)) {
+      clearedWorkspaces[id] = clearWorkspaceUnreadState(workspace);
+    }
+
+    set({
+      workspaces: clearedWorkspaces,
+      notifications: notifications.map((notification) =>
+        notification.read ? notification : { ...notification, read: true },
+      ),
     });
   },
 

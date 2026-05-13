@@ -736,17 +736,23 @@ export default function App() {
         id: "new-workspace",
         label: "New Workspace",
         shortcut: "Ctrl+N",
+        group: "Workspace",
+        aliases: ["workspace", "new ws"],
         action: handleCreateWorkspace,
       },
       {
         id: "new-worktree",
         label: "New Worktree Workspace",
         shortcut: "Ctrl+Shift+N",
+        group: "Workspace",
+        aliases: ["wt", "worktree", "branch workspace"],
         action: openBranchPicker,
       },
       {
         id: "rename-workspace",
         label: "Rename Workspace...",
+        group: "Workspace",
+        aliases: ["rename ws"],
         action: () => {
           const state = useWorkspaceStore.getState();
           const ws = state.workspaces[state.activeWorkspaceId];
@@ -761,6 +767,8 @@ export default function App() {
         id: "close-workspace",
         label: "Close Workspace",
         shortcut: "Ctrl+Shift+W",
+        group: "Workspace",
+        aliases: ["close ws"],
         action: () => {
           const state = useWorkspaceStore.getState();
           if (state.workspaceOrder.length > 1) {
@@ -772,18 +780,24 @@ export default function App() {
         id: "split-right",
         label: "Split Right",
         shortcut: "Ctrl+D",
+        group: "Pane",
+        aliases: ["split", "pane right"],
         action: () => handleSplitFocusedPane("horizontal"),
       },
       {
         id: "split-down",
         label: "Split Down",
         shortcut: "Ctrl+Shift+D",
+        group: "Pane",
+        aliases: ["split", "pane down"],
         action: () => handleSplitFocusedPane("vertical"),
       },
       {
         id: "close-pane",
         label: "Close Pane",
         shortcut: "Ctrl+W",
+        group: "Pane",
+        aliases: ["kill pane"],
         action: () => {
           const state = useWorkspaceStore.getState();
           const ws = state.workspaces[state.activeWorkspaceId];
@@ -794,69 +808,93 @@ export default function App() {
         id: "find-in-terminal",
         label: "Find in Terminal",
         shortcut: "Ctrl+F",
+        group: "Pane",
+        aliases: ["search", "find"],
         action: () => dispatchFocusedPaneAction("find"),
       },
       {
         id: "copy-selection",
         label: "Copy Selection",
         shortcut: "Ctrl+Shift+C",
+        group: "Pane",
+        aliases: ["copy"],
         action: () => dispatchFocusedPaneAction("copy"),
       },
       {
         id: "notifications",
         label: "Toggle Notifications",
         shortcut: "Ctrl+Shift+I",
+        group: "Notifications",
+        aliases: ["notif", "inbox", "alerts"],
         action: toggleNotificationsDrawer,
       },
       {
         id: "jump-unread",
         label: "Jump to Unread",
         shortcut: "Ctrl+Shift+U",
+        group: "Notifications",
+        aliases: ["unread", "next alert"],
         action: jumpToUnread,
       },
       {
         id: "mark-read",
         label: "Mark Workspace as Read",
+        group: "Notifications",
+        aliases: ["read", "clear unread"],
         action: () => markWorkspaceRead(activeWorkspaceId),
       },
       {
         id: "zoom-in",
         label: "Zoom In",
         shortcut: "Ctrl+=",
+        group: "View",
+        aliases: ["larger text"],
         action: () => useConfigStore.getState().zoomIn(),
       },
       {
         id: "zoom-out",
         label: "Zoom Out",
         shortcut: "Ctrl+-",
+        group: "View",
+        aliases: ["smaller text"],
         action: () => useConfigStore.getState().zoomOut(),
       },
       {
         id: "zoom-reset",
         label: "Reset Zoom",
         shortcut: "Ctrl+0",
+        group: "View",
+        aliases: ["normal zoom"],
         action: () => useConfigStore.getState().zoomReset(),
       },
       {
         id: "settings",
         label: "Open Settings",
         shortcut: "Ctrl+,",
+        group: "Settings",
+        aliases: ["prefs", "preferences", "config"],
         action: toggleSettingsPanel,
       },
       {
         id: "command-palette",
         label: "Command Palette",
         shortcut: "Ctrl+Shift+P",
+        group: "View",
+        aliases: ["palette", "commands"],
         action: openCommandPalette,
       },
       {
         id: "toggle-sidebar",
         label: sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar",
+        group: "View",
+        aliases: ["sidebar"],
         action: toggleSidebarCollapsed,
       },
       {
         id: "next-workspace",
         label: "Next Workspace",
+        group: "Workspace",
+        aliases: ["workspace next"],
         action: () => {
           const state = useWorkspaceStore.getState();
           const idx = state.workspaceOrder.indexOf(state.activeWorkspaceId);
@@ -867,6 +905,8 @@ export default function App() {
       {
         id: "prev-workspace",
         label: "Previous Workspace",
+        group: "Workspace",
+        aliases: ["workspace previous"],
         action: () => {
           const state = useWorkspaceStore.getState();
           const idx = state.workspaceOrder.indexOf(state.activeWorkspaceId);
@@ -881,24 +921,32 @@ export default function App() {
         id: "nav-left",
         label: "Navigate Left",
         shortcut: "Alt+Left",
+        group: "Pane",
+        aliases: ["focus left"],
         action: () => moveFocus("left"),
       },
       {
         id: "nav-right",
         label: "Navigate Right",
         shortcut: "Alt+Right",
+        group: "Pane",
+        aliases: ["focus right"],
         action: () => moveFocus("right"),
       },
       {
         id: "nav-up",
         label: "Navigate Up",
         shortcut: "Alt+Up",
+        group: "Pane",
+        aliases: ["focus up"],
         action: () => moveFocus("up"),
       },
       {
         id: "nav-down",
         label: "Navigate Down",
         shortcut: "Alt+Down",
+        group: "Pane",
+        aliases: ["focus down"],
         action: () => moveFocus("down"),
       },
     ],

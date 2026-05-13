@@ -40,7 +40,7 @@ import {
 import { dispatchWorkspaceNotification } from "../lib/notification-dispatch";
 import { buildTerminalFontFamily } from "../lib/terminal-fonts";
 import { truncatePath } from "../lib/path-utils";
-import { Columns2, Rows2, Search, GripVertical, X } from "lucide-react";
+import { Columns2, Rows2, Search, GripVertical, Settings, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -271,6 +271,7 @@ function PaneToolbar({
             {truncatePath(cwd, 36)}
           </span>
         )}
+        {isFocused && <span className="pane-toolbar-badge pane-toolbar-badge-focus">Active</span>}
         {hasUnreadNotification && (
           <span className="pane-toolbar-badge pane-toolbar-badge-alert">
             Needs input
@@ -355,6 +356,8 @@ const TerminalPane = memo(function TerminalPane({
   const xtermTheme = useConfigStore((s) => s.xtermTheme);
   const configTheme = useConfigStore((s) => s.theme);
   const fontSizeOffset = useConfigStore((s) => s.fontSizeOffset);
+  const showSettings = useConfigStore((s) => s.showSettings);
+  const toggleSettings = useConfigStore((s) => s.toggleSettings);
 
   const lastFindTermRef = useRef("");
 
@@ -996,6 +999,27 @@ const TerminalPane = memo(function TerminalPane({
             <div className="terminal-pane-state-title">{spawnErrorTitle}</div>
             <div className="terminal-pane-state-copy">{spawnErrorCopy}</div>
             <div className="terminal-pane-state-hint">{spawnError}</div>
+            <div className="terminal-pane-state-actions">
+              <button
+                type="button"
+                className="terminal-pane-state-btn terminal-pane-state-btn-primary"
+                onClick={() => {
+                  if (!showSettings) {
+                    toggleSettings();
+                  }
+                }}
+              >
+                <Settings size={14} />
+                Open settings
+              </button>
+              <button
+                type="button"
+                className="terminal-pane-state-btn"
+                onClick={() => navigator.clipboard.writeText(spawnError).catch(logError)}
+              >
+                Copy error
+              </button>
+            </div>
           </div>
         )}
         <div

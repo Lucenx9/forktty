@@ -60,6 +60,24 @@ describe("workspace lifecycle state transitions", () => {
     expect(state.notifications.every((notification) => notification.read)).toBe(true);
   });
 
+  it("marks every notification as read without clearing history", () => {
+    const store = useWorkspaceStore.getState();
+    const firstId = store.activeWorkspaceId;
+    const secondId = store.createWorkspace("Workspace 2", "/tmp");
+
+    store.switchWorkspace(firstId);
+    store.addNotification(secondId, "Prompt waiting", "Workspace 2 needs attention");
+    store.addNotification(secondId, "Build failed", "Tests need a retry");
+
+    useWorkspaceStore.getState().markAllNotificationsRead();
+
+    const state = useWorkspaceStore.getState();
+    expect(state.notifications).toHaveLength(2);
+    expect(state.notifications.every((notification) => notification.read)).toBe(true);
+    expect(state.workspaces[secondId]?.unreadCount).toBe(0);
+    expect(state.workspaces[secondId]?.lastNotificationText).toBe("");
+  });
+
   it("treats repeated closePane calls as a no-op after the first close", () => {
     const store = useWorkspaceStore.getState();
     const workspaceId = store.activeWorkspaceId;

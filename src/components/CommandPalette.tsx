@@ -1,9 +1,17 @@
-import { useState, useEffect, useRef, useMemo, useId } from "react";
+import { Fragment, useId, useMemo, useRef, useState } from "react";
+import { useOverlayFocus } from "../lib/overlay-focus";
+import {
+  buildHighlightParts,
+  findSearchMatch,
+  type SearchMatchResult,
+} from "../lib/search-match";
 
 interface CommandEntry {
   id: string;
   label: string;
   shortcut?: string;
+  group?: string;
+  aliases?: string[];
   action: () => void;
 }
 
@@ -12,57 +20,145 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
+const GROUP_ORDER = ["Workspace", "Pane", "View", "Notifications", "Settings"];
+
+function renderHighlightedText(text: string, match: SearchMatchResult) {
+  return buildHighlightParts(text, match.matchedIndices).map((part, index) =>
+    part.matched ? (
+      <mark key={`${text}-${index}`} className="command-palette-highlight">
+        {part.text}
+      </mark>
+    ) : (
+      <Fragment key={`${text}-${index}`}>{part.text}</Fragment>
+    ),
+  );
+}
+
+function renderShortcutKeycaps(shortcut: string) {
+  return shortcut.split("+").map((part) => (
+    <kbd key={`${shortcut}-${part}`} className="command-palette-keycap">
+      {part}
+    </kbd>
+  ));
+}
+
 export default function CommandPalette({ commands, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const paletteRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
   const listboxId = useId();
   const optionIdPrefix = useId();
 
-  useEffect(() => {
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    inputRef.current?.focus();
-
-    return () => {
-      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
-  }, []);
+  useOverlayFocus({
+    containerRef: paletteRef,
+    initialFocusRef: inputRef,
+    onClose,
+  });
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return commands;
-    const needle = query.toLowerCase().replace(/\s+/g, "");
+    const queryTrimmed = query.trim();
+    const groupRank = new Map(GROUP_ORDER.map((group, index) => [group, index]));
+
+    if (!queryTrimmed) {
+      return commands
+        .map((cmd) => ({
+          cmd,
+          score: 0,
+          labelMatch: { score: 0, matchedIndices: [] } as SearchMatchResult,
+          aliasMatch: null as SearchMatchResult | null,
+          aliasLabel: "",
+          group: cmd.group ?? "Workspace",
+        }))
+        .sort((a, b) => {
+          const groupDelta =
+            (groupRank.get(a.group) ?? Number.MAX_SAFE_INTEGER) -
+            (groupRank.get(b.group) ?? Number.MAX_SAFE_INTEGER);
+          return groupDelta || a.cmd.label.localeCompare(b.cmd.label);
+        });
+    }
+
     return commands
       .map((cmd) => {
-        const label = cmd.label.toLowerCase();
-        const compact = label.replace(/\s+/g, "");
-        let cursor = 0;
-        let score = 0;
+        const labelMatch = findSearchMatch(cmd.label, queryTrimmed);
+        let bestMatch = labelMatch;
+        let aliasLabel = "";
+        let bestScore = labelMatch?.score ?? Number.MAX_SAFE_INTEGER;
 
-        for (const char of needle) {
-          const index = compact.indexOf(char, cursor);
-          if (index === -1) return null;
-          score += index === cursor ? 0 : index - cursor + 1;
-          cursor = index + 1;
+        for (const alias of cmd.aliases ?? []) {
+          const aliasMatch = findSearchMatch(alias, queryTrimmed);
+          if (!aliasMatch) continue;
+          const aliasScore = aliasMatch.score + 2;
+          if (aliasScore < bestScore) {
+            bestMatch = aliasMatch;
+            bestScore = aliasScore;
+            aliasLabel = alias;
+          }
         }
 
-        if (label.includes(query.toLowerCase())) {
-          score -= 8;
-        }
+        if (!bestMatch) return null;
 
-        return { cmd, score };
+        return {
+          cmd,
+          score: bestScore,
+          labelMatch: labelMatch ?? { score: bestMatch.score, matchedIndices: [] },
+          aliasMatch: aliasLabel ? bestMatch : null,
+          aliasLabel,
+          group: cmd.group ?? "Workspace",
+        };
       })
-      .filter((match): match is { cmd: CommandEntry; score: number } => match !== null)
-      .sort((a, b) => a.score - b.score || a.cmd.label.localeCompare(b.cmd.label))
-      .map((match) => match.cmd);
+      .filter(
+        (
+          match,
+        ): match is {
+          cmd: CommandEntry;
+          score: number;
+          labelMatch: SearchMatchResult;
+          aliasMatch: SearchMatchResult | null;
+          aliasLabel: string;
+          group: string;
+        } => match !== null,
+      )
+      .sort((a, b) => {
+        const groupDelta =
+          (groupRank.get(a.group) ?? Number.MAX_SAFE_INTEGER) -
+          (groupRank.get(b.group) ?? Number.MAX_SAFE_INTEGER);
+        return groupDelta || a.score - b.score || a.cmd.label.localeCompare(b.cmd.label);
+      });
   }, [query, commands]);
+
+  const grouped = useMemo(() => {
+    const sections = new Map<
+      string,
+      Array<{
+        flatIndex: number;
+        cmd: CommandEntry;
+        labelMatch: SearchMatchResult;
+        aliasMatch: SearchMatchResult | null;
+        aliasLabel: string;
+      }>
+    >();
+
+    filtered.forEach((entry, flatIndex) => {
+      const group = entry.group;
+      if (!sections.has(group)) {
+        sections.set(group, []);
+      }
+      sections.get(group)!.push({
+        flatIndex,
+        cmd: entry.cmd,
+        labelMatch: entry.labelMatch,
+        aliasMatch: entry.aliasMatch,
+        aliasLabel: entry.aliasLabel,
+      });
+    });
+
+    return Array.from(sections.entries());
+  }, [filtered]);
 
   const queryTrimmed = query.trim();
   const resultSummary = queryTrimmed
-    ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}`
+    ? `${filtered.length} match${filtered.length === 1 ? "" : "es"} in ${grouped.length} group${grouped.length === 1 ? "" : "s"}`
     : `${commands.length} commands`;
   const safeSelectedIndex =
     filtered.length > 0 ? Math.min(selectedIndex, filtered.length - 1) : 0;
@@ -89,10 +185,10 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      const cmd = filtered[safeSelectedIndex];
-      if (cmd) {
+      const entry = filtered[safeSelectedIndex];
+      if (entry) {
         onClose();
-        cmd.action();
+        entry.cmd.action();
       }
       return;
     }
@@ -107,7 +203,9 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
       aria-label="Command palette"
     >
       <div
+        ref={paletteRef}
         className="command-palette"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
@@ -130,38 +228,66 @@ export default function CommandPalette({ commands, onClose }: CommandPaletteProp
         />
         <div className="command-palette-meta">
           <span>{resultSummary}</span>
-          <span>Enter to run</span>
+          <span>Alias-aware search</span>
         </div>
         <div id={listboxId} className="command-palette-list" role="listbox">
           {filtered.length === 0 && (
             <div className="command-palette-empty" role="status">
-              {queryTrimmed
-                ? `No commands match "${queryTrimmed}".`
-                : "No commands available."}
+              <div className="command-palette-empty-title">No matching commands</div>
+              <div className="command-palette-empty-body">
+                {queryTrimmed
+                  ? `No commands match "${queryTrimmed}". Try "wt" for worktrees or "notif" for notifications.`
+                  : "No commands available."}
+              </div>
             </div>
           )}
-          {filtered.map((cmd, i) => (
-            <button
-              key={cmd.id}
-              id={`${optionIdPrefix}-option-${i}`}
-              type="button"
-              tabIndex={-1}
-              role="option"
-              aria-selected={i === safeSelectedIndex}
-              aria-current={i === safeSelectedIndex ? "true" : undefined}
-              className={`command-palette-item ${i === safeSelectedIndex ? "command-palette-item-selected" : ""}`}
-              onClick={() => {
-                onClose();
-                cmd.action();
-              }}
-              onMouseMove={() => setSelectedIndex(i)}
-            >
-              <span className="command-palette-label">{cmd.label}</span>
-              {cmd.shortcut && (
-                <span className="command-palette-shortcut">{cmd.shortcut}</span>
-              )}
-            </button>
+          {grouped.map(([group, items]) => (
+            <div key={group} className="command-palette-group">
+              <div className="command-palette-group-title">{group}</div>
+              {items.map(({ flatIndex, cmd, labelMatch, aliasMatch, aliasLabel }) => (
+                <button
+                  key={cmd.id}
+                  id={`${optionIdPrefix}-option-${flatIndex}`}
+                  type="button"
+                  tabIndex={-1}
+                  role="option"
+                  aria-selected={flatIndex === safeSelectedIndex}
+                  aria-current={flatIndex === safeSelectedIndex ? "true" : undefined}
+                  className={`command-palette-item ${flatIndex === safeSelectedIndex ? "command-palette-item-selected" : ""}`}
+                  onClick={() => {
+                    onClose();
+                    cmd.action();
+                  }}
+                  onMouseMove={() => setSelectedIndex(flatIndex)}
+                >
+                  <div className="command-palette-label-block">
+                    <span className="command-palette-label">
+                      {renderHighlightedText(cmd.label, labelMatch)}
+                    </span>
+                    {aliasLabel && (
+                      <span className="command-palette-alias">
+                        Alias{" "}
+                        {renderHighlightedText(
+                          aliasLabel,
+                          aliasMatch ?? { score: 0, matchedIndices: [] },
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {cmd.shortcut && (
+                    <span className="command-palette-shortcut" aria-label={cmd.shortcut}>
+                      {renderShortcutKeycaps(cmd.shortcut)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           ))}
+        </div>
+        <div className="command-palette-footer" aria-hidden="true">
+          <span>↑↓ Navigate</span>
+          <span>Enter Run</span>
+          <span>Esc Close</span>
         </div>
       </div>
     </div>

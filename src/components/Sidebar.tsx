@@ -464,6 +464,13 @@ function WorkspaceEntry({
     isWorktree && workspace.worktreeStatus
       ? `sidebar-entry-wt-${workspace.worktreeStatus}`
       : "";
+  const showWorktreeStatus =
+    isWorktree &&
+    workspace.worktreeStatus !== "" &&
+    workspace.worktreeStatus !== "clean";
+  const truncatedCwd = workspace.workingDir
+    ? truncatePath(workspace.workingDir, workspace.gitBranch ? 20 : 28)
+    : "";
   const entryClassName = [
     "sidebar-entry",
     isActive ? "sidebar-entry-active" : "",
@@ -568,10 +575,22 @@ function WorkspaceEntry({
             </button>
           )}
         </div>
-        {workspace.gitBranch && (
-          <div className="sidebar-entry-meta">
-            <span className="sidebar-branch">{workspace.gitBranch}</span>
-            {isWorktree && workspace.worktreeStatus && (
+        {(workspace.gitBranch || workspace.workingDir || showWorktreeStatus || paneCount > 1) && (
+          <div className="sidebar-entry-meta sidebar-entry-meta-compact">
+            {(workspace.gitBranch || workspace.workingDir) && (
+              <span className="sidebar-meta-summary">
+                {workspace.gitBranch && (
+                  <span className="sidebar-branch">{workspace.gitBranch}</span>
+                )}
+                {workspace.gitBranch && workspace.workingDir && (
+                  <span className="sidebar-meta-separator" aria-hidden="true">
+                    ·
+                  </span>
+                )}
+                {workspace.workingDir && <span className="sidebar-cwd">{truncatedCwd}</span>}
+              </span>
+            )}
+            {showWorktreeStatus && (
               <span
                 className={`sidebar-wt-status sidebar-wt-${workspace.worktreeStatus}`}
               >
@@ -579,18 +598,6 @@ function WorkspaceEntry({
               </span>
             )}
             {paneCount > 1 && (
-              <span className="sidebar-pane-count">
-                {paneCount} {paneCount === 1 ? "pane" : "panes"}
-              </span>
-            )}
-          </div>
-        )}
-        {workspace.workingDir && (
-          <div className="sidebar-entry-meta">
-            <span className="sidebar-cwd">
-              {truncatePath(workspace.workingDir, 28)}
-            </span>
-            {!workspace.gitBranch && paneCount > 1 && (
               <span className="sidebar-pane-count">
                 {paneCount} {paneCount === 1 ? "pane" : "panes"}
               </span>

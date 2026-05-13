@@ -69,6 +69,33 @@ npm install
 npm run tauri:dev
 ```
 
+### Work Inside an Isolated Ubuntu Container
+
+If you do not want to install Node, Rust, WebKitGTK, or Tauri build dependencies on your host system, use the Ubuntu Docker environment included in this repository instead.
+
+```bash
+./scripts/ubuntu-dev.sh
+```
+
+That opens a shell inside an Ubuntu 24.04 container with Node, Rust, and the Linux dependencies needed for ForkTTY. From there you can work normally:
+
+```bash
+npm ci
+npm run tauri:dev
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+You can also run one-off commands without entering an interactive shell:
+
+```bash
+./scripts/ubuntu-dev.sh npm test
+./scripts/ubuntu-dev.sh bash -lc "npm ci && npm run tauri:build -- --bundles deb"
+./scripts/ubuntu-build-deb.sh
+```
+
+The host-side footprint is limited to Docker itself, one image, a few named cache volumes, and the repository files/artifacts you explicitly create.
+
 ### Build Installers Locally
 
 ```bash
