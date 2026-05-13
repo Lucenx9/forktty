@@ -1246,12 +1246,14 @@ fn show_notification_panel(parent: &adw::ApplicationWindow, state: &SocketAppSta
         .margin_end(12)
         .build();
 
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let notifications = state
         .model
         .lock()
         .ok()
         .map(|model| model.list_notifications())
         .unwrap_or_default();
+    let has_notifications = !notifications.is_empty();
     if notifications.is_empty() {
         list.append(&gtk::Label::new(Some("No notifications")));
     } else {
@@ -1272,7 +1274,26 @@ fn show_notification_panel(parent: &adw::ApplicationWindow, state: &SocketAppSta
         }
     }
 
-    dialog.set_child(Some(&list));
+    let clear = gtk::Button::builder()
+        .icon_name("edit-clear-symbolic")
+        .tooltip_text("Clear notifications")
+        .halign(gtk::Align::End)
+        .sensitive(has_notifications)
+        .margin_bottom(12)
+        .margin_end(12)
+        .build();
+    let state_for_clear = state.clone();
+    let dialog_for_clear = dialog.clone();
+    clear.connect_clicked(move |_| {
+        if let Ok(mut model) = state_for_clear.model.lock() {
+            model.clear_notifications();
+        }
+        dialog_for_clear.close();
+    });
+
+    content.append(&list);
+    content.append(&clear);
+    dialog.set_child(Some(&content));
     dialog.present();
 }
 
