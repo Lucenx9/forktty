@@ -65,7 +65,9 @@ Tauri/React implementation.
   and socket `surface.split` both create real VTE-backed surfaces and rebuild
   the GTK `Paned` layout from the model.
 - GTK command palette, notification panel, and settings dialog have native
-  minimal implementations. Settings persist through `forktty-core` config.
+  implementations. The notification panel can clear unread/attention state, and
+  settings persist shell, font size, notification command, worktree layout,
+  window mode, and notification preferences through `forktty-core` config.
 - GTK quake/dropdown mode reads `appearance.window_mode = "quake"`, starts with
   an undecorated monitor-sized dropdown-style window, and uses
   `gtk4-layer-shell` at runtime when available on Wayland to anchor the window
@@ -78,6 +80,8 @@ Tauri/React implementation.
   surface alive.
 - The GTK sidebar refreshes from `WorkspaceModel`, including active workspace,
   branch/worktree metadata, agent status metadata, and unread/attention state.
+  Activating a sidebar row selects that workspace and rebuilds the VTE split
+  layout from the active workspace's pane tree.
 - VTE `bell` and `child-exited` signals now update the core model, creating
   notifications that drive unread/attention state.
 - VTE termprop events are wired for `xterm.title`, `vte.shell.precmd`,
