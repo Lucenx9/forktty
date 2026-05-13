@@ -4,7 +4,6 @@ use forktty_socket::{bootstrap_default_workspace, default_socket_path, SocketApp
 use forktty_terminal::vte::spawn_vte_terminal;
 use forktty_terminal::HeadlessTerminalBackend;
 use gtk::glib;
-use gtk::prelude::*;
 use gtk4 as gtk;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -90,16 +89,16 @@ fn build_ui(app: &adw::Application) {
     paned.set_shrink_start_child(false);
     paned.set_end_child(Some(&*terminal_stack.borrow()));
 
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
-    toolbar_view.set_content(Some(&paned));
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&header);
+    content.append(&paned);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("ForkTTY GTK")
         .default_width(1200)
         .default_height(760)
-        .content(&toolbar_view)
+        .content(&content)
         .build();
 
     let stack_for_horizontal = terminal_stack.clone();
