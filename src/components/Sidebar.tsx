@@ -29,6 +29,7 @@ import {
   Rows2,
   Bell,
   Command,
+  Settings,
   ChevronsLeft,
   ChevronsRight,
   X,
@@ -633,6 +634,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
   const setWorktreeStatus = useWorkspaceStore((s) => s.setWorktreeStatus);
   const reorderWorkspaces = useWorkspaceStore((s) => s.reorderWorkspaces);
   const showNotificationPanel = useWorkspaceStore((s) => s.showNotificationPanel);
+  const showSettings = useConfigStore((s) => s.showSettings);
   const sidebarPosition = useConfigStore(
     (s) => s.config?.appearance.sidebar_position ?? "left",
   );
@@ -761,6 +763,10 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
     }
   }
 
+  function handleOpenSettings() {
+    window.dispatchEvent(new CustomEvent("forktty-open-settings"));
+  }
+
   if (collapsed) {
     return (
       <div className="sidebar sidebar-collapsed">
@@ -839,6 +845,18 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
               </button>
             );
           })}
+        </div>
+        <div className="sidebar-rail-footer">
+          <button
+            className={`sidebar-icon-btn ${showSettings ? "sidebar-icon-btn-active" : ""}`}
+            type="button"
+            onClick={handleOpenSettings}
+            title="Settings"
+            aria-label="Settings"
+            aria-pressed={showSettings}
+          >
+            <Settings size={14} />
+          </button>
         </div>
       </div>
     );
@@ -949,18 +967,30 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
       </div>
       <div className="sidebar-footer" aria-label="Sidebar status">
         <span className="sidebar-footer-status">Ready</span>
-        <button
-          className="sidebar-footer-command"
-          type="button"
-          onClick={() =>
-            window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
-          }
-          title="Command palette"
-          aria-label="Command palette"
-        >
-          <Command size={12} aria-hidden="true" />
-          <span>Ctrl+Shift+P</span>
-        </button>
+        <div className="sidebar-footer-actions">
+          <button
+            className="sidebar-footer-command"
+            type="button"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("forktty-open-command-palette"))
+            }
+            title="Command palette"
+            aria-label="Command palette"
+          >
+            <Command size={12} aria-hidden="true" />
+            <span>Ctrl+Shift+P</span>
+          </button>
+          <button
+            className={`sidebar-footer-icon ${showSettings ? "sidebar-footer-icon-active" : ""}`}
+            type="button"
+            onClick={handleOpenSettings}
+            title="Settings"
+            aria-label="Settings"
+            aria-pressed={showSettings}
+          >
+            <Settings size={13} />
+          </button>
+        </div>
       </div>
       {contextMenu &&
         createPortal(
