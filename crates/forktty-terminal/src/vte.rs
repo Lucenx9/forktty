@@ -41,7 +41,7 @@ where
     terminal.set_scrollback_lines(20_000);
 
     let env_storage = child_environment(request);
-    let argv_storage = vec![request.shell.clone()];
+    let argv_storage = [request.shell.clone()];
     let cwd_storage = request.cwd.to_string_lossy().to_string();
     let on_spawn_result = Rc::new(RefCell::new(Some(on_spawn_result)));
     let spawned = Rc::new(Cell::new(false));
