@@ -33,6 +33,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_ID: &str = "dev.forktty.ForkTTY";
 const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
+const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
+    "JetBrainsMono Nerd Font Mono",
+    "JetBrainsMono Nerd Font",
+    "FantasqueSansM Nerd Font Mono",
+    "FiraCode Nerd Font Mono",
+    "Hack Nerd Font Mono",
+    "Iosevka Nerd Font Mono",
+    "Symbols Nerd Font Mono",
+];
 const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_secs(8);
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
@@ -672,7 +681,7 @@ fn layout_structure_signature(node: &PaneNode, out: &mut String) {
 
 fn apply_vte_appearance(widget: &VteTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
-    let font = terminal_font_description(&config);
+    let font = terminal_font_description_for_context(&config, &widget.pango_context());
     widget.add_css_class("vte-terminal");
     widget.set_font(Some(&font));
     widget.set_color_background(&rgba("#1c1d2a"));
@@ -684,10 +693,30 @@ fn apply_vte_appearance(widget: &VteTerminalWidget) {
     widget.set_color_highlight_foreground(Some(&rgba("#f5f6fb")));
 }
 
+#[cfg(test)]
 fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDescription {
+    terminal_font_description_with_family(config, default_terminal_font_family(&[]))
+}
+
+fn terminal_font_description_for_context(
+    config: &config::AppConfig,
+    context: &gtk::pango::Context,
+) -> gtk::pango::FontDescription {
+    let family_names = context
+        .list_families()
+        .iter()
+        .map(|family| family.name().to_string())
+        .collect::<Vec<_>>();
+    terminal_font_description_with_family(config, default_terminal_font_family(&family_names))
+}
+
+fn terminal_font_description_with_family(
+    config: &config::AppConfig,
+    default_family: String,
+) -> gtk::pango::FontDescription {
     let configured = config.appearance.font_family.trim();
     let family = if configured.is_empty() {
-        preferred_terminal_font_family()
+        default_family
     } else {
         configured.to_string()
     };
@@ -698,26 +727,20 @@ fn rgba(value: &str) -> gtk::gdk::RGBA {
     gtk::gdk::RGBA::parse(value).unwrap_or(gtk::gdk::RGBA::BLACK)
 }
 
-fn preferred_terminal_font_family() -> String {
-    let context = gtk::pango::Context::new();
-    let families = context.list_families();
-    for preferred in [
-        "JetBrainsMono Nerd Font Mono",
-        "JetBrainsMono Nerd Font",
-        "FantasqueSansM Nerd Font Mono",
-        "FiraCode Nerd Font Mono",
-        "Hack Nerd Font Mono",
-        "Iosevka Nerd Font Mono",
-        "Symbols Nerd Font Mono",
-    ] {
-        if families
+fn default_terminal_font_family(installed_families: &[String]) -> String {
+    for preferred in PREFERRED_TERMINAL_FONT_FAMILIES {
+        if installed_families
             .iter()
-            .any(|family| family.name().as_str() == preferred)
+            .any(|family| family.eq_ignore_ascii_case(preferred))
         {
             return preferred.to_string();
         }
     }
-    "monospace".to_string()
+    installed_families
+        .iter()
+        .find(|family| family.eq_ignore_ascii_case("monospace"))
+        .cloned()
+        .unwrap_or_else(|| "monospace".to_string())
 }
 
 fn attach_vte_signal_handlers(
@@ -3627,11 +3650,19 @@ fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText 
 
 fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
-    combo.append(Some(DEFAULT_FONT_FAMILY_ID), "System default (monospace)");
-
     let active_family = active_family.trim();
     let context = parent.pango_context();
     let families = context.list_families();
+    let all_names = families
+        .iter()
+        .map(|family| family.name().to_string())
+        .collect::<Vec<_>>();
+    let default_family = default_terminal_font_family(&all_names);
+    combo.append(
+        Some(DEFAULT_FONT_FAMILY_ID),
+        &format!("Default terminal font ({default_family})"),
+    );
+
     let mut names = families
         .iter()
         .filter(|family| family.is_monospace())
@@ -3833,4 +3864,16 @@ mod tests {
         assert!(description.to_string().contains("16"));
     }
 
+    #[test]
+    fn default_terminal_font_prefers_installed_nerd_font() {
+        let families = vec![
+            "Noto Sans Mono".to_string(),
+            "JetBrainsMono Nerd Font Mono".to_string(),
+        ];
+
+        assert_eq!(
+            default_terminal_font_family(&families),
+            "JetBrainsMono Nerd Font Mono"
+        );
+    }
 }
