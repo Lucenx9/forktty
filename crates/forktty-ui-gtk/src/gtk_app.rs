@@ -1250,6 +1250,14 @@ fn show_command_palette(parent: &adw::ApplicationWindow, state: &SocketAppState)
             dialog.close();
         }
     });
+    append_command_button(&list, "Close Workspace", {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            close_active_workspace(&state);
+            dialog.close();
+        }
+    });
     append_command_button(&list, "Mark Notification", {
         let state = state.clone();
         let dialog = dialog.clone();
@@ -1597,6 +1605,49 @@ fn create_plain_workspace(state: &SocketAppState) {
         extra_env: Vec::new(),
     }) {
         eprintln!("Failed to create workspace terminal: {err}");
+    }
+}
+
+fn close_active_workspace(state: &SocketAppState) {
+    let (workspace_id, surface_ids) = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let Some(workspace) = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+        else {
+            return;
+        };
+        let surface_ids = model
+            .list_surfaces(Some(&workspace.id))
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<Vec<_>>();
+        (workspace.id, surface_ids)
+    };
+
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
+        if model.list_workspaces().is_empty() {
+            model.create_workspace(
+                "main",
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            );
+        }
+    }
+    for surface_id in surface_ids {
+        let _ = state.terminal.close(&surface_id);
+    }
+    if let Err(err) = spawn_focused_surface_if_needed(state) {
+        eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
 }
 
