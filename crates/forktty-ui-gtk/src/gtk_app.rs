@@ -658,10 +658,19 @@ fn build_ui(app: &adw::Application) {
     let terminal_stack = Rc::new(RefCell::new(terminal_stack));
 
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
-    paned.set_start_child(Some(&sidebar));
-    paned.set_resize_start_child(false);
-    paned.set_shrink_start_child(false);
-    paned.set_end_child(Some(&*terminal_stack.borrow()));
+    if app_config.appearance.sidebar_position == "right" {
+        paned.set_start_child(Some(&*terminal_stack.borrow()));
+        paned.set_resize_start_child(true);
+        paned.set_shrink_start_child(false);
+        paned.set_end_child(Some(&sidebar));
+        paned.set_resize_end_child(false);
+        paned.set_shrink_end_child(false);
+    } else {
+        paned.set_start_child(Some(&sidebar));
+        paned.set_resize_start_child(false);
+        paned.set_shrink_start_child(false);
+        paned.set_end_child(Some(&*terminal_stack.borrow()));
+    }
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&header);
@@ -1669,6 +1678,10 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
         &[("normal", "Normal"), ("quake", "Quake")],
         &loaded.appearance.window_mode,
     );
+    let sidebar_position = combo_with_ids(
+        &[("left", "Left"), ("right", "Right")],
+        &loaded.appearance.sidebar_position,
+    );
     let desktop_notifications = gtk::CheckButton::builder()
         .active(loaded.notifications.desktop)
         .build();
@@ -1701,12 +1714,14 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
     grid.attach(&worktree_layout, 1, 4, 1, 1);
     grid.attach(&gtk::Label::new(Some("Window mode")), 0, 5, 1, 1);
     grid.attach(&window_mode, 1, 5, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Desktop notifications")), 0, 6, 1, 1);
-    grid.attach(&desktop_notifications, 1, 6, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Notification sound")), 0, 7, 1, 1);
-    grid.attach(&notification_sound, 1, 7, 1, 1);
-    grid.attach(&save, 1, 8, 1, 1);
-    grid.attach(&status, 0, 9, 2, 1);
+    grid.attach(&gtk::Label::new(Some("Sidebar position")), 0, 6, 1, 1);
+    grid.attach(&sidebar_position, 1, 6, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Desktop notifications")), 0, 7, 1, 1);
+    grid.attach(&desktop_notifications, 1, 7, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Notification sound")), 0, 8, 1, 1);
+    grid.attach(&notification_sound, 1, 8, 1, 1);
+    grid.attach(&save, 1, 9, 1, 1);
+    grid.attach(&status, 0, 10, 2, 1);
 
     save.connect_clicked(move |_| {
         let mut next = config::load_config().unwrap_or_default();
@@ -1719,6 +1734,9 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
         }
         if let Some(mode) = window_mode.active_id() {
             next.appearance.window_mode = mode.to_string();
+        }
+        if let Some(position) = sidebar_position.active_id() {
+            next.appearance.sidebar_position = position.to_string();
         }
         next.notifications.desktop = desktop_notifications.is_active();
         next.notifications.sound = notification_sound.is_active();
