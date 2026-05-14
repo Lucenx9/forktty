@@ -761,9 +761,9 @@ fn update_partition_ratio(
                 apply_partition_ratio(sizes, split_at, ratio);
                 return true;
             }
-            children.iter_mut().any(|child| {
-                update_partition_ratio(child, left_leaves, right_leaves, ratio)
-            })
+            children
+                .iter_mut()
+                .any(|child| update_partition_ratio(child, left_leaves, right_leaves, ratio))
         }
     }
 }
@@ -774,7 +774,11 @@ fn apply_partition_ratio(sizes: &mut [f64], split_at: usize, ratio: f64) {
         return;
     }
     let total: f64 = sizes.iter().filter(|s| s.is_finite() && **s > 0.0).sum();
-    let total = if total > f64::EPSILON { total } else { len as f64 };
+    let total = if total > f64::EPSILON {
+        total
+    } else {
+        len as f64
+    };
     let left_sum: f64 = sizes[..split_at]
         .iter()
         .filter(|s| s.is_finite() && **s > 0.0)

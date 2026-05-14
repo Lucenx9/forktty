@@ -27,6 +27,7 @@ use std::ffi::CString;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -414,8 +415,8 @@ impl VteController {
     fn widget_for_pane(&self, node: &PaneNode, workspace_id: &str) -> gtk::Widget {
         let model = self.model.clone();
         let workspace_id_for_resize = workspace_id.to_string();
-        let on_resize: SplitResizeCallback = Rc::new(
-            move |left: &[String], right: &[String], ratio: f64| {
+        let on_resize: SplitResizeCallback =
+            Rc::new(move |left: &[String], right: &[String], ratio: f64| {
                 if let Ok(mut model) = model.lock() {
                     let _ = model.update_split_partition_ratio(
                         &workspace_id_for_resize,
@@ -424,8 +425,7 @@ impl VteController {
                         ratio,
                     );
                 }
-            },
-        );
+            });
         self.widget_for_pane_with_resize(node, on_resize)
     }
 
@@ -682,7 +682,7 @@ fn layout_structure_signature(node: &PaneNode, out: &mut String) {
 
 fn apply_vte_appearance(widget: &VteTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
-    let font = terminal_font_description_for_context(&config, &widget.pango_context());
+    let font = terminal_font_description(&config);
     widget.add_css_class("vte-terminal");
     widget.set_font(Some(&font));
     widget.set_color_background(&rgba("#1c1d2a"));
@@ -694,21 +694,14 @@ fn apply_vte_appearance(widget: &VteTerminalWidget) {
     widget.set_color_highlight_foreground(Some(&rgba("#f5f6fb")));
 }
 
-#[cfg(test)]
 fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDescription {
-    terminal_font_description_with_family(config, default_terminal_font_family(&[]))
-}
-
-fn terminal_font_description_for_context(
-    config: &config::AppConfig,
-    context: &gtk::pango::Context,
-) -> gtk::pango::FontDescription {
-    let family_names = context
-        .list_families()
-        .iter()
-        .map(|family| family.name().to_string())
-        .collect::<Vec<_>>();
-    terminal_font_description_with_family(config, default_terminal_font_family(&family_names))
+    let configured = config.appearance.font_family.trim();
+    let family = if configured.is_empty() {
+        default_terminal_font_family(&installed_font_families())
+    } else {
+        configured.to_string()
+    };
+    terminal_font_description_with_family(config, family)
 }
 
 fn terminal_font_description_with_family(
@@ -744,11 +737,58 @@ fn default_terminal_font_family(installed_families: &[String]) -> String {
         .unwrap_or_else(|| "monospace".to_string())
 }
 
-fn resolved_system_monospace_family(context: &gtk::pango::Context) -> Option<String> {
-    let description = gtk::pango::FontDescription::from_string("monospace 12");
-    context
-        .load_font(&description)
-        .and_then(|font| font.describe().family().map(|family| family.to_string()))
+fn installed_font_families() -> Vec<String> {
+    fontconfig_list_families(":").unwrap_or_default()
+}
+
+fn installed_monospace_font_families() -> Vec<String> {
+    fontconfig_list_families(":spacing=mono").unwrap_or_else(installed_font_families)
+}
+
+fn fontconfig_list_families(pattern: &str) -> Option<Vec<String>> {
+    let output = Command::new("fc-list")
+        .args([pattern, "family"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(parse_fontconfig_families(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn resolved_system_monospace_family() -> Option<String> {
+    let output = Command::new("fc-match")
+        .args(["-f", "%{family}\n", "monospace"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    first_fontconfig_family(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_fontconfig_families(output: &str) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for line in output.lines() {
+        for name in line.split(',') {
+            let name = name.trim();
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn first_fontconfig_family(output: &str) -> Option<String> {
+    output
+        .lines()
+        .flat_map(|line| line.split(','))
+        .map(str::trim)
+        .find(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn attach_vte_signal_handlers(
@@ -1508,8 +1548,8 @@ fn schedule_paned_ratio(
         let attempt = attempts.get().saturating_add(1);
         attempts.set(attempt);
         let applied = apply_paned_ratio(paned, orientation, ratio);
-        let done = (applied && attempt >= PANED_RATIO_APPLY_FRAMES)
-            || attempt >= PANED_RATIO_MAX_FRAMES;
+        let done =
+            (applied && attempt >= PANED_RATIO_APPLY_FRAMES) || attempt >= PANED_RATIO_MAX_FRAMES;
         if done {
             ready.set(true);
             glib::ControlFlow::Break
@@ -1662,10 +1702,7 @@ fn build_ui(app: &adw::Application) {
 
     let header = adw::HeaderBar::new();
     header.add_css_class("app-header");
-    let workspace_title = gtk::Button::builder()
-        .label("")
-        .has_frame(false)
-        .build();
+    let workspace_title = gtk::Button::builder().label("").has_frame(false).build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");
     workspace_title.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
@@ -1794,10 +1831,7 @@ fn build_ui(app: &adw::Application) {
 
     let status_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     status_bar.add_css_class("app-status-bar");
-    let status_location = gtk::Button::builder()
-        .label("")
-        .has_frame(false)
-        .build();
+    let status_location = gtk::Button::builder().label("").has_frame(false).build();
     status_location.add_css_class("flat");
     status_location.add_css_class("status-location");
     status_location.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
@@ -1890,7 +1924,12 @@ fn build_ui(app: &adw::Application) {
     let controller_for_sidebar = controller.clone();
     let sidebar_ui_for_timer = sidebar_ui.clone();
     glib::timeout_add_local(Duration::from_millis(500), move || {
-        refresh_sidebar(&sidebar_ui_for_timer, &state_for_sidebar, &controller_for_sidebar, false);
+        refresh_sidebar(
+            &sidebar_ui_for_timer,
+            &state_for_sidebar,
+            &controller_for_sidebar,
+            false,
+        );
         glib::ControlFlow::Continue
     });
     install_session_autosave(&state);
@@ -3621,11 +3660,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
                 } else {
                     "Saved. Changes applied."
                 };
-                set_status_message(
-                    &status_for_save,
-                    message,
-                    StatusKind::Success,
-                );
+                set_status_message(&status_for_save, message, StatusKind::Success);
             }
             Err(err) => set_status_message(&status_for_save, &err.to_string(), StatusKind::Error),
         }
@@ -3656,42 +3691,31 @@ fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText 
     combo
 }
 
-fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
+fn font_family_combo(_parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     let active_family = active_family.trim();
-    let context = parent.pango_context();
-    let families = context.list_families();
-    let all_names = families
-        .iter()
-        .map(|family| family.name().to_string())
-        .collect::<Vec<_>>();
+    let all_names = installed_font_families();
     let default_family = default_terminal_font_family(&all_names);
     combo.append(
         Some(DEFAULT_FONT_FAMILY_ID),
         &format!("Default terminal font ({default_family})"),
     );
-    let system_monospace = resolved_system_monospace_family(&context)
-        .unwrap_or_else(|| "monospace".to_string());
+    let system_monospace =
+        resolved_system_monospace_family().unwrap_or_else(|| "monospace".to_string());
     combo.append(
         Some(SYSTEM_MONOSPACE_FONT_FAMILY_ID),
         &format!("System monospace ({system_monospace})"),
     );
 
-    let mut names = families
-        .iter()
-        .filter(|family| family.is_monospace())
-        .map(|family| family.name().to_string())
-        .collect::<Vec<_>>();
+    let mut names = installed_monospace_font_families();
     if names.is_empty() {
-        names = families
-            .iter()
-            .map(|family| family.name().to_string())
-            .collect::<Vec<_>>();
+        names = all_names;
     }
     names.sort_by_key(|name| name.to_ascii_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
 
-    let mut has_active = active_family.is_empty() || active_family.eq_ignore_ascii_case("monospace");
+    let mut has_active =
+        active_family.is_empty() || active_family.eq_ignore_ascii_case("monospace");
     for name in &names {
         if name == active_family {
             has_active = true;
@@ -3890,6 +3914,25 @@ mod tests {
         assert_eq!(
             default_terminal_font_family(&families),
             "JetBrainsMono Nerd Font Mono"
+        );
+    }
+
+    #[test]
+    fn parses_fontconfig_family_lists() {
+        let families = parse_fontconfig_families(
+            "JetBrainsMono Nerd Font Mono,JetBrainsMono NFM\nNoto Sans Mono\n\n",
+        );
+
+        assert!(families.contains(&"JetBrainsMono Nerd Font Mono".to_string()));
+        assert!(families.contains(&"JetBrainsMono NFM".to_string()));
+        assert!(families.contains(&"Noto Sans Mono".to_string()));
+    }
+
+    #[test]
+    fn first_fontconfig_family_preserves_match_order() {
+        assert_eq!(
+            first_fontconfig_family("Noto Sans Mono,Noto Sans Mono Regular\n"),
+            Some("Noto Sans Mono".to_string())
         );
     }
 }
