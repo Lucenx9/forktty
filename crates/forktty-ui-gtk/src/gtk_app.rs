@@ -755,6 +755,7 @@ fn build_ui(app: &adw::Application) {
         refresh_sidebar(&sidebar_for_timer, &model_for_sidebar);
         glib::ControlFlow::Continue
     });
+    install_session_autosave(&state);
 
     if let Err(err) = restore_or_bootstrap_workspaces(&state, cwd) {
         eprintln!("Failed to restore workspace session: {err}");
@@ -843,6 +844,27 @@ fn save_session_from_state(state: &SocketAppState) {
     if let Err(err) = session::save_session(&data) {
         eprintln!("Failed to save GTK session: {err}");
     }
+}
+
+fn install_session_autosave(state: &SocketAppState) {
+    let state = state.clone();
+    let last_saved = Rc::new(RefCell::new(None::<String>));
+    glib::timeout_add_local(Duration::from_secs(2), move || {
+        let data = match state.model.lock() {
+            Ok(model) => model.to_session_data(),
+            Err(_) => return glib::ControlFlow::Continue,
+        };
+        let signature = format!("{data:?}");
+        if last_saved.borrow().as_deref() == Some(signature.as_str()) {
+            return glib::ControlFlow::Continue;
+        }
+        if let Err(err) = session::save_session(&data) {
+            eprintln!("Failed to autosave GTK session: {err}");
+        } else {
+            *last_saved.borrow_mut() = Some(signature);
+        }
+        glib::ControlFlow::Continue
+    });
 }
 
 fn quake_default_size() -> (i32, i32) {

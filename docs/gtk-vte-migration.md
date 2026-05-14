@@ -115,8 +115,8 @@ Tauri/React implementation.
 - Session restore can load the current Tauri v1 `session.json` shape and migrate
   workspace order, active workspace, pane tree, focused pane, cwd, branch, and
   worktree metadata into the new v2 core schema. The GTK app restores that
-  session on startup, spawns VTE terminals for restored surfaces, and writes the
-  v2 session on window close.
+  session on startup, spawns VTE terminals for restored surfaces, autosaves
+  changed session state during runtime, and writes the v2 session on window close.
 
 ## VTE Owning PTY Gap
 
