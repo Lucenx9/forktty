@@ -4,21 +4,42 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-05-14
+
 ### Architecture
 - Replaced the old Tauri/React/WebKit runtime with the native GTK4/libadwaita/VTE implementation as the primary app.
 - Removed the legacy frontend, Tauri backend, Vite/TypeScript build, and npm dependency tree from the main code path.
 - Installed the native binary and Debian package as `forktty` instead of `forktty-gtk`.
 
 ### UI
-- Added a first native GTK visual pass: dark libadwaita chrome, themed VTE colors, styled workspace sidebar cards, active/unread indicators, and focused terminal outline.
+- Added the native GTK shell with compact header, product wordmark, workspace sidebar, recursive split panes, global status bar, command palette, settings, notification panel, keyboard shortcut reference, and context menus.
+- Added the refreshed ForkTTY app icon used by README, desktop integration, notifications, window chrome, and About dialog.
+- Added workspace rename support from the workspace context menu and command palette.
+- Added sidebar toggle persistence, theme selection, sidebar visibility setting, reset-to-defaults staging, destructive confirmations, and improved empty/error states.
+- Polished pane chrome with single-pane header hiding, hover/focus-revealed pane actions, duplicate CWD suppression, active pane indicators, and terminal placeholder recovery actions.
+
+### Terminal
+- Moved terminal spawning to GTK/VTE realization to avoid Wayland/VTE startup crashes and duplicate shell spawns.
+- Restored sessions now rebuild panes incrementally instead of spawning every VTE surface in the same main-loop turn.
+- Clean terminal exits no longer create noisy warning notifications.
+- Added safer quake mode fallback to a normal decorated window when layer-shell support is unavailable.
 
 ### Reliability
 - Fixed `workspace.close` to close by the resolved workspace ID so surface cleanup and model mutation cannot diverge on ambiguous selectors.
 - Limited VTE prompt fallback scanning to a bounded visible tail instead of copying the full terminal text on every contents-changed signal.
+- Added immediate session saves after workspace and pane mutations.
+- Added config-load and session-restore user-facing error notifications.
 
 ### Tooling
 - Replaced Vitest/Vite frontend checks with Node built-in CLI tests.
 - Updated CI, dependency review, security audit, Docker dev image, desktop entry validation, and Debian packaging for the Rust GTK/VTE stack.
+- Debian prerelease package versions now use Debian ordering (`0.2.0~alpha.1`) while Cargo and GitHub use SemVer (`0.2.0-alpha.1`).
+
+### Known Limitations
+- Linux only.
+- The first alpha ships a `.deb` package. AppImage packaging is deferred until the native GTK/VTE bundle can be tested reliably.
+- PTY processes and scrollback are not preserved across restart; restored sessions spawn fresh shells.
+- Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
 
 ## [0.1.2] - 2026-05-11
 

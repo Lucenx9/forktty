@@ -18,7 +18,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 </div>
 
-> **Status**: Early development (v0.1.2). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
+> **Status**: Early alpha (v0.2.0-alpha.1). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
 
 ## Why ForkTTY
 

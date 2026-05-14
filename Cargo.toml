@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0-alpha.1"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
@@ -20,7 +20,7 @@ repository = "https://github.com/Lucenx9/forktty"
 base64 = "0.22"
 chrono = "0.4"
 dirs = "6"
-git2 = "0.20"
+git2 = { version = "0.20", features = ["vendored-libgit2"] }
 libc = "0.2"
 notify-rust = "4"
 regex = "1"

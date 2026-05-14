@@ -4,12 +4,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
+DEB_VERSION="${FORKTTY_DEB_VERSION:-$VERSION}"
 TARGET_DIR="$ROOT_DIR/target/packaging/deb"
 ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
 
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
   exit 1
+fi
+
+if [[ -z "${FORKTTY_DEB_VERSION:-}" && "$VERSION" == *-* ]]; then
+  DEB_VERSION="${VERSION%%-*}~${VERSION#*-}"
 fi
 
 if [[ -z "$ARCH" ]]; then
@@ -21,8 +26,8 @@ if [[ -z "$ARCH" ]]; then
 fi
 
 PKG_NAME="forktty"
-PKG_ROOT="$TARGET_DIR/${PKG_NAME}_${VERSION}_${ARCH}"
-DEB_PATH="$TARGET_DIR/${PKG_NAME}_${VERSION}_${ARCH}.deb"
+PKG_ROOT="$TARGET_DIR/${PKG_NAME}_${DEB_VERSION}_${ARCH}"
+DEB_PATH="$TARGET_DIR/${PKG_NAME}_${DEB_VERSION}_${ARCH}.deb"
 
 command -v dpkg-deb >/dev/null || {
   echo "dpkg-deb is required to build a .deb package" >&2
@@ -46,14 +51,14 @@ mkdir -p "$PKG_ROOT/DEBIAN"
 INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"
 cat > "$PKG_ROOT/DEBIAN/control" <<CONTROL
 Package: $PKG_NAME
-Version: $VERSION
+Version: $DEB_VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://github.com/Lucenx9/forktty
-Depends: libc6, libgtk-4-1, libadwaita-1-0, libvte-2.91-gtk4-0 (>= 0.76)
+Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0, libvte-2.91-gtk4-0 (>= 0.76), libssl3, libssh2-1, zlib1g, libzstd1
 Description: Linux-native multi-agent terminal
  ForkTTY is a Linux-native GTK4/libadwaita/VTE terminal for multi-agent
  workflows, programmable socket automation, and git worktree isolation.
