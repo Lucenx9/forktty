@@ -28,11 +28,12 @@ use std::ffi::CString;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_ID: &str = "dev.forktty.ForkTTY";
-const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_millis(750);
+const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_secs(8);
+const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
 const PANED_RATIO_MAX_FRAMES: u8 = 30;
 
@@ -181,6 +182,7 @@ struct SidebarUi {
     status_location: gtk::Button,
     last_signature: Rc<RefCell<Option<String>>>,
     context_menu_open: Rc<Cell<bool>>,
+    context_popover: Rc<RefCell<Option<gtk::Popover>>>,
 }
 
 type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
@@ -897,13 +899,50 @@ fn visible_terminal_tail(terminal: &VteTerminalWidget) -> String {
 }
 
 fn dispatch_notification_with_loaded_config(notification: &NotificationItem) {
+    if !should_dispatch_notification(notification) {
+        return;
+    }
     let config = config::load_config().unwrap_or_default();
     for error in dispatch_notification(&config, notification) {
+        if error.channel == "desktop" && is_desktop_notification_rate_limit(&error.message) {
+            continue;
+        }
         eprintln!(
             "Failed to dispatch {} notification: {}",
             error.channel, error.message
         );
     }
+}
+
+fn should_dispatch_notification(notification: &NotificationItem) -> bool {
+    static RECENT_NOTIFICATIONS: OnceLock<Mutex<BTreeMap<String, Instant>>> = OnceLock::new();
+
+    let now = Instant::now();
+    let key = format!(
+        "{}\n{}\n{}",
+        notification_kind_class(notification.kind),
+        notification.title,
+        notification.body
+    );
+    let recent = RECENT_NOTIFICATIONS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let Ok(mut recent) = recent.lock() else {
+        return true;
+    };
+
+    recent.retain(|_, last_seen| now.duration_since(*last_seen) < NOTIFICATION_DEDUPE_WINDOW);
+    if recent
+        .get(&key)
+        .is_some_and(|last_seen| now.duration_since(*last_seen) < NOTIFICATION_DEDUPE_WINDOW)
+    {
+        return false;
+    }
+    recent.insert(key, now);
+    true
+}
+
+fn is_desktop_notification_rate_limit(message: &str) -> bool {
+    message.contains("ExcessNotificationGeneration")
+        || message.contains("too many similar notifications")
 }
 
 #[derive(Clone, Copy)]
@@ -1142,11 +1181,6 @@ fn build_workspace_context_menu(
     });
 
     popover.set_child(Some(&menu));
-    popover.connect_closed(|p| {
-        if p.parent().is_some() {
-            p.unparent();
-        }
-    });
     popover
 }
 
@@ -1710,31 +1744,8 @@ fn build_ui(app: &adw::Application) {
         status_location: status_location.clone(),
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),
+        context_popover: Rc::new(RefCell::new(None)),
     };
-    let state_for_sidebar_select = state.clone();
-    let controller_for_sidebar_select = controller.clone();
-    let sidebar_ui_for_select = sidebar_ui.clone();
-    sidebar.connect_row_activated(move |_, row| {
-        let workspace_id = {
-            let model = match state_for_sidebar_select.model.lock() {
-                Ok(model) => model,
-                Err(_) => return,
-            };
-            workspace_id_at_index(&model, row.index())
-        };
-        if let Some(workspace_id) = workspace_id {
-            select_sidebar_workspace(
-                &state_for_sidebar_select,
-                &workspace_id,
-                &controller_for_sidebar_select,
-            );
-            schedule_sidebar_refresh(
-                sidebar_ui_for_select.clone(),
-                state_for_sidebar_select.clone(),
-                controller_for_sidebar_select.clone(),
-            );
-        }
-    });
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
         while let Ok(command) = terminal_rx.try_recv() {
@@ -2156,6 +2167,7 @@ fn refresh_sidebar(
     for row_data in snapshot.rows {
         let workspace = row_data.workspace;
         let row = gtk::ListBoxRow::new();
+        row.set_activatable(false);
         row.add_css_class("workspace-row");
         if workspace.active {
             row.add_css_class("active");
@@ -2233,8 +2245,11 @@ fn refresh_sidebar(
         let state_for_click = state.clone();
         let controller_for_click = controller.clone();
         let ui_for_click = ui.clone();
+        let row_for_click = row.clone();
         primary_click.connect_pressed(move |gesture, _n_press, _x, _y| {
             gesture.set_state(gtk::EventSequenceState::Claimed);
+            close_sidebar_context_menu(&ui_for_click);
+            ui_for_click.sidebar.select_row(Some(&row_for_click));
             select_sidebar_workspace(
                 &state_for_click,
                 &workspace_id_for_click,
@@ -2256,24 +2271,44 @@ fn refresh_sidebar(
         let parent_for_menu = ui.parent_window.clone();
         let workspace_for_menu = workspace.clone();
         let row_for_menu = row.clone();
-        let menu_open_for_menu = ui.context_menu_open.clone();
+        let ui_for_menu = ui.clone();
         gesture.connect_pressed(move |gesture, _n_press, x, y| {
             // Claim the sequence so ListBox doesn't also treat right-click as
             // row activation (would switch workspace under the menu).
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            menu_open_for_menu.set(true);
+            close_sidebar_context_menu(&ui_for_menu);
+            ui_for_menu.context_menu_open.set(true);
             let popover = build_workspace_context_menu(
                 &parent_for_menu,
                 &state_for_menu,
                 &controller_for_menu,
                 &workspace_for_menu,
             );
-            let menu_open_for_closed = menu_open_for_menu.clone();
-            popover.connect_closed(move |_| {
-                menu_open_for_closed.set(false);
+            let ui_for_closed = ui_for_menu.clone();
+            let state_for_closed = state_for_menu.clone();
+            let controller_for_closed = controller_for_menu.clone();
+            popover.connect_closed(move |popover| {
+                ui_for_closed.context_menu_open.set(false);
+                let should_clear = ui_for_closed
+                    .context_popover
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|current| current == popover);
+                if should_clear {
+                    ui_for_closed.context_popover.borrow_mut().take();
+                }
+                if popover.parent().is_some() {
+                    popover.unparent();
+                }
+                schedule_sidebar_refresh(
+                    ui_for_closed.clone(),
+                    state_for_closed.clone(),
+                    controller_for_closed.clone(),
+                );
             });
             popover.set_parent(&row_for_menu);
             popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            *ui_for_menu.context_popover.borrow_mut() = Some(popover.clone());
             popover.popup();
         });
         row.add_controller(gesture);
@@ -2383,12 +2418,15 @@ fn select_sidebar_workspace(
     controller.borrow_mut().rebuild_layout();
 }
 
-fn workspace_id_at_index(model: &WorkspaceModel, index: i32) -> Option<String> {
-    let index = usize::try_from(index).ok()?;
-    model
-        .list_workspaces()
-        .get(index)
-        .map(|workspace| workspace.id.clone())
+fn close_sidebar_context_menu(ui: &SidebarUi) {
+    let popover = ui.context_popover.borrow_mut().take();
+    if let Some(popover) = popover {
+        popover.popdown();
+        if popover.parent().is_some() {
+            popover.unparent();
+        }
+    }
+    ui.context_menu_open.set(false);
 }
 
 fn format_metadata_summary(
@@ -3565,21 +3603,4 @@ mod tests {
         assert!(description.to_string().contains("16"));
     }
 
-    #[test]
-    fn resolves_sidebar_workspace_by_visible_index() {
-        let mut model = WorkspaceModel::new();
-        let first = model.create_workspace("one", "/tmp/one");
-        let second = model.create_workspace("two", "/tmp/two");
-
-        assert_eq!(
-            workspace_id_at_index(&model, 0).as_deref(),
-            Some(first.id.as_str())
-        );
-        assert_eq!(
-            workspace_id_at_index(&model, 1).as_deref(),
-            Some(second.id.as_str())
-        );
-        assert!(workspace_id_at_index(&model, -1).is_none());
-        assert!(workspace_id_at_index(&model, 2).is_none());
-    }
 }
