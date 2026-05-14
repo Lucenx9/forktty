@@ -2635,11 +2635,11 @@ fn build_ui(app: &adw::Application) {
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(&sidebar_shell));
-        paned.set_resize_end_child(true);
+        paned.set_resize_end_child(false);
         paned.set_shrink_end_child(false);
     } else {
         paned.set_start_child(Some(&sidebar_shell));
-        paned.set_resize_start_child(true);
+        paned.set_resize_start_child(false);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(&*terminal_stack.borrow()));
         paned.set_resize_end_child(true);
@@ -2922,11 +2922,11 @@ fn apply_sidebar_position(
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(sidebar_shell));
-        paned.set_resize_end_child(true);
+        paned.set_resize_end_child(false);
         paned.set_shrink_end_child(false);
     } else {
         paned.set_start_child(Some(sidebar_shell));
-        paned.set_resize_start_child(true);
+        paned.set_resize_start_child(false);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(terminal_stack));
         paned.set_resize_end_child(true);
