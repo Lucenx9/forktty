@@ -46,7 +46,9 @@ Tauri/React implementation.
 - `metadata.list_logs`
 - `metadata.clear_logs`
 - `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`
-  injection through the terminal backend adapter.
+  injection through the terminal backend adapter. VTE child processes inherit
+  the app environment first, then ForkTTY-specific variables and explicit
+  backend overrides are applied.
 - Worktree create, attach, list, remove, merge, status, and hook execution in
   `forktty-core`, with direct socket dispatch that opens/closes matching
   worktree-backed workspaces.
