@@ -27,7 +27,7 @@ use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const APP_ID: &str = "dev.forktty.ForkTTYGtk";
+const APP_ID: &str = "dev.forktty.ForkTTY";
 const VTE_TERMPROP_PROGRESS_HINT: &str = "vte.progress.hint";
 const VTE_TERMPROP_PROGRESS_VALUE: &str = "vte.progress.value";
 const VTE_TERMPROP_SHELL_POSTEXEC: &str = "vte.shell.postexec";
@@ -201,7 +201,7 @@ impl VteController {
         }
         match spawn_vte_terminal(&request) {
             Ok(widget) => {
-                apply_vte_font(&widget);
+                apply_vte_appearance(&widget);
                 attach_vte_signal_handlers(&widget, &self.model, &request);
                 widget.grab_focus();
                 self.container.append(&widget);
@@ -275,10 +275,17 @@ fn active_layout_snapshot(
     Some((signature, workspace.pane_tree, workspace.focused_surface_id))
 }
 
-fn apply_vte_font(widget: &VteTerminalWidget) {
+fn apply_vte_appearance(widget: &VteTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
     let font = terminal_font_description(&config);
     widget.set_font(Some(&font));
+    widget.set_color_background(&rgba("#1e1e2e"));
+    widget.set_color_foreground(&rgba("#cdd6f4"));
+    widget.set_color_bold(Some(&rgba("#cdd6f4")));
+    widget.set_color_cursor(Some(&rgba("#89b4fa")));
+    widget.set_color_cursor_foreground(Some(&rgba("#11111b")));
+    widget.set_color_highlight(Some(&rgba("#313244")));
+    widget.set_color_highlight_foreground(Some(&rgba("#f5e0dc")));
 }
 
 fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDescription {
@@ -289,6 +296,10 @@ fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDesc
         family
     };
     gtk::pango::FontDescription::from_string(&format!("{} {}", family, config.appearance.font_size))
+}
+
+fn rgba(value: &str) -> gtk::gdk::RGBA {
+    gtk::gdk::RGBA::parse(value).unwrap_or(gtk::gdk::RGBA::BLACK)
 }
 
 fn attach_vte_signal_handlers(
@@ -324,23 +335,23 @@ fn attach_vte_signal_handlers(
     let surface_id = request.surface_id.clone();
     let workspace_id = request.workspace_id.clone();
     let prompt_model = model.clone();
-    let last_visible_text = Rc::new(RefCell::new(String::new()));
+    let last_prompt_tail = Rc::new(RefCell::new(String::new()));
     let last_prompt_notification = Rc::new(RefCell::new(None));
     let visible_last_prompt = last_prompt_notification.clone();
     widget.connect_contents_changed(move |terminal| {
-        let Some(text) = terminal.text_format(Format::Text) else {
+        let tail = visible_terminal_tail(terminal);
+        if tail.is_empty() {
             return;
-        };
-        let text = text.to_string();
-        let mut previous = last_visible_text.borrow_mut();
-        let changed = text
-            .strip_prefix(previous.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| visible_text_tail(&text));
-        *previous = text;
+        }
+
+        let mut previous = last_prompt_tail.borrow_mut();
+        if previous.as_str() == tail {
+            return;
+        }
+        *previous = tail.clone();
         drop(previous);
 
-        if !looks_like_prompt(&changed) {
+        if !looks_like_prompt(&tail) {
             return;
         }
         emit_prompt_notification(
@@ -551,6 +562,19 @@ fn visible_text_tail(text: &str) -> String {
     chars.into_iter().collect()
 }
 
+fn visible_terminal_tail(terminal: &VteTerminalWidget) -> String {
+    const PROMPT_SCAN_ROWS: i64 = 8;
+
+    let rows = terminal.row_count().max(1);
+    let cols = terminal.column_count().max(1);
+    let start_row = rows.saturating_sub(PROMPT_SCAN_ROWS);
+    let (text, _) = terminal.text_range_format(Format::Text, start_row, 0, rows - 1, cols);
+    let Some(text) = text else {
+        return String::new();
+    };
+    visible_text_tail(text.as_str())
+}
+
 fn dispatch_notification_with_loaded_config(notification: &NotificationItem) {
     let config = config::load_config().unwrap_or_default();
     for error in dispatch_notification(&config, notification) {
@@ -598,6 +622,8 @@ pub fn run() {
 }
 
 fn build_ui(app: &adw::Application) {
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let app_config = config::load_config().unwrap_or_default();
     let shell = configured_shell(&app_config);
@@ -617,6 +643,7 @@ fn build_ui(app: &adw::Application) {
     let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path);
 
     let header = adw::HeaderBar::new();
+    header.add_css_class("app-header");
     let split_horizontal = gtk::Button::builder()
         .icon_name("view-split-left-right-symbolic")
         .tooltip_text("Split horizontally")
@@ -641,6 +668,17 @@ fn build_ui(app: &adw::Application) {
         .icon_name("emblem-system-symbolic")
         .tooltip_text("Settings")
         .build();
+    for button in [
+        &split_horizontal,
+        &split_vertical,
+        &close_pane,
+        &command_palette,
+        &notifications,
+        &settings,
+    ] {
+        button.add_css_class("flat");
+        button.add_css_class("header-action");
+    }
     header.pack_start(&split_horizontal);
     header.pack_start(&split_vertical);
     header.pack_start(&close_pane);
@@ -655,9 +693,11 @@ fn build_ui(app: &adw::Application) {
     sidebar.add_css_class("navigation-sidebar");
 
     let terminal_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    terminal_stack.add_css_class("terminal-stage");
     let terminal_stack = Rc::new(RefCell::new(terminal_stack));
 
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+    paned.add_css_class("workspace-paned");
     if app_config.appearance.sidebar_position == "right" {
         paned.set_start_child(Some(&*terminal_stack.borrow()));
         paned.set_resize_start_child(true);
@@ -673,15 +713,16 @@ fn build_ui(app: &adw::Application) {
     }
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.add_css_class("app-root");
     content.append(&header);
     content.append(&paned);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title(if quake_mode {
-            "ForkTTY GTK Quake"
+            "ForkTTY Quake"
         } else {
-            "ForkTTY GTK"
+            "ForkTTY"
         })
         .default_width(default_width)
         .default_height(default_height)
@@ -712,13 +753,7 @@ fn build_ui(app: &adw::Application) {
     });
 
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(
-        "
-        window { background: @window_bg_color; }
-        .navigation-sidebar { padding: 6px; }
-        .focused-terminal { outline: 2px solid @accent_color; outline-offset: -2px; }
-        ",
-    );
+    provider.load_from_data(include_str!("style.css"));
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -1053,43 +1088,98 @@ fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
                     let statuses = model.list_status(&workspace.id);
                     let progress = model.list_progress(&workspace.id);
                     let logs = model.list_logs(&workspace.id);
-                    (workspace, statuses, progress, logs)
+                    let surface_count = model.list_surfaces(Some(&workspace.id)).len();
+                    (workspace, statuses, progress, logs, surface_count)
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    for (workspace, statuses, progress, logs) in workspaces {
-        let branch = if workspace.git_branch.is_empty() {
-            String::new()
-        } else {
-            format!("  {}", workspace.git_branch)
-        };
-        let worktree = workspace
-            .worktree_name
-            .as_deref()
-            .map(|name| format!("  [{name}]"))
-            .unwrap_or_default();
-        let attention = if workspace.needs_attention {
-            "  unread"
-        } else {
-            ""
-        };
-        let active = if workspace.active { "*" } else { " " };
-        let label = gtk::Label::builder()
-            .label(format!(
-                "{active} {}{branch}{worktree}{attention}{}",
-                workspace.name,
-                format_metadata_summary(&statuses, &progress, logs.first())
-            ))
-            .xalign(0.0)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .margin_top(8)
-            .margin_bottom(8)
-            .margin_start(12)
-            .margin_end(12)
+    for (workspace, statuses, progress, logs, surface_count) in workspaces {
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("workspace-row");
+        if workspace.active {
+            row.add_css_class("active");
+        }
+        if workspace.needs_attention {
+            row.add_css_class("needs-attention");
+        }
+
+        let card = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(6)
+            .margin_top(6)
+            .margin_bottom(6)
+            .margin_start(8)
+            .margin_end(8)
             .build();
-        sidebar.append(&label);
+        card.add_css_class("workspace-card");
+
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let dot = gtk::Label::new(Some("●"));
+        dot.add_css_class("workspace-dot");
+        if workspace.active {
+            dot.add_css_class("active");
+        }
+        if workspace.needs_attention {
+            dot.add_css_class("attention");
+        }
+        let name = gtk::Label::builder()
+            .label(&workspace.name)
+            .xalign(0.0)
+            .hexpand(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        name.add_css_class("workspace-name");
+        let pane_label = if surface_count == 1 {
+            "1 pane".to_string()
+        } else {
+            format!("{surface_count} panes")
+        };
+        let badge = gtk::Label::new(Some(&pane_label));
+        badge.add_css_class("workspace-pill");
+        top.append(&dot);
+        top.append(&name);
+        top.append(&badge);
+
+        let meta = workspace_meta_line(&workspace);
+        let meta_label = gtk::Label::builder()
+            .label(&meta)
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::Middle)
+            .build();
+        meta_label.add_css_class("workspace-meta");
+
+        card.append(&top);
+        card.append(&meta_label);
+
+        let summary = format_metadata_summary(&statuses, &progress, logs.first());
+        if !summary.is_empty() {
+            let summary_label = gtk::Label::builder()
+                .label(&summary)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .build();
+            summary_label.add_css_class("workspace-summary");
+            card.append(&summary_label);
+        }
+
+        row.set_child(Some(&card));
+        sidebar.append(&row);
     }
+}
+
+fn workspace_meta_line(workspace: &forktty_core::Workspace) -> String {
+    let mut parts = Vec::new();
+    if !workspace.git_branch.trim().is_empty() {
+        parts.push(workspace.git_branch.clone());
+    }
+    if let Some(worktree) = workspace.worktree_name.as_deref() {
+        if !worktree.trim().is_empty() {
+            parts.push(format!("wt:{worktree}"));
+        }
+    }
+    parts.push(workspace.working_dir.to_string_lossy().to_string());
+    parts.join(" · ")
 }
 
 fn select_sidebar_workspace(
@@ -1153,7 +1243,7 @@ fn format_metadata_summary(
     if let Some(log) = latest_log {
         parts.push(format!("{:?}: {}", log.level, log.message));
     }
-    format!("\n  {}", parts.join("  "))
+    parts.join("  ·  ")
 }
 
 fn add_action<F>(app: &adw::Application, name: &str, callback: F)

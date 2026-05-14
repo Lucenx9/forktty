@@ -9,6 +9,10 @@ homepage.workspace = true
 repository.workspace = true
 description = "ForkTTY GTK4/libadwaita application shell"
 
+[[bin]]
+name = "forktty"
+path = "src/main.rs"
+
 [features]
 default = []
 gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/vte"]

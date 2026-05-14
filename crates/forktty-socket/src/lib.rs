@@ -203,7 +203,7 @@ pub async fn dispatch(
                     .map(|surface| surface.id)
                     .collect::<Vec<_>>();
                 let workspace = model
-                    .close_workspace(selector)
+                    .close_workspace(WorkspaceSelector::Id(&workspace_id))
                     .ok_or_else(|| "Workspace not found".to_string())?;
                 if model.list_workspaces().is_empty() {
                     model.create_workspace(

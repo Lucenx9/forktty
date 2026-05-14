@@ -49,7 +49,7 @@ fn send_desktop_notification(title: &str, body: &str, play_sound: bool) -> Resul
         use notify_rust::Hint;
 
         notification
-            .hint(Hint::DesktopEntry("forktty-gtk".to_string()))
+            .hint(Hint::DesktopEntry("forktty".to_string()))
             .hint(Hint::Category("im.received".to_string()));
 
         if !play_sound {

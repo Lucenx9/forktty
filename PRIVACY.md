@@ -14,7 +14,7 @@ The automation interface is a local Unix domain socket, normally at:
 $XDG_RUNTIME_DIR/forktty.sock
 ```
 
-The socket is intended for same-machine, same-user automation and is removed on exit.
+The socket is intended for same-machine, same-user automation and is removed on exit when possible.
 
 ## Locally Stored Files
 
@@ -22,9 +22,10 @@ ForkTTY stores local application data only:
 
 | File | Location | Purpose |
 | ---- | -------- | ------- |
-| Configuration | `~/.config/forktty/config.toml` | Theme, font, shell, worktree, and notification settings |
-| Session data | `~/.local/share/forktty/session.json` | Workspace layout and metadata needed for session restore |
-| Quarantined sessions | `~/.local/share/forktty/session.json.bad-*` | Invalid/corrupt session files kept for debugging |
+| Configuration | `~/.config/forktty/config.toml` | Font, shell, worktree, notification, sidebar, renderer, and window settings |
+| Native session data | `~/.local/share/forktty/session-v2.json` | Workspace layout and metadata needed for GTK/VTE session restore |
+| Legacy session import | `~/.local/share/forktty/session.json` | Imported if present; native saves do not overwrite it |
+| Quarantined sessions | `~/.local/share/forktty/session-v2.json.bad-*` | Invalid/corrupt session files kept for debugging |
 | Logs | `~/.local/share/forktty/logs/` | Local structured logs for debugging |
 | IPC socket | `$XDG_RUNTIME_DIR/forktty.sock` | Ephemeral local socket for automation |
 
@@ -43,7 +44,9 @@ Use a custom notification command only if you trust that executable with local t
 
 ## Third-Party Components
 
-ForkTTY uses WebKitGTK, the system WebView on Linux, to render the UI. ForkTTY's Content Security Policy restricts the app to local content and does not load external URLs.
+ForkTTY uses GTK4/libadwaita and VTE from the local Linux system to render the window and terminal widgets. It does not load remote UI content.
+
+The repo-local CLI uses Node.js built-ins only and talks to the local Unix socket.
 
 ## How to Delete Local Data
 

@@ -5,44 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
     "forktty:cli": "node scripts/forktty.mjs",
-    "preview": "vite preview",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "bash src-tauri/packaging/tauri-build.sh",
-    "tauri:info": "tauri info",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "lint": "eslint src/"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@xterm/addon-canvas": "0.7.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-search": "^0.16.0",
-    "@xterm/addon-webgl": "^0.18.0",
-    "@xterm/xterm": "5.5.0",
-    "lucide-react": "^0.577.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-resizable-panels": "^4.8.0",
-    "zustand": "^5.0.12"
-  },
-  "devDependencies": {
-    "@eslint/js": "^9.39.4",
-    "@tauri-apps/cli": "^2.10.1",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "eslint": "^9.39.4",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "jsdom": "^29.0.2",
-    "prettier": "^3.6.2",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.5",
-    "vitest": "^4.1.2"
+    "test": "node --test scripts/forktty.test.mjs"
   }
 }

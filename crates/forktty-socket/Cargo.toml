@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "ForkTTY Unix socket JSON-RPC server without Tauri bridge"
+description = "ForkTTY Unix socket JSON-RPC server"
 
 [dependencies]
 forktty-core = { path = "../forktty-core" }

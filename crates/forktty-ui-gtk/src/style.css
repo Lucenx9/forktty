@@ -1,0 +1,117 @@
+window {
+  background: #0f1117;
+  color: #cdd6f4;
+}
+
+.app-root {
+  background: #0f1117;
+}
+
+.app-header {
+  min-height: 46px;
+  background: #181825;
+  color: #cdd6f4;
+  border-bottom: 1px solid rgba(166, 173, 200, 0.14);
+  box-shadow: 0 1px 0 rgba(137, 180, 250, 0.08);
+}
+
+.header-action {
+  min-width: 34px;
+  min-height: 34px;
+  margin: 0 2px;
+  color: #a6adc8;
+  border-radius: 10px;
+}
+
+.header-action:hover {
+  color: #cdd6f4;
+  background: rgba(137, 180, 250, 0.12);
+}
+
+.workspace-paned > separator {
+  background: rgba(137, 180, 250, 0.20);
+  min-width: 1px;
+  min-height: 1px;
+}
+
+.navigation-sidebar {
+  padding: 10px 8px;
+  background: #11111b;
+  color: #cdd6f4;
+  border-right: 1px solid rgba(166, 173, 200, 0.12);
+}
+
+.navigation-sidebar row {
+  border-radius: 14px;
+  margin: 2px 0;
+}
+
+.navigation-sidebar row:hover {
+  background: rgba(137, 180, 250, 0.08);
+}
+
+.workspace-card {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(24, 24, 37, 0.78);
+  border: 1px solid rgba(166, 173, 200, 0.08);
+}
+
+.workspace-row.active .workspace-card {
+  background: linear-gradient(135deg, rgba(137, 180, 250, 0.18), rgba(49, 50, 68, 0.74));
+  border-color: rgba(137, 180, 250, 0.48);
+  box-shadow: inset 3px 0 0 #89b4fa;
+}
+
+.workspace-row.needs-attention .workspace-card {
+  border-color: rgba(250, 179, 135, 0.55);
+}
+
+.workspace-dot {
+  color: #585b70;
+  font-size: 9px;
+}
+
+.workspace-dot.active {
+  color: #89b4fa;
+}
+
+.workspace-dot.attention {
+  color: #fab387;
+}
+
+.workspace-name {
+  color: #f5e0dc;
+  font-weight: 700;
+}
+
+.workspace-meta {
+  color: #a6adc8;
+  font-size: 0.88em;
+}
+
+.workspace-summary {
+  color: #89b4fa;
+  font-size: 0.86em;
+}
+
+.workspace-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #bac2de;
+  background: rgba(49, 50, 68, 0.95);
+  font-size: 0.82em;
+}
+
+.terminal-stage {
+  background: #1e1e2e;
+}
+
+.focused-terminal {
+  outline: 2px solid rgba(137, 180, 250, 0.75);
+  outline-offset: -2px;
+}
+
+.dim-label {
+  color: #6c7086;
+}

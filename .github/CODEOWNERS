@@ -3,9 +3,9 @@
 
 # Security-critical paths
 /.github/ @Lucenx9
-/src-tauri/src/socket_api.rs @Lucenx9
-/src-tauri/src/notification.rs @Lucenx9
-/src-tauri/src/worktree.rs @Lucenx9
-/src-tauri/src/lib.rs @Lucenx9
-/src-tauri/tauri.conf.json @Lucenx9
+/crates/forktty-socket/ @Lucenx9
+/crates/forktty-core/src/notification.rs @Lucenx9
+/crates/forktty-core/src/worktree.rs @Lucenx9
+/crates/forktty-core/src/session.rs @Lucenx9
+/crates/forktty-ui-gtk/ @Lucenx9
 /SECURITY.md @Lucenx9

@@ -38,11 +38,9 @@ docker_args=(
   -e HOME="$CONTAINER_HOME"
   -e CARGO_HOME="$CONTAINER_HOME/.cargo"
   -e RUSTUP_HOME="$CONTAINER_HOME/.rustup"
-  -e npm_config_cache="$CONTAINER_HOME/.npm"
   -v "$ROOT_DIR:$CONTAINER_WORKDIR"
   -v "${IMAGE_NAME}-cargo-registry:$CONTAINER_HOME/.cargo/registry"
   -v "${IMAGE_NAME}-cargo-git:$CONTAINER_HOME/.cargo/git"
-  -v "${IMAGE_NAME}-npm:$CONTAINER_HOME/.npm"
   -w "$CONTAINER_WORKDIR"
 )
 
