@@ -159,6 +159,20 @@ struct PaneChrome {
     attention_dot: gtk::Box,
 }
 
+struct SidebarWorkspaceRow {
+    workspace: forktty_core::Workspace,
+    meta: String,
+    summary: String,
+    surface_count: usize,
+}
+
+struct SidebarSnapshot {
+    rows: Vec<SidebarWorkspaceRow>,
+    active_workspace_name: Option<String>,
+    active_status_label: Option<String>,
+    signature: String,
+}
+
 struct VteController {
     container: gtk::Box,
     model: Arc<Mutex<WorkspaceModel>>,
@@ -1677,14 +1691,41 @@ fn build_ui(app: &adw::Application) {
         model.clone(),
     )));
     controller.borrow_mut().attach_state(state.clone());
+    let sidebar_signature = Rc::new(RefCell::new(None::<String>));
+    let sidebar_context_menu_open = Rc::new(Cell::new(false));
     let state_for_sidebar_select = state.clone();
     let controller_for_sidebar_select = controller.clone();
+    let sidebar_for_select = sidebar.clone();
+    let window_for_select = window.clone();
+    let workspace_title_for_select = workspace_title.clone();
+    let status_location_for_select = status_location.clone();
+    let sidebar_signature_for_select = sidebar_signature.clone();
+    let sidebar_context_menu_open_for_select = sidebar_context_menu_open.clone();
     sidebar.connect_row_activated(move |_, row| {
-        select_sidebar_workspace(
-            &state_for_sidebar_select,
-            row.index(),
-            &controller_for_sidebar_select,
-        );
+        let workspace_id = {
+            let model = match state_for_sidebar_select.model.lock() {
+                Ok(model) => model,
+                Err(_) => return,
+            };
+            workspace_id_at_index(&model, row.index())
+        };
+        if let Some(workspace_id) = workspace_id {
+            select_sidebar_workspace(
+                &state_for_sidebar_select,
+                &workspace_id,
+                &controller_for_sidebar_select,
+            );
+            schedule_sidebar_refresh(
+                sidebar_for_select.clone(),
+                state_for_sidebar_select.clone(),
+                controller_for_sidebar_select.clone(),
+                window_for_select.clone(),
+                workspace_title_for_select.clone(),
+                status_location_for_select.clone(),
+                sidebar_signature_for_select.clone(),
+                sidebar_context_menu_open_for_select.clone(),
+            );
+        }
     });
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -1701,6 +1742,9 @@ fn build_ui(app: &adw::Application) {
         &window,
         &workspace_title,
         &status_location,
+        &sidebar_signature,
+        &sidebar_context_menu_open,
+        true,
     );
     let sidebar_for_timer = sidebar.clone();
     let state_for_sidebar = state.clone();
@@ -1708,6 +1752,8 @@ fn build_ui(app: &adw::Application) {
     let window_for_sidebar = window.clone();
     let workspace_title_for_sidebar = workspace_title.clone();
     let status_location_for_sidebar = status_location.clone();
+    let sidebar_signature_for_timer = sidebar_signature.clone();
+    let sidebar_context_menu_open_for_timer = sidebar_context_menu_open.clone();
     glib::timeout_add_local(Duration::from_millis(500), move || {
         refresh_sidebar(
             &sidebar_for_timer,
@@ -1716,6 +1762,9 @@ fn build_ui(app: &adw::Application) {
             &window_for_sidebar,
             &workspace_title_for_sidebar,
             &status_location_for_sidebar,
+            &sidebar_signature_for_timer,
+            &sidebar_context_menu_open_for_timer,
+            false,
         );
         glib::ControlFlow::Continue
     });
@@ -2062,6 +2111,31 @@ fn install_actions(
     }
 }
 
+fn schedule_sidebar_refresh(
+    sidebar: gtk::ListBox,
+    state: SocketAppState,
+    controller: Rc<RefCell<VteController>>,
+    parent_window: adw::ApplicationWindow,
+    workspace_title: gtk::Button,
+    status_location: gtk::Button,
+    last_signature: Rc<RefCell<Option<String>>>,
+    context_menu_open: Rc<Cell<bool>>,
+) {
+    glib::idle_add_local_once(move || {
+        refresh_sidebar(
+            &sidebar,
+            &state,
+            &controller,
+            &parent_window,
+            &workspace_title,
+            &status_location,
+            &last_signature,
+            &context_menu_open,
+            true,
+        );
+    });
+}
+
 fn refresh_sidebar(
     sidebar: &gtk::ListBox,
     state: &SocketAppState,
@@ -2069,57 +2143,40 @@ fn refresh_sidebar(
     parent_window: &adw::ApplicationWindow,
     workspace_title: &gtk::Button,
     status_location: &gtk::Button,
+    last_signature: &Rc<RefCell<Option<String>>>,
+    context_menu_open: &Rc<Cell<bool>>,
+    force: bool,
 ) {
-    while let Some(child) = sidebar.first_child() {
-        sidebar.remove(&child);
-    }
-    let (workspaces, active_workspace_name, active_status_label) = state
-        .model
-        .lock()
-        .ok()
-        .map(|model| {
-            let active_workspace_id = model.active_workspace_id();
-            let workspaces = model
-                .list_workspaces()
-                .into_iter()
-                .map(|workspace| {
-                    let statuses = model.list_status(&workspace.id);
-                    let progress = model.list_progress(&workspace.id);
-                    let logs = model.list_logs(&workspace.id);
-                    let surface_count = model.list_surfaces(Some(&workspace.id)).len();
-                    (workspace, statuses, progress, logs, surface_count)
-                })
-                .collect::<Vec<_>>();
-            let active_workspace = workspaces
-                .iter()
-                .map(|(workspace, _, _, _, _)| workspace)
-                .find(|workspace| active_workspace_id.as_deref() == Some(workspace.id.as_str()));
-            let active_workspace_name = active_workspace.map(|workspace| workspace.name.clone());
-            let active_status_label = active_workspace.map(|workspace| {
-                let cwd = model
-                    .surface(&workspace.focused_surface_id)
-                    .map(|surface| compact_path(&surface.cwd))
-                    .unwrap_or_else(|| compact_path(&workspace.working_dir));
-                format!("{} · {}", workspace.name, cwd)
-            });
-            (workspaces, active_workspace_name, active_status_label)
-        })
-        .unwrap_or_else(|| (Vec::new(), None, None));
-    if let Some(name) = active_workspace_name.as_deref() {
+    let snapshot = sidebar_snapshot(state);
+    if let Some(name) = snapshot.active_workspace_name.as_deref() {
         workspace_title.set_label(name);
         workspace_title.set_sensitive(true);
     } else {
         workspace_title.set_label("");
         workspace_title.set_sensitive(false);
     }
-    if let Some(label) = active_status_label.as_deref() {
+    if let Some(label) = snapshot.active_status_label.as_deref() {
         status_location.set_label(label);
         status_location.set_sensitive(true);
     } else {
         status_location.set_label("");
         status_location.set_sensitive(false);
     }
-    if workspaces.is_empty() {
+
+    if !force {
+        if context_menu_open.get() {
+            return;
+        }
+        if last_signature.borrow().as_deref() == Some(snapshot.signature.as_str()) {
+            return;
+        }
+    }
+    *last_signature.borrow_mut() = Some(snapshot.signature.clone());
+
+    while let Some(child) = sidebar.first_child() {
+        sidebar.remove(&child);
+    }
+    if snapshot.rows.is_empty() {
         let row = gtk::ListBoxRow::new();
         row.set_selectable(false);
         row.set_activatable(false);
@@ -2133,7 +2190,8 @@ fn refresh_sidebar(
         sidebar.append(&row);
         return;
     }
-    for (workspace, statuses, progress, logs, surface_count) in workspaces {
+    for row_data in snapshot.rows {
+        let workspace = row_data.workspace;
         let row = gtk::ListBoxRow::new();
         row.add_css_class("workspace-row");
         if workspace.active {
@@ -2172,16 +2230,15 @@ fn refresh_sidebar(
 
         top.append(&dot);
         top.append(&name);
-        if surface_count > 1 {
-            let count_label = gtk::Label::new(Some(&surface_count.to_string()));
+        if row_data.surface_count > 1 {
+            let count_label = gtk::Label::new(Some(&row_data.surface_count.to_string()));
             count_label.add_css_class("workspace-count");
-            count_label.set_tooltip_text(Some(&format!("{surface_count} panes")));
+            count_label.set_tooltip_text(Some(&format!("{} panes", row_data.surface_count)));
             top.append(&count_label);
         }
 
-        let meta = workspace_meta_line(&workspace);
         let meta_label = gtk::Label::builder()
-            .label(&meta)
+            .label(&row_data.meta)
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::Middle)
             .build();
@@ -2190,47 +2247,154 @@ fn refresh_sidebar(
         card.append(&top);
         card.append(&meta_label);
 
-        let summary = format_metadata_summary(&statuses, &progress, logs.first());
-        let mut tooltip = format!("{}\n{}", workspace.name, meta);
-        if !summary.is_empty() {
+        let mut tooltip = format!("{}\n{}", workspace.name, row_data.meta);
+        if !row_data.summary.is_empty() {
             let summary_label = gtk::Label::builder()
-                .label(&summary)
+                .label(&row_data.summary)
                 .xalign(0.0)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .build();
             summary_label.add_css_class("workspace-summary");
             card.append(&summary_label);
             tooltip.push('\n');
-            tooltip.push_str(&summary);
+            tooltip.push_str(&row_data.summary);
         }
         row.set_tooltip_text(Some(&tooltip));
 
         row.set_child(Some(&card));
 
+        let primary_click = gtk::GestureClick::new();
+        primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
+        primary_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let workspace_id_for_click = workspace.id.clone();
+        let state_for_click = state.clone();
+        let controller_for_click = controller.clone();
+        let sidebar_for_click = sidebar.clone();
+        let parent_for_click = parent_window.clone();
+        let title_for_click = workspace_title.clone();
+        let status_for_click = status_location.clone();
+        let signature_for_click = last_signature.clone();
+        let menu_open_for_click = context_menu_open.clone();
+        primary_click.connect_pressed(move |gesture, _n_press, _x, _y| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            select_sidebar_workspace(
+                &state_for_click,
+                &workspace_id_for_click,
+                &controller_for_click,
+            );
+            schedule_sidebar_refresh(
+                sidebar_for_click.clone(),
+                state_for_click.clone(),
+                controller_for_click.clone(),
+                parent_for_click.clone(),
+                title_for_click.clone(),
+                status_for_click.clone(),
+                signature_for_click.clone(),
+                menu_open_for_click.clone(),
+            );
+        });
+        row.add_controller(primary_click);
+
         let gesture = gtk::GestureClick::new();
         gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
+        gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
         let state_for_menu = state.clone();
         let controller_for_menu = controller.clone();
         let parent_for_menu = parent_window.clone();
         let workspace_for_menu = workspace.clone();
         let row_for_menu = row.clone();
+        let menu_open_for_menu = context_menu_open.clone();
         gesture.connect_pressed(move |gesture, _n_press, x, y| {
             // Claim the sequence so ListBox doesn't also treat right-click as
             // row activation (would switch workspace under the menu).
             gesture.set_state(gtk::EventSequenceState::Claimed);
+            menu_open_for_menu.set(true);
             let popover = build_workspace_context_menu(
                 &parent_for_menu,
                 &state_for_menu,
                 &controller_for_menu,
                 &workspace_for_menu,
             );
+            let menu_open_for_closed = menu_open_for_menu.clone();
+            popover.connect_closed(move |_| {
+                menu_open_for_closed.set(false);
+            });
             popover.set_parent(&row_for_menu);
             popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.popup();
         });
         row.add_controller(gesture);
 
+        let select_row = workspace.active;
         sidebar.append(&row);
+        if select_row {
+            sidebar.select_row(Some(&row));
+        }
+    }
+}
+
+fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
+    let Ok(model) = state.model.lock() else {
+        return SidebarSnapshot {
+            rows: Vec::new(),
+            active_workspace_name: None,
+            active_status_label: None,
+            signature: "lock-poisoned".to_string(),
+        };
+    };
+    let active_workspace_id = model.active_workspace_id();
+    let mut rows = Vec::new();
+    for workspace in model.list_workspaces() {
+        let statuses = model.list_status(&workspace.id);
+        let progress = model.list_progress(&workspace.id);
+        let logs = model.list_logs(&workspace.id);
+        let summary = format_metadata_summary(&statuses, &progress, logs.first());
+        let surface_count = model.list_surfaces(Some(&workspace.id)).len();
+        let meta = workspace_meta_line(&workspace);
+        rows.push(SidebarWorkspaceRow {
+            workspace,
+            meta,
+            summary,
+            surface_count,
+        });
+    }
+    let active_workspace = rows
+        .iter()
+        .map(|row| &row.workspace)
+        .find(|workspace| active_workspace_id.as_deref() == Some(workspace.id.as_str()));
+    let active_workspace_name = active_workspace.map(|workspace| workspace.name.clone());
+    let active_status_label = active_workspace.map(|workspace| {
+        let cwd = model
+            .surface(&workspace.focused_surface_id)
+            .map(|surface| compact_path(&surface.cwd))
+            .unwrap_or_else(|| compact_path(&workspace.working_dir));
+        format!("{} · {}", workspace.name, cwd)
+    });
+    let mut signature = format!(
+        "active={:?};status={:?};rows={};",
+        active_workspace_id,
+        active_status_label,
+        rows.len()
+    );
+    for row in &rows {
+        signature.push_str(&format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{:?};",
+            row.workspace.id,
+            row.workspace.name,
+            row.workspace.active,
+            row.workspace.needs_attention,
+            row.workspace.working_dir.to_string_lossy(),
+            row.workspace.worktree_name.as_deref().unwrap_or(""),
+            row.surface_count,
+            row.meta,
+            row.summary
+        ));
+    }
+    SidebarSnapshot {
+        rows,
+        active_workspace_name,
+        active_status_label,
+        signature,
     }
 }
 
@@ -2250,26 +2414,15 @@ fn workspace_meta_line(workspace: &forktty_core::Workspace) -> String {
 
 fn select_sidebar_workspace(
     state: &SocketAppState,
-    index: i32,
+    workspace_id: &str,
     controller: &Rc<RefCell<VteController>>,
 ) {
-    let workspace_id = {
-        let model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => return,
-        };
-        workspace_id_at_index(&model, index)
-    };
-    let Some(workspace_id) = workspace_id else {
-        return;
-    };
-
     {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
         };
-        let _ = model.select_workspace(WorkspaceSelector::Id(&workspace_id));
+        let _ = model.select_workspace(WorkspaceSelector::Id(workspace_id));
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to spawn selected workspace terminal: {err}");
