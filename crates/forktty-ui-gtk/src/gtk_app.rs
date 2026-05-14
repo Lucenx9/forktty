@@ -1289,7 +1289,7 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
         .transient_for(parent)
         .modal(true)
         .default_width(420)
-        .default_height(180)
+        .default_height(220)
         .build();
     let entry = gtk::Entry::builder()
         .placeholder_text("Branch name")
@@ -1303,11 +1303,21 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
         .icon_name("folder-open-symbolic")
         .tooltip_text("Attach worktree")
         .build();
+    let remove = gtk::Button::builder()
+        .icon_name("edit-delete-symbolic")
+        .tooltip_text("Remove worktree")
+        .build();
+    let merge = gtk::Button::builder()
+        .icon_name("view-converge-symbolic")
+        .tooltip_text("Merge worktree")
+        .build();
     let status = gtk::Label::builder().xalign(0.0).wrap(true).build();
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.append(&create);
     actions.append(&attach);
+    actions.append(&remove);
+    actions.append(&merge);
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -1342,6 +1352,29 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
         match open_worktree_from_gtk(&state_for_attach, &name, WorktreeAction::Attach) {
             Ok(()) => dialog_for_attach.close(),
             Err(err) => status_for_attach.set_text(&err),
+        }
+    });
+
+    let state_for_remove = state.clone();
+    let status_for_remove = status.clone();
+    let entry_for_remove = entry.clone();
+    let dialog_for_remove = dialog.clone();
+    remove.connect_clicked(move |_| {
+        let name = entry_for_remove.text().trim().to_string();
+        match remove_worktree_from_gtk(&state_for_remove, &name) {
+            Ok(()) => dialog_for_remove.close(),
+            Err(err) => status_for_remove.set_text(&err),
+        }
+    });
+
+    let state_for_merge = state.clone();
+    let status_for_merge = status.clone();
+    let entry_for_merge = entry.clone();
+    merge.connect_clicked(move |_| {
+        let name = entry_for_merge.text().trim().to_string();
+        match merge_worktree_from_gtk(&state_for_merge, &name) {
+            Ok(message) => status_for_merge.set_text(&message),
+            Err(err) => status_for_merge.set_text(&err),
         }
     });
 
@@ -1403,6 +1436,82 @@ fn open_worktree_from_gtk(
         .map_err(|err| err.to_string())?;
     let _ = worktree::run_hook(&info.path, "setup");
     Ok(())
+}
+
+fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Branch or worktree name is required".to_string());
+    }
+    let cwd = active_workspace_cwd_string(state)?;
+    let mut workspace_worktree_name = name.to_string();
+    if let Ok(existing) = worktree::list(&cwd) {
+        if let Some(info) = existing
+            .iter()
+            .find(|info| info.worktree_name == name || info.branch == name)
+        {
+            workspace_worktree_name = info.worktree_name.clone();
+            let _ = worktree::run_hook(&info.path, "teardown");
+        }
+    }
+    worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
+    close_workspace_by_worktree_name(state, &workspace_worktree_name);
+    if let Err(err) = spawn_focused_surface_if_needed(state) {
+        eprintln!("Failed to keep a workspace terminal alive: {err}");
+    }
+    Ok(())
+}
+
+fn merge_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("Branch or worktree name is required".to_string());
+    }
+    let cwd = active_workspace_cwd_string(state)?;
+    let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
+    Ok(if result.trim().is_empty() {
+        "Merged".to_string()
+    } else {
+        result
+    })
+}
+
+fn active_workspace_cwd_string(state: &SocketAppState) -> Result<String, String> {
+    active_workspace_cwd(state)
+        .or_else(|| std::env::current_dir().ok())
+        .map(|path| path.to_string_lossy().to_string())
+        .ok_or_else(|| "Cannot resolve current workspace directory".to_string())
+}
+
+fn close_workspace_by_worktree_name(state: &SocketAppState, worktree_name: &str) {
+    let surface_ids = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let workspace_id = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name))
+            .map(|workspace| workspace.id);
+        let Some(workspace_id) = workspace_id else {
+            return;
+        };
+        let surface_ids = model
+            .list_surfaces(Some(&workspace_id))
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<Vec<_>>();
+        let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
+        if model.list_workspaces().is_empty() {
+            model.create_workspace(
+                "main",
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            );
+        }
+        surface_ids
+    };
+    for surface_id in surface_ids {
+        let _ = state.terminal.close(&surface_id);
+    }
 }
 
 fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {

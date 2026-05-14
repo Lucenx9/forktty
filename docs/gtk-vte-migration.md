@@ -74,9 +74,11 @@ Tauri/React implementation.
 - The GTK command palette can create a plain workspace, close the active pane,
   or close the active workspace while preserving a replacement workspace/surface
   when needed.
-- The GTK command palette can open a native worktree dialog that creates or
-  attaches a branch worktree from the active workspace, opens a matching
-  worktree-backed workspace, spawns a VTE terminal there, and runs `.forktty/setup`.
+- The GTK command palette can open a native worktree dialog that creates,
+  attaches, removes, or merges worktrees from the active workspace. Create/attach
+  opens a matching worktree-backed workspace, spawns a VTE terminal there, and
+  runs `.forktty/setup`; remove runs `.forktty/teardown` when present and closes
+  the matching workspace.
 - GTK quake/dropdown mode reads `appearance.window_mode = "quake"`, starts with
   an undecorated monitor-sized dropdown-style window, and uses
   `gtk4-layer-shell` at runtime when available on Wayland to anchor the window
