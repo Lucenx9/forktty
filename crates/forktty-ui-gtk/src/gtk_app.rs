@@ -2491,8 +2491,6 @@ fn install_gtk_runtime_defaults() {
 }
 
 fn build_ui(app: &adw::Application) {
-    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::PreferDark);
-
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let (app_config, config_load_warning) = match config::load_config() {
         Ok(config) => (config, None),
@@ -2501,6 +2499,7 @@ fn build_ui(app: &adw::Application) {
             Some(format!("Could not load config; defaults are in use. {err}")),
         ),
     };
+    apply_color_scheme(&app_config);
     let shell = configured_shell(&app_config);
     let quake_mode = app_config.appearance.window_mode == "quake";
     let (default_width, default_height) = if quake_mode {
@@ -2864,6 +2863,7 @@ fn settings_apply_callback(
     let terminal_stack = terminal_stack.clone();
     let controller = controller.clone();
     Rc::new(move |config| {
+        apply_color_scheme(config);
         apply_sidebar_position(
             &paned,
             &sidebar_shell,
@@ -2930,6 +2930,21 @@ fn configured_shell(config: &config::AppConfig) -> String {
     } else {
         "/bin/sh".to_string()
     }
+}
+
+fn apply_color_scheme(config: &config::AppConfig) {
+    let scheme = match config
+        .general
+        .theme_source
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "light" => adw::ColorScheme::ForceLight,
+        "dark" => adw::ColorScheme::ForceDark,
+        _ => adw::ColorScheme::Default,
+    };
+    adw::StyleManager::default().set_color_scheme(scheme);
 }
 
 fn is_executable_shell(shell: &str) -> bool {
@@ -3362,12 +3377,30 @@ fn refresh_sidebar(
         let row = gtk::ListBoxRow::new();
         row.set_selectable(false);
         row.set_activatable(false);
-        let empty = compact_status_page(
-            "folder-symbolic",
-            "No Workspaces",
-            "Use the command palette to create one.",
-        );
+        let empty = gtk::Box::new(gtk::Orientation::Vertical, 10);
         empty.add_css_class("sidebar-empty");
+        empty.set_halign(gtk::Align::Center);
+        let icon = gtk::Image::from_icon_name("folder-symbolic");
+        icon.set_pixel_size(24);
+        let title = gtk::Label::builder().label("No Workspaces").build();
+        title.add_css_class("sidebar-empty-title");
+        let body = gtk::Label::builder()
+            .label("Create a workspace to start a terminal.")
+            .wrap(true)
+            .justify(gtk::Justification::Center)
+            .build();
+        body.add_css_class("sidebar-empty-body");
+        let create = gtk::Button::builder()
+            .label("New Workspace")
+            .has_frame(true)
+            .build();
+        create.add_css_class("suggested-action");
+        create.set_action_name(Some("app.new-workspace"));
+        set_accessible_button_text(&create, "New Workspace", Some("Ctrl+Shift+N"));
+        empty.append(&icon);
+        empty.append(&title);
+        empty.append(&body);
+        empty.append(&create);
         row.set_child(Some(&empty));
         ui.sidebar.append(&row);
         return;
@@ -5636,6 +5669,11 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .placeholder_text("/usr/bin/notify-send ForkTTY")
         .hexpand(true)
         .build();
+    let theme_source = combo_with_ids(
+        &[("auto", "System"), ("light", "Light"), ("dark", "Dark")],
+        &loaded.general.theme_source,
+    );
+    theme_source.set_tooltip_text(Some("Application color scheme"));
     let worktree_layout = combo_with_ids(
         &[
             ("nested", "Nested"),
@@ -5800,6 +5838,13 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     let appearance_group = settings_group("Appearance");
     let appearance_rows = settings_group_body(&appearance_group);
     appearance_rows.append(&settings_row(
+        "Theme",
+        "Use the system preference or force a light/dark app theme.",
+        &theme_source,
+        240,
+        false,
+    ));
+    appearance_rows.append(&settings_row(
         "Window mode",
         "Quake mode uses a borderless drop-down window after restart.",
         &window_mode,
@@ -5884,6 +5929,10 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         let mark_dirty = mark_dirty.clone();
         move |_| mark_dirty()
     });
+    theme_source.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
     worktree_layout.connect_changed({
         let mark_dirty = mark_dirty.clone();
         move |_| mark_dirty()
@@ -5910,6 +5959,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         let font_family = font_family.clone();
         let font_size = font_size.clone();
         let notification_command = notification_command.clone();
+        let theme_source = theme_source.clone();
         let worktree_layout = worktree_layout.clone();
         let window_mode = window_mode.clone();
         let sidebar_position = sidebar_position.clone();
@@ -5926,6 +5976,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
                     let _ = font_family.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
                     font_size.set_value(f64::from(defaults.appearance.font_size));
                     notification_command.set_text(&defaults.general.notification_command);
+                    let _ = theme_source.set_active_id(Some(&defaults.general.theme_source));
                     let _ = worktree_layout.set_active_id(Some(&defaults.general.worktree_layout));
                     let _ = window_mode.set_active_id(Some(&defaults.appearance.window_mode));
                     let _ =
@@ -5959,6 +6010,9 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         }
         next.appearance.font_size = font_size.value() as u16;
         next.general.notification_command = notification_command.text().to_string();
+        if let Some(theme) = theme_source.active_id() {
+            next.general.theme_source = theme.to_string();
+        }
         if let Some(layout) = worktree_layout.active_id() {
             next.general.worktree_layout = layout.to_string();
         }
