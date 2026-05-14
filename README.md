@@ -20,6 +20,10 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 > **Status**: Early alpha (v0.2.0-alpha.1). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
 
+<p align="center">
+  <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />
+</p>
+
 ## Why ForkTTY
 
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, shell scripts, and custom tools.

@@ -380,6 +380,35 @@ impl VteController {
         self.rebuild_layout();
     }
 
+    fn focused_widget(&self) -> Option<VteTerminalWidget> {
+        let surface_id = {
+            let model = self.model.lock().ok()?;
+            model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.active)
+                .or_else(|| model.list_workspaces().into_iter().next())?
+                .focused_surface_id
+        };
+        self.widgets.get(&surface_id).cloned()
+    }
+
+    fn copy_focused_terminal(&self) -> bool {
+        let Some(widget) = self.focused_widget() else {
+            return false;
+        };
+        widget.copy_clipboard_format(Format::Text);
+        true
+    }
+
+    fn paste_focused_terminal(&self) -> bool {
+        let Some(widget) = self.focused_widget() else {
+            return false;
+        };
+        widget.paste_clipboard();
+        true
+    }
+
     fn ensure_layout_current(&mut self) {
         self.spawn_active_surfaces_if_needed();
         let Some((signature, _, _, _)) = active_layout_snapshot(&self.model) else {
@@ -2143,9 +2172,17 @@ fn install_terminal_context_menu(
                 popover.unparent();
             }
         });
-        popover.set_parent(&widget_for_menu);
+        let (popover_x, popover_y) = widget_for_menu
+            .translate_coordinates(&parent_for_menu, x, y)
+            .unwrap_or((x, y));
+        popover.set_parent(&parent_for_menu);
         popover.set_position(gtk::PositionType::Bottom);
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            popover_x.round() as i32,
+            popover_y.round() as i32,
+            1,
+            1,
+        )));
         *current_popover_for_menu.borrow_mut() = Some(popover.clone());
         popover.popup();
     });
@@ -3425,6 +3462,18 @@ fn install_actions(
         let state = state.clone();
         move || restart_active_surface(&state)
     });
+    add_action(app, "copy", {
+        let controller = controller.clone();
+        move || {
+            controller.borrow().copy_focused_terminal();
+        }
+    });
+    add_action(app, "paste", {
+        let controller = controller.clone();
+        move || {
+            controller.borrow().paste_focused_terminal();
+        }
+    });
     add_action(app, "close-pane", {
         let window = window.clone();
         let state = state.clone();
@@ -3479,6 +3528,8 @@ fn install_actions(
     app.set_accels_for_action("app.open-workspace", &["<Control><Shift>O"]);
     app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);
     app.set_accels_for_action("app.restart-pane", &[RESTART_PANE_ACCEL]);
+    app.set_accels_for_action("app.copy", &["<Control><Shift>C"]);
+    app.set_accels_for_action("app.paste", &["<Control><Shift>V"]);
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
     app.set_accels_for_action("app.focus-previous-pane", &["<Control><Alt>Left"]);
     app.set_accels_for_action("app.focus-next-pane", &["<Control><Alt>Right"]);
@@ -4808,6 +4859,26 @@ fn show_command_palette_with_query(
         let dialog = dialog.clone();
         move || {
             restart_active_surface(&state);
+            dialog.close();
+        }
+    });
+    command!("Copy", Some("Ctrl+Shift+C"), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow().copy_focused_terminal();
+            }
+            dialog.close();
+        }
+    });
+    command!("Paste", Some("Ctrl+Shift+V"), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow().paste_focused_terminal();
+            }
             dialog.close();
         }
     });
