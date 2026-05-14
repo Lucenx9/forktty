@@ -839,7 +839,7 @@ fn build_ui(app: &adw::Application) {
         show_settings_dialog(&settings_parent);
     });
 
-    install_actions(app, &window, &state);
+    install_actions(app, &window, &state, quake_mode);
     if quake_mode {
         install_global_quake_shortcut(&window);
     }
@@ -1089,6 +1089,7 @@ fn install_actions(
     app: &adw::Application,
     window: &adw::ApplicationWindow,
     state: &SocketAppState,
+    quake_mode: bool,
 ) {
     add_action(app, "split-horizontal", {
         let state = state.clone();
@@ -1116,10 +1117,12 @@ fn install_actions(
         let state = state.clone();
         move || close_active_surface(&state)
     });
-    add_action(app, "toggle-quake", {
-        let window = window.clone();
-        move || toggle_quake_window(&window)
-    });
+    if quake_mode {
+        add_action(app, "toggle-quake", {
+            let window = window.clone();
+            move || toggle_quake_window(&window)
+        });
+    }
 
     app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
     app.set_accels_for_action("app.split-vertical", &["<Control><Shift>V"]);
@@ -1127,7 +1130,9 @@ fn install_actions(
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
     app.set_accels_for_action("app.settings", &["<Control>comma"]);
-    app.set_accels_for_action("app.toggle-quake", &["F12"]);
+    if quake_mode {
+        app.set_accels_for_action("app.toggle-quake", &["F12"]);
+    }
 }
 
 fn refresh_sidebar(sidebar: &gtk::ListBox, model: &Arc<Mutex<WorkspaceModel>>) {
