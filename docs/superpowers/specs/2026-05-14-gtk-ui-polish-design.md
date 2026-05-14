@@ -50,7 +50,12 @@ In `:root`:
   - `--ft-pane-bg: shade(var(--ft-bg-1), 0.94);` — slightly deeper than window
   - `--ft-pane-header: shade(var(--ft-bg-1), 1.06);`
   - `--ft-pane-header-active: shade(var(--ft-bg-1), 1.12);`
-  - Fallbacks: if `shade()` is unavailable in the target GTK version, use `mix(var(--ft-bg-1), #000, 6%)` style — verify at implementation time.
+- **Fallback if `shade()` / `alpha()` aren't supported by the deployed GTK CSS engine**: replace each token's value with an explicit hex picked to match the intended ratio against the current dark `--window-fg-color`/`--window-bg-color`. Computed once at implementation, not deferred to a runtime decision. The hex set below is the canonical fallback if the dynamic forms fail:
+  - `--ft-pane-bg: #1b1c27;`
+  - `--ft-pane-header: #23253250;` (i.e. existing-ish, slightly tinted)
+  - `--ft-pane-header-active: #2c2e42;`
+  - `--ft-text: rgba(255,255,255,0.85);` (and the muted/faint pair at 0.60 / 0.40)
+  - `--ft-*-soft: rgba(<r,g,b of the semantic color>,0.14);`
 
 ### Verification
 
@@ -70,7 +75,7 @@ In `:root`:
 
 In `gtk_app.rs:build_ui`:
 
-- Remove the default Adwaita title by calling `header.set_title_widget(Some(&workspace_title_widget))` where `workspace_title_widget` is a `gtk::Button` (flat, no border, drag-handle preserved) showing the active workspace name. Click handler: open command palette with workspaces section pre-focused (or filtered). Tooltip: `Switch workspace (Ctrl+Shift+P)`.
+- Remove the default Adwaita title by calling `header.set_title_widget(Some(&workspace_title_widget))` where `workspace_title_widget` is a `gtk::Button` (flat, no border, drag-handle preserved) showing the active workspace name. Click handler: open the command palette with the query field pre-populated with a workspace-filter prefix (or, equivalently, scroll/focus the workspace section if the palette doesn't support text-prefix filtering — pick whichever is already supported by `show_command_palette` at `gtk_app.rs:2315`; do not invent a new palette mode). Tooltip: `Switch workspace (Ctrl+Shift+P)`.
 - The workspace title widget exposes a `set_label(&str)` we call from `refresh_sidebar` (or a new sibling that fires on workspace switch) whenever the active workspace changes.
 - Keep `pack_start`: `new_workspace`, `new_worktree`.
 - Keep `pack_end`: `command_palette`, `notifications`, `settings`. Order unchanged.
@@ -117,9 +122,9 @@ In `style.css`:
 
 #### 4.3 Toggle Ctrl+B (`gtk_app.rs` + `forktty-core` config)
 
-- Add `appearance.sidebar_visible: bool` (default `true`) to `forktty-core::config::AppearanceConfig` (or wherever sidebar_position currently lives — `crates/forktty-ui-gtk/src/gtk_app.rs:1568` references `app_config.appearance.sidebar_position`, so the field goes alongside it).
-- Add a `win.toggle-sidebar` action (or `app.toggle-sidebar` consistent with existing pattern in `install_actions`), bound to `<Primary>b`.
-- The action flips `sidebar_shell.set_visible(!visible)` and writes the new state to config via the existing config-write path. If no such write path exists for runtime changes, add a minimal `set_sidebar_visible(bool)` helper to `forktty-core::config` that persists atomically (write to temp + rename, matching whatever style the existing config uses).
+- Add field `pub sidebar_visible: bool` (default `true`) to `forktty-core::config::AppearanceConfig` at `crates/forktty-core/src/config.rs:47`, alongside the existing `sidebar_position`. Use the same `#[serde(default = "...")]` pattern as the surrounding fields (introduce `default_sidebar_visible() -> bool { true }`). Update `Default for AppearanceConfig` at `config.rs:81` to set the field.
+- Persistence path already exists: `pub fn save_config(config: &AppConfig)` at `config.rs:116` is the canonical write path. The toggle action reads the current `AppConfig`, mutates `appearance.sidebar_visible`, and calls `save_config(...)`. No new helper required.
+- Add an action consistent with the existing `install_actions` pattern (`gtk_app.rs:1933`), keybind `<Primary>b`. The action calls `sidebar_shell.set_visible(!sidebar_shell.is_visible())` then persists via `save_config`.
 - On startup, `build_ui` reads `app_config.appearance.sidebar_visible` and calls `sidebar_shell.set_visible(...)` accordingly.
 
 #### 4.4 CSS
@@ -152,8 +157,8 @@ In `style.css`:
 
 #### 5.1 Hide header on single-pane workspaces
 
-- Add a `set_header_visible(&self, bool)` method to `PaneChrome` (or expose the header `gtk::Box` so we can call `set_visible` from outside).
-- Trigger: in the layout build/refresh path (after `collect_leaves` in `gtk_app.rs:1199` or wherever the layout tree is materialized), count leaves; if there is exactly one pane in the active workspace, hide its header. On split or close, the count changes and headers are re-shown/hidden accordingly.
+- Extend `PaneChrome` (`gtk_app.rs:154`) with a stored reference to the header `gtk::Box` so callers can toggle its visibility. Construction of the box already happens in `build_pane_chrome`; just store it in the struct alongside `pane`/`title`/`cwd`.
+- Trigger site: `rebuild_layout` at `gtk_app.rs:257`. After constructing `pane_tree` (line 272) and before grabbing focus, compute `let single = collect_leaves(&pane_tree).len() == 1;` and iterate `self.chromes.values()`, calling `chrome.header.set_visible(!single)` on each. This re-runs on every split/close because both end up calling `rebuild_layout`.
 - The accent border-top on `.terminal-pane` is the only active-state cue when the header is hidden.
 
 #### 5.2 Header structure (`build_pane_chrome`)
@@ -163,7 +168,7 @@ In `style.css`:
 - Keep `title` and `cwd` labels but change rendering:
   - Title on the left.
   - CWD on the right, **only if `cwd_text != title.label()` after both are computed**. Otherwise hide the CWD label (`cwd.set_visible(false)`). This kills the visible duplicate seen in the screenshot.
-- Add a 6px dot label `pane-attention-dot` (Pango bullet `●`, hidden by default, shown via `set_visible(true)` when `surface.unread || surface.needs_attention`). Inserted as the first child of the header `gtk::Box`, before the title. Class `.pane-attention-dot`.
+- Add an attention indicator as the first child of the header `gtk::Box`, before the title: a `gtk::Box` (empty, class `.pane-attention-dot`), 6×6px, rendered as a filled circle via CSS (`border-radius: 50%; background: var(--ft-warning);`). Hidden by default; shown via `set_visible(true)` when `surface.unread || surface.needs_attention`. Using a CSS-sized box instead of a Pango bullet avoids sub-10px glyph rendering inconsistencies.
 - Actions container (`actions`) wired to a `gtk::EventControllerMotion` on the header `gtk::Box`. On enter, `actions.add_css_class("revealed")`; on leave, `remove_css_class("revealed")`. Default state: `.terminal-pane-actions { opacity: 0; pointer-events: none; }` and `.terminal-pane-actions.revealed { opacity: 1; pointer-events: auto; }`.
 - Header height: CSS `.terminal-pane-header { min-height: 22px; padding: 0 8px; }` (from 32px / `0 12px`).
 - Button size: `.terminal-pane-action { min-width: 20px; min-height: 20px; padding: 0; }`.
@@ -183,7 +188,7 @@ In `style.css`:
 - `.terminal-pane-cwd { font-size: 0.78em; color: var(--ft-text-faint); }`.
 - `.terminal-pane-actions { opacity: 0; transition: opacity 90ms ease; pointer-events: none; }`.
 - `.terminal-pane-actions.revealed { opacity: 1; pointer-events: auto; }`.
-- `.pane-attention-dot { color: var(--ft-warning); font-size: 9px; margin-right: 4px; }`.
+- `.pane-attention-dot { min-width: 6px; min-height: 6px; border-radius: 50%; background: var(--ft-warning); margin-right: 4px; }`.
 - Remove `.pane-grip`, `.terminal-pane-state` (and its `.active`/`.unread` variants) — dead code after this section lands.
 
 ### Verification
@@ -209,7 +214,7 @@ The current `sidebar_footer` (`gtk_app.rs:1541-1555`) lives inside the sidebar s
 
 - After the `paned` (`gtk_app.rs:1566`), create a global vertical box `app_root_box` that wraps `header` + `paned` + new `status_bar`. The window content child becomes `app_root_box`.
 - `status_bar` is a `gtk::Box::new(gtk::Orientation::Horizontal, 8)` with class `.app-status-bar`.
-- Left: a flat `gtk::Button` (class `.status-location`) showing `<workspace> · <cwd-compact>`. Click handler: open command palette filtered for workspaces (same as titlebar). Tooltip: `Switch workspace (Ctrl+Shift+P)`.
+- Left: a flat `gtk::Button` (class `.status-location`) showing `<workspace> · <cwd-compact>`. Click handler: identical to the titlebar workspace title widget (Section 3) — both call the same helper that opens the palette in workspace-switch mode. Tooltip: `Switch workspace (Ctrl+Shift+P)`.
 - Spacer: `gtk::Box` with `hexpand=true`.
 - Right: keycap `gtk::Label::new(Some("Ctrl+Shift+P"))` with class `.keycap` (reusing the existing rule at `style.css:364-374`). Tooltip: `Open the Command Palette`.
 - Update path: wherever active surface/workspace changes (the sidebar refresh + pane focus paths), call `status_location_set_label(...)`. The label is the same string used in the titlebar workspace name on the left side, plus ` · ` + `compact_path(&active_surface.cwd)` on the right side.
@@ -270,7 +275,7 @@ Delete:
 
 Microinteraction tightening:
 
-- All `transition: ... 120ms ease` → `90ms ease` for color/background-color/border-color/opacity properties only. (Already enumerated per-rule; this is a search-and-replace within `style.css`.)
+- Grep `style.css` for `120ms` first. For every match whose `transition` property list contains only `color`, `background-color`, `border-color`, and/or `opacity`, replace `120ms` with `90ms`. If any rule transitions a non-color property (e.g. `margin`, `transform`), leave it untouched — but a grep at spec time shows the only properties currently animated are the four above, so in practice this is a clean global replace.
 - `cursor: pointer;` added on `.workspace-card`, `.app-header-title`, `.status-location`, palette rows. GTK supports `cursor: pointer` in CSS.
 - No transforms, no scales, no slide-in. Conservative: only color/opacity fades.
 
@@ -309,5 +314,5 @@ Recorded here so they don't get rediscovered later as if they were new:
 ## 10. Risk and rollback
 
 - All changes are isolated to `forktty-ui-gtk` and a single config field in `forktty-core`. No protocol or socket changes.
-- If `shade()` / `alpha()` / `mix()` CSS functions are not supported in the deployed GTK version, the token section falls back to explicit hex values picked to match (concrete values determined during implementation).
+- If `shade()` / `alpha()` CSS functions are not supported in the deployed GTK version, fall back to the canonical hex/rgba set listed in Section 2 (no runtime decision).
 - Rollback: revert the commit(s) on this branch. No data migration required for the new config field — older builds simply ignore the unknown key.
