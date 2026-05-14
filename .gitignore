@@ -38,3 +38,4 @@ security_best_practices_report.md
 
 # ForkTTY runtime
 /tmp/forktty.sock
+.worktrees/
