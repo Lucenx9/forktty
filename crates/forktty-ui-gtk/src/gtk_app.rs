@@ -1490,6 +1490,14 @@ fn build_ui(app: &adw::Application) {
         .icon_name("folder-new-symbolic")
         .tooltip_text("New Worktree")
         .build();
+    let split_horizontal = gtk::Button::builder()
+        .icon_name("view-dual-symbolic")
+        .tooltip_text("Split Horizontally (Ctrl+Shift+H)")
+        .build();
+    let split_vertical = gtk::Button::builder()
+        .icon_name("view-paged-symbolic")
+        .tooltip_text("Split Vertically (Ctrl+Shift+V)")
+        .build();
     let command_palette = gtk::Button::builder()
         .icon_name("system-search-symbolic")
         .tooltip_text("Command Palette (Ctrl+Shift+P)")
@@ -1505,6 +1513,12 @@ fn build_ui(app: &adw::Application) {
     for (button, label, shortcut) in [
         (&new_workspace, "New Workspace", None),
         (&new_worktree, "New Worktree", None),
+        (
+            &split_horizontal,
+            "Split Horizontally",
+            Some("Ctrl+Shift+H"),
+        ),
+        (&split_vertical, "Split Vertically", Some("Ctrl+Shift+V")),
         (&command_palette, "Command Palette", Some("Ctrl+Shift+P")),
         (&notifications, "Notifications", Some("Ctrl+Shift+M")),
         (&settings, "Settings", Some("Ctrl+,")),
@@ -1514,11 +1528,15 @@ fn build_ui(app: &adw::Application) {
         set_accessible_button_text(button, label, shortcut);
     }
     new_workspace.set_action_name(Some("app.new-workspace"));
+    split_horizontal.set_action_name(Some("app.split-horizontal"));
+    split_vertical.set_action_name(Some("app.split-vertical"));
 
     // Start: workspace-level "create" actions (HIG: new/add at the start).
     header.pack_start(&new_workspace);
     header.pack_start(&new_worktree);
-    // End: global app tools. Pane-scoped split/close live in each pane's header.
+    header.pack_start(&split_horizontal);
+    header.pack_start(&split_vertical);
+    // End: global app tools. Pane-scoped close still lives in each pane's header.
     header.pack_end(&settings);
     header.pack_end(&notifications);
     header.pack_end(&command_palette);
