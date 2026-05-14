@@ -183,6 +183,7 @@ struct SidebarUi {
     last_signature: Rc<RefCell<Option<String>>>,
     context_menu_open: Rc<Cell<bool>>,
     context_popover: Rc<RefCell<Option<gtk::Popover>>>,
+    context_menu_position: gtk::PositionType,
 }
 
 type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
@@ -1646,7 +1647,13 @@ fn build_ui(app: &adw::Application) {
 
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.add_css_class("workspace-paned");
-    if app_config.appearance.sidebar_position == "right" {
+    let sidebar_on_right = app_config.appearance.sidebar_position == "right";
+    let context_menu_position = if sidebar_on_right {
+        gtk::PositionType::Left
+    } else {
+        gtk::PositionType::Right
+    };
+    if sidebar_on_right {
         paned.set_start_child(Some(&*terminal_stack.borrow()));
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
@@ -1745,6 +1752,7 @@ fn build_ui(app: &adw::Application) {
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
+        context_menu_position,
     };
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -2307,7 +2315,13 @@ fn refresh_sidebar(
                 );
             });
             popover.set_parent(&row_for_menu);
-            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.set_position(ui_for_menu.context_menu_position);
+            let x = match ui_for_menu.context_menu_position {
+                gtk::PositionType::Left => 0,
+                gtk::PositionType::Right => row_for_menu.width().max(1),
+                _ => x as i32,
+            };
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x, y as i32, 1, 1)));
             *ui_for_menu.context_popover.borrow_mut() = Some(popover.clone());
             popover.popup();
         });
