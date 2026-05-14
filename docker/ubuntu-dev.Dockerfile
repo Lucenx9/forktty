@@ -11,17 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    desktop-file-utils \
     file \
     git \
     gnupg \
-    libayatana-appindicator3-dev \
-    libdbus-1-dev \
+    libadwaita-1-dev \
     libglib2.0-dev \
-    librsvg2-dev \
+    libgtk-4-dev \
     libssl-dev \
-    libwebkit2gtk-4.1-dev \
-    libxdo-dev \
-    libgtk-3-dev \
+    libvte-2.91-gtk4-dev \
     patchelf \
     pkg-config \
     unzip \

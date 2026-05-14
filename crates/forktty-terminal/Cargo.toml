@@ -1,0 +1,21 @@
+[package]
+name = "forktty-terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "ForkTTY terminal backend trait with headless and VTE adapters"
+
+[features]
+default = []
+vte = ["dep:vte4", "dep:gtk4"]
+
+[dependencies]
+forktty-core = { path = "../forktty-core" }
+serde.workspace = true
+thiserror.workspace = true
+gtk4 = { version = "0.10", optional = true }
+vte4 = { version = "0.9", features = ["v0_76"], optional = true }

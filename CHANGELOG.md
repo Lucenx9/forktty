@@ -4,6 +4,22 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Architecture
+- Replaced the old Tauri/React/WebKit runtime with the native GTK4/libadwaita/VTE implementation as the primary app.
+- Removed the legacy frontend, Tauri backend, Vite/TypeScript build, and npm dependency tree from the main code path.
+- Installed the native binary and Debian package as `forktty` instead of `forktty-gtk`.
+
+### UI
+- Added a first native GTK visual pass: dark libadwaita chrome, themed VTE colors, styled workspace sidebar cards, active/unread indicators, and focused terminal outline.
+
+### Reliability
+- Fixed `workspace.close` to close by the resolved workspace ID so surface cleanup and model mutation cannot diverge on ambiguous selectors.
+- Limited VTE prompt fallback scanning to a bounded visible tail instead of copying the full terminal text on every contents-changed signal.
+
+### Tooling
+- Replaced Vitest/Vite frontend checks with Node built-in CLI tests.
+- Updated CI, dependency review, security audit, Docker dev image, desktop entry validation, and Debian packaging for the Rust GTK/VTE stack.
+
 ## [0.1.2] - 2026-05-11
 
 ### Documentation

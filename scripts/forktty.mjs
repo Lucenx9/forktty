@@ -13,6 +13,7 @@ const HOOK_STATUS_TIMEOUT_MS = 5_000;
 const SOCKET_TIMEOUT_MS = 5_000;
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
 const VALID_STATUS_COLORS = new Set(["green", "yellow", "red", "blue", "muted"]);
+const VALID_LOG_LEVELS = new Set(["info", "warn", "error"]);
 
 const AGENT_SPECS = {
   codex: {
@@ -248,6 +249,68 @@ function buildTargetParams(options, env = process.env) {
   return params;
 }
 
+function parseFiniteNumber(value, optionName) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${optionName} requires a value`);
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid ${optionName}: expected finite number`);
+  }
+  return parsed;
+}
+
+function buildProgressParams(options, env = process.env) {
+  const key = typeof options.key === "string" ? options.key.trim() : "";
+  const label =
+    typeof options.label === "string" && options.label.trim() ? options.label.trim() : key;
+
+  if (!key) throw new Error("set-progress requires --key");
+  if (typeof options.value !== "string") throw new Error("set-progress requires --value");
+
+  const value = parseFiniteNumber(options.value, "--value");
+  const params = {
+    ...buildTargetParams(options, env),
+    key,
+    label,
+    value,
+  };
+
+  if (typeof options.total === "string") {
+    const total = parseFiniteNumber(options.total, "--total");
+    if (total <= 0) {
+      throw new Error("Invalid --total: expected positive number");
+    }
+    params.total = total;
+  }
+
+  return params;
+}
+
+function buildLogParams(options, positionals, stdinText = "", env = process.env) {
+  const level =
+    typeof options.level === "string" && options.level.trim() ? options.level.trim() : "info";
+  const message =
+    typeof options.message === "string"
+      ? options.message
+      : positionals.length > 0
+        ? positionals.join(" ")
+        : stdinText.trim();
+
+  if (!VALID_LOG_LEVELS.has(level)) {
+    throw new Error("Invalid --level: expected info, warn, or error");
+  }
+  if (!message.trim()) {
+    throw new Error("log requires --message, a positional message, or stdin");
+  }
+
+  return {
+    ...buildTargetParams(options, env),
+    level,
+    message,
+  };
+}
+
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -262,10 +325,28 @@ Usage:
   ./scripts/forktty.mjs focus --workspace-id <id>
   ./scripts/forktty.mjs close-workspace <selector>
   ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
+  ./scripts/forktty.mjs surfaces [--workspace-id <id>] [--json]
+  ./scripts/forktty.mjs split-surface [--surface-id <id>] [--axis horizontal|vertical]
+  ./scripts/forktty.mjs focus-surface <surface-id>
+  ./scripts/forktty.mjs close-surface <surface-id>
+  ./scripts/forktty.mjs send-text <text> [--surface-id <id>]
+  ./scripts/forktty.mjs worktree-list [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-status [--path <worktree>] [--cwd <worktree>]
+  ./scripts/forktty.mjs worktree-create <branch> [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-attach <branch> [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-remove <branch-or-worktree> [--cwd <repo>]
+  ./scripts/forktty.mjs worktree-merge <branch-or-worktree> [--cwd <repo>]
   ./scripts/forktty.mjs set-status --key <key> --value <value> [--label <label>] [--color <color>]
   ./scripts/forktty.mjs list-status [--workspace-id <id>]
   ./scripts/forktty.mjs clear-status [--key <key>]
+  ./scripts/forktty.mjs set-progress --key <key> --value <number> [--label <label>] [--total <number>]
+  ./scripts/forktty.mjs list-progress [--workspace-id <id>]
+  ./scripts/forktty.mjs clear-progress [--key <key>]
+  ./scripts/forktty.mjs log [message] [--message <message>] [--level info|warn|error]
+  ./scripts/forktty.mjs logs [--workspace-id <id>]
+  ./scripts/forktty.mjs clear-logs [--workspace-id <id>]
   ./scripts/forktty.mjs notifications [--json]
+  ./scripts/forktty.mjs clear-notifications
   ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
   ./scripts/forktty.mjs hooks <agent> <event>
   ./scripts/forktty.mjs ping
@@ -277,7 +358,8 @@ Selector flags:
 
 Notes:
   - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
-  - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify/status commands.
+  - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
+  - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
 `);
 }
@@ -287,14 +369,31 @@ function formatWorkspaceLine(workspace) {
   parts.push(workspace.active ? "*" : " ");
   parts.push(workspace.name);
   parts.push(`[${workspace.id}]`);
-  if (workspace.gitBranch) {
-    parts.push(workspace.gitBranch);
+  const gitBranch = workspace.gitBranch || workspace.git_branch;
+  const workingDir = workspace.workingDir || workspace.working_dir;
+  const surfaceCount =
+    typeof workspace.surfaces === "number"
+      ? workspace.surfaces
+      : workspace.pane_tree
+        ? countPaneLeaves(workspace.pane_tree)
+        : 0;
+  if (gitBranch) {
+    parts.push(gitBranch);
   }
-  if (workspace.workingDir) {
-    parts.push(workspace.workingDir);
+  if (workingDir) {
+    parts.push(workingDir);
   }
-  parts.push(`${workspace.surfaces} surface${workspace.surfaces === 1 ? "" : "s"}`);
+  parts.push(`${surfaceCount} surface${surfaceCount === 1 ? "" : "s"}`);
   return parts.join("  ");
+}
+
+function countPaneLeaves(node) {
+  if (!node || typeof node !== "object") return 0;
+  if (node.type === "leaf") return 1;
+  if (Array.isArray(node.children)) {
+    return node.children.reduce((total, child) => total + countPaneLeaves(child), 0);
+  }
+  return 0;
 }
 
 async function handleList(context) {
@@ -429,6 +528,293 @@ async function handleNotify(context, args) {
   }
 }
 
+async function handleSendText(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const stdinText = await readStdinText();
+  const text =
+    typeof options.text === "string"
+      ? options.text
+      : positionals.length > 0
+        ? positionals.join(" ")
+        : stdinText;
+  const surfaceId = await resolveSendTextSurfaceId(context, options);
+
+  if (!surfaceId) {
+    throw new Error(
+      "send-text requires --surface-id, FORKTTY_SURFACE_ID, or an active workspace surface",
+    );
+  }
+  if (!text) {
+    throw new Error("send-text requires text or stdin");
+  }
+
+  await sendSocketRequest(context.socketPath, "surface.send_text", {
+    surface_id: surfaceId,
+    text,
+  });
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Sent text\n");
+  }
+}
+
+async function resolveSendTextSurfaceId(context, options) {
+  if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
+    return options["surface-id"].trim();
+  }
+  if (
+    typeof context.env.FORKTTY_SURFACE_ID === "string" &&
+    context.env.FORKTTY_SURFACE_ID.trim()
+  ) {
+    return context.env.FORKTTY_SURFACE_ID.trim();
+  }
+  return resolveFocusedSurfaceId(context);
+}
+
+async function resolveFocusedSurfaceId(context) {
+  const workspaces = await sendSocketRequest(context.socketPath, "workspace.list", {});
+  return surfaceIdFromWorkspaceList(workspaces);
+}
+
+function surfaceIdFromWorkspaceList(workspaces) {
+  if (!Array.isArray(workspaces) || workspaces.length === 0) {
+    return "";
+  }
+  const workspace =
+    workspaces.find((candidate) => candidate.active) ||
+    workspaces.find((candidate) => candidate?.focused_surface_id || candidate?.focusedSurfaceId);
+  return workspace?.focused_surface_id || workspace?.focusedSurfaceId || "";
+}
+
+function surfaceIdFromArgs(options, positionals, env = process.env) {
+  if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
+    return options["surface-id"].trim();
+  }
+  if (positionals[0]) {
+    return positionals[0].trim();
+  }
+  if (typeof env.FORKTTY_SURFACE_ID === "string" && env.FORKTTY_SURFACE_ID.trim()) {
+    return env.FORKTTY_SURFACE_ID.trim();
+  }
+  return "";
+}
+
+function buildSurfaceActionParams(options, positionals, env = process.env, command = "surface") {
+  const surfaceId = surfaceIdFromArgs(options, positionals, env);
+  if (!surfaceId) {
+    throw new Error(`${command} requires --surface-id, a surface id, or FORKTTY_SURFACE_ID`);
+  }
+  return { surface_id: surfaceId };
+}
+
+function buildSurfaceSplitParams(options, positionals, env = process.env) {
+  const axis =
+    typeof options.axis === "string" && options.axis.trim() ? options.axis.trim() : "horizontal";
+  if (axis !== "horizontal" && axis !== "vertical") {
+    throw new Error("Invalid --axis: expected horizontal or vertical");
+  }
+  const params = { axis };
+  const surfaceId = surfaceIdFromArgs(options, positionals, env);
+  if (surfaceId) {
+    params.surface_id = surfaceId;
+  }
+  return params;
+}
+
+function formatSurfaceLine(surface) {
+  const state = surface.unread || surface.needs_attention ? "unread" : "read";
+  const title = surface.title ? ` ${surface.title}` : "";
+  const cwd = surface.cwd ? ` ${surface.cwd}` : "";
+  return `${surface.id} [${surface.workspace_id}] ${state}${title}${cwd}`;
+}
+
+async function handleSurfaces(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "surface.list", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No surfaces\n");
+    return;
+  }
+
+  for (const surface of result) {
+    process.stdout.write(`${formatSurfaceLine(surface)}\n`);
+  }
+}
+
+async function handleSplitSurface(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const params = buildSurfaceSplitParams(options, positionals, context.env);
+  if (!params.surface_id) {
+    params.surface_id = await resolveFocusedSurfaceId(context);
+  }
+  if (!params.surface_id) {
+    throw new Error(
+      "split-surface requires --surface-id, a surface id, FORKTTY_SURFACE_ID, or an active workspace surface",
+    );
+  }
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "surface.split",
+    params,
+  );
+
+  if (context.json) {
+    printJson(result);
+  } else {
+    process.stdout.write(`Created surface ${result.id}\n`);
+  }
+}
+
+async function handleFocusSurface(context, args) {
+  const { options, positionals } = parseFlags(args);
+  await sendSocketRequest(
+    context.socketPath,
+    "surface.focus",
+    buildSurfaceActionParams(options, positionals, context.env, "focus-surface"),
+  );
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Focused surface\n");
+  }
+}
+
+async function handleCloseSurface(context, args) {
+  const { options, positionals } = parseFlags(args);
+  await sendSocketRequest(
+    context.socketPath,
+    "surface.close",
+    buildSurfaceActionParams(options, positionals, context.env, "close-surface"),
+  );
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Closed surface\n");
+  }
+}
+
+function worktreeParams(options, positionals, requireName = false) {
+  const params = {};
+  const name = positionals[0] || options.name || options.branch;
+  if (requireName && (!name || typeof name !== "string")) {
+    throw new Error("worktree command requires a branch or worktree name");
+  }
+  if (typeof name === "string" && name.trim()) {
+    params.name = name.trim();
+  }
+  if (typeof options.cwd === "string" && options.cwd.trim()) {
+    params.cwd = options.cwd.trim();
+  }
+  return params;
+}
+
+function buildWorktreeStatusParams(options, positionals, env = process.env) {
+  const pathValue =
+    typeof options.path === "string" && options.path.trim()
+      ? options.path.trim()
+      : typeof options.cwd === "string" && options.cwd.trim()
+        ? options.cwd.trim()
+        : positionals[0]
+          ? positionals[0].trim()
+          : typeof env.PWD === "string" && env.PWD.trim()
+            ? env.PWD.trim()
+            : "";
+
+  if (!pathValue) {
+    throw new Error("worktree-status requires --path, --cwd, a path, or PWD");
+  }
+  return { path: pathValue };
+}
+
+function formatWorktreeLine(worktree) {
+  const status = worktree.status ? ` ${worktree.status}` : "";
+  return `${worktree.branch || worktree.name} [${worktree.worktree_name}] ${worktree.path}${status}`;
+}
+
+async function handleWorktreeList(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.list",
+    worktreeParams(options, []),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  for (const worktree of result) {
+    process.stdout.write(`${formatWorktreeLine(worktree)}\n`);
+  }
+}
+
+async function handleWorktreeStatus(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.status",
+    buildWorktreeStatusParams(options, positionals, context.env),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${result.status || "unknown"}\n`);
+}
+
+async function handleWorktreeCreate(context, args, method) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    method,
+    worktreeParams(options, positionals, true),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`Opened worktree ${result.branch || result.name} at ${result.path}\n`);
+}
+
+async function handleWorktreeRemove(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.remove",
+    worktreeParams(options, positionals, true),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`Removed worktree ${result.removed}\n`);
+}
+
+async function handleWorktreeMerge(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const result = await sendSocketRequest(
+    context.socketPath,
+    "worktree.merge",
+    worktreeParams(options, positionals, true),
+  );
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${result}\n`);
+}
+
 async function handleSetStatus(context, args) {
   const { options } = parseFlags(args);
   const key = typeof options.key === "string" ? options.key : "";
@@ -498,11 +884,118 @@ async function handleClearStatus(context, args) {
   }
 }
 
+async function handleSetProgress(context, args) {
+  const { options } = parseFlags(args);
+  const params = buildProgressParams(options, context.env);
+  await sendSocketRequest(context.socketPath, "metadata.set_progress", params);
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write(`Updated progress ${params.key}\n`);
+  }
+}
+
+function formatProgressLine(progress) {
+  const label = progress.label || progress.key;
+  if (typeof progress.total === "number") {
+    return `${label}: ${progress.value}/${progress.total}`;
+  }
+  return `${label}: ${progress.value}`;
+}
+
+async function handleListProgress(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "metadata.list_progress", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No progress entries\n");
+    return;
+  }
+
+  for (const progress of result) {
+    process.stdout.write(`${formatProgressLine(progress)}\n`);
+  }
+}
+
+async function handleClearProgress(context, args) {
+  const { options } = parseFlags(args);
+  await sendSocketRequest(context.socketPath, "metadata.clear_progress", {
+    ...buildTargetParams(options, context.env),
+    ...(typeof options.key === "string" ? { key: options.key } : {}),
+  });
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Cleared progress\n");
+  }
+}
+
+function formatLogLine(log) {
+  return `[${log.level || "info"}] ${log.message || ""}`;
+}
+
+async function handleLog(context, args) {
+  const { options, positionals } = parseFlags(args);
+  const stdinText = await readStdinText();
+  const params = buildLogParams(options, positionals, stdinText, context.env);
+  await sendSocketRequest(context.socketPath, "metadata.log", params);
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write(`Appended ${params.level} log\n`);
+  }
+}
+
+async function handleLogs(context, args) {
+  const { options } = parseFlags(args);
+  const result = await sendSocketRequest(context.socketPath, "metadata.list_logs", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson(result);
+    return;
+  }
+
+  if (!Array.isArray(result) || result.length === 0) {
+    process.stdout.write("No logs\n");
+    return;
+  }
+
+  for (const log of result) {
+    process.stdout.write(`${formatLogLine(log)}\n`);
+  }
+}
+
+async function handleClearLogs(context, args) {
+  const { options } = parseFlags(args);
+  await sendSocketRequest(context.socketPath, "metadata.clear_logs", {
+    ...buildTargetParams(options, context.env),
+  });
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Cleared logs\n");
+  }
+}
+
 function formatNotificationLine(notification) {
   const state = notification.read ? "read" : "unread";
   const title = notification.title || "ForkTTY";
   const body = notification.body ? ` — ${notification.body}` : "";
-  return `[${state}] ${notification.workspaceName} · ${notification.kind} · ${title}${body}`;
+  const workspace = notification.workspaceName || notification.workspace_id || "global";
+  return `[${state}] ${workspace} · ${notification.kind} · ${title}${body}`;
 }
 
 async function handleNotifications(context) {
@@ -520,6 +1013,16 @@ async function handleNotifications(context) {
 
   for (const notification of result) {
     process.stdout.write(`${formatNotificationLine(notification)}\n`);
+  }
+}
+
+async function handleClearNotifications(context) {
+  await sendSocketRequest(context.socketPath, "notification.clear", {});
+
+  if (context.json) {
+    printJson({ result: true });
+  } else {
+    process.stdout.write("Cleared notifications\n");
   }
 }
 
@@ -721,10 +1224,19 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
   const target = workspaceId ? { workspace_id: workspaceId } : {};
   const key = `agent:${agent}`;
   const message = extractHookMessage(payload);
+  const log = (level, logMessage) => ({
+    method: "metadata.log",
+    params: {
+      ...target,
+      level,
+      message: logMessage,
+    },
+  });
 
   switch (eventName) {
     case "session-start":
       return [
+        log("info", `${spec.label} session started`),
         {
           method: "metadata.set_status",
           params: {
@@ -738,6 +1250,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "prompt-submit":
       return [
+        log("info", `${spec.label} prompt submitted`),
         {
           method: "metadata.set_status",
           params: {
@@ -751,6 +1264,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "notification":
       return [
+        log("warn", message || `${spec.label} requested attention`),
         {
           method: "metadata.set_status",
           params: {
@@ -773,6 +1287,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "stop-failure":
       return [
+        log("error", message || `${spec.label} reported a failure`),
         {
           method: "metadata.set_status",
           params: {
@@ -795,6 +1310,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "stop":
       return [
+        log("info", message || `${spec.label} stopped`),
         {
           method: "metadata.set_status",
           params: {
@@ -808,6 +1324,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "session-end":
       return [
+        log("info", `${spec.label} session ended`),
         {
           method: "metadata.clear_status",
           params: {
@@ -922,6 +1439,54 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "notify":
       await handleNotify(context, args);
       return;
+    case "surfaces":
+    case "surface-list":
+    case "surface:list":
+      await handleSurfaces(context, args);
+      return;
+    case "split-surface":
+    case "surface-split":
+    case "surface:split":
+      await handleSplitSurface(context, args);
+      return;
+    case "focus-surface":
+    case "surface-focus":
+    case "surface:focus":
+      await handleFocusSurface(context, args);
+      return;
+    case "close-surface":
+    case "surface-close":
+    case "surface:close":
+      await handleCloseSurface(context, args);
+      return;
+    case "send-text":
+    case "send_text":
+      await handleSendText(context, args);
+      return;
+    case "worktree-list":
+    case "worktree:list":
+      await handleWorktreeList(context, args);
+      return;
+    case "worktree-status":
+    case "worktree:status":
+      await handleWorktreeStatus(context, args);
+      return;
+    case "worktree-create":
+    case "worktree:create":
+      await handleWorktreeCreate(context, args, "worktree.create");
+      return;
+    case "worktree-attach":
+    case "worktree:attach":
+      await handleWorktreeCreate(context, args, "worktree.attach");
+      return;
+    case "worktree-remove":
+    case "worktree:remove":
+      await handleWorktreeRemove(context, args);
+      return;
+    case "worktree-merge":
+    case "worktree:merge":
+      await handleWorktreeMerge(context, args);
+      return;
     case "set-status":
       await handleSetStatus(context, args);
       return;
@@ -931,8 +1496,32 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "clear-status":
       await handleClearStatus(context, args);
       return;
+    case "set-progress":
+      await handleSetProgress(context, args);
+      return;
+    case "list-progress":
+      await handleListProgress(context, args);
+      return;
+    case "clear-progress":
+      await handleClearProgress(context, args);
+      return;
+    case "log":
+      await handleLog(context, args);
+      return;
+    case "logs":
+    case "list-logs":
+      await handleLogs(context, args);
+      return;
+    case "clear-logs":
+      await handleClearLogs(context, args);
+      return;
     case "notifications":
       await handleNotifications(context);
+      return;
+    case "clear-notifications":
+    case "notifications-clear":
+    case "notification:clear":
+      await handleClearNotifications(context);
       return;
     case "hooks":
       if (args[0] === "setup") {
@@ -957,10 +1546,17 @@ export {
   HOOK_CONTINUE_RESPONSE,
   buildHookActions,
   buildHookShellCommand,
+  buildLogParams,
+  buildProgressParams,
+  buildSurfaceActionParams,
+  buildSurfaceSplitParams,
+  buildWorktreeStatusParams,
   defaultSocketPath,
+  formatNotificationLine,
   mergeHookConfig,
   parseFlags,
   shellQuote,
+  surfaceIdFromWorkspaceList,
 };
 
 const isMainModule =

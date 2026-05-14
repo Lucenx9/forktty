@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ForkTTY
+Comment=Linux-native multi-agent terminal
+Exec=forktty
+Icon=forktty
+Categories=System;TerminalEmulator;
+Terminal=false
+StartupNotify=true
+StartupWMClass=forktty
