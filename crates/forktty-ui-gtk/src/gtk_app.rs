@@ -2528,6 +2528,21 @@ fn build_ui(app: &adw::Application) {
 
     let header = adw::HeaderBar::new();
     header.add_css_class("app-header");
+    let brand = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    brand.add_css_class("app-brand");
+    brand.set_tooltip_text(Some("ForkTTY"));
+    let brand_logo = gtk::Image::from_icon_name("forktty");
+    brand_logo.set_pixel_size(18);
+    brand_logo.add_css_class("app-brand-logo");
+    let brand_name = gtk::Label::builder().label("ForkTTY").xalign(0.0).build();
+    brand_name.add_css_class("app-brand-name");
+    brand.append(&brand_logo);
+    brand.append(&brand_name);
+    let brand_separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    brand_separator.add_css_class("header-action-separator");
+    header.pack_start(&brand);
+    header.pack_start(&brand_separator);
+
     let workspace_title = gtk::Button::builder().label("").has_frame(false).build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");

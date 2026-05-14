@@ -87,6 +87,23 @@ window {
   color: var(--ft-text);
 }
 
+.app-brand {
+  min-height: 28px;
+  margin: 0 4px 0 0;
+  padding: 0 6px 0 2px;
+  color: var(--ft-text);
+}
+
+.app-brand-logo {
+  opacity: 0.95;
+}
+
+.app-brand-name {
+  color: var(--ft-text-strong);
+  font-size: 0.90em;
+  font-weight: 700;
+}
+
 .app-header-title-spacer {
   min-width: 1px;
 }
