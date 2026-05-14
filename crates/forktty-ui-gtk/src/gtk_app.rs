@@ -32,6 +32,7 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_ID: &str = "dev.forktty.ForkTTY";
+const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
 const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_secs(8);
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
@@ -1862,6 +1863,7 @@ fn build_ui(app: &adw::Application) {
         &paned,
         &sidebar_shell,
         &terminal_stack_for_settings,
+        &controller,
     );
 
     let settings_parent = window.clone();
@@ -1902,10 +1904,12 @@ fn settings_apply_callback(
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
     terminal_stack: &gtk::Box,
+    controller: &Rc<RefCell<VteController>>,
 ) -> SettingsApplyCallback {
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
     let terminal_stack = terminal_stack.clone();
+    let controller = controller.clone();
     Rc::new(move |config| {
         apply_sidebar_position(
             &paned,
@@ -1913,6 +1917,9 @@ fn settings_apply_callback(
             &terminal_stack,
             &config.appearance.sidebar_position,
         );
+        for widget in controller.borrow().widgets.values() {
+            apply_vte_appearance(widget);
+        }
     })
 }
 
@@ -3390,10 +3397,8 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .text(&loaded.general.shell)
         .hexpand(true)
         .build();
-    let font_family = gtk::Entry::builder()
-        .text(&loaded.appearance.font_family)
-        .hexpand(true)
-        .build();
+    let font_family = font_family_combo(parent, &loaded.appearance.font_family);
+    font_family.set_tooltip_text(Some("Terminal font family"));
     let font_size = gtk::SpinButton::with_range(8.0, 64.0, 1.0);
     font_size.set_value(f64::from(loaded.appearance.font_size));
     let notification_command = gtk::Entry::builder()
@@ -3527,10 +3532,19 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     cancel.connect_clicked(move |_| dialog_for_cancel.close());
 
     let status_for_save = status.clone();
+    let initial_shell = loaded.general.shell.clone();
+    let initial_window_mode = loaded.appearance.window_mode.clone();
     save.connect_clicked(move |_| {
         let mut next = config::load_config().unwrap_or_default();
         next.general.shell = shell_entry.text().to_string();
-        next.appearance.font_family = font_family.text().to_string();
+        if let Some(family) = font_family.active_id() {
+            let family = family.to_string();
+            next.appearance.font_family = if family == DEFAULT_FONT_FAMILY_ID {
+                String::new()
+            } else {
+                family
+            };
+        }
         next.appearance.font_size = font_size.value() as u16;
         next.general.notification_command = notification_command.text().to_string();
         if let Some(layout) = worktree_layout.active_id() {
@@ -3547,9 +3561,16 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         match config::save_config(&next) {
             Ok(()) => {
                 on_apply(&next);
+                let message = if next.general.shell != initial_shell
+                    || next.appearance.window_mode != initial_window_mode
+                {
+                    "Saved. Font and layout applied; shell/window mode apply after restart."
+                } else {
+                    "Saved. Changes applied."
+                };
                 set_status_message(
                     &status_for_save,
-                    "Saved. Layout changes applied.",
+                    message,
                     StatusKind::Success,
                 );
             }
@@ -3576,6 +3597,49 @@ fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText 
     for (id, label) in items {
         combo.append(Some(id), label);
     }
+    if !combo.set_active_id(Some(active_id)) {
+        combo.set_active(Some(0));
+    }
+    combo
+}
+
+fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
+    let combo = gtk::ComboBoxText::new();
+    combo.append(Some(DEFAULT_FONT_FAMILY_ID), "System default (monospace)");
+
+    let active_family = active_family.trim();
+    let context = parent.pango_context();
+    let families = context.list_families();
+    let mut names = families
+        .iter()
+        .filter(|family| family.is_monospace())
+        .map(|family| family.name().to_string())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        names = families
+            .iter()
+            .map(|family| family.name().to_string())
+            .collect::<Vec<_>>();
+    }
+    names.sort_by_key(|name| name.to_ascii_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+
+    let mut has_active = active_family.is_empty();
+    for name in &names {
+        if name == active_family {
+            has_active = true;
+        }
+        combo.append(Some(name), name);
+    }
+    if !has_active {
+        combo.append(Some(active_family), &format!("{active_family} (saved)"));
+    }
+
+    let active_id = if active_family.is_empty() {
+        DEFAULT_FONT_FAMILY_ID
+    } else {
+        active_family
+    };
     if !combo.set_active_id(Some(active_id)) {
         combo.set_active(Some(0));
     }
