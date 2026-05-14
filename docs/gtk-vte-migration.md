@@ -70,6 +70,9 @@ Tauri/React implementation.
   implementations. The notification panel can clear unread/attention state, and
   settings persist shell, font size, notification command, worktree layout,
   window mode, and notification preferences through `forktty-core` config.
+- The GTK command palette can open a native worktree dialog that creates or
+  attaches a branch worktree from the active workspace, opens a matching
+  worktree-backed workspace, spawns a VTE terminal there, and runs `.forktty/setup`.
 - GTK quake/dropdown mode reads `appearance.window_mode = "quake"`, starts with
   an undecorated monitor-sized dropdown-style window, and uses
   `gtk4-layer-shell` at runtime when available on Wayland to anchor the window

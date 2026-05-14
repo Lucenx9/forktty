@@ -1,6 +1,6 @@
 use adw::prelude::*;
 use forktty_core::{
-    config, dispatch_notification, session, NotificationItem, NotificationKind, PaneNode,
+    config, dispatch_notification, session, worktree, NotificationItem, NotificationKind, PaneNode,
     ProgressEntry, SplitAxis, StatusEntry, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_socket::{
@@ -1212,6 +1212,15 @@ fn show_command_palette(parent: &adw::ApplicationWindow, state: &SocketAppState)
             dialog.close();
         }
     });
+    append_command_button(&list, "New Worktree", {
+        let state = state.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        move || {
+            dialog.close();
+            show_worktree_dialog(&parent, &state);
+        }
+    });
     append_command_button(&list, "Close Pane", {
         let state = state.clone();
         let dialog = dialog.clone();
@@ -1243,6 +1252,139 @@ where
         .build();
     button.connect_clicked(move |_| action());
     list.append(&button);
+}
+
+fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
+    let dialog = gtk::Window::builder()
+        .title("Worktree")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(420)
+        .default_height(180)
+        .build();
+    let entry = gtk::Entry::builder()
+        .placeholder_text("Branch name")
+        .hexpand(true)
+        .build();
+    let create = gtk::Button::builder()
+        .icon_name("list-add-symbolic")
+        .tooltip_text("Create worktree")
+        .build();
+    let attach = gtk::Button::builder()
+        .icon_name("folder-open-symbolic")
+        .tooltip_text("Attach worktree")
+        .build();
+    let status = gtk::Label::builder().xalign(0.0).wrap(true).build();
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.append(&create);
+    actions.append(&attach);
+
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .margin_top(16)
+        .margin_bottom(16)
+        .margin_start(16)
+        .margin_end(16)
+        .build();
+    content.append(&entry);
+    content.append(&actions);
+    content.append(&status);
+
+    let state_for_create = state.clone();
+    let status_for_create = status.clone();
+    let entry_for_create = entry.clone();
+    let dialog_for_create = dialog.clone();
+    create.connect_clicked(move |_| {
+        let name = entry_for_create.text().trim().to_string();
+        match open_worktree_from_gtk(&state_for_create, &name, WorktreeAction::Create) {
+            Ok(()) => dialog_for_create.close(),
+            Err(err) => status_for_create.set_text(&err),
+        }
+    });
+
+    let state_for_attach = state.clone();
+    let status_for_attach = status.clone();
+    let entry_for_attach = entry.clone();
+    let dialog_for_attach = dialog.clone();
+    attach.connect_clicked(move |_| {
+        let name = entry_for_attach.text().trim().to_string();
+        match open_worktree_from_gtk(&state_for_attach, &name, WorktreeAction::Attach) {
+            Ok(()) => dialog_for_attach.close(),
+            Err(err) => status_for_attach.set_text(&err),
+        }
+    });
+
+    dialog.set_child(Some(&content));
+    dialog.present();
+}
+
+#[derive(Clone, Copy)]
+enum WorktreeAction {
+    Create,
+    Attach,
+}
+
+fn open_worktree_from_gtk(
+    state: &SocketAppState,
+    name: &str,
+    action: WorktreeAction,
+) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Branch name is required".to_string());
+    }
+    let cwd = active_workspace_cwd(state)
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| "Cannot resolve current workspace directory".to_string())?;
+    let cwd = cwd.to_string_lossy().to_string();
+    let layout = config::load_config()
+        .ok()
+        .map(|config| config.general.worktree_layout)
+        .filter(|layout| !layout.trim().is_empty())
+        .unwrap_or_else(|| "nested".to_string());
+    let info = match action {
+        WorktreeAction::Create => worktree::create(&cwd, name, &layout),
+        WorktreeAction::Attach => worktree::attach(&cwd, name, &layout),
+    }
+    .map_err(|err| err.to_string())?;
+
+    let workspace = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.create_worktree_workspace(
+            &info.branch,
+            PathBuf::from(&info.path),
+            &info.branch,
+            &info.worktree_name,
+        )
+    };
+    state
+        .terminal
+        .spawn(SpawnRequest {
+            surface_id: workspace.focused_surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            shell: state.shell.clone(),
+            cwd: workspace.working_dir.clone(),
+            socket_path: state.socket_path.clone(),
+            extra_env: Vec::new(),
+        })
+        .map_err(|err| err.to_string())?;
+    let _ = worktree::run_hook(&info.path, "setup");
+    Ok(())
+}
+
+fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
+    state.model.lock().ok().and_then(|model| {
+        model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.active)
+            .or_else(|| model.list_workspaces().into_iter().next())
+            .map(|workspace| workspace.working_dir)
+    })
 }
 
 fn show_notification_panel(parent: &adw::ApplicationWindow, state: &SocketAppState) {
