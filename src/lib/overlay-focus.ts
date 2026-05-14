@@ -113,7 +113,11 @@ export function useOverlayFocus({
         document.body.style.overflow = originalOverflow;
       }
 
-      if (restoreFocus && previousFocusRef.current && document.contains(previousFocusRef.current)) {
+      if (
+        restoreFocus &&
+        previousFocusRef.current &&
+        document.contains(previousFocusRef.current)
+      ) {
         previousFocusRef.current.focus();
       }
     };

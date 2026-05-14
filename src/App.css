@@ -382,7 +382,9 @@ textarea {
     0 10px 24px rgba(7, 12, 25, 0.18);
 }
 
-.sidebar-rail-entry-live:not(.sidebar-rail-entry-unread):not(.sidebar-rail-entry-active) {
+.sidebar-rail-entry-live:not(.sidebar-rail-entry-unread):not(
+    .sidebar-rail-entry-active
+  ) {
   border-color: rgba(166, 227, 161, 0.18);
   background:
     linear-gradient(180deg, rgba(24, 33, 42, 0.96), rgba(16, 23, 29, 0.95)),
@@ -413,19 +415,35 @@ textarea {
 }
 
 .sidebar-rail-entry-active .sidebar-rail-accent {
-  background: linear-gradient(180deg, rgba(137, 180, 250, 0.92), rgba(166, 227, 161, 0.62));
+  background: linear-gradient(
+    180deg,
+    rgba(137, 180, 250, 0.92),
+    rgba(166, 227, 161, 0.62)
+  );
 }
 
 .sidebar-rail-entry-unread .sidebar-rail-accent {
-  background: linear-gradient(180deg, rgba(137, 180, 250, 0.92), rgba(180, 190, 254, 0.54));
+  background: linear-gradient(
+    180deg,
+    rgba(137, 180, 250, 0.92),
+    rgba(180, 190, 254, 0.54)
+  );
 }
 
 .sidebar-rail-entry-live:not(.sidebar-rail-entry-unread) .sidebar-rail-accent {
-  background: linear-gradient(180deg, rgba(166, 227, 161, 0.92), rgba(137, 220, 235, 0.48));
+  background: linear-gradient(
+    180deg,
+    rgba(166, 227, 161, 0.92),
+    rgba(137, 220, 235, 0.48)
+  );
 }
 
 .sidebar-rail-entry-problem:not(.sidebar-rail-entry-unread) .sidebar-rail-accent {
-  background: linear-gradient(180deg, rgba(250, 179, 135, 0.92), rgba(243, 139, 168, 0.52));
+  background: linear-gradient(
+    180deg,
+    rgba(250, 179, 135, 0.92),
+    rgba(243, 139, 168, 0.52)
+  );
 }
 
 .sidebar-rail-monogram {
@@ -1542,11 +1560,7 @@ textarea {
   padding: 16px;
   border: 1px solid rgba(119, 128, 165, 0.14);
   border-radius: var(--radius-md);
-  background: linear-gradient(
-    180deg,
-    rgba(24, 29, 46, 0.94),
-    rgba(14, 17, 29, 0.92)
-  );
+  background: linear-gradient(180deg, rgba(24, 29, 46, 0.94), rgba(14, 17, 29, 0.92));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
@@ -4858,7 +4872,12 @@ body.pane-dragging * {
 
 .sidebar-entry-active {
   background:
-    linear-gradient(135deg, rgba(137, 180, 250, 0.19), rgba(137, 180, 250, 0.11) 54%, rgba(205, 214, 244, 0.03)),
+    linear-gradient(
+      135deg,
+      rgba(137, 180, 250, 0.19),
+      rgba(137, 180, 250, 0.11) 54%,
+      rgba(205, 214, 244, 0.03)
+    ),
     rgba(17, 20, 33, 0.96);
   border-color: rgba(137, 180, 250, 0.24);
 }
@@ -4982,8 +5001,7 @@ body.pane-dragging * {
 .pane-toolbar {
   padding: 0 10px 0 12px;
   background:
-    linear-gradient(180deg, rgba(24, 28, 44, 0.96), rgba(15, 18, 30, 0.98)),
-    #11131a;
+    linear-gradient(180deg, rgba(24, 28, 44, 0.96), rgba(15, 18, 30, 0.98)), #11131a;
 }
 
 .pane-toolbar-title {
@@ -5027,7 +5045,11 @@ body.pane-dragging * {
 
 .terminal-pane-focused::before {
   height: 3px;
-  background: linear-gradient(90deg, rgba(120, 166, 255, 0.98), rgba(166, 227, 161, 0.56));
+  background: linear-gradient(
+    90deg,
+    rgba(120, 166, 255, 0.98),
+    rgba(166, 227, 161, 0.56)
+  );
 }
 
 .terminal-pane-focused {
@@ -5041,8 +5063,7 @@ body.pane-dragging * {
 .terminal-pane-inactive .pane-toolbar {
   opacity: 0.82;
   background:
-    linear-gradient(180deg, rgba(18, 21, 33, 0.98), rgba(12, 14, 22, 0.98)),
-    #0f1219;
+    linear-gradient(180deg, rgba(18, 21, 33, 0.98), rgba(12, 14, 22, 0.98)), #0f1219;
   border-bottom-color: rgba(119, 128, 165, 0.06);
 }
 

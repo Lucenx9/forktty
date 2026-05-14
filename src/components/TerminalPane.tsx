@@ -115,7 +115,9 @@ function shouldUseCanvasRenderer(): boolean {
 
 type TerminalRendererSetting = "auto" | "dom" | "canvas" | "webgl";
 
-function normalizeTerminalRenderer(value: string | null | undefined): TerminalRendererSetting {
+function normalizeTerminalRenderer(
+  value: string | null | undefined,
+): TerminalRendererSetting {
   switch (value) {
     case "dom":
     case "canvas":
@@ -653,7 +655,9 @@ const TerminalPane = memo(function TerminalPane({
       const loadWebglRenderer = () => {
         if (isLinuxTauriRuntime()) {
           maybeWarnAboutUnsupportedWebglRuntime();
-          logError("WebGL renderer disabled on Linux/WebKitGTK, falling back automatically");
+          logError(
+            "WebGL renderer disabled on Linux/WebKitGTK, falling back automatically",
+          );
           return loadDefaultFallbackRenderer("WebGL is disabled on Linux/WebKitGTK");
         }
 

@@ -344,8 +344,8 @@ export default function SettingsPanel() {
               <option value="quake">Quake dropdown</option>
             </select>
             <span className="settings-field-hint">
-              Quake mode keeps the window top-anchored and enables the global
-              F12 toggle.
+              Quake mode keeps the window top-anchored and enables the global F12
+              toggle.
             </span>
           </label>
 

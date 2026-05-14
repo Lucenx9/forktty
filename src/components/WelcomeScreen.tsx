@@ -1,4 +1,12 @@
-import { ArrowRight, Columns2, Command, GitBranch, Plus, Settings, Terminal } from "lucide-react";
+import {
+  ArrowRight,
+  Columns2,
+  Command,
+  GitBranch,
+  Plus,
+  Settings,
+  Terminal,
+} from "lucide-react";
 import { useId, useRef } from "react";
 import { useOverlayFocus } from "../lib/overlay-focus";
 

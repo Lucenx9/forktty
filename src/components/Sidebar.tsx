@@ -692,7 +692,10 @@ function WorkspaceEntry({
             <span className="sidebar-entry-preview-text">{previewText}</span>
           </div>
         )}
-        {(workspace.gitBranch || workspace.workingDir || showWorktreeStatus || paneCount > 1) && (
+        {(workspace.gitBranch ||
+          workspace.workingDir ||
+          showWorktreeStatus ||
+          paneCount > 1) && (
           <div className="sidebar-entry-meta sidebar-entry-meta-compact">
             {(workspace.gitBranch || workspace.workingDir) && (
               <span className="sidebar-meta-summary">
@@ -704,7 +707,9 @@ function WorkspaceEntry({
                     ·
                   </span>
                 )}
-                {workspace.workingDir && <span className="sidebar-cwd">{truncatedCwd}</span>}
+                {workspace.workingDir && (
+                  <span className="sidebar-cwd">{truncatedCwd}</span>
+                )}
               </span>
             )}
             {showWorktreeStatus && (

@@ -18,10 +18,7 @@ function compactTextWithMap(text: string): { compact: string; map: number[] } {
   return { compact, map };
 }
 
-export function findSearchMatch(
-  text: string,
-  query: string,
-): SearchMatchResult | null {
+export function findSearchMatch(text: string, query: string): SearchMatchResult | null {
   const trimmedQuery = query.trim().toLowerCase();
   if (!trimmedQuery) {
     return { score: 0, matchedIndices: [] };
