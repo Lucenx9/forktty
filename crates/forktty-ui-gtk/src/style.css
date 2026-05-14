@@ -149,21 +149,36 @@ separator.header-spacer {
  * -------------------------------------------------------------------------- */
 
 popover.ft-context-menu contents {
-  padding: 6px;
-  background: var(--ft-bg-3);
-  border: 1px solid var(--ft-bg-0);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px var(--shade-color);
-  min-width: 220px;
+  padding: 7px;
+  background: var(--ft-bg-overlay);
+  border: 1px solid var(--ft-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 34px var(--shade-color);
+  min-width: 248px;
 }
 
 .ft-menu {
   background: transparent;
 }
 
+.ft-menu-header {
+  padding: 6px 8px 5px;
+}
+
+.ft-menu-header-title {
+  color: var(--ft-text-strong);
+  font-size: 0.92em;
+  font-weight: 700;
+}
+
+.ft-menu-header-subtitle {
+  color: var(--ft-text-faint);
+  font-size: 0.78em;
+}
+
 .ft-menu-item {
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 32px;
+  padding: 4px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -171,7 +186,13 @@ popover.ft-context-menu contents {
   font-weight: 500;
 }
 
-.ft-menu-item label {
+.ft-menu-icon {
+  color: var(--ft-text-muted);
+  min-width: 16px;
+  min-height: 16px;
+}
+
+.ft-menu-label {
   margin: 0;
 }
 
@@ -190,15 +211,19 @@ popover.ft-context-menu contents {
   border-color: transparent;
 }
 
+.ft-menu-item.destructive-action .ft-menu-icon {
+  color: var(--ft-error);
+}
+
 .ft-menu-item.destructive-action:hover {
   background: var(--ft-error-soft);
   color: var(--ft-error);
 }
 
 .ft-menu-separator {
-  background: var(--ft-bg-0);
+  background: var(--ft-border-subtle);
   min-height: 1px;
-  margin: 4px 2px;
+  margin: 5px 4px;
 }
 
 /* --------------------------------------------------------------------------

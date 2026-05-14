@@ -1037,23 +1037,32 @@ fn notification_age_label(created_at_ms: u128) -> String {
 fn add_context_menu_item<F>(
     menu: &gtk::Box,
     popover: &gtk::Popover,
+    icon_name: &str,
     label: &str,
     destructive: bool,
     action: F,
 ) where
     F: Fn() + 'static,
 {
-    let button = gtk::Button::with_label(label);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.set_hexpand(true);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.add_css_class("ft-menu-icon");
+    let label_widget = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .hexpand(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    label_widget.add_css_class("ft-menu-label");
+    content.append(&icon);
+    content.append(&label_widget);
+
+    let button = gtk::Button::builder().child(&content).build();
     button.add_css_class("flat");
     button.add_css_class("ft-menu-item");
     if destructive {
         button.add_css_class("destructive-action");
-    }
-    if let Some(child) = button.child() {
-        if let Some(label_widget) = child.downcast_ref::<gtk::Label>() {
-            label_widget.set_xalign(0.0);
-            label_widget.set_hexpand(true);
-        }
     }
     button.set_halign(gtk::Align::Fill);
     let popover = popover.clone();
@@ -1062,6 +1071,28 @@ fn add_context_menu_item<F>(
         popover.popdown();
     });
     menu.append(&button);
+}
+
+fn add_context_menu_header(menu: &gtk::Box, workspace: &forktty_core::Workspace) {
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    header.add_css_class("ft-menu-header");
+
+    let title = gtk::Label::builder()
+        .label(&workspace.name)
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    title.add_css_class("ft-menu-header-title");
+    let subtitle = gtk::Label::builder()
+        .label(compact_path(&workspace.working_dir))
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .build();
+    subtitle.add_css_class("ft-menu-header-subtitle");
+
+    header.append(&title);
+    header.append(&subtitle);
+    menu.append(&header);
 }
 
 fn add_context_menu_separator(menu: &gtk::Box) {
@@ -1092,6 +1123,8 @@ fn build_workspace_context_menu(
 
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
     menu.add_css_class("ft-menu");
+    add_context_menu_header(&menu, workspace);
+    add_context_menu_separator(&menu);
 
     let workspace_id = workspace.id.clone();
     let is_active = workspace.active;
@@ -1102,26 +1135,47 @@ fn build_workspace_context_menu(
         let state_ = state.clone();
         let controller_ = controller.clone();
         let ws_id = workspace_id.clone();
-        add_context_menu_item(&menu, &popover, "Focus Workspace", false, move || {
-            focus_workspace(&state_, &ws_id);
-            controller_.borrow_mut().rebuild_layout();
-        });
+        add_context_menu_item(
+            &menu,
+            &popover,
+            "go-next-symbolic",
+            "Focus Workspace",
+            false,
+            move || {
+                focus_workspace(&state_, &ws_id);
+                controller_.borrow_mut().rebuild_layout();
+            },
+        );
         add_context_menu_separator(&menu);
     }
 
     let state_ = state.clone();
     let ws_id = workspace_id.clone();
-    add_context_menu_item(&menu, &popover, "Split Horizontally", false, move || {
-        focus_workspace(&state_, &ws_id);
-        split_active_surface(&state_, SplitAxis::Horizontal);
-    });
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "view-dual-symbolic",
+        "Split Horizontally",
+        false,
+        move || {
+            focus_workspace(&state_, &ws_id);
+            split_active_surface(&state_, SplitAxis::Horizontal);
+        },
+    );
 
     let state_ = state.clone();
     let ws_id = workspace_id.clone();
-    add_context_menu_item(&menu, &popover, "Split Vertically", false, move || {
-        focus_workspace(&state_, &ws_id);
-        split_active_surface(&state_, SplitAxis::Vertical);
-    });
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "view-paged-symbolic",
+        "Split Vertically",
+        false,
+        move || {
+            focus_workspace(&state_, &ws_id);
+            split_active_surface(&state_, SplitAxis::Vertical);
+        },
+    );
 
     add_context_menu_separator(&menu);
 
@@ -1131,6 +1185,7 @@ fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
+        "folder-new-symbolic",
         "New Worktree from Here...",
         false,
         move || {
@@ -1143,6 +1198,7 @@ fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
+        "edit-copy-symbolic",
         "Copy Working Directory",
         false,
         move || {
@@ -1157,30 +1213,49 @@ fn build_workspace_context_menu(
 
         let state_ = state.clone();
         let name_ = name.clone();
-        add_context_menu_item(&menu, &popover, "Merge Worktree", false, move || {
-            match merge_worktree_from_gtk(&state_, &name_) {
+        add_context_menu_item(
+            &menu,
+            &popover,
+            "emblem-ok-symbolic",
+            "Merge Worktree",
+            false,
+            move || match merge_worktree_from_gtk(&state_, &name_) {
                 Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
                 Err(err) => create_local_notification(&state_, "Merge Failed", &err),
-            }
-        });
+            },
+        );
 
         let state_ = state.clone();
         let name_ = name.clone();
-        add_context_menu_item(&menu, &popover, "Remove Worktree", true, move || {
-            if let Err(err) = remove_worktree_from_gtk(&state_, &name_) {
-                create_local_notification(&state_, "Remove Failed", &err);
-            }
-        });
+        add_context_menu_item(
+            &menu,
+            &popover,
+            "user-trash-symbolic",
+            "Remove Worktree",
+            true,
+            move || {
+                if let Err(err) = remove_worktree_from_gtk(&state_, &name_) {
+                    create_local_notification(&state_, "Remove Failed", &err);
+                }
+            },
+        );
     }
 
     add_context_menu_separator(&menu);
 
     let state_ = state.clone();
     let ws_id = workspace_id.clone();
-    add_context_menu_item(&menu, &popover, "Close Workspace", true, move || {
-        focus_workspace(&state_, &ws_id);
-        close_active_workspace(&state_);
-    });
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "window-close-symbolic",
+        "Close Workspace",
+        true,
+        move || {
+            focus_workspace(&state_, &ws_id);
+            close_active_workspace(&state_);
+        },
+    );
 
     popover.set_child(Some(&menu));
     popover
