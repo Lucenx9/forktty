@@ -173,10 +173,9 @@ bash scripts/gtk-build-deb.sh
 ```
 
 The first command builds the dependency-safe headless binary. The second command
-builds the GTK/VTE app once the VTE development package is installed. On the
-current development machine, `pkg-config --modversion vte-2.91-gtk4` returns
-`0.84.0` and the GTK/VTE feature build passes. The GTK/VTE feature currently
-requires VTE 0.80 or newer for shell-integration and progress termprops.
+builds the GTK/VTE app once the VTE development package is installed. CI builds
+against Ubuntu 24.04's VTE 0.76 packages, while newer VTE releases can expose
+richer shell-integration and progress termprops.
 
 `scripts/gtk-build-deb.sh` creates a preview package named `forktty-gtk` so it
 does not replace the existing Tauri package while the migration is still in

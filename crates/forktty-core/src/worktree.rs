@@ -1,4 +1,4 @@
-use git2::{BranchType, Repository, StatusOptions};
+use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -15,6 +15,14 @@ pub enum WorktreeError {
     BranchNotFound(String),
     #[error("Worktree '{0}' not found")]
     NotFound(String),
+    #[error("Merge conflicts detected; resolve manually in the worktree")]
+    MergeConflicts,
+    #[error("Already up to date")]
+    UpToDate,
+    #[error("Current checkout has uncommitted changes or conflicts; commit, stash, or resolve them before merging")]
+    TargetDirty,
+    #[error("Worktree '{0}' has uncommitted changes or conflicts; commit, stash, or resolve them before removing")]
+    WorktreeDirty(String),
     #[error("Worktree '{0}' already exists")]
     AlreadyExists(String),
     #[error("{0}")]
@@ -112,11 +120,11 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
     let wt = repo
         .find_worktree(&worktree_name)
         .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
-    let wt_path = wt.path().to_path_buf();
-    if status(&wt_path.to_string_lossy())? != "clean" {
-        return Err(WorktreeError::Other(format!(
-            "Worktree '{worktree_name}' has uncommitted changes"
-        )));
+    let wt_path = verify_linked_worktree_path(&repo, &worktree_name, wt.path())?;
+    let wt_repo = Repository::open(&wt_path)
+        .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
+    if has_uncommitted_changes(&wt_repo)? {
+        return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
     }
     let branch = get_worktree_branch(&wt_path);
     let mut opts = git2::WorktreePruneOptions::new();
@@ -134,19 +142,73 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
 }
 
 pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_path)
-        .arg("merge")
-        .arg(selector)
-        .output()?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(WorktreeError::Other(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ))
+    let repo = open_repo(repo_path)?;
+    ensure_clean_checkout(&repo)?;
+    let branch_name = resolve_branch_name(&repo, selector)?;
+    let source_branch = repo
+        .find_branch(&branch_name, BranchType::Local)
+        .map_err(|_| WorktreeError::BranchNotFound(branch_name.clone()))?;
+    let source_oid = source_branch
+        .get()
+        .target()
+        .ok_or_else(|| WorktreeError::Other("Branch has no target".to_string()))?;
+    let annotated_commit = repo.find_annotated_commit(source_oid)?;
+    let (analysis, _) = repo.merge_analysis(&[&annotated_commit])?;
+
+    if analysis.contains(MergeAnalysis::ANALYSIS_UP_TO_DATE) {
+        return Err(WorktreeError::UpToDate);
     }
+
+    if analysis.contains(MergeAnalysis::ANALYSIS_FASTFORWARD) {
+        let head_ref_name = repo
+            .head()?
+            .name()
+            .ok_or_else(|| WorktreeError::Other("HEAD has no name".to_string()))?
+            .to_string();
+        let mut reference = repo.find_reference(&head_ref_name)?;
+        reference.set_target(
+            source_oid,
+            &format!("Fast-forward merge of '{branch_name}'"),
+        )?;
+        repo.set_head(&head_ref_name)?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_head(Some(&mut checkout))?;
+        return Ok(format!("Fast-forward merged '{branch_name}'"));
+    }
+
+    if analysis.contains(MergeAnalysis::ANALYSIS_NORMAL) {
+        repo.merge(&[&annotated_commit], None, None)?;
+        let mut index = repo.index()?;
+        if index.has_conflicts() {
+            return Err(WorktreeError::MergeConflicts);
+        }
+        index.write()?;
+        let tree_oid = index.write_tree()?;
+        let tree = repo.find_tree(tree_oid)?;
+        let head_commit = repo.head()?.peel_to_commit()?;
+        let source_commit = repo.find_commit(source_oid)?;
+        let sig = repo
+            .signature()
+            .or_else(|_| git2::Signature::now("ForkTTY", "forktty@localhost"))?;
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            &format!("Merge branch '{branch_name}'"),
+            &tree,
+            &[&head_commit, &source_commit],
+        )?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_head(Some(&mut checkout))?;
+        repo.cleanup_state()?;
+        return Ok(format!("Merged '{branch_name}' into HEAD"));
+    }
+
+    Err(WorktreeError::Other(
+        "Merge analysis inconclusive".to_string(),
+    ))
 }
 
 pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
@@ -230,6 +292,89 @@ fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, Wo
         }
     }
     Err(WorktreeError::NotFound(selector.to_string()))
+}
+
+fn parse_linked_worktree_gitdir(git_file_contents: &str) -> Option<&str> {
+    git_file_contents
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("gitdir:").map(str::trim))
+}
+
+fn verify_linked_worktree_path(
+    repo: &Repository,
+    worktree_name: &str,
+    reported_path: &Path,
+) -> Result<PathBuf, WorktreeError> {
+    let canonical_worktree = std::fs::canonicalize(reported_path).map_err(|err| {
+        WorktreeError::Other(format!(
+            "Cannot resolve worktree path for '{worktree_name}': {err}"
+        ))
+    })?;
+    let admin_dir = repo.path().join("worktrees").join(worktree_name);
+    let canonical_admin_dir = std::fs::canonicalize(&admin_dir).map_err(|err| {
+        WorktreeError::Other(format!(
+            "Cannot resolve admin directory for '{worktree_name}': {err}"
+        ))
+    })?;
+    let git_file = canonical_worktree.join(".git");
+    let git_file_contents = std::fs::read_to_string(&git_file).map_err(|err| {
+        WorktreeError::Other(format!(
+            "Cannot read linked worktree metadata for '{worktree_name}': {err}"
+        ))
+    })?;
+    let referenced_gitdir = parse_linked_worktree_gitdir(&git_file_contents).ok_or_else(|| {
+        WorktreeError::Other(format!(
+            "Worktree '{worktree_name}' does not contain a valid linked .git file"
+        ))
+    })?;
+    let gitdir_path = Path::new(referenced_gitdir);
+    let resolved_gitdir = if gitdir_path.is_absolute() {
+        gitdir_path.to_path_buf()
+    } else {
+        canonical_worktree.join(gitdir_path)
+    };
+    let canonical_gitdir = std::fs::canonicalize(&resolved_gitdir).map_err(|err| {
+        WorktreeError::Other(format!(
+            "Cannot resolve gitdir for worktree '{worktree_name}': {err}"
+        ))
+    })?;
+    if canonical_gitdir != canonical_admin_dir {
+        return Err(WorktreeError::Other(format!(
+            "Worktree '{worktree_name}' metadata does not match this repository"
+        )));
+    }
+    Ok(canonical_worktree)
+}
+
+fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {
+    if has_uncommitted_changes(repo)? {
+        return Err(WorktreeError::TargetDirty);
+    }
+    Ok(())
+}
+
+fn has_uncommitted_changes(repo: &Repository) -> Result<bool, WorktreeError> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    let statuses = repo.statuses(Some(&mut opts))?;
+    Ok(statuses
+        .iter()
+        .any(|entry| entry.status().is_conflicted() || !entry.status().is_empty()))
+}
+
+fn resolve_branch_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
+    if repo.find_branch(selector, BranchType::Local).is_ok() {
+        return Ok(selector.to_string());
+    }
+    let worktree_name = resolve_worktree_name(repo, selector)?;
+    let wt = repo
+        .find_worktree(&worktree_name)
+        .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
+    let branch_name = get_worktree_branch(wt.path());
+    if branch_name.is_empty() {
+        return Err(WorktreeError::BranchNotFound(selector.to_string()));
+    }
+    Ok(branch_name)
 }
 
 fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> Result<PathBuf, WorktreeError> {
@@ -327,5 +472,40 @@ mod tests {
 
         remove(dir.path().to_str().unwrap(), "feature/one", true).unwrap();
         assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_rejects_dirty_worktree() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "remove-dirty", "nested").unwrap();
+        fs::write(Path::new(&info.path).join("dirty.txt"), "dirty\n").unwrap();
+
+        let result = remove(dir.path().to_str().unwrap(), "remove-dirty", true);
+
+        assert!(matches!(result, Err(WorktreeError::WorktreeDirty(_))));
+        assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn remove_rejects_tampered_worktree_gitdir() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "remove-tamper", "nested").unwrap();
+        fs::write(Path::new(&info.path).join(".git"), "gitdir: /tmp\n").unwrap();
+
+        let result = remove(dir.path().to_str().unwrap(), "remove-tamper", true);
+
+        assert!(matches!(result, Err(WorktreeError::Other(_))));
+        assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn merge_rejects_dirty_target_checkout() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "merge-dirty", "nested").unwrap();
+        fs::write(dir.path().join("note.txt"), "dirty target\n").unwrap();
+
+        let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
+
+        assert!(matches!(result, Err(WorktreeError::TargetDirty)));
     }
 }
