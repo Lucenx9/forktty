@@ -173,6 +173,18 @@ struct SidebarSnapshot {
     signature: String,
 }
 
+#[derive(Clone)]
+struct SidebarUi {
+    sidebar: gtk::ListBox,
+    parent_window: adw::ApplicationWindow,
+    workspace_title: gtk::Button,
+    status_location: gtk::Button,
+    last_signature: Rc<RefCell<Option<String>>>,
+    context_menu_open: Rc<Cell<bool>>,
+}
+
+type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
+
 struct VteController {
     container: gtk::Box,
     model: Arc<Mutex<WorkspaceModel>>,
@@ -388,7 +400,7 @@ impl VteController {
     fn widget_for_pane(&self, node: &PaneNode, workspace_id: &str) -> gtk::Widget {
         let model = self.model.clone();
         let workspace_id_for_resize = workspace_id.to_string();
-        let on_resize: Rc<dyn Fn(&[String], &[String], f64)> = Rc::new(
+        let on_resize: SplitResizeCallback = Rc::new(
             move |left: &[String], right: &[String], ratio: f64| {
                 if let Ok(mut model) = model.lock() {
                     let _ = model.update_split_partition_ratio(
@@ -406,7 +418,7 @@ impl VteController {
     fn widget_for_pane_with_resize(
         &self,
         node: &PaneNode,
-        on_resize: Rc<dyn Fn(&[String], &[String], f64)>,
+        on_resize: SplitResizeCallback,
     ) -> gtk::Widget {
         match node {
             PaneNode::Leaf { surface_id } => self.terminal_pane_widget(surface_id),
@@ -1142,7 +1154,7 @@ fn build_split_widget<F>(
     orientation: gtk::Orientation,
     children: &[PaneNode],
     sizes: &[f64],
-    on_resize: Rc<dyn Fn(&[String], &[String], f64)>,
+    on_resize: SplitResizeCallback,
     build: F,
 ) -> gtk::Widget
 where
@@ -1691,16 +1703,17 @@ fn build_ui(app: &adw::Application) {
         model.clone(),
     )));
     controller.borrow_mut().attach_state(state.clone());
-    let sidebar_signature = Rc::new(RefCell::new(None::<String>));
-    let sidebar_context_menu_open = Rc::new(Cell::new(false));
+    let sidebar_ui = SidebarUi {
+        sidebar: sidebar.clone(),
+        parent_window: window.clone(),
+        workspace_title: workspace_title.clone(),
+        status_location: status_location.clone(),
+        last_signature: Rc::new(RefCell::new(None::<String>)),
+        context_menu_open: Rc::new(Cell::new(false)),
+    };
     let state_for_sidebar_select = state.clone();
     let controller_for_sidebar_select = controller.clone();
-    let sidebar_for_select = sidebar.clone();
-    let window_for_select = window.clone();
-    let workspace_title_for_select = workspace_title.clone();
-    let status_location_for_select = status_location.clone();
-    let sidebar_signature_for_select = sidebar_signature.clone();
-    let sidebar_context_menu_open_for_select = sidebar_context_menu_open.clone();
+    let sidebar_ui_for_select = sidebar_ui.clone();
     sidebar.connect_row_activated(move |_, row| {
         let workspace_id = {
             let model = match state_for_sidebar_select.model.lock() {
@@ -1716,14 +1729,9 @@ fn build_ui(app: &adw::Application) {
                 &controller_for_sidebar_select,
             );
             schedule_sidebar_refresh(
-                sidebar_for_select.clone(),
+                sidebar_ui_for_select.clone(),
                 state_for_sidebar_select.clone(),
                 controller_for_sidebar_select.clone(),
-                window_for_select.clone(),
-                workspace_title_for_select.clone(),
-                status_location_for_select.clone(),
-                sidebar_signature_for_select.clone(),
-                sidebar_context_menu_open_for_select.clone(),
             );
         }
     });
@@ -1735,37 +1743,12 @@ fn build_ui(app: &adw::Application) {
         controller_for_timer.borrow_mut().ensure_layout_current();
         glib::ControlFlow::Continue
     });
-    refresh_sidebar(
-        &sidebar,
-        &state,
-        &controller,
-        &window,
-        &workspace_title,
-        &status_location,
-        &sidebar_signature,
-        &sidebar_context_menu_open,
-        true,
-    );
-    let sidebar_for_timer = sidebar.clone();
+    refresh_sidebar(&sidebar_ui, &state, &controller, true);
     let state_for_sidebar = state.clone();
     let controller_for_sidebar = controller.clone();
-    let window_for_sidebar = window.clone();
-    let workspace_title_for_sidebar = workspace_title.clone();
-    let status_location_for_sidebar = status_location.clone();
-    let sidebar_signature_for_timer = sidebar_signature.clone();
-    let sidebar_context_menu_open_for_timer = sidebar_context_menu_open.clone();
+    let sidebar_ui_for_timer = sidebar_ui.clone();
     glib::timeout_add_local(Duration::from_millis(500), move || {
-        refresh_sidebar(
-            &sidebar_for_timer,
-            &state_for_sidebar,
-            &controller_for_sidebar,
-            &window_for_sidebar,
-            &workspace_title_for_sidebar,
-            &status_location_for_sidebar,
-            &sidebar_signature_for_timer,
-            &sidebar_context_menu_open_for_timer,
-            false,
-        );
+        refresh_sidebar(&sidebar_ui_for_timer, &state_for_sidebar, &controller_for_sidebar, false);
         glib::ControlFlow::Continue
     });
     install_session_autosave(&state);
@@ -2112,69 +2095,49 @@ fn install_actions(
 }
 
 fn schedule_sidebar_refresh(
-    sidebar: gtk::ListBox,
+    ui: SidebarUi,
     state: SocketAppState,
     controller: Rc<RefCell<VteController>>,
-    parent_window: adw::ApplicationWindow,
-    workspace_title: gtk::Button,
-    status_location: gtk::Button,
-    last_signature: Rc<RefCell<Option<String>>>,
-    context_menu_open: Rc<Cell<bool>>,
 ) {
     glib::idle_add_local_once(move || {
-        refresh_sidebar(
-            &sidebar,
-            &state,
-            &controller,
-            &parent_window,
-            &workspace_title,
-            &status_location,
-            &last_signature,
-            &context_menu_open,
-            true,
-        );
+        refresh_sidebar(&ui, &state, &controller, true);
     });
 }
 
 fn refresh_sidebar(
-    sidebar: &gtk::ListBox,
+    ui: &SidebarUi,
     state: &SocketAppState,
     controller: &Rc<RefCell<VteController>>,
-    parent_window: &adw::ApplicationWindow,
-    workspace_title: &gtk::Button,
-    status_location: &gtk::Button,
-    last_signature: &Rc<RefCell<Option<String>>>,
-    context_menu_open: &Rc<Cell<bool>>,
     force: bool,
 ) {
     let snapshot = sidebar_snapshot(state);
     if let Some(name) = snapshot.active_workspace_name.as_deref() {
-        workspace_title.set_label(name);
-        workspace_title.set_sensitive(true);
+        ui.workspace_title.set_label(name);
+        ui.workspace_title.set_sensitive(true);
     } else {
-        workspace_title.set_label("");
-        workspace_title.set_sensitive(false);
+        ui.workspace_title.set_label("");
+        ui.workspace_title.set_sensitive(false);
     }
     if let Some(label) = snapshot.active_status_label.as_deref() {
-        status_location.set_label(label);
-        status_location.set_sensitive(true);
+        ui.status_location.set_label(label);
+        ui.status_location.set_sensitive(true);
     } else {
-        status_location.set_label("");
-        status_location.set_sensitive(false);
+        ui.status_location.set_label("");
+        ui.status_location.set_sensitive(false);
     }
 
     if !force {
-        if context_menu_open.get() {
+        if ui.context_menu_open.get() {
             return;
         }
-        if last_signature.borrow().as_deref() == Some(snapshot.signature.as_str()) {
+        if ui.last_signature.borrow().as_deref() == Some(snapshot.signature.as_str()) {
             return;
         }
     }
-    *last_signature.borrow_mut() = Some(snapshot.signature.clone());
+    *ui.last_signature.borrow_mut() = Some(snapshot.signature.clone());
 
-    while let Some(child) = sidebar.first_child() {
-        sidebar.remove(&child);
+    while let Some(child) = ui.sidebar.first_child() {
+        ui.sidebar.remove(&child);
     }
     if snapshot.rows.is_empty() {
         let row = gtk::ListBoxRow::new();
@@ -2187,7 +2150,7 @@ fn refresh_sidebar(
         );
         empty.add_css_class("sidebar-empty");
         row.set_child(Some(&empty));
-        sidebar.append(&row);
+        ui.sidebar.append(&row);
         return;
     }
     for row_data in snapshot.rows {
@@ -2269,12 +2232,7 @@ fn refresh_sidebar(
         let workspace_id_for_click = workspace.id.clone();
         let state_for_click = state.clone();
         let controller_for_click = controller.clone();
-        let sidebar_for_click = sidebar.clone();
-        let parent_for_click = parent_window.clone();
-        let title_for_click = workspace_title.clone();
-        let status_for_click = status_location.clone();
-        let signature_for_click = last_signature.clone();
-        let menu_open_for_click = context_menu_open.clone();
+        let ui_for_click = ui.clone();
         primary_click.connect_pressed(move |gesture, _n_press, _x, _y| {
             gesture.set_state(gtk::EventSequenceState::Claimed);
             select_sidebar_workspace(
@@ -2283,14 +2241,9 @@ fn refresh_sidebar(
                 &controller_for_click,
             );
             schedule_sidebar_refresh(
-                sidebar_for_click.clone(),
+                ui_for_click.clone(),
                 state_for_click.clone(),
                 controller_for_click.clone(),
-                parent_for_click.clone(),
-                title_for_click.clone(),
-                status_for_click.clone(),
-                signature_for_click.clone(),
-                menu_open_for_click.clone(),
             );
         });
         row.add_controller(primary_click);
@@ -2300,10 +2253,10 @@ fn refresh_sidebar(
         gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
         let state_for_menu = state.clone();
         let controller_for_menu = controller.clone();
-        let parent_for_menu = parent_window.clone();
+        let parent_for_menu = ui.parent_window.clone();
         let workspace_for_menu = workspace.clone();
         let row_for_menu = row.clone();
-        let menu_open_for_menu = context_menu_open.clone();
+        let menu_open_for_menu = ui.context_menu_open.clone();
         gesture.connect_pressed(move |gesture, _n_press, x, y| {
             // Claim the sequence so ListBox doesn't also treat right-click as
             // row activation (would switch workspace under the menu).
@@ -2326,9 +2279,9 @@ fn refresh_sidebar(
         row.add_controller(gesture);
 
         let select_row = workspace.active;
-        sidebar.append(&row);
+        ui.sidebar.append(&row);
         if select_row {
-            sidebar.select_row(Some(&row));
+            ui.sidebar.select_row(Some(&row));
         }
     }
 }

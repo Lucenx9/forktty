@@ -411,14 +411,6 @@ popover.ft-context-menu contents {
   padding: 1px 5px;
 }
 
-.workspace-card,
-.app-header-title,
-.status-location,
-.sidebar-add,
-.command-list row {
-  cursor: pointer;
-}
-
 /* --------------------------------------------------------------------------
  * Terminal stage and panes
  * -------------------------------------------------------------------------- */
