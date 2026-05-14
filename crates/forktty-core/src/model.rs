@@ -344,6 +344,23 @@ impl WorkspaceModel {
         }
     }
 
+    pub fn update_split_partition_ratio(
+        &mut self,
+        workspace_id: &str,
+        left_leaves: &[SurfaceId],
+        right_leaves: &[SurfaceId],
+        ratio: f64,
+    ) -> bool {
+        if left_leaves.is_empty() || right_leaves.is_empty() {
+            return false;
+        }
+        let ratio = ratio.clamp(0.01, 0.99);
+        let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+            return false;
+        };
+        update_partition_ratio(&mut workspace.pane_tree, left_leaves, right_leaves, ratio)
+    }
+
     pub fn focus_surface(&mut self, surface_id: &str) -> bool {
         let Some(surface) = self.surfaces.get(surface_id) else {
             return false;
@@ -639,10 +656,47 @@ fn replace_leaf_with_split(
             true
         }
         PaneNode::Leaf { .. } => false,
-        PaneNode::Split { children, .. } => children
-            .iter_mut()
-            .any(|child| replace_leaf_with_split(child, target_surface_id, axis, new_leaf.clone())),
+        PaneNode::Split {
+            axis: split_axis,
+            children,
+            sizes,
+        } => {
+            if *split_axis == axis {
+                for index in 0..children.len() {
+                    if matches!(
+                        &children[index],
+                        PaneNode::Leaf { surface_id } if surface_id == target_surface_id
+                    ) {
+                        children.insert(index + 1, new_leaf);
+                        rebalance_split_sizes(sizes, children.len());
+                        return true;
+                    }
+                    if replace_leaf_with_split(
+                        &mut children[index],
+                        target_surface_id,
+                        axis,
+                        new_leaf.clone(),
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            } else {
+                children.iter_mut().any(|child| {
+                    replace_leaf_with_split(child, target_surface_id, axis, new_leaf.clone())
+                })
+            }
+        }
     }
+}
+
+fn rebalance_split_sizes(sizes: &mut Vec<f64>, len: usize) {
+    if len == 0 {
+        sizes.clear();
+        return;
+    }
+    sizes.clear();
+    sizes.resize(len, 1.0 / len as f64);
 }
 
 fn remove_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<bool> {
@@ -664,11 +718,101 @@ fn remove_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<bool> {
             }
             let index = remove_index?;
             children.remove(index);
-            sizes.remove(index);
+            if index < sizes.len() {
+                sizes.remove(index);
+            }
             if children.len() == 1 {
                 *node = children.remove(0);
+            } else {
+                rebalance_split_sizes(sizes, children.len());
             }
             Some(false)
+        }
+    }
+}
+
+fn update_partition_ratio(
+    node: &mut PaneNode,
+    left_leaves: &[SurfaceId],
+    right_leaves: &[SurfaceId],
+    ratio: f64,
+) -> bool {
+    match node {
+        PaneNode::Leaf { .. } => false,
+        PaneNode::Split {
+            children, sizes, ..
+        } => {
+            if sizes.len() != children.len() {
+                rebalance_split_sizes(sizes, children.len());
+            }
+            let mut prefix_leaves: Vec<SurfaceId> = Vec::new();
+            for split_at in 1..children.len() {
+                collect_leaf_surface_ids(&children[split_at - 1], &mut prefix_leaves);
+                if prefix_leaves.as_slice() != left_leaves {
+                    continue;
+                }
+                let mut suffix_leaves: Vec<SurfaceId> = Vec::new();
+                for child in &children[split_at..] {
+                    collect_leaf_surface_ids(child, &mut suffix_leaves);
+                }
+                if suffix_leaves.as_slice() != right_leaves {
+                    continue;
+                }
+                apply_partition_ratio(sizes, split_at, ratio);
+                return true;
+            }
+            children.iter_mut().any(|child| {
+                update_partition_ratio(child, left_leaves, right_leaves, ratio)
+            })
+        }
+    }
+}
+
+fn apply_partition_ratio(sizes: &mut [f64], split_at: usize, ratio: f64) {
+    let len = sizes.len();
+    if split_at == 0 || split_at >= len {
+        return;
+    }
+    let total: f64 = sizes.iter().filter(|s| s.is_finite() && **s > 0.0).sum();
+    let total = if total > f64::EPSILON { total } else { len as f64 };
+    let left_sum: f64 = sizes[..split_at]
+        .iter()
+        .filter(|s| s.is_finite() && **s > 0.0)
+        .sum();
+    let right_sum: f64 = sizes[split_at..]
+        .iter()
+        .filter(|s| s.is_finite() && **s > 0.0)
+        .sum();
+    let target_left = total * ratio;
+    let target_right = total * (1.0 - ratio);
+    let scale_left = if left_sum > f64::EPSILON {
+        target_left / left_sum
+    } else {
+        target_left / split_at as f64
+    };
+    let scale_right = if right_sum > f64::EPSILON {
+        target_right / right_sum
+    } else {
+        target_right / (len - split_at) as f64
+    };
+    for (index, size) in sizes.iter_mut().enumerate() {
+        let base = if size.is_finite() && *size > 0.0 {
+            *size
+        } else {
+            1.0
+        };
+        if index < split_at {
+            *size = if left_sum > f64::EPSILON {
+                base * scale_left
+            } else {
+                scale_left
+            };
+        } else {
+            *size = if right_sum > f64::EPSILON {
+                base * scale_right
+            } else {
+                scale_right
+            };
         }
     }
 }
@@ -736,6 +880,100 @@ mod tests {
         assert_eq!(workspace.focused_surface_id, new_surface.id);
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
         assert!(matches!(workspace.pane_tree, PaneNode::Split { .. }));
+    }
+
+    #[test]
+    fn repeated_same_axis_splits_are_siblings() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let third = model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .unwrap();
+
+        let workspace = model.list_workspaces().remove(0);
+
+        let PaneNode::Split {
+            axis,
+            children,
+            sizes,
+        } = workspace.pane_tree
+        else {
+            panic!("expected split pane tree");
+        };
+        assert_eq!(axis, SplitAxis::Horizontal);
+        assert_eq!(children.len(), 3);
+        assert_eq!(sizes.len(), 3);
+        assert_eq!(workspace.focused_surface_id, third.id);
+        assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 3);
+    }
+
+    #[test]
+    fn closing_split_surface_rebalances_sizes() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let _third = model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .unwrap();
+
+        model.close_surface(&second.id).unwrap();
+        let workspace = model.list_workspaces().remove(0);
+
+        let PaneNode::Split {
+            children, sizes, ..
+        } = workspace.pane_tree
+        else {
+            panic!("expected split pane tree");
+        };
+        assert_eq!(children.len(), 2);
+        assert_eq!(sizes, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn update_split_partition_ratio_persists_drag() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let third = model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .unwrap();
+
+        let left = vec![workspace.focused_surface_id.clone(), second.id.clone()];
+        let right = vec![third.id.clone()];
+        assert!(model.update_split_partition_ratio(&workspace.id, &left, &right, 0.8));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { sizes, .. } = workspace.pane_tree else {
+            panic!("expected split pane tree");
+        };
+        let total: f64 = sizes.iter().sum();
+        let left_sum: f64 = sizes[..2].iter().sum();
+        assert!((total - 1.0).abs() < 1e-6);
+        assert!((left_sum / total - 0.8).abs() < 1e-6);
+        assert!((sizes[0] - sizes[1]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn update_split_partition_ratio_rejects_unknown_partition() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+
+        assert!(!model.update_split_partition_ratio(
+            &workspace.id,
+            std::slice::from_ref(&second.id),
+            &["bogus".into()],
+            0.5,
+        ));
     }
 
     #[test]

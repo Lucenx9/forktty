@@ -1,5 +1,9 @@
 .git
 .github
+target
+src-tauri/target
 dist
 node_modules
 coverage
+*.deb
+*.AppImage

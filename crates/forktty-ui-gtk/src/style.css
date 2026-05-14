@@ -1,117 +1,910 @@
+/* --------------------------------------------------------------------------
+ * ForkTTY design tokens
+ * Surfaces step from bg-0 (deepest) to bg-3 (raised hover). Accent is reserved
+ * for active, focus, and primary actions; everything else uses neutral tiers.
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --ft-bg-0: var(--shade-color);
+  --ft-bg-1: var(--window-bg-color);
+  --ft-bg-2: var(--view-bg-color);
+  --ft-bg-3: var(--card-bg-color);
+  --ft-bg-4: var(--active-toggle-bg-color);
+  --ft-bg-overlay: var(--popover-bg-color);
+
+  --ft-pane-bg: shade(var(--ft-bg-1), 0.94);
+  --ft-pane-header: shade(var(--ft-bg-1), 1.06);
+  --ft-pane-header-active: shade(var(--ft-bg-1), 1.12);
+
+  --ft-border-subtle: var(--border-color);
+  --ft-border: var(--border-color);
+  --ft-border-strong: var(--headerbar-border-color);
+
+  --ft-text-strong: var(--window-fg-color);
+  --ft-text: alpha(var(--window-fg-color), 0.85);
+  --ft-text-muted: alpha(var(--window-fg-color), 0.60);
+  --ft-text-faint: alpha(var(--window-fg-color), 0.40);
+
+  --ft-accent: var(--accent-color);
+  --ft-accent-hover: var(--accent-bg-color);
+  --ft-accent-strong: var(--accent-color);
+  --ft-accent-soft: var(--active-toggle-bg-color);
+  --ft-accent-soft-2: var(--active-toggle-bg-color);
+  --ft-accent-fg: var(--accent-fg-color);
+
+  --ft-warning: var(--warning-color);
+  --ft-warning-soft: alpha(var(--warning-color), 0.14);
+  --ft-error: var(--error-color);
+  --ft-error-soft: alpha(var(--error-color), 0.14);
+  --ft-success: var(--success-color);
+  --ft-success-soft: alpha(var(--success-color), 0.14);
+  --ft-info: var(--accent-color);
+  --ft-info-soft: alpha(var(--accent-color), 0.14);
+}
+
+/* --------------------------------------------------------------------------
+ * Base
+ * -------------------------------------------------------------------------- */
+
+button:focus-visible,
+listview row:focus-visible,
+.navigation-sidebar row:focus-visible,
+entry:focus-visible,
+.ft-menu-item:focus-visible,
+.terminal-pane-action:focus-visible,
+.status-location:focus-visible,
+.app-header-title:focus-visible,
+.sidebar-add:focus-visible {
+  outline: 2px solid var(--ft-accent);
+  outline-offset: 2px;
+}
+
 window {
-  background: #0f1117;
-  color: #cdd6f4;
+  background: var(--ft-bg-1);
+  color: var(--ft-text);
 }
 
 .app-root {
-  background: #0f1117;
+  background: var(--ft-bg-1);
 }
 
+/* --------------------------------------------------------------------------
+ * Header bar
+ * -------------------------------------------------------------------------- */
+
 .app-header {
-  min-height: 46px;
-  background: #181825;
-  color: #cdd6f4;
-  border-bottom: 1px solid rgba(166, 173, 200, 0.14);
-  box-shadow: 0 1px 0 rgba(137, 180, 250, 0.08);
+  min-height: 38px;
+  padding: 0 6px;
+  background: var(--ft-bg-2);
+  color: var(--ft-text);
+  border-bottom: 1px solid var(--ft-border-subtle);
+  box-shadow: none;
+}
+
+.app-header windowhandle {
+  color: var(--ft-text);
 }
 
 .header-action {
-  min-width: 34px;
-  min-height: 34px;
-  margin: 0 2px;
-  color: #a6adc8;
-  border-radius: 10px;
+  min-width: 28px;
+  min-height: 28px;
+  margin: 0 1px;
+  padding: 0 4px;
+  color: var(--ft-text-muted);
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background-color 90ms ease, color 90ms ease, border-color 90ms ease;
+}
+
+.app-header-title {
+  padding: 2px 8px;
+  background: transparent;
+  border: 0;
+  color: var(--ft-text-muted);
+  font-size: 0.92em;
+  font-weight: 500;
+  border-radius: 6px;
+}
+
+.app-header-title:hover {
+  background: var(--ft-bg-3);
+  color: var(--ft-text-strong);
+}
+
+.app-header-title:disabled {
+  background: transparent;
+  color: var(--ft-text-faint);
 }
 
 .header-action:hover {
-  color: #cdd6f4;
-  background: rgba(137, 180, 250, 0.12);
+  color: var(--ft-text-strong);
+  background: var(--ft-bg-3);
 }
 
+.header-action:active {
+  background: var(--ft-accent-soft);
+  color: var(--ft-text-strong);
+}
+
+.header-action:focus-visible {
+  border-color: var(--ft-accent);
+  color: var(--ft-text-strong);
+}
+
+.header-action:disabled {
+  color: var(--ft-text-faint);
+  background: transparent;
+}
+
+separator.header-spacer {
+  background: transparent;
+  min-width: 14px;
+  margin: 0;
+  border: none;
+}
+
+/* --------------------------------------------------------------------------
+ * Context menu (workspace row right-click)
+ * -------------------------------------------------------------------------- */
+
+popover.ft-context-menu contents {
+  padding: 6px;
+  background: var(--ft-bg-3);
+  border: 1px solid var(--ft-bg-0);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shade-color);
+  min-width: 220px;
+}
+
+.ft-menu {
+  background: transparent;
+}
+
+.ft-menu-item {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ft-text);
+  font-weight: 500;
+}
+
+.ft-menu-item label {
+  margin: 0;
+}
+
+.ft-menu-item:hover {
+  background: var(--ft-bg-4);
+  color: var(--ft-text-strong);
+}
+
+.ft-menu-item:focus-visible {
+  border-color: var(--ft-accent);
+}
+
+.ft-menu-item.destructive-action {
+  color: var(--ft-error);
+  background: transparent;
+  border-color: transparent;
+}
+
+.ft-menu-item.destructive-action:hover {
+  background: var(--ft-error-soft);
+  color: var(--ft-error);
+}
+
+.ft-menu-separator {
+  background: var(--ft-bg-0);
+  min-height: 1px;
+  margin: 4px 2px;
+}
+
+/* --------------------------------------------------------------------------
+ * Workspace paned + sidebar
+ * -------------------------------------------------------------------------- */
+
 .workspace-paned > separator {
-  background: rgba(137, 180, 250, 0.20);
+  background: var(--ft-bg-0);
   min-width: 1px;
   min-height: 1px;
 }
 
+.sidebar-shell {
+  background: var(--ft-bg-2);
+  color: var(--ft-text);
+  border-right: 1px solid var(--ft-bg-0);
+}
+
+.sidebar-header {
+  min-height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--ft-border-subtle);
+}
+
+.sidebar-section-label {
+  color: var(--ft-text-faint);
+  font-weight: 700;
+  font-size: 0.72em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sidebar-add {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--ft-text-muted);
+  background: transparent;
+  border: 0;
+  transition: background-color 90ms ease, color 90ms ease;
+}
+
+.sidebar-add:hover {
+  background: var(--ft-bg-3);
+  color: var(--ft-text-strong);
+}
+
+.sidebar-scroll {
+  background: transparent;
+}
+
 .navigation-sidebar {
-  padding: 10px 8px;
-  background: #11111b;
-  color: #cdd6f4;
-  border-right: 1px solid rgba(166, 173, 200, 0.12);
+  padding: 8px 8px;
+  background: transparent;
+  color: var(--ft-text);
 }
 
 .navigation-sidebar row {
-  border-radius: 14px;
-  margin: 2px 0;
+  border-radius: 10px;
+  margin: 1px 0;
+  background: transparent;
+  padding: 0;
+  transition: background-color 90ms ease;
 }
 
 .navigation-sidebar row:hover {
-  background: rgba(137, 180, 250, 0.08);
+  background: var(--ft-bg-2);
 }
 
+.navigation-sidebar row:selected {
+  background: transparent;
+}
+
+.navigation-sidebar row:selected .workspace-card {
+  border-color: var(--ft-border-strong);
+}
+
+.navigation-sidebar row:focus-visible .workspace-card {
+  border-color: var(--ft-accent);
+}
+
+/* Workspace cards */
+
 .workspace-card {
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(24, 24, 37, 0.78);
-  border: 1px solid rgba(166, 173, 200, 0.08);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background-color 90ms ease, border-color 90ms ease;
 }
 
 .workspace-row.active .workspace-card {
-  background: linear-gradient(135deg, rgba(137, 180, 250, 0.18), rgba(49, 50, 68, 0.74));
-  border-color: rgba(137, 180, 250, 0.48);
-  box-shadow: inset 3px 0 0 #89b4fa;
+  background: var(--ft-bg-3);
+  border-color: var(--ft-border);
+  box-shadow: inset 2px 0 0 var(--ft-accent);
 }
 
 .workspace-row.needs-attention .workspace-card {
-  border-color: rgba(250, 179, 135, 0.55);
+  box-shadow: inset 2px 0 0 var(--ft-warning);
+}
+
+.workspace-row.active.needs-attention .workspace-card {
+  box-shadow: inset 2px 0 0 var(--ft-warning);
+  background: var(--ft-bg-3);
+  border-color: var(--ft-border);
 }
 
 .workspace-dot {
-  color: #585b70;
+  color: var(--ft-text-faint);
   font-size: 9px;
 }
 
 .workspace-dot.active {
-  color: #89b4fa;
+  color: var(--ft-accent);
 }
 
 .workspace-dot.attention {
-  color: #fab387;
+  color: var(--ft-warning);
 }
 
 .workspace-name {
-  color: #f5e0dc;
-  font-weight: 700;
+  color: var(--ft-text-strong);
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+.workspace-row.active .workspace-name {
+  color: var(--ft-text-strong);
 }
 
 .workspace-meta {
-  color: #a6adc8;
-  font-size: 0.88em;
+  color: var(--ft-text-muted);
+  font-size: 0.84em;
 }
 
 .workspace-summary {
-  color: #89b4fa;
-  font-size: 0.86em;
-}
-
-.workspace-pill {
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: #bac2de;
-  background: rgba(49, 50, 68, 0.95);
+  color: var(--ft-text-muted);
   font-size: 0.82em;
 }
 
+.workspace-count {
+  color: var(--ft-text-muted);
+  font-size: 0.78em;
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+/* Sidebar empty state */
+
+.sidebar-empty {
+  padding: 28px 18px;
+  color: var(--ft-text-muted);
+  font-size: 0.88em;
+}
+
+.sidebar-empty-title {
+  color: var(--ft-text-strong);
+  font-weight: 700;
+  font-size: 0.95em;
+  margin-bottom: 4px;
+}
+
+.sidebar-empty-body {
+  color: var(--ft-text-muted);
+}
+
+.sidebar-keycap,
+.keycap {
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--ft-text-muted);
+  background: var(--ft-bg-3);
+  border: 1px solid var(--ft-border-subtle);
+  border-bottom: 1px solid var(--ft-border);
+  font-size: 0.74em;
+  font-weight: 700;
+}
+
+.app-status-bar {
+  min-height: 22px;
+  padding: 0 10px;
+  background: var(--ft-bg-2);
+  border-top: 1px solid var(--ft-border-subtle);
+  color: var(--ft-text-muted);
+  font-size: 0.78em;
+}
+
+.status-location {
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  color: var(--ft-text-muted);
+  font-size: 0.78em;
+  border-radius: 4px;
+}
+
+.status-location:hover {
+  background: var(--ft-bg-3);
+  color: var(--ft-text);
+}
+
+.status-location:disabled {
+  color: var(--ft-text-faint);
+  background: transparent;
+}
+
+.app-status-bar .keycap {
+  font-size: 0.72em;
+  padding: 1px 5px;
+}
+
+.workspace-card,
+.app-header-title,
+.status-location,
+.sidebar-add,
+.command-list row {
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+ * Terminal stage and panes
+ * -------------------------------------------------------------------------- */
+
 .terminal-stage {
-  background: #1e1e2e;
+  padding: 0;
+  background: var(--ft-bg-1);
+}
+
+.terminal-pane {
+  background: var(--ft-pane-bg);
+  border-top: 2px solid transparent;
+  border-bottom: none;
+  border-left: none;
+  border-right: none;
+  transition: border-color 90ms ease, background-color 90ms ease;
+}
+
+.terminal-pane.active {
+  border-top-color: var(--ft-accent);
+}
+
+.terminal-pane.needs-attention {
+  border-top-color: var(--ft-warning);
+}
+
+.terminal-pane-header {
+  min-height: 22px;
+  padding: 0 8px;
+  background: var(--ft-pane-header);
+  border-bottom: 1px solid var(--ft-border-subtle);
+  color: var(--ft-text-muted);
+}
+
+.terminal-pane.active .terminal-pane-header {
+  background: var(--ft-pane-header-active);
+  color: var(--ft-text);
+}
+
+.terminal-pane-title {
+  color: var(--ft-text-muted);
+  font-size: 0.82em;
+}
+
+.terminal-pane.active .terminal-pane-title {
+  color: var(--ft-text);
+  font-weight: 600;
+}
+
+.terminal-pane-cwd {
+  color: var(--ft-text-faint);
+  font-size: 0.78em;
+}
+
+.pane-attention-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: var(--ft-warning);
+  margin-right: 4px;
+}
+
+.terminal-pane-actions {
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 90ms ease;
+}
+
+.terminal-pane-actions.revealed {
+  opacity: 1;
+}
+
+.terminal-pane-action {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  margin: 0 1px;
+  border-radius: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ft-text-muted);
+  transition: background-color 90ms ease, color 90ms ease;
+}
+
+.terminal-pane-action image {
+  -gtk-icon-size: 14px;
+}
+
+.terminal-pane-action:hover {
+  color: var(--ft-text-strong);
+  background: var(--ft-bg-3);
+}
+
+.terminal-pane-action:focus-visible {
+  border-color: var(--ft-accent);
+}
+
+.vte-terminal {
+  padding: 10px 12px;
+  background: var(--ft-pane-bg);
 }
 
 .focused-terminal {
-  outline: 2px solid rgba(137, 180, 250, 0.75);
-  outline-offset: -2px;
+  outline: none;
 }
 
-.dim-label {
-  color: #6c7086;
+.dimmed {
+  opacity: var(--dim-opacity);
+}
+
+/* --------------------------------------------------------------------------
+ * Form controls (entries, spinbuttons, combos, textviews)
+ * -------------------------------------------------------------------------- */
+
+entry,
+spinbutton,
+combobox,
+textview {
+  color: var(--ft-text);
+  background: var(--ft-bg-2);
+  border: 1px solid var(--ft-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-height: 30px;
+  transition: border-color 90ms ease, background-color 90ms ease;
+}
+
+entry:hover,
+spinbutton:hover,
+combobox:hover button {
+  border-color: var(--ft-border-strong);
+}
+
+entry:focus,
+entry:focus-within,
+spinbutton:focus-within,
+combobox:focus button,
+textview:focus,
+textview:focus-within {
+  border-color: var(--ft-accent);
+  background: var(--ft-bg-2);
+}
+
+entry:disabled,
+spinbutton:disabled,
+combobox:disabled,
+textview:disabled {
+  color: var(--ft-text-faint);
+  background: var(--ft-bg-1);
+  border-color: var(--ft-border-subtle);
+}
+
+entry placeholder {
+  color: var(--ft-text-faint);
+}
+
+checkbutton {
+  color: var(--ft-text);
+}
+
+checkbutton check {
+  min-width: 16px;
+  min-height: 16px;
+  border-radius: 4px;
+}
+
+checkbutton > label {
+  margin-left: 2px;
+}
+
+checkbutton:focus-visible {
+  outline: 2px solid var(--ft-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --------------------------------------------------------------------------
+ * Buttons
+ * -------------------------------------------------------------------------- */
+
+button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  color: var(--ft-text);
+  background: var(--ft-bg-2);
+  border: 1px solid var(--ft-border);
+  transition: background-color 90ms ease, border-color 90ms ease, color 90ms ease;
+}
+
+button:hover {
+  background: var(--ft-bg-3);
+  border-color: var(--ft-border-strong);
+}
+
+button:active {
+  background: var(--ft-bg-3);
+}
+
+button:focus-visible {
+  border-color: var(--ft-accent);
+}
+
+button:disabled {
+  color: var(--ft-text-faint);
+  background: var(--ft-bg-1);
+  border-color: var(--ft-border-subtle);
+}
+
+button.flat {
+  background: transparent;
+  border-color: transparent;
+}
+
+button.flat:hover {
+  background: var(--ft-bg-3);
+}
+
+button.flat:focus-visible {
+  border-color: var(--ft-accent);
+}
+
+button.suggested-action,
+button.primary {
+  color: var(--ft-accent-fg);
+  background: var(--ft-accent);
+  border-color: transparent;
+  font-weight: 700;
+}
+
+button.suggested-action:hover,
+button.primary:hover {
+  background: var(--ft-accent-hover);
+}
+
+button.suggested-action:disabled,
+button.primary:disabled {
+  color: var(--ft-text-faint);
+  background: var(--ft-bg-2);
+}
+
+button.destructive-action {
+  color: var(--ft-error);
+  border-color: var(--ft-error-soft);
+  background: transparent;
+}
+
+button.destructive-action:hover {
+  background: var(--ft-error-soft);
+}
+
+/* --------------------------------------------------------------------------
+ * Dialogs (command palette, worktree, notifications, settings)
+ * -------------------------------------------------------------------------- */
+
+.ft-dialog window,
+window.ft-dialog,
+.ft-dialog {
+  background: var(--ft-bg-1);
+}
+
+.ft-dialog-header {
+  padding: 14px 18px 4px 18px;
+}
+
+.ft-dialog-title {
+  color: var(--ft-text-strong);
+  font-weight: 700;
+  font-size: 1.05em;
+}
+
+.ft-dialog-subtitle {
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
+}
+
+.ft-dialog-body {
+  padding: 14px 18px 18px 18px;
+}
+
+.ft-dialog-footer {
+  padding: 10px 18px 14px 18px;
+  border-top: 1px solid var(--ft-border-subtle);
+  background: var(--ft-bg-0);
+}
+
+.ft-section-title {
+  color: var(--ft-text-muted);
+  font-size: 0.74em;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin: 6px 0 4px 0;
+}
+
+.ft-form-row {
+  padding: 6px 0;
+}
+
+.ft-form-label {
+  color: var(--ft-text);
+  font-weight: 600;
+  font-size: 0.92em;
+}
+
+.ft-form-hint {
+  color: var(--ft-text-faint);
+  font-size: 0.82em;
+}
+
+.ft-inline-status {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--ft-bg-2);
+  border: 1px solid var(--ft-border-subtle);
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
+}
+
+.ft-inline-status.success {
+  color: var(--ft-success);
+  background: var(--ft-success-soft);
+  border-color: transparent;
+}
+
+.ft-inline-status.error {
+  color: var(--ft-error);
+  background: var(--ft-error-soft);
+  border-color: transparent;
+}
+
+.ft-inline-status.warning {
+  color: var(--ft-warning);
+  background: var(--ft-warning-soft);
+  border-color: transparent;
+}
+
+/* --------------------------------------------------------------------------
+ * Command palette
+ * -------------------------------------------------------------------------- */
+
+.command-list {
+  background: transparent;
+}
+
+.command-search {
+  margin-bottom: 10px;
+}
+
+.command-list row {
+  background: transparent;
+  border-radius: 8px;
+  margin: 1px 0;
+  padding: 0;
+  transition: background-color 100ms ease;
+}
+
+.command-list row:hover,
+.command-list row:focus-visible,
+.command-list row:selected {
+  background: var(--ft-bg-2);
+}
+
+.command-list row:selected button.flat {
+  background: var(--ft-bg-2);
+}
+
+.command-list row:selected button.flat:focus-visible {
+  border-color: var(--ft-accent);
+}
+
+.command-item {
+  padding: 8px 12px;
+}
+
+.command-item-label {
+  color: var(--ft-text);
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+.command-item-hint {
+  color: var(--ft-text-faint);
+  font-size: 0.82em;
+}
+
+.workspace-meta,
+.workspace-summary,
+.ft-dialog-subtitle,
+.ft-form-hint,
+.command-item-hint,
+.notification-body,
+.notification-time {
+  opacity: var(--dim-opacity);
+}
+
+/* --------------------------------------------------------------------------
+ * Notification panel
+ * -------------------------------------------------------------------------- */
+
+.notification-list {
+  background: transparent;
+}
+
+.notification-list row {
+  background: transparent;
+  border-radius: 10px;
+  margin: 2px 0;
+  padding: 0;
+}
+
+.notification-row {
+  padding: 10px 12px;
+  border: 1px solid var(--ft-border-subtle);
+  border-radius: 10px;
+  background: var(--ft-bg-2);
+}
+
+.notification-title {
+  color: var(--ft-text-strong);
+  font-weight: 600;
+  font-size: 0.92em;
+}
+
+.notification-body {
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
+}
+
+.notification-time {
+  color: var(--ft-text-muted);
+  font-size: 0.78em;
+}
+
+.notification-kind {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.notification-kind.info {
+  color: var(--ft-info);
+  background: var(--ft-info-soft);
+}
+
+.notification-kind.success {
+  color: var(--ft-success);
+  background: var(--ft-success-soft);
+}
+
+.notification-kind.warning {
+  color: var(--ft-warning);
+  background: var(--ft-warning-soft);
+}
+
+.notification-kind.error {
+  color: var(--ft-error);
+  background: var(--ft-error-soft);
+}
+
+.notification-kind.prompt {
+  color: var(--ft-accent);
+  background: var(--ft-accent-soft);
+}
+
+.notification-kind.custom {
+  color: var(--ft-text-muted);
+  background: var(--ft-bg-3);
+}
+
+/* --------------------------------------------------------------------------
+ * Empty state (used by sidebar, notifications, command palette)
+ * -------------------------------------------------------------------------- */
+
+.empty-state {
+  padding: 32px 20px;
+}
+
+.empty-state-title {
+  color: var(--ft-text-strong);
+  font-weight: 700;
+  font-size: 0.98em;
+}
+
+.empty-state-body {
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
 }

@@ -51,6 +51,8 @@ pub struct AppearanceConfig {
     pub font_size: u16,
     #[serde(default = "default_sidebar_position")]
     pub sidebar_position: String,
+    #[serde(default = "default_sidebar_visible")]
+    pub sidebar_visible: bool,
     #[serde(default = "default_terminal_renderer")]
     pub terminal_renderer: String,
     #[serde(default = "default_window_mode")]
@@ -84,6 +86,7 @@ impl Default for AppearanceConfig {
             font_family: default_font_family(),
             font_size: default_font_size(),
             sidebar_position: default_sidebar_position(),
+            sidebar_visible: default_sidebar_visible(),
             terminal_renderer: default_terminal_renderer(),
             window_mode: default_window_mode(),
         }
@@ -304,6 +307,9 @@ fn default_font_size() -> u16 {
 fn default_sidebar_position() -> String {
     "left".to_string()
 }
+fn default_sidebar_visible() -> bool {
+    true
+}
 fn default_terminal_renderer() -> String {
     "auto".to_string()
 }
@@ -361,5 +367,24 @@ mod tests {
         let error = validate_config(&config).unwrap_err();
 
         assert!(error.to_string().contains("must not invoke a shell"));
+    }
+
+    #[test]
+    fn sidebar_visible_defaults_to_true_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
+        assert!(config.appearance.sidebar_visible);
+    }
+
+    #[test]
+    fn sidebar_visible_round_trips_through_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = AppConfig::default();
+        config.appearance.sidebar_visible = false;
+        let toml_str = toml::to_string(&config).unwrap();
+        std::fs::write(&path, toml_str).unwrap();
+        let loaded = load_config_from_path(&path).unwrap();
+        assert!(!loaded.appearance.sidebar_visible);
     }
 }

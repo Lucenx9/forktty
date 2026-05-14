@@ -25,6 +25,20 @@ if [[ "${FORKTTY_UBUNTU_REBUILD:-0}" == "1" ]] || ! docker image inspect "$IMAGE
   build_image
 fi
 
+init_cache_volumes() {
+  docker run \
+    --rm \
+    --user root \
+    -e HOME="$CONTAINER_HOME" \
+    -e CARGO_HOME="$CONTAINER_HOME/.cargo" \
+    -v "${IMAGE_NAME}-cargo-registry:$CONTAINER_HOME/.cargo/registry" \
+    -v "${IMAGE_NAME}-cargo-git:$CONTAINER_HOME/.cargo/git" \
+    "$IMAGE_NAME" \
+    bash -lc "mkdir -p '$CONTAINER_HOME/.cargo/registry' '$CONTAINER_HOME/.cargo/git' && chown -R '$HOST_UID:$HOST_GID' '$CONTAINER_HOME/.cargo/registry' '$CONTAINER_HOME/.cargo/git'"
+}
+
+init_cache_volumes
+
 tty_args=()
 if [[ -t 0 && -t 1 ]]; then
   tty_args=(-it)
@@ -38,6 +52,7 @@ docker_args=(
   -e HOME="$CONTAINER_HOME"
   -e CARGO_HOME="$CONTAINER_HOME/.cargo"
   -e RUSTUP_HOME="$CONTAINER_HOME/.rustup"
+  -e GSK_RENDERER="${FORKTTY_UBUNTU_GSK_RENDERER:-cairo}"
   -v "$ROOT_DIR:$CONTAINER_WORKDIR"
   -v "${IMAGE_NAME}-cargo-registry:$CONTAINER_HOME/.cargo/registry"
   -v "${IMAGE_NAME}-cargo-git:$CONTAINER_HOME/.cargo/git"
