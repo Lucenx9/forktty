@@ -191,6 +191,9 @@ describe("forktty CLI helpers", () => {
       surface_id: "surface-2",
       axis: "vertical",
     });
+    expect(buildSurfaceSplitParams({}, [], {})).toEqual({
+      axis: "horizontal",
+    });
     expect(() => buildSurfaceSplitParams({ axis: "diagonal" }, ["surface-2"])).toThrow(
       "Invalid --axis",
     );

@@ -570,6 +570,10 @@ async function resolveSendTextSurfaceId(context, options) {
   ) {
     return context.env.FORKTTY_SURFACE_ID.trim();
   }
+  return resolveFocusedSurfaceId(context);
+}
+
+async function resolveFocusedSurfaceId(context) {
   const workspaces = await sendSocketRequest(context.socketPath, "workspace.list", {});
   return surfaceIdFromWorkspaceList(workspaces);
 }
@@ -611,10 +615,12 @@ function buildSurfaceSplitParams(options, positionals, env = process.env) {
   if (axis !== "horizontal" && axis !== "vertical") {
     throw new Error("Invalid --axis: expected horizontal or vertical");
   }
-  return {
-    ...buildSurfaceActionParams(options, positionals, env, "split-surface"),
-    axis,
-  };
+  const params = { axis };
+  const surfaceId = surfaceIdFromArgs(options, positionals, env);
+  if (surfaceId) {
+    params.surface_id = surfaceId;
+  }
+  return params;
 }
 
 function formatSurfaceLine(surface) {
@@ -647,10 +653,19 @@ async function handleSurfaces(context, args) {
 
 async function handleSplitSurface(context, args) {
   const { options, positionals } = parseFlags(args);
+  const params = buildSurfaceSplitParams(options, positionals, context.env);
+  if (!params.surface_id) {
+    params.surface_id = await resolveFocusedSurfaceId(context);
+  }
+  if (!params.surface_id) {
+    throw new Error(
+      "split-surface requires --surface-id, a surface id, FORKTTY_SURFACE_ID, or an active workspace surface",
+    );
+  }
   const result = await sendSocketRequest(
     context.socketPath,
     "surface.split",
-    buildSurfaceSplitParams(options, positionals, context.env),
+    params,
   );
 
   if (context.json) {
