@@ -764,6 +764,15 @@ fn focused_surface_id(state: &SocketAppState) -> Option<String> {
         .map(|workspace| workspace.focused_surface_id)
 }
 
+fn active_workspace_snapshot(state: &SocketAppState) -> Option<forktty_core::Workspace> {
+    let model = state.model.lock().ok()?;
+    model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.active)
+        .or_else(|| model.list_workspaces().into_iter().next())
+}
+
 fn show_close_pane_confirmation(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
@@ -1410,6 +1419,127 @@ fn show_destructive_confirmation<W, F>(
     dialog.present();
 }
 
+fn show_rename_workspace_dialog<W>(
+    parent: &W,
+    state: &SocketAppState,
+    workspace_id: &str,
+    current_name: &str,
+) where
+    W: IsA<gtk::Window>,
+{
+    let dialog = gtk::Window::builder()
+        .title("Rename Workspace")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(420)
+        .default_height(190)
+        .build();
+    dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
+    install_escape_close(&dialog);
+    restore_focus_after_hide(&dialog, parent);
+
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    header.add_css_class("ft-dialog-header");
+    let title = gtk::Label::builder()
+        .label("Rename Workspace")
+        .xalign(0.0)
+        .build();
+    title.add_css_class("ft-dialog-title");
+    let subtitle = gtk::Label::builder()
+        .label("Choose a short name that is easy to recognize in the sidebar and status bar.")
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    subtitle.add_css_class("ft-dialog-subtitle");
+    header.append(&title);
+    header.append(&subtitle);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    body.add_css_class("ft-dialog-body");
+    let entry = gtk::Entry::builder()
+        .text(current_name)
+        .placeholder_text("Workspace name")
+        .hexpand(true)
+        .build();
+    entry.update_property(&[gtk::accessible::Property::Label("Workspace name")]);
+    let status = gtk::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .visible(false)
+        .build();
+    status.add_css_class("ft-inline-status");
+    body.append(&entry);
+    body.append(&status);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("ft-dialog-footer");
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    let cancel = gtk::Button::with_label("Cancel");
+    let rename = gtk::Button::with_label("Rename");
+    rename.add_css_class("suggested-action");
+    rename.set_sensitive(false);
+    footer.append(&spacer);
+    footer.append(&cancel);
+    footer.append(&rename);
+
+    let current_name_owned = current_name.to_string();
+    let status_for_change = status.clone();
+    let rename_for_change = rename.clone();
+    entry.connect_changed(move |entry| {
+        let candidate = entry.text();
+        let trimmed = candidate.trim();
+        let valid = !trimmed.is_empty() && trimmed != current_name_owned;
+        rename_for_change.set_sensitive(valid);
+        if trimmed.is_empty() {
+            set_status_message(
+                &status_for_change,
+                "Workspace name cannot be empty.",
+                StatusKind::Error,
+            );
+        } else {
+            clear_status_message(&status_for_change);
+        }
+    });
+
+    let dialog_for_cancel = dialog.clone();
+    cancel.connect_clicked(move |_| dialog_for_cancel.close());
+
+    let state_for_rename = state.clone();
+    let workspace_id_for_rename = workspace_id.to_string();
+    let dialog_for_rename = dialog.clone();
+    let status_for_rename = status.clone();
+    let entry_for_rename = entry.clone();
+    rename.connect_clicked(move |_| {
+        match rename_workspace_gtk(
+            &state_for_rename,
+            &workspace_id_for_rename,
+            entry_for_rename.text().as_str(),
+        ) {
+            Ok(()) => dialog_for_rename.close(),
+            Err(err) => set_status_message(&status_for_rename, &err, StatusKind::Error),
+        }
+    });
+
+    let rename_for_activate = rename.clone();
+    entry.connect_activate(move |_| {
+        if rename_for_activate.is_sensitive() {
+            rename_for_activate.emit_clicked();
+        }
+    });
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&header);
+    content.append(&body);
+    content.append(&footer);
+    dialog.set_default_widget(Some(&rename));
+    dialog.set_child(Some(&content));
+    dialog.present();
+    entry.grab_focus();
+    entry.select_region(0, -1);
+}
+
 fn set_accessible_button_text(button: &gtk::Button, label: &str, shortcut: Option<&str>) {
     if let Some(shortcut) = shortcut {
         button.update_property(&[
@@ -1597,6 +1727,7 @@ fn build_workspace_context_menu(
     add_context_menu_separator(&menu);
 
     let workspace_id = workspace.id.clone();
+    let workspace_name = workspace.name.clone();
     let is_active = workspace.active;
     let worktree_name = workspace.worktree_name.clone();
     let working_dir = workspace.working_dir.clone();
@@ -1618,6 +1749,21 @@ fn build_workspace_context_menu(
         );
         add_context_menu_separator(&menu);
     }
+
+    let state_ = state.clone();
+    let parent_ = parent.clone();
+    let ws_id = workspace_id.clone();
+    let ws_name = workspace_name.clone();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "document-edit-symbolic",
+        "Rename Workspace...",
+        false,
+        move || show_rename_workspace_dialog(&parent_, &state_, &ws_id, &ws_name),
+    );
+
+    add_context_menu_separator(&menu);
 
     let state_ = state.clone();
     let ws_id = workspace_id.clone();
@@ -4603,6 +4749,24 @@ fn show_command_palette_with_query(
             dialog.close();
         }
     });
+    command!("Rename Workspace...", None, {
+        let state = state.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        move || {
+            dialog.close();
+            if let Some(workspace) = active_workspace_snapshot(&state) {
+                show_rename_workspace_dialog(&parent, &state, &workspace.id, &workspace.name);
+            } else {
+                create_global_notification(
+                    &state,
+                    "Rename Workspace Failed",
+                    "There is no workspace to rename.",
+                    NotificationKind::Error,
+                );
+            }
+        }
+    });
     command!("Open Workspace...", Some("Ctrl+Shift+O"), {
         let state = state.clone();
         let parent = parent.clone();
@@ -6337,6 +6501,38 @@ fn create_plain_workspace(state: &SocketAppState) {
     } else {
         save_session_from_state(state);
     }
+}
+
+fn rename_workspace_gtk(
+    state: &SocketAppState,
+    workspace_id: &str,
+    new_name: &str,
+) -> Result<(), String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("Workspace name cannot be empty.".to_string());
+    }
+    if trimmed.chars().count() > 80 {
+        return Err("Workspace name must be 80 characters or fewer.".to_string());
+    }
+    {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if model
+            .list_workspaces()
+            .into_iter()
+            .any(|workspace| workspace.id != workspace_id && workspace.name == trimmed)
+        {
+            return Err(format!("A workspace named '{trimmed}' already exists."));
+        }
+        model
+            .rename_workspace(WorkspaceSelector::Id(workspace_id), trimmed)
+            .ok_or_else(|| "Workspace no longer exists.".to_string())?;
+    }
+    save_session_from_state(state);
+    Ok(())
 }
 
 fn close_active_workspace(state: &SocketAppState) {

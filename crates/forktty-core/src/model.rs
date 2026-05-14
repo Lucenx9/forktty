@@ -309,6 +309,17 @@ impl WorkspaceModel {
         self.workspaces.get(&id).cloned()
     }
 
+    pub fn rename_workspace(
+        &mut self,
+        selector: WorkspaceSelector<'_>,
+        name: impl Into<String>,
+    ) -> Option<Workspace> {
+        let id = self.resolve_workspace_id(selector)?;
+        let workspace = self.workspaces.get_mut(&id)?;
+        workspace.name = name.into();
+        Some(workspace.clone())
+    }
+
     pub fn close_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
         let id = self.resolve_workspace_id(selector)?;
         let removed = self.workspaces.remove(&id)?;
@@ -1095,6 +1106,19 @@ mod tests {
             .unwrap();
         assert_eq!(removed.id, second.id);
         assert_eq!(model.list_workspaces().len(), 1);
+    }
+
+    #[test]
+    fn can_rename_workspace() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp/main");
+
+        let renamed = model
+            .rename_workspace(WorkspaceSelector::Id(&workspace.id), "prod")
+            .unwrap();
+
+        assert_eq!(renamed.name, "prod");
+        assert_eq!(model.list_workspaces()[0].name, "prod");
     }
 
     #[test]
