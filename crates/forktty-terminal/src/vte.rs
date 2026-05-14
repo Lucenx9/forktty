@@ -35,7 +35,6 @@ where
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
     terminal.set_scrollback_lines(20_000);
-    terminal.set_enable_legacy_osc777(true);
 
     let env_storage = child_environment(request);
     let envv = env_storage.iter().map(String::as_str).collect::<Vec<_>>();

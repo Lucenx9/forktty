@@ -21,8 +21,8 @@ gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktt
 forktty-core = { path = "../forktty-core" }
 forktty-socket = { path = "../forktty-socket" }
 forktty-terminal = { path = "../forktty-terminal" }
-adw = { package = "libadwaita", version = "0.9", optional = true }
+adw = { package = "libadwaita", version = "0.8", optional = true }
 global-hotkey = { version = "0.7", optional = true }
-gtk4 = { version = "0.11", optional = true }
+gtk4 = { version = "0.10", optional = true }
 libloading = { version = "0.8", optional = true }
 tokio.workspace = true

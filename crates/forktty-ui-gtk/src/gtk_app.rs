@@ -31,13 +31,6 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const APP_ID: &str = "dev.forktty.ForkTTY";
-const VTE_TERMPROP_PROGRESS_HINT: &str = "vte.progress.hint";
-const VTE_TERMPROP_PROGRESS_VALUE: &str = "vte.progress.value";
-const VTE_TERMPROP_SHELL_POSTEXEC: &str = "vte.shell.postexec";
-const VTE_TERMPROP_SHELL_PRECMD: &str = "vte.shell.precmd";
-const VTE_TERMPROP_SHELL_PREEXEC: &str = "vte.shell.preexec";
-const VTE_TERMPROP_XTERM_TITLE: &str = "xterm.title";
-const VTE_PROGRESS_HINT_INACTIVE: i64 = 0;
 const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_millis(750);
 
 #[derive(Debug)]
@@ -349,9 +342,8 @@ fn attach_vte_signal_handlers(
 
     let surface_id = request.surface_id.clone();
     let title_model = model.clone();
-    widget.connect_termprop_changed(Some(VTE_TERMPROP_XTERM_TITLE), move |terminal, _| {
-        let (title, _) = terminal.termprop_string(VTE_TERMPROP_XTERM_TITLE);
-        if let Some(title) = title {
+    widget.connect_window_title_changed(move |terminal| {
+        if let Some(title) = terminal.window_title() {
             if let Ok(mut model) = title_model.lock() {
                 let _ = model.set_surface_title(&surface_id, title.to_string());
             }
@@ -393,7 +385,7 @@ fn attach_vte_signal_handlers(
     let workspace_id = request.workspace_id.clone();
     let precmd_model = model.clone();
     let last_prompt = last_prompt_notification.clone();
-    widget.connect_termprop_changed(Some(VTE_TERMPROP_SHELL_PRECMD), move |_, _| {
+    widget.connect_shell_precmd(move |_| {
         if let Ok(mut model) = precmd_model.lock() {
             let _ = model.set_status(
                 &workspace_id,
@@ -415,7 +407,7 @@ fn attach_vte_signal_handlers(
     let surface_id = request.surface_id.clone();
     let workspace_id = request.workspace_id.clone();
     let preexec_model = model.clone();
-    widget.connect_termprop_changed(Some(VTE_TERMPROP_SHELL_PREEXEC), move |_, _| {
+    widget.connect_shell_preexec(move |_| {
         if let Ok(mut model) = preexec_model.lock() {
             let _ = model.set_status(
                 &workspace_id,
@@ -425,52 +417,6 @@ fn attach_vte_signal_handlers(
                 Some("blue".to_string()),
             );
         }
-    });
-
-    let surface_id = request.surface_id.clone();
-    let workspace_id = request.workspace_id.clone();
-    let postexec_model = model.clone();
-    widget.connect_termprop_changed(Some(VTE_TERMPROP_SHELL_POSTEXEC), move |terminal, _| {
-        let exit_code = terminal
-            .termprop_uint(VTE_TERMPROP_SHELL_POSTEXEC)
-            .unwrap_or(0);
-        let (value, color) = if exit_code == 0 {
-            ("Done".to_string(), "green".to_string())
-        } else {
-            (format!("Exit {exit_code}"), "red".to_string())
-        };
-        if let Ok(mut model) = postexec_model.lock() {
-            let _ = model.set_status(
-                &workspace_id,
-                surface_status_key(&surface_id),
-                "Terminal",
-                value,
-                Some(color),
-            );
-            let _ = model.append_log(
-                &workspace_id,
-                if exit_code == 0 {
-                    forktty_core::LogLevel::Info
-                } else {
-                    forktty_core::LogLevel::Error
-                },
-                format!("Terminal command finished with exit code {exit_code}"),
-            );
-        }
-    });
-
-    let surface_id = request.surface_id.clone();
-    let workspace_id = request.workspace_id.clone();
-    let progress_model = model.clone();
-    widget.connect_termprop_changed(Some(VTE_TERMPROP_PROGRESS_VALUE), move |terminal, _| {
-        update_vte_progress(terminal, &progress_model, &workspace_id, &surface_id);
-    });
-
-    let surface_id = request.surface_id.clone();
-    let workspace_id = request.workspace_id.clone();
-    let progress_model = model.clone();
-    widget.connect_termprop_changed(Some(VTE_TERMPROP_PROGRESS_HINT), move |terminal, _| {
-        update_vte_progress(terminal, &progress_model, &workspace_id, &surface_id);
     });
 
     let surface_id = request.surface_id.clone();
@@ -510,10 +456,6 @@ fn surface_status_key(surface_id: &str) -> String {
     format!("surface:{surface_id}:status")
 }
 
-fn surface_progress_key(surface_id: &str) -> String {
-    format!("surface:{surface_id}:progress")
-}
-
 fn emit_prompt_notification(
     model: &Arc<Mutex<WorkspaceModel>>,
     last_prompt_notification: &Rc<RefCell<Option<Instant>>>,
@@ -539,34 +481,6 @@ fn emit_prompt_notification(
             Some(surface_id.to_string()),
         );
         dispatch_notification_with_loaded_config(&notification);
-    }
-}
-
-fn update_vte_progress(
-    terminal: &VteTerminalWidget,
-    model: &Arc<Mutex<WorkspaceModel>>,
-    workspace_id: &str,
-    surface_id: &str,
-) {
-    let key = surface_progress_key(surface_id);
-    let value = terminal.termprop_uint(VTE_TERMPROP_PROGRESS_VALUE);
-    let hint = terminal.termprop_int(VTE_TERMPROP_PROGRESS_HINT);
-
-    let Ok(mut model) = model.lock() else {
-        return;
-    };
-
-    match (value, hint) {
-        (Some(_), Some(VTE_PROGRESS_HINT_INACTIVE)) => {
-            let _ = model.clear_progress(workspace_id, Some(&key));
-        }
-        (Some(value), _) => {
-            let value = value.min(100) as f64;
-            let _ = model.set_progress(workspace_id, key, "Terminal", value, Some(100.0));
-        }
-        (None, _) => {
-            let _ = model.clear_progress(workspace_id, Some(&key));
-        }
     }
 }
 
@@ -2068,10 +1982,6 @@ mod tests {
     #[test]
     fn builds_surface_metadata_keys() {
         assert_eq!(surface_status_key("surface-1"), "surface:surface-1:status");
-        assert_eq!(
-            surface_progress_key("surface-1"),
-            "surface:surface-1:progress"
-        );
     }
 
     #[test]

@@ -49,13 +49,13 @@ Arch-style names:
 - `vte4`
 - `desktop-file-utils`
 
-ForkTTY currently requires VTE 0.80 or newer. `gtk4-layer-shell` is optional and only improves quake/dropdown placement on supported Wayland compositors.
+ForkTTY currently requires VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. `gtk4-layer-shell` is optional and only improves quake/dropdown placement on supported Wayland compositors.
 
 ## Runtime Notes
 
 - VTE owns the child PTY; ForkTTY drives terminals through VTE widgets rather than a separate portable-pty stream.
 - Spawned shells receive `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`.
-- Prompt/metadata detection uses VTE termprops where available, plus a bounded visible-tail prompt fallback.
+- Prompt/metadata detection uses VTE shell integration signals and a bounded visible-tail prompt fallback.
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.
 

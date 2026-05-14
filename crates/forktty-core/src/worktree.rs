@@ -479,6 +479,9 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
     fn make_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
@@ -494,6 +497,46 @@ mod tests {
         drop(tree);
         drop(repo);
         dir
+    }
+
+    fn commit_file(repo_dir: &Path, relative_path: &str, contents: &str) {
+        let path = repo_dir.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, contents).unwrap();
+        #[cfg(unix)]
+        if relative_path.starts_with(".forktty/") {
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).unwrap();
+        }
+
+        let repo = Repository::open(repo_dir).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(relative_path)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test file", &tree, &[&parent])
+            .unwrap();
+    }
+
+    fn create_branch(repo_dir: &Path, branch_name: &str) {
+        let repo = Repository::open(repo_dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch(branch_name, &head, false).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn executable_hook_script(marker: &Path, contents: &str) -> String {
+        format!(
+            "#!/bin/sh\nprintf '{}' > '{}'\n",
+            contents,
+            marker.display()
+        )
     }
 
     #[test]
@@ -542,5 +585,96 @@ mod tests {
         let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
 
         assert!(matches!(result, Err(WorktreeError::TargetDirty)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_runs_setup_hook() {
+        let dir = make_repo();
+        let marker = dir.path().join("setup-marker");
+        commit_file(
+            dir.path(),
+            ".forktty/setup",
+            &executable_hook_script(&marker, "create"),
+        );
+
+        let _info = create(dir.path().to_str().unwrap(), "setup-create", "nested").unwrap();
+
+        assert_eq!(fs::read_to_string(marker).unwrap(), "create");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attach_runs_setup_hook() {
+        let dir = make_repo();
+        let marker = dir.path().join("attach-marker");
+        commit_file(
+            dir.path(),
+            ".forktty/setup",
+            &executable_hook_script(&marker, "attach"),
+        );
+        create_branch(dir.path(), "setup-attach");
+
+        let _info = attach(dir.path().to_str().unwrap(), "setup-attach", "nested").unwrap();
+
+        assert_eq!(fs::read_to_string(marker).unwrap(), "attach");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_runs_teardown_hook_before_prune() {
+        let dir = make_repo();
+        let marker = dir.path().join("teardown-marker");
+        commit_file(
+            dir.path(),
+            ".forktty/teardown",
+            &executable_hook_script(&marker, "remove"),
+        );
+        let info = create(dir.path().to_str().unwrap(), "teardown-remove", "nested").unwrap();
+
+        remove(dir.path().to_str().unwrap(), "teardown-remove", true).unwrap();
+
+        assert_eq!(fs::read_to_string(marker).unwrap(), "remove");
+        assert!(!Path::new(&info.path).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failing_teardown_hook_prevents_remove() {
+        let dir = make_repo();
+        commit_file(dir.path(), ".forktty/teardown", "#!/bin/sh\nexit 7\n");
+        let info = create(dir.path().to_str().unwrap(), "teardown-fails", "nested").unwrap();
+
+        let result = remove(dir.path().to_str().unwrap(), "teardown-fails", true);
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::HookFailed(hook, 7)) if hook == "teardown"
+        ));
+        assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn missing_hook_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(
+            run_hook(dir.path().to_str().unwrap(), "setup").unwrap(),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_hook_rejects_symlink_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        let hook_dir = dir.path().join(".forktty");
+        fs::create_dir_all(&hook_dir).unwrap();
+        symlink(outside.path(), hook_dir.join("setup")).unwrap();
+
+        let result = run_hook(dir.path().to_str().unwrap(), "setup");
+
+        assert!(matches!(result, Err(WorktreeError::Other(_))));
     }
 }

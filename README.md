@@ -54,7 +54,7 @@ Arch / CachyOS:
 sudo pacman -S base-devel openssl gtk4 libadwaita vte4 desktop-file-utils
 ```
 
-ForkTTY currently builds with VTE 0.80 or newer. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
+ForkTTY currently builds with VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
 
 ### Build and Run
 
@@ -141,7 +141,7 @@ Hooks report status, progress, logs, and prompt notifications through the same l
 - Direct Unix socket JSON-RPC server for workspace, surface, notification, worktree, and metadata automation.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
-- Prompt-aware notifications from VTE shell integration termprops, visible prompt fallback, VTE bell, and hook/socket events.
+- Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
 ## Configuration
@@ -193,7 +193,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 ## Known Limitations
 
 - Linux only. There are no supported macOS or Windows builds.
-- VTE 0.80+ is currently required by the native terminal integration.
+- VTE 0.76+ is currently required by the native terminal integration.
 - PTYs and scrollback are not persisted across restart.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
