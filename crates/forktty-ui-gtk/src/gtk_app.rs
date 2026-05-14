@@ -183,10 +183,11 @@ struct SidebarUi {
     last_signature: Rc<RefCell<Option<String>>>,
     context_menu_open: Rc<Cell<bool>>,
     context_popover: Rc<RefCell<Option<gtk::Popover>>>,
-    context_menu_position: gtk::PositionType,
+    context_menu_position: Rc<Cell<gtk::PositionType>>,
 }
 
 type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
+type SettingsApplyCallback = Rc<dyn Fn(&config::AppConfig)>;
 
 struct VteController {
     container: gtk::Box,
@@ -1648,11 +1649,9 @@ fn build_ui(app: &adw::Application) {
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.add_css_class("workspace-paned");
     let sidebar_on_right = app_config.appearance.sidebar_position == "right";
-    let context_menu_position = if sidebar_on_right {
-        gtk::PositionType::Left
-    } else {
-        gtk::PositionType::Right
-    };
+    let context_menu_position = Rc::new(Cell::new(context_menu_position_for_sidebar(
+        &app_config.appearance.sidebar_position,
+    )));
     if sidebar_on_right {
         paned.set_start_child(Some(&*terminal_stack.borrow()));
         paned.set_resize_start_child(true);
@@ -1752,7 +1751,7 @@ fn build_ui(app: &adw::Application) {
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
-        context_menu_position,
+        context_menu_position: context_menu_position.clone(),
     };
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -1788,9 +1787,18 @@ fn build_ui(app: &adw::Application) {
         show_notification_panel(&notifications_parent, &notifications_state);
     });
 
+    let terminal_stack_for_settings = terminal_stack.borrow().clone();
+    let settings_apply = settings_apply_callback(
+        &paned,
+        &sidebar_shell,
+        &terminal_stack_for_settings,
+        context_menu_position.clone(),
+    );
+
     let settings_parent = window.clone();
+    let settings_apply_for_button = settings_apply.clone();
     settings.connect_clicked(move |_| {
-        show_settings_dialog(&settings_parent);
+        show_settings_dialog(&settings_parent, settings_apply_for_button.clone());
     });
 
     let new_worktree_parent = window.clone();
@@ -1799,7 +1807,14 @@ fn build_ui(app: &adw::Application) {
         show_worktree_dialog(&new_worktree_parent, &new_worktree_state);
     });
 
-    install_actions(app, &window, &state, &sidebar_shell, quake_mode);
+    install_actions(
+        app,
+        &window,
+        &state,
+        &sidebar_shell,
+        settings_apply,
+        quake_mode,
+    );
     if quake_mode {
         install_global_quake_shortcut(&window);
     }
@@ -1812,6 +1827,64 @@ fn build_ui(app: &adw::Application) {
     start_socket_server(state.clone());
 
     window.present();
+}
+
+fn settings_apply_callback(
+    paned: &gtk::Paned,
+    sidebar_shell: &gtk::Box,
+    terminal_stack: &gtk::Box,
+    context_menu_position: Rc<Cell<gtk::PositionType>>,
+) -> SettingsApplyCallback {
+    let paned = paned.clone();
+    let sidebar_shell = sidebar_shell.clone();
+    let terminal_stack = terminal_stack.clone();
+    Rc::new(move |config| {
+        apply_sidebar_position(
+            &paned,
+            &sidebar_shell,
+            &terminal_stack,
+            &config.appearance.sidebar_position,
+        );
+        context_menu_position.set(context_menu_position_for_sidebar(
+            &config.appearance.sidebar_position,
+        ));
+    })
+}
+
+fn apply_sidebar_position(
+    paned: &gtk::Paned,
+    sidebar_shell: &gtk::Box,
+    terminal_stack: &gtk::Box,
+    position: &str,
+) {
+    let sidebar_visible = sidebar_shell.is_visible();
+    paned.set_start_child(Option::<&gtk::Widget>::None);
+    paned.set_end_child(Option::<&gtk::Widget>::None);
+
+    if position == "right" {
+        paned.set_start_child(Some(terminal_stack));
+        paned.set_resize_start_child(true);
+        paned.set_shrink_start_child(false);
+        paned.set_end_child(Some(sidebar_shell));
+        paned.set_resize_end_child(false);
+        paned.set_shrink_end_child(false);
+    } else {
+        paned.set_start_child(Some(sidebar_shell));
+        paned.set_resize_start_child(false);
+        paned.set_shrink_start_child(false);
+        paned.set_end_child(Some(terminal_stack));
+        paned.set_resize_end_child(true);
+        paned.set_shrink_end_child(false);
+    }
+    sidebar_shell.set_visible(sidebar_visible);
+}
+
+fn context_menu_position_for_sidebar(position: &str) -> gtk::PositionType {
+    if position == "right" {
+        gtk::PositionType::Left
+    } else {
+        gtk::PositionType::Right
+    }
 }
 
 fn configured_shell(config: &config::AppConfig) -> String {
@@ -2050,6 +2123,7 @@ fn install_actions(
     window: &adw::ApplicationWindow,
     state: &SocketAppState,
     sidebar_shell: &gtk::Box,
+    settings_apply: SettingsApplyCallback,
     quake_mode: bool,
 ) {
     add_action(app, "new-workspace", {
@@ -2076,7 +2150,8 @@ fn install_actions(
     });
     add_action(app, "settings", {
         let window = window.clone();
-        move || show_settings_dialog(&window)
+        let settings_apply = settings_apply.clone();
+        move || show_settings_dialog(&window, settings_apply.clone())
     });
     add_action(app, "close-pane", {
         let state = state.clone();
@@ -2315,8 +2390,9 @@ fn refresh_sidebar(
                 );
             });
             popover.set_parent(&row_for_menu);
-            popover.set_position(ui_for_menu.context_menu_position);
-            let x = match ui_for_menu.context_menu_position {
+            let context_menu_position = ui_for_menu.context_menu_position.get();
+            popover.set_position(context_menu_position);
+            let x = match context_menu_position {
                 gtk::PositionType::Left => 0,
                 gtk::PositionType::Right => row_for_menu.width().max(1),
                 _ => x as i32,
@@ -3247,7 +3323,7 @@ fn show_notification_panel(parent: &adw::ApplicationWindow, state: &SocketAppSta
     dialog.present();
 }
 
-fn show_settings_dialog(parent: &adw::ApplicationWindow) {
+fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApplyCallback) {
     let dialog = gtk::Window::builder()
         .title("Settings")
         .transient_for(parent)
@@ -3418,11 +3494,14 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
         next.notifications.desktop = desktop_notifications.is_active();
         next.notifications.sound = notification_sound.is_active();
         match config::save_config(&next) {
-            Ok(()) => set_status_message(
-                &status_for_save,
-                "Saved. Some changes apply after restart.",
-                StatusKind::Success,
-            ),
+            Ok(()) => {
+                on_apply(&next);
+                set_status_message(
+                    &status_for_save,
+                    "Saved. Layout changes applied.",
+                    StatusKind::Success,
+                );
+            }
             Err(err) => set_status_message(&status_for_save, &err.to_string(), StatusKind::Error),
         }
     });
