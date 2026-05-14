@@ -52,8 +52,8 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 
 - [x] Native `.deb` package installing `forktty`.
 - [x] Desktop entry and icon under `packaging/linux`.
-- [x] Ubuntu container dev helper.
 - [x] CI for Rust fmt/test/clippy/build, CLI tests, desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
+- [x] GitHub prerelease workflow that uploads the Debian package artifact.
 
 ## Backlog
 
@@ -64,7 +64,8 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] More complete command palette search/filter parity.
 - [ ] Rich branch picker UI with query highlighting.
 - [ ] Better notification inbox grouping and actions.
-- [ ] Explicit theme switching UI and full theme customization.
+- [x] Basic Auto/Light/Dark theme selection in Settings.
+- [ ] Full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
 - [ ] Built-in browser pane.

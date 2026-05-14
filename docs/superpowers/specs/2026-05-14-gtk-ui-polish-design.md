@@ -4,6 +4,8 @@
 **Scope:** Polish + chrome redesign (Scope B). Visual language target: Zed/Ghostty — minimal, dense.
 **Affected crates:** `forktty-ui-gtk` (primary), `forktty-core` (config additions for sidebar visibility).
 
+> **Status:** Historical design spec for the GTK chrome polish pass. The implementation has since gained additional release polish such as the product wordmark/icon, theme-source settings, workspace rename, terminal clipboard shortcuts, and README screenshot.
+
 ---
 
 ## 1. Goals and non-goals
@@ -20,8 +22,8 @@
 - No git branch / git status in the status bar (requires plumbing in `forktty-core` outside this scope).
 - No running-command or exit-code indicators.
 - No redesign of command palette, worktree dialog, or notification panel internals (only token alignment).
-- No light theme work. The app stays dark; tokens are restructured so light is possible later but not delivered now.
-- No new keyboard shortcuts beyond Ctrl+B.
+- No full theme customization in this scope. Basic Auto/Light/Dark theme-source selection landed later.
+- No new keyboard shortcuts beyond Ctrl+B in this scope.
 - No animation beyond fade transitions on color/opacity.
 
 ---

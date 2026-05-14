@@ -4,6 +4,17 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- Added a README screenshot of the GTK/VTE app running on Ubuntu.
+
+### Changed
+- Removed the Ubuntu Docker development wrapper from the main workflow; native dependency installation and CI remain the supported build paths.
+- Updated README release links to point directly at the current prerelease.
+
+### Fixed
+- Added GTK actions for terminal copy/paste so `Ctrl+Shift+C` and `Ctrl+Shift+V` target the focused VTE pane.
+- Moved terminal context menus out of clipped pane widgets so right-click paste remains reachable in heavily split layouts.
+
 ## [0.2.0-alpha.1] - 2026-05-14
 
 ### Architecture
@@ -32,7 +43,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Tooling
 - Replaced Vitest/Vite frontend checks with Node built-in CLI tests.
-- Updated CI, dependency review, security audit, Docker dev image, desktop entry validation, and Debian packaging for the Rust GTK/VTE stack.
+- Updated CI, dependency review, security audit, desktop entry validation, and Debian packaging for the Rust GTK/VTE stack.
 - Debian prerelease package versions now use Debian ordering (`0.2.0~alpha.1`) while Cargo and GitHub use SemVer (`0.2.0-alpha.1`).
 
 ### Known Limitations
