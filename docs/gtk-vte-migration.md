@@ -71,6 +71,8 @@ Tauri/React implementation.
   implementations. The notification panel can clear unread/attention state, and
   settings persist shell, font size, notification command, worktree layout,
   window mode, and notification preferences through `forktty-core` config.
+- VTE terminal widgets apply the configured terminal font family and size when
+  they spawn; empty font family falls back to `monospace`.
 - The GTK command palette can create a plain workspace, close the active pane,
   or close the active workspace while preserving a replacement workspace/surface
   when needed.

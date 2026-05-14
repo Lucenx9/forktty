@@ -199,6 +199,7 @@ impl VteController {
         }
         match spawn_vte_terminal(&request) {
             Ok(widget) => {
+                apply_vte_font(&widget);
                 attach_vte_signal_handlers(&widget, &self.model, &request);
                 widget.grab_focus();
                 self.container.append(&widget);
@@ -249,6 +250,22 @@ impl VteController {
             }
         }
     }
+}
+
+fn apply_vte_font(widget: &VteTerminalWidget) {
+    let config = config::load_config().unwrap_or_default();
+    let font = terminal_font_description(&config);
+    widget.set_font(Some(&font));
+}
+
+fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDescription {
+    let family = config.appearance.font_family.trim();
+    let family = if family.is_empty() {
+        "monospace"
+    } else {
+        family
+    };
+    gtk::pango::FontDescription::from_string(&format!("{} {}", family, config.appearance.font_size))
 }
 
 fn attach_vte_signal_handlers(
@@ -1606,6 +1623,10 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
         .text(&loaded.general.shell)
         .hexpand(true)
         .build();
+    let font_family = gtk::Entry::builder()
+        .text(&loaded.appearance.font_family)
+        .hexpand(true)
+        .build();
     let font_size = gtk::SpinButton::with_range(8.0, 64.0, 1.0);
     font_size.set_value(f64::from(loaded.appearance.font_size));
     let notification_command = gtk::Entry::builder()
@@ -1646,24 +1667,27 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow) {
         .build();
     grid.attach(&gtk::Label::new(Some("Shell")), 0, 0, 1, 1);
     grid.attach(&shell_entry, 1, 0, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Font size")), 0, 1, 1, 1);
-    grid.attach(&font_size, 1, 1, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Notification command")), 0, 2, 1, 1);
-    grid.attach(&notification_command, 1, 2, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Worktree layout")), 0, 3, 1, 1);
-    grid.attach(&worktree_layout, 1, 3, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Window mode")), 0, 4, 1, 1);
-    grid.attach(&window_mode, 1, 4, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Desktop notifications")), 0, 5, 1, 1);
-    grid.attach(&desktop_notifications, 1, 5, 1, 1);
-    grid.attach(&gtk::Label::new(Some("Notification sound")), 0, 6, 1, 1);
-    grid.attach(&notification_sound, 1, 6, 1, 1);
-    grid.attach(&save, 1, 7, 1, 1);
-    grid.attach(&status, 0, 8, 2, 1);
+    grid.attach(&gtk::Label::new(Some("Font family")), 0, 1, 1, 1);
+    grid.attach(&font_family, 1, 1, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Font size")), 0, 2, 1, 1);
+    grid.attach(&font_size, 1, 2, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Notification command")), 0, 3, 1, 1);
+    grid.attach(&notification_command, 1, 3, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Worktree layout")), 0, 4, 1, 1);
+    grid.attach(&worktree_layout, 1, 4, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Window mode")), 0, 5, 1, 1);
+    grid.attach(&window_mode, 1, 5, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Desktop notifications")), 0, 6, 1, 1);
+    grid.attach(&desktop_notifications, 1, 6, 1, 1);
+    grid.attach(&gtk::Label::new(Some("Notification sound")), 0, 7, 1, 1);
+    grid.attach(&notification_sound, 1, 7, 1, 1);
+    grid.attach(&save, 1, 8, 1, 1);
+    grid.attach(&status, 0, 9, 2, 1);
 
     save.connect_clicked(move |_| {
         let mut next = config::load_config().unwrap_or_default();
         next.general.shell = shell_entry.text().to_string();
+        next.appearance.font_family = font_family.text().to_string();
         next.appearance.font_size = font_size.value() as u16;
         next.general.notification_command = notification_command.text().to_string();
         if let Some(layout) = worktree_layout.active_id() {
@@ -1840,6 +1864,18 @@ mod tests {
         config.general.shell = "/bin/zsh".to_string();
 
         assert_eq!(configured_shell(&config), "/bin/zsh");
+    }
+
+    #[test]
+    fn builds_terminal_font_description_from_config() {
+        let mut config = config::AppConfig::default();
+        config.appearance.font_family = "JetBrains Mono".to_string();
+        config.appearance.font_size = 16;
+
+        let description = terminal_font_description(&config);
+
+        assert!(description.to_string().contains("JetBrains Mono"));
+        assert!(description.to_string().contains("16"));
     }
 
     #[test]
