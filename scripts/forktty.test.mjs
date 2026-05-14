@@ -77,6 +77,14 @@ describe("forktty CLI helpers", () => {
 
     expect(actions).toEqual([
       {
+        method: "metadata.log",
+        params: {
+          workspace_id: "ws-1",
+          level: "warn",
+          message: "Review needed",
+        },
+      },
+      {
         method: "metadata.set_status",
         params: {
           workspace_id: "ws-1",
@@ -107,6 +115,14 @@ describe("forktty CLI helpers", () => {
     );
 
     expect(actions).toEqual([
+      {
+        method: "metadata.log",
+        params: {
+          workspace_id: "ws-2",
+          level: "info",
+          message: "Gemini session ended",
+        },
+      },
       {
         method: "metadata.clear_status",
         params: {

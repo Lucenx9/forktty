@@ -1223,10 +1223,19 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
   const target = workspaceId ? { workspace_id: workspaceId } : {};
   const key = `agent:${agent}`;
   const message = extractHookMessage(payload);
+  const log = (level, logMessage) => ({
+    method: "metadata.log",
+    params: {
+      ...target,
+      level,
+      message: logMessage,
+    },
+  });
 
   switch (eventName) {
     case "session-start":
       return [
+        log("info", `${spec.label} session started`),
         {
           method: "metadata.set_status",
           params: {
@@ -1240,6 +1249,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "prompt-submit":
       return [
+        log("info", `${spec.label} prompt submitted`),
         {
           method: "metadata.set_status",
           params: {
@@ -1253,6 +1263,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "notification":
       return [
+        log("warn", message || `${spec.label} requested attention`),
         {
           method: "metadata.set_status",
           params: {
@@ -1275,6 +1286,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "stop-failure":
       return [
+        log("error", message || `${spec.label} reported a failure`),
         {
           method: "metadata.set_status",
           params: {
@@ -1297,6 +1309,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "stop":
       return [
+        log("info", message || `${spec.label} stopped`),
         {
           method: "metadata.set_status",
           params: {
@@ -1310,6 +1323,7 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
       ];
     case "session-end":
       return [
+        log("info", `${spec.label} session ended`),
         {
           method: "metadata.clear_status",
           params: {
