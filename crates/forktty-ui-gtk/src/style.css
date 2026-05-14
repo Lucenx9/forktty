@@ -53,6 +53,7 @@ listview row:focus-visible,
 entry:focus-visible,
 .ft-menu-item:focus-visible,
 .terminal-pane-action:focus-visible,
+.terminal-pane:focus-visible,
 .status-location:focus-visible,
 .app-header-title:focus-visible,
 .sidebar-add:focus-visible {
@@ -519,7 +520,7 @@ popover.ft-context-menu contents {
 }
 
 .app-status-bar {
-  min-height: 25px;
+  min-height: 22px;
   padding: 0 12px;
   background: var(--ft-bg-2);
   border-top: 1px solid var(--ft-border-subtle);
@@ -659,6 +660,10 @@ popover.ft-workspace-popover contents {
   box-shadow: inset 0 1px 0 alpha(var(--ft-accent), 0.24);
 }
 
+.terminal-pane:focus-visible {
+  outline-offset: -2px;
+}
+
 .terminal-pane.needs-attention {
   border-top-color: var(--ft-warning);
 }
@@ -716,7 +721,8 @@ popover.ft-workspace-popover contents {
 }
 
 .terminal-pane-actions.revealed,
-.terminal-pane-actions.focus-revealed {
+.terminal-pane-actions.focus-revealed,
+.terminal-pane-actions:focus-within {
   opacity: 1;
 }
 

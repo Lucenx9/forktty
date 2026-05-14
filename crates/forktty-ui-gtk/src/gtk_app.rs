@@ -604,7 +604,6 @@ fn build_pane_chrome(
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     actions.add_css_class("terminal-pane-actions");
-    actions.set_sensitive(false);
     let split_h = pane_action_button("view-dual-symbolic", "Split Right (Ctrl+Shift+H)");
     let split_v = pane_action_button(
         "view-paged-symbolic",
@@ -684,28 +683,17 @@ fn build_pane_chrome(
         close.set_sensitive(false);
     }
 
-    let actions_hovered = Rc::new(Cell::new(false));
-    let actions_focused = Rc::new(Cell::new(false));
     let motion = gtk::EventControllerMotion::new();
     {
         let actions_for_enter = actions.clone();
-        let actions_hovered = actions_hovered.clone();
         motion.connect_enter(move |_, _, _| {
-            actions_hovered.set(true);
-            actions_for_enter.set_sensitive(true);
             actions_for_enter.add_css_class("revealed");
         });
     }
     {
         let actions_for_leave = actions.clone();
-        let actions_hovered = actions_hovered.clone();
-        let actions_focused = actions_focused.clone();
         motion.connect_leave(move |_| {
-            actions_hovered.set(false);
             actions_for_leave.remove_css_class("revealed");
-            if !actions_focused.get() {
-                actions_for_leave.set_sensitive(false);
-            }
         });
     }
     header.add_controller(motion);
@@ -713,23 +701,14 @@ fn build_pane_chrome(
     let focus = gtk::EventControllerFocus::new();
     {
         let actions_for_focus = actions.clone();
-        let actions_focused = actions_focused.clone();
         focus.connect_enter(move |_| {
-            actions_focused.set(true);
-            actions_for_focus.set_sensitive(true);
             actions_for_focus.add_css_class("focus-revealed");
         });
     }
     {
         let actions_for_focus = actions.clone();
-        let actions_hovered = actions_hovered.clone();
-        let actions_focused = actions_focused.clone();
         focus.connect_leave(move |_| {
-            actions_focused.set(false);
             actions_for_focus.remove_css_class("focus-revealed");
-            if !actions_hovered.get() {
-                actions_for_focus.set_sensitive(false);
-            }
         });
     }
     actions.add_controller(focus);
@@ -2419,10 +2398,7 @@ fn surface_placeholder_details(
             return SurfacePlaceholderDetails {
                 icon_name: "dialog-error-symbolic",
                 title: "Terminal Failed to Start",
-                description: format!(
-                    "{}. Check the shell/settings, then restart this pane.",
-                    truncate_single_line(&status.value, 180)
-                ),
+                description: terminal_failure_guidance(&status.value),
                 can_restart: true,
             };
         }
@@ -2449,10 +2425,28 @@ fn surface_placeholder_details(
 
     SurfacePlaceholderDetails {
         icon_name: "utilities-terminal-symbolic",
-        title: "Terminal Pending",
-        description: format!("Surface {surface_id} has not spawned yet."),
+        title: "Terminal Waiting to Start",
+        description: format!(
+            "This pane is waiting for its terminal process. Restart the pane if it stays here. Diagnostic ID: {surface_id}."
+        ),
         can_restart: true,
     }
+}
+
+fn terminal_failure_guidance(message: &str) -> String {
+    let summary = truncate_single_line(message, 180);
+    let lower = message.to_ascii_lowercase();
+    let hint = if lower.contains("no such file or directory")
+        || lower.contains("not found")
+        || lower.contains("permission denied")
+    {
+        "Check the shell path and permissions in Settings, then restart this pane."
+    } else if lower.contains("vte") || lower.contains("pty") {
+        "The VTE/PTY backend failed. Restart this pane after checking the terminal backend."
+    } else {
+        "Check Settings, then restart this pane."
+    };
+    format!("{summary}. {hint}")
 }
 
 fn compact_status_page(icon_name: &str, title: &str, description: &str) -> adw::StatusPage {
@@ -2502,6 +2496,7 @@ fn install_gtk_runtime_defaults() {
 }
 
 fn build_ui(app: &adw::Application) {
+    register_app_icon();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let (app_config, config_load_warning) = match config::load_config() {
         Ok(config) => (config, None),
@@ -2675,6 +2670,7 @@ fn build_ui(app: &adw::Application) {
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
+        .icon_name("forktty")
         .title(if quake_mode {
             "ForkTTY Quake"
         } else {
@@ -3021,6 +3017,22 @@ fn restore_or_bootstrap_workspaces(state: &SocketAppState, cwd: PathBuf) -> Resu
     }
 }
 
+fn register_app_icon() {
+    gtk::Window::set_default_icon_name("forktty");
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let icon_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("packaging")
+        .join("linux")
+        .join("icons");
+    if icon_dir.is_dir() {
+        gtk::IconTheme::for_display(&display).add_search_path(icon_dir);
+    }
+}
+
 fn save_session_from_state(state: &SocketAppState) {
     let data = match state.model.lock() {
         Ok(mut model) => {
@@ -3339,7 +3351,7 @@ fn refresh_sidebar(
     if let Some(name) = snapshot.active_workspace_name.as_deref() {
         ui.workspace_title.set_label(name);
         ui.workspace_title
-            .set_tooltip_text(Some("Switch workspace"));
+            .set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
         set_accessible_button_text(
             &ui.workspace_title,
             &format!("Active workspace: {name}"),
@@ -4278,9 +4290,7 @@ fn show_workspace_popover<W: IsA<gtk::Widget>>(
 
             let check = gtk::Image::from_icon_name("emblem-ok-symbolic");
             check.add_css_class("ft-workspace-popover-check");
-            if !is_active {
-                check.set_opacity(0.0);
-            }
+            check.set_visible(is_active);
             inner.append(&check);
 
             let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -4455,6 +4465,20 @@ fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
     dialog.present();
 }
 
+fn show_about_dialog(parent: &adw::ApplicationWindow) {
+    let dialog = gtk::AboutDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .program_name("ForkTTY")
+        .version(env!("CARGO_PKG_VERSION"))
+        .comments("Native GTK/VTE workspace terminal for panes, worktrees and socket automation.")
+        .website("https://github.com/Lucenx9/forktty")
+        .website_label("GitHub Repository")
+        .logo_icon_name("forktty")
+        .build();
+    dialog.present();
+}
+
 fn append_shortcut_group(container: &gtk::Box, title: &str, shortcuts: &[(&str, &str)]) {
     let title = gtk::Label::builder().label(title).xalign(0.0).build();
     title.add_css_class("ft-section-title");
@@ -4608,12 +4632,15 @@ fn show_command_palette_with_query(
             dialog.close();
         }
     });
-    command!("Close Pane", Some("Ctrl+Shift+W"), {
+    command!("Close Pane...", Some("Ctrl+Shift+W"), {
         let state = state.clone();
+        let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
-            close_active_surface(&state);
             dialog.close();
+            if let Some(surface_id) = focused_surface_id(&state) {
+                show_close_pane_confirmation(&parent, &state, &surface_id);
+            }
         }
     });
     command!("Focus Previous Pane", Some("Ctrl+Alt+Left"), {
@@ -4665,12 +4692,12 @@ fn show_command_palette_with_query(
             );
         }
     });
-    command!("Send Test Notification", None, {
-        let state = state.clone();
+    command!("About ForkTTY", None, {
+        let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
-            create_local_notification(&state, "ForkTTY", "Command Palette notification");
             dialog.close();
+            show_about_dialog(&parent);
         }
     });
 
@@ -5766,6 +5793,11 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         &loaded.appearance.sidebar_position,
     );
     sidebar_position.set_tooltip_text(Some("Side of the window where the workspace list appears"));
+    let sidebar_visible = gtk::Switch::builder()
+        .active(loaded.appearance.sidebar_visible)
+        .tooltip_text("Show the workspace sidebar on startup")
+        .valign(gtk::Align::Center)
+        .build();
     let desktop_notifications = gtk::Switch::builder()
         .active(loaded.notifications.desktop)
         .tooltip_text("Forward ForkTTY notifications to the system notification daemon")
@@ -5927,6 +5959,13 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         240,
         false,
     ));
+    appearance_rows.append(&settings_row(
+        "Sidebar visible",
+        "Show the workspace sidebar by default. You can still toggle it with Ctrl+B or F9.",
+        &sidebar_visible,
+        0,
+        false,
+    ));
     body.append(&appearance_group);
 
     let notification_group = settings_group("Notifications");
@@ -6014,6 +6053,10 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         let mark_dirty = mark_dirty.clone();
         move |_| mark_dirty()
     });
+    sidebar_visible.connect_active_notify({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
     desktop_notifications.connect_active_notify({
         let mark_dirty = mark_dirty.clone();
         move |_| mark_dirty()
@@ -6032,32 +6075,30 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         let worktree_layout = worktree_layout.clone();
         let window_mode = window_mode.clone();
         let sidebar_position = sidebar_position.clone();
+        let sidebar_visible = sidebar_visible.clone();
         let desktop_notifications = desktop_notifications.clone();
         let notification_sound = notification_sound.clone();
         let status = status.clone();
         let save = save.clone();
-        let on_apply = on_apply.clone();
         reset.connect_clicked(move |_| {
             let defaults = config::AppConfig::default();
-            match config::save_config(&defaults) {
-                Ok(()) => {
-                    shell_entry.set_text(&defaults.general.shell);
-                    let _ = font_family.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
-                    font_size.set_value(f64::from(defaults.appearance.font_size));
-                    notification_command.set_text(&defaults.general.notification_command);
-                    let _ = theme_source.set_active_id(Some(&defaults.general.theme_source));
-                    let _ = worktree_layout.set_active_id(Some(&defaults.general.worktree_layout));
-                    let _ = window_mode.set_active_id(Some(&defaults.appearance.window_mode));
-                    let _ =
-                        sidebar_position.set_active_id(Some(&defaults.appearance.sidebar_position));
-                    desktop_notifications.set_active(defaults.notifications.desktop);
-                    notification_sound.set_active(defaults.notifications.sound);
-                    on_apply(&defaults);
-                    save.set_sensitive(false);
-                    set_status_message(&status, "Defaults restored.", StatusKind::Success);
-                }
-                Err(err) => set_status_message(&status, &err.to_string(), StatusKind::Error),
-            }
+            shell_entry.set_text(&defaults.general.shell);
+            let _ = font_family.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
+            font_size.set_value(f64::from(defaults.appearance.font_size));
+            notification_command.set_text(&defaults.general.notification_command);
+            let _ = theme_source.set_active_id(Some(&defaults.general.theme_source));
+            let _ = worktree_layout.set_active_id(Some(&defaults.general.worktree_layout));
+            let _ = window_mode.set_active_id(Some(&defaults.appearance.window_mode));
+            let _ = sidebar_position.set_active_id(Some(&defaults.appearance.sidebar_position));
+            sidebar_visible.set_active(defaults.appearance.sidebar_visible);
+            desktop_notifications.set_active(defaults.notifications.desktop);
+            notification_sound.set_active(defaults.notifications.sound);
+            save.set_sensitive(true);
+            set_status_message(
+                &status,
+                "Defaults staged. Save to apply them.",
+                StatusKind::Success,
+            );
         });
     }
 
@@ -6091,6 +6132,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         if let Some(position) = sidebar_position.active_id() {
             next.appearance.sidebar_position = position.to_string();
         }
+        next.appearance.sidebar_visible = sidebar_visible.is_active();
         next.notifications.desktop = desktop_notifications.is_active();
         next.notifications.sound = notification_sound.is_active();
         match config::save_config(&next) {
