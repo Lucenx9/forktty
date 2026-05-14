@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -245,11 +245,60 @@ impl WorkspaceModel {
     }
 
     pub fn to_session_data(&self) -> SessionData {
+        let mut workspaces = self.list_workspaces();
+        for workspace in &mut workspaces {
+            normalize_workspace_focus(workspace);
+        }
         SessionData {
             version: SESSION_FORMAT_VERSION,
-            workspaces: self.list_workspaces(),
+            workspaces,
             active_workspace_id: self.active_workspace_id(),
         }
+    }
+
+    pub fn repair_session_invariants(&mut self) -> bool {
+        let mut changed = false;
+        let mut valid_surface_ids = BTreeSet::new();
+        let workspace_ids = self.workspace_order.clone();
+
+        for workspace_id in workspace_ids {
+            let Some(workspace) = self.workspaces.get_mut(&workspace_id) else {
+                continue;
+            };
+            let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
+            for surface_id in &leaf_ids {
+                valid_surface_ids.insert(surface_id.clone());
+            }
+            if !leaf_ids.contains(&workspace.focused_surface_id) {
+                if let Some(first_leaf) = leaf_ids.first() {
+                    workspace.focused_surface_id = first_leaf.clone();
+                    changed = true;
+                }
+            }
+            for surface_id in leaf_ids {
+                if !self.surfaces.contains_key(&surface_id) {
+                    self.surfaces.insert(
+                        surface_id.clone(),
+                        Surface {
+                            id: surface_id,
+                            workspace_id: workspace.id.clone(),
+                            cwd: workspace.working_dir.clone(),
+                            title: String::from("shell"),
+                            unread: false,
+                            needs_attention: false,
+                        },
+                    );
+                    changed = true;
+                }
+            }
+        }
+
+        let before = self.surfaces.len();
+        self.surfaces.retain(|surface_id, surface| {
+            valid_surface_ids.contains(surface_id)
+                && self.workspaces.contains_key(&surface.workspace_id)
+        });
+        changed || self.surfaces.len() != before
     }
 
     pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
@@ -368,6 +417,9 @@ impl WorkspaceModel {
         let Some(workspace) = self.workspaces.get_mut(&surface.workspace_id) else {
             return false;
         };
+        if !leaf_surface_ids(&workspace.pane_tree).contains(&surface_id.to_string()) {
+            return false;
+        }
         workspace.focused_surface_id = surface_id.to_string();
         true
     }
@@ -828,6 +880,15 @@ fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
     }
 }
 
+fn normalize_workspace_focus(workspace: &mut Workspace) {
+    let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
+    if !leaf_ids.contains(&workspace.focused_surface_id) {
+        if let Some(first_leaf) = leaf_ids.first() {
+            workspace.focused_surface_id = first_leaf.clone();
+        }
+    }
+}
+
 fn leaf_surface_ids(node: &PaneNode) -> Vec<SurfaceId> {
     let mut ids = Vec::new();
     collect_leaf_surface_ids(node, &mut ids);
@@ -884,6 +945,43 @@ mod tests {
         assert_eq!(workspace.focused_surface_id, new_surface.id);
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
         assert!(matches!(workspace.pane_tree, PaneNode::Split { .. }));
+    }
+
+    #[test]
+    fn focus_surface_rejects_surface_outside_workspace_pane_tree() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let first = workspace.focused_surface_id;
+        model.workspaces.get_mut(&workspace.id).unwrap().pane_tree =
+            PaneNode::Leaf { surface_id: first };
+
+        assert!(!model.focus_surface(&second.id));
+    }
+
+    #[test]
+    fn repair_session_invariants_restores_missing_focus() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let first = workspace.focused_surface_id;
+        {
+            let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
+            workspace.pane_tree = PaneNode::Leaf {
+                surface_id: first.clone(),
+            };
+            workspace.focused_surface_id = second.id.clone();
+        }
+
+        assert!(model.repair_session_invariants());
+        let repaired = model.list_workspaces().remove(0);
+        assert_eq!(repaired.focused_surface_id, first);
+        assert!(model.surface(&second.id).is_none());
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]

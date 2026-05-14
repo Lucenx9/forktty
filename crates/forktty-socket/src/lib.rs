@@ -2,7 +2,7 @@ use forktty_core::{
     config, dispatch_notification, worktree, JsonRpcRequest, JsonRpcResponse, LogLevel,
     NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
 };
-use forktty_terminal::{SharedTerminalBackend, SpawnRequest};
+use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
 use std::fs::{self, DirBuilder};
 use std::io;
@@ -140,24 +140,18 @@ pub async fn dispatch(
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("workspace");
             let cwd = resolve_workspace_cwd_param(&params)?;
-            let workspace = {
+            let (workspace, previous_active_id) = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.create_workspace(name, cwd)
+                let previous_active_id = model.active_workspace_id();
+                (model.create_workspace(name, cwd), previous_active_id)
             };
-            state
-                .terminal
-                .spawn(SpawnRequest {
-                    surface_id: workspace.focused_surface_id.clone(),
-                    workspace_id: workspace.id.clone(),
-                    shell: state.shell.clone(),
-                    cwd: workspace.working_dir.clone(),
-                    socket_path: state.socket_path.clone(),
-                    extra_env: Vec::new(),
-                })
-                .map_err(|err| err.to_string())?;
+            if let Err(err) = spawn_workspace_terminal(state, &workspace) {
+                rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
+                return Err(err);
+            }
             Ok(json!(workspace))
         }
         "workspace.select" => {
@@ -372,17 +366,10 @@ pub async fn dispatch(
                     .split_surface(surface_id, axis)
                     .ok_or_else(|| "Surface not found".to_string())?
             };
-            state
-                .terminal
-                .spawn(SpawnRequest {
-                    surface_id: surface.id.clone(),
-                    workspace_id: surface.workspace_id.clone(),
-                    shell: state.shell.clone(),
-                    cwd: surface.cwd.clone(),
-                    socket_path: state.socket_path.clone(),
-                    extra_env: Vec::new(),
-                })
-                .map_err(|err| err.to_string())?;
+            if let Err(err) = spawn_surface_terminal(state, &surface) {
+                rollback_surface_creation(state, &surface.id)?;
+                return Err(err);
+            }
             Ok(json!(surface))
         }
         "surface.focus" => {
@@ -410,6 +397,16 @@ pub async fn dispatch(
                 .or_else(|| params.get("surfaceId"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing surface_id".to_string())?;
+            {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                if model.surface(surface_id).is_none() {
+                    return Err("Surface not found".to_string());
+                }
+            }
+            close_terminal_surface_if_present(state, surface_id)?;
             let surface = {
                 let mut model = state
                     .model
@@ -419,10 +416,6 @@ pub async fn dispatch(
                     .close_surface(surface_id)
                     .ok_or_else(|| "Surface not found".to_string())?
             };
-            state
-                .terminal
-                .close(surface_id)
-                .map_err(|err| err.to_string())?;
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(surface))
         }
@@ -645,18 +638,33 @@ async fn open_worktree_workspace(
     state: &SocketAppState,
     info: &worktree::WorktreeInfo,
 ) -> Result<forktty_core::Workspace, String> {
-    let workspace = {
+    let (workspace, previous_active_id) = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model.create_worktree_workspace(
-            &info.branch,
-            PathBuf::from(&info.path),
-            &info.branch,
-            &info.worktree_name,
+        let previous_active_id = model.active_workspace_id();
+        (
+            model.create_worktree_workspace(
+                &info.branch,
+                PathBuf::from(&info.path),
+                &info.branch,
+                &info.worktree_name,
+            ),
+            previous_active_id,
         )
     };
+    if let Err(err) = spawn_workspace_terminal(state, &workspace) {
+        rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
+        return Err(err);
+    }
+    Ok(workspace)
+}
+
+fn spawn_workspace_terminal(
+    state: &SocketAppState,
+    workspace: &forktty_core::Workspace,
+) -> Result<(), String> {
     state
         .terminal
         .spawn(SpawnRequest {
@@ -667,8 +675,59 @@ async fn open_worktree_workspace(
             socket_path: state.socket_path.clone(),
             extra_env: Vec::new(),
         })
-        .map_err(|err| err.to_string())?;
-    Ok(workspace)
+        .map_err(|err| err.to_string())
+}
+
+fn spawn_surface_terminal(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+) -> Result<(), String> {
+    state
+        .terminal
+        .spawn(SpawnRequest {
+            surface_id: surface.id.clone(),
+            workspace_id: surface.workspace_id.clone(),
+            shell: state.shell.clone(),
+            cwd: surface.cwd.clone(),
+            socket_path: state.socket_path.clone(),
+            extra_env: Vec::new(),
+        })
+        .map_err(|err| err.to_string())
+}
+
+fn close_terminal_surface_if_present(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), String> {
+    match state.terminal.close(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn rollback_workspace_creation(
+    state: &SocketAppState,
+    workspace_id: &str,
+    previous_active_id: Option<String>,
+) -> Result<(), String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let _ = model.close_workspace(WorkspaceSelector::Id(workspace_id));
+    if let Some(previous_active_id) = previous_active_id {
+        let _ = model.select_workspace(WorkspaceSelector::Id(&previous_active_id));
+    }
+    Ok(())
+}
+
+fn rollback_surface_creation(state: &SocketAppState, surface_id: &str) -> Result<(), String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let _ = model.close_surface(surface_id);
+    Ok(())
 }
 
 async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<(), String> {
@@ -686,6 +745,15 @@ async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<
     let Some(workspace) = workspace else {
         return Ok(());
     };
+    if state
+        .terminal
+        .surfaces()
+        .map_err(|err| err.to_string())?
+        .iter()
+        .any(|surface| surface.surface_id == workspace.focused_surface_id)
+    {
+        return Ok(());
+    }
     state
         .terminal
         .spawn(SpawnRequest {
@@ -1131,10 +1199,13 @@ fn effective_uid() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forktty_terminal::{HeadlessTerminalBackend, TerminalBackend};
+    use forktty_terminal::{
+        HeadlessTerminalBackend, TerminalBackend, TerminalError, TerminalSurfaceState,
+    };
     use git2::Repository;
+    use std::collections::BTreeMap;
     use std::fs;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tokio::io::BufReader;
 
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
@@ -1149,6 +1220,78 @@ mod tests {
         .with_notification_dispatch(false);
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingSpawnBackend;
+
+    impl TerminalBackend for FailingSpawnBackend {
+        fn spawn(&self, _request: SpawnRequest) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("spawn failed".to_string()))
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("send failed".to_string()))
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("resize failed".to_string()))
+        }
+
+        fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("close failed".to_string()))
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingCloseBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+    }
+
+    impl TerminalBackend for FailingCloseBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("close failed".to_string()))
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
+        }
     }
 
     fn make_temp_repo() -> tempfile::TempDir {
@@ -1365,6 +1508,140 @@ mod tests {
             backend.sent_text(feature_surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn workspace_create_rolls_back_model_when_spawn_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+        let state = SocketAppState::new(
+            model,
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "failed", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("spawn failed"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["name"], "main");
+        assert_eq!(workspaces[0]["active"], true);
+    }
+
+    #[tokio::test]
+    async fn surface_split_rolls_back_model_when_spawn_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+        let state = SocketAppState::new(
+            model,
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let error = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("spawn failed"));
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn surface_close_keeps_model_when_backend_close_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(FailingCloseBackend::default());
+        let state = SocketAppState::new(
+            model,
+            backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("close failed"));
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+        assert_eq!(surfaces[0]["id"], surface_id);
+    }
+
+    #[tokio::test]
+    async fn surface_close_removes_model_surface_when_backend_already_missing() {
+        let (state, backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        backend.close(surface_id).unwrap();
+
+        dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+            .await
+            .unwrap();
+
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+        assert_ne!(surfaces[0]["id"], surface_id);
+        assert!(backend.sent_text(surface_id).is_err());
+        assert!(backend
+            .sent_text(surfaces[0]["id"].as_str().unwrap())
+            .is_ok());
     }
 
     #[tokio::test]

@@ -167,6 +167,7 @@ impl TerminalBackend for GtkVteBackend {
 struct PaneChrome {
     pane: gtk::Box,
     header: gtk::Box,
+    focus_marker: gtk::Box,
     title: gtk::Label,
     cwd: gtk::Label,
     attention_dot: gtk::Box,
@@ -183,6 +184,7 @@ struct SidebarSnapshot {
     rows: Vec<SidebarWorkspaceRow>,
     active_workspace_name: Option<String>,
     active_status_label: Option<String>,
+    active_pane_label: Option<String>,
     signature: String,
 }
 
@@ -191,7 +193,9 @@ struct SidebarUi {
     sidebar: gtk::ListBox,
     parent_window: adw::ApplicationWindow,
     workspace_title: gtk::Button,
+    workspace_title_label: gtk::Label,
     status_location: gtk::Button,
+    pane_status: gtk::Label,
     last_signature: Rc<RefCell<Option<String>>>,
     context_menu_open: Rc<Cell<bool>>,
     context_popover: Rc<RefCell<Option<gtk::Popover>>>,
@@ -208,6 +212,7 @@ struct VteController {
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeSet<String>,
     last_layout_signature: Option<String>,
+    maximized_pane: bool,
 }
 
 impl VteController {
@@ -220,6 +225,7 @@ impl VteController {
             chromes: BTreeMap::new(),
             pending_spawns: BTreeSet::new(),
             last_layout_signature: None,
+            maximized_pane: false,
         }
     }
 
@@ -298,11 +304,11 @@ impl VteController {
 
     fn rebuild_layout(&mut self) {
         self.spawn_active_surfaces_if_needed();
-        while let Some(child) = self.container.first_child() {
-            self.container.remove(&child);
-        }
         for chrome in self.chromes.values() {
             detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
+        }
+        while let Some(child) = self.container.first_child() {
+            self.container.remove(&child);
         }
 
         let Some((signature, pane_tree, focused_surface_id, workspace_id)) =
@@ -311,8 +317,15 @@ impl VteController {
             self.last_layout_signature = None;
             return;
         };
-        let widget = self.widget_for_pane(&pane_tree, &workspace_id);
-        let single_pane = collect_leaves(&pane_tree).len() == 1;
+        let visible_tree = if self.maximized_pane {
+            PaneNode::Leaf {
+                surface_id: focused_surface_id.clone(),
+            }
+        } else {
+            pane_tree
+        };
+        let widget = self.widget_for_pane(&visible_tree, &workspace_id);
+        let single_pane = collect_leaves(&visible_tree).len() == 1;
         for chrome in self.chromes.values() {
             chrome.header.set_visible(!single_pane);
         }
@@ -321,6 +334,12 @@ impl VteController {
             widget.grab_focus();
         }
         self.last_layout_signature = Some(signature);
+    }
+
+    fn toggle_maximized_pane(&mut self) {
+        self.maximized_pane = !self.maximized_pane;
+        self.last_layout_signature = None;
+        self.rebuild_layout();
     }
 
     fn ensure_layout_current(&mut self) {
@@ -507,6 +526,11 @@ fn build_pane_chrome(
     attention_dot.set_size_request(6, 6);
     attention_dot.set_valign(gtk::Align::Center);
     attention_dot.set_visible(false);
+    let focus_marker = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    focus_marker.add_css_class("pane-focus-marker");
+    focus_marker.set_size_request(8, 8);
+    focus_marker.set_valign(gtk::Align::Center);
+    focus_marker.set_visible(false);
     let title = gtk::Label::builder()
         .label("Terminal")
         .xalign(0.0)
@@ -525,9 +549,9 @@ fn build_pane_chrome(
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     actions.add_css_class("terminal-pane-actions");
     actions.set_sensitive(false);
-    let split_h = pane_action_button("view-dual-symbolic", "Split Horizontally");
-    let split_v = pane_action_button("view-paged-symbolic", "Split Vertically");
-    let close = pane_action_button("window-close-symbolic", "Close Pane");
+    let split_h = pane_action_button("view-dual-symbolic", "Split Horizontally (Ctrl+Shift+H)");
+    let split_v = pane_action_button("view-paged-symbolic", "Split Vertically (Ctrl+Shift+V)");
+    let close = pane_action_button("window-close-symbolic", "Close Pane (Ctrl+Shift+W)");
     actions.append(&split_h);
     actions.append(&split_v);
     actions.append(&close);
@@ -576,6 +600,7 @@ fn build_pane_chrome(
     }
     header.add_controller(motion);
 
+    header.append(&focus_marker);
     header.append(&attention_dot);
     header.append(&title);
     header.append(&cwd);
@@ -586,6 +611,7 @@ fn build_pane_chrome(
     PaneChrome {
         pane,
         header,
+        focus_marker,
         title,
         cwd,
         attention_dot,
@@ -636,6 +662,7 @@ fn update_pane_chrome(chrome: &PaneChrome, surface: &Surface, active: bool) {
         chrome.pane.remove_css_class("needs-attention");
     }
     chrome.attention_dot.set_visible(!active && needs_attention);
+    chrome.focus_marker.set_visible(active);
 }
 
 fn active_layout_snapshot(
@@ -1056,11 +1083,31 @@ fn labeled_icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button
 }
 
+fn apply_dialog_chrome(dialog: &gtk::Window) {
+    let titlebar = gtk::HeaderBar::new();
+    titlebar.set_show_title_buttons(false);
+    titlebar.add_css_class("ft-dialog-titlebar");
+    titlebar.set_title_widget(Some(&gtk::Label::new(None)));
+    let close = gtk::Button::builder()
+        .icon_name("window-close-symbolic")
+        .tooltip_text("Close")
+        .build();
+    close.add_css_class("flat");
+    close.add_css_class("ft-dialog-close");
+    set_accessible_button_text(&close, "Close", Some("Esc"));
+    let dialog_for_close = dialog.clone();
+    close.connect_clicked(move |_| dialog_for_close.close());
+    titlebar.pack_end(&close);
+    dialog.set_titlebar(Some(&titlebar));
+}
+
 fn install_escape_close(window: &gtk::Window) {
     let controller = gtk::EventControllerKey::new();
     let window_for_close = window.clone();
-    controller.connect_key_pressed(move |_, key, _, _| {
-        if key == gtk::gdk::Key::Escape {
+    controller.connect_key_pressed(move |_, key, _, modifiers| {
+        let is_close_shortcut =
+            key == gtk::gdk::Key::w && modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        if key == gtk::gdk::Key::Escape || is_close_shortcut {
             window_for_close.close();
             return glib::Propagation::Stop;
         }
@@ -1699,10 +1746,24 @@ fn build_ui(app: &adw::Application) {
     let (terminal_tx, terminal_rx) = mpsc::channel();
     let backend = Arc::new(GtkVteBackend::new(terminal_tx));
     let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path);
+    let ui_alive = Rc::new(Cell::new(true));
 
     let header = adw::HeaderBar::new();
     header.add_css_class("app-header");
-    let workspace_title = gtk::Button::builder().label("").has_frame(false).build();
+    let workspace_title_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let workspace_title_label = gtk::Label::builder()
+        .label("")
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    workspace_title_label.add_css_class("app-header-title-label");
+    let workspace_title_chevron = gtk::Image::from_icon_name("pan-down-symbolic");
+    workspace_title_chevron.add_css_class("app-header-title-chevron");
+    workspace_title_box.append(&workspace_title_label);
+    workspace_title_box.append(&workspace_title_chevron);
+    let workspace_title = gtk::Button::builder()
+        .child(&workspace_title_box)
+        .has_frame(false)
+        .build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");
     workspace_title.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
@@ -1716,14 +1777,6 @@ fn build_ui(app: &adw::Application) {
     let new_worktree = gtk::Button::builder()
         .icon_name("folder-new-symbolic")
         .tooltip_text("New Worktree")
-        .build();
-    let split_horizontal = gtk::Button::builder()
-        .icon_name("view-dual-symbolic")
-        .tooltip_text("Split Horizontally (Ctrl+Shift+H)")
-        .build();
-    let split_vertical = gtk::Button::builder()
-        .icon_name("view-paged-symbolic")
-        .tooltip_text("Split Vertically (Ctrl+Shift+V)")
         .build();
     let command_palette = gtk::Button::builder()
         .icon_name("system-search-symbolic")
@@ -1740,12 +1793,6 @@ fn build_ui(app: &adw::Application) {
     for (button, label, shortcut) in [
         (&new_workspace, "New Workspace", None),
         (&new_worktree, "New Worktree", None),
-        (
-            &split_horizontal,
-            "Split Horizontally",
-            Some("Ctrl+Shift+H"),
-        ),
-        (&split_vertical, "Split Vertically", Some("Ctrl+Shift+V")),
         (&command_palette, "Command Palette", Some("Ctrl+Shift+P")),
         (&notifications, "Notifications", Some("Ctrl+Shift+M")),
         (&settings, "Settings", Some("Ctrl+,")),
@@ -1755,14 +1802,10 @@ fn build_ui(app: &adw::Application) {
         set_accessible_button_text(button, label, shortcut);
     }
     new_workspace.set_action_name(Some("app.new-workspace"));
-    split_horizontal.set_action_name(Some("app.split-horizontal"));
-    split_vertical.set_action_name(Some("app.split-vertical"));
 
     // Start: workspace-level "create" actions (HIG: new/add at the start).
     header.pack_start(&new_workspace);
     header.pack_start(&new_worktree);
-    header.pack_start(&split_horizontal);
-    header.pack_start(&split_vertical);
     // End: global app tools. Pane-scoped close still lives in each pane's header.
     header.pack_end(&settings);
     header.pack_end(&notifications);
@@ -1838,12 +1881,24 @@ fn build_ui(app: &adw::Application) {
     status_location.set_sensitive(false);
     let status_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     status_spacer.set_hexpand(true);
+    let pane_status = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    pane_status.add_css_class("pane-status");
+    let pane_nav_keycap = gtk::Label::new(Some("Ctrl+Alt+←/→"));
+    pane_nav_keycap.add_css_class("keycap");
+    pane_nav_keycap.add_css_class("monospace");
+    pane_nav_keycap.set_tooltip_text(Some("Focus Previous or Next Pane"));
     let status_keycap = gtk::Label::new(Some("Ctrl+Shift+P"));
     status_keycap.add_css_class("keycap");
     status_keycap.add_css_class("monospace");
     status_keycap.set_tooltip_text(Some("Open the Command Palette"));
     status_bar.append(&status_location);
+    status_bar.append(&pane_status);
     status_bar.append(&status_spacer);
+    status_bar.append(&pane_nav_keycap);
     status_bar.append(&status_keycap);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -1882,38 +1937,50 @@ fn build_ui(app: &adw::Application) {
         );
     }
 
-    {
-        let window_for_click = window.clone();
-        let state_for_click = state.clone();
-        workspace_title.connect_clicked(move |_| {
-            show_workspace_switcher(&window_for_click, &state_for_click);
-        });
-    }
-    {
-        let window_for_click = window.clone();
-        let state_for_click = state.clone();
-        status_location.connect_clicked(move |_| {
-            show_workspace_switcher(&window_for_click, &state_for_click);
-        });
-    }
-
     let controller = Rc::new(RefCell::new(VteController::new(
         terminal_stack.borrow().clone(),
         model.clone(),
     )));
     controller.borrow_mut().attach_state(state.clone());
+
+    {
+        let state_for_click = state.clone();
+        let controller_for_click = controller.clone();
+        let button = workspace_title.clone();
+        workspace_title.connect_clicked(move |_| {
+            show_workspace_popover(&button, &state_for_click, &controller_for_click);
+        });
+    }
+    {
+        let state_for_click = state.clone();
+        let controller_for_click = controller.clone();
+        let button = status_location.clone();
+        status_location.connect_clicked(move |_| {
+            show_workspace_popover(&button, &state_for_click, &controller_for_click);
+        });
+    }
     let sidebar_ui = SidebarUi {
         sidebar: sidebar.clone(),
         parent_window: window.clone(),
         workspace_title: workspace_title.clone(),
+        workspace_title_label: workspace_title_label.clone(),
         status_location: status_location.clone(),
+        pane_status: pane_status.clone(),
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
     };
     let controller_for_timer = controller.clone();
+    let alive_for_terminal_timer = ui_alive.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
-        while let Ok(command) = terminal_rx.try_recv() {
+        if !alive_for_terminal_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        // VTE/GTK on Wayland can become unstable if several terminals are
+        // created and spawned in the same main-loop turn during session restore.
+        // Handle one backend command per frame so restored panes realize
+        // incrementally.
+        if let Ok(command) = terminal_rx.try_recv() {
             controller_for_timer.borrow_mut().handle(command);
         }
         controller_for_timer.borrow_mut().ensure_layout_current();
@@ -1923,7 +1990,11 @@ fn build_ui(app: &adw::Application) {
     let state_for_sidebar = state.clone();
     let controller_for_sidebar = controller.clone();
     let sidebar_ui_for_timer = sidebar_ui.clone();
+    let alive_for_sidebar_timer = ui_alive.clone();
     glib::timeout_add_local(Duration::from_millis(500), move || {
+        if !alive_for_sidebar_timer.get() {
+            return glib::ControlFlow::Break;
+        }
         refresh_sidebar(
             &sidebar_ui_for_timer,
             &state_for_sidebar,
@@ -1934,22 +2005,6 @@ fn build_ui(app: &adw::Application) {
     });
     install_session_autosave(&state);
 
-    if let Err(err) = restore_or_bootstrap_workspaces(&state, cwd) {
-        eprintln!("Failed to restore workspace session: {err}");
-    }
-
-    let palette_parent = window.clone();
-    let palette_state = state.clone();
-    command_palette.connect_clicked(move |_| {
-        show_command_palette(&palette_parent, &palette_state);
-    });
-
-    let notifications_parent = window.clone();
-    let notifications_state = state.clone();
-    notifications.connect_clicked(move |_| {
-        show_notification_panel(&notifications_parent, &notifications_state);
-    });
-
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
     let settings_apply = settings_apply_callback(
         &paned,
@@ -1957,6 +2012,23 @@ fn build_ui(app: &adw::Application) {
         &terminal_stack_for_settings,
         &controller,
     );
+
+    let palette_parent = window.clone();
+    let palette_state = state.clone();
+    let palette_controller = controller.clone();
+    command_palette.connect_clicked(move |_| {
+        show_command_palette_with_controller(
+            &palette_parent,
+            &palette_state,
+            Some(palette_controller.clone()),
+        );
+    });
+
+    let notifications_parent = window.clone();
+    let notifications_state = state.clone();
+    notifications.connect_clicked(move |_| {
+        show_notification_panel(&notifications_parent, &notifications_state);
+    });
 
     let settings_parent = window.clone();
     let settings_apply_for_button = settings_apply.clone();
@@ -1975,6 +2047,7 @@ fn build_ui(app: &adw::Application) {
         &window,
         &state,
         &sidebar_shell,
+        &controller,
         settings_apply,
         quake_mode,
     );
@@ -1982,14 +2055,33 @@ fn build_ui(app: &adw::Application) {
         install_global_quake_shortcut(&window);
     }
     let state_for_close = state.clone();
+    let alive_for_close = ui_alive.clone();
     window.connect_close_request(move |_| {
+        alive_for_close.set(false);
         save_session_from_state(&state_for_close);
         glib::Propagation::Proceed
     });
 
+    window.present();
     start_socket_server(state.clone());
 
-    window.present();
+    let state_for_bootstrap = state.clone();
+    let controller_for_bootstrap = controller.clone();
+    let sidebar_ui_for_bootstrap = sidebar_ui.clone();
+    glib::idle_add_local_once(move || {
+        if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, cwd) {
+            eprintln!("Failed to restore workspace session: {err}");
+        }
+        controller_for_bootstrap
+            .borrow_mut()
+            .ensure_layout_current();
+        refresh_sidebar(
+            &sidebar_ui_for_bootstrap,
+            &state_for_bootstrap,
+            &controller_for_bootstrap,
+            true,
+        );
+    });
 }
 
 fn settings_apply_callback(
@@ -2119,7 +2211,10 @@ fn restore_or_bootstrap_workspaces(state: &SocketAppState, cwd: PathBuf) -> Resu
 
 fn save_session_from_state(state: &SocketAppState) {
     let data = match state.model.lock() {
-        Ok(model) => model.to_session_data(),
+        Ok(mut model) => {
+            let _ = model.repair_session_invariants();
+            model.to_session_data()
+        }
         Err(_) => return,
     };
     if let Err(err) = session::save_session(&data) {
@@ -2132,7 +2227,10 @@ fn install_session_autosave(state: &SocketAppState) {
     let last_saved = Rc::new(RefCell::new(None::<String>));
     glib::timeout_add_local(Duration::from_secs(2), move || {
         let data = match state.model.lock() {
-            Ok(model) => model.to_session_data(),
+            Ok(mut model) => {
+                let _ = model.repair_session_invariants();
+                model.to_session_data()
+            }
             Err(_) => return glib::ControlFlow::Continue,
         };
         let signature = format!("{data:?}");
@@ -2279,6 +2377,7 @@ fn install_actions(
     window: &adw::ApplicationWindow,
     state: &SocketAppState,
     sidebar_shell: &gtk::Box,
+    controller: &Rc<RefCell<VteController>>,
     settings_apply: SettingsApplyCallback,
     quake_mode: bool,
 ) {
@@ -2297,7 +2396,8 @@ fn install_actions(
     add_action(app, "command-palette", {
         let window = window.clone();
         let state = state.clone();
-        move || show_command_palette(&window, &state)
+        let controller = controller.clone();
+        move || show_command_palette_with_controller(&window, &state, Some(controller.clone()))
     });
     add_action(app, "notifications", {
         let window = window.clone();
@@ -2312,6 +2412,26 @@ fn install_actions(
     add_action(app, "close-pane", {
         let state = state.clone();
         move || close_active_surface(&state)
+    });
+    add_action(app, "focus-previous-pane", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            focus_relative_pane(&state, -1);
+            controller.borrow_mut().rebuild_layout();
+        }
+    });
+    add_action(app, "focus-next-pane", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            focus_relative_pane(&state, 1);
+            controller.borrow_mut().rebuild_layout();
+        }
+    });
+    add_action(app, "toggle-maximize-pane", {
+        let controller = controller.clone();
+        move || controller.borrow_mut().toggle_maximized_pane()
     });
     add_action(app, "toggle-sidebar", {
         let sidebar_shell = sidebar_shell.clone();
@@ -2336,9 +2456,12 @@ fn install_actions(
     app.set_accels_for_action("app.split-vertical", &["<Control><Shift>V"]);
     app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
+    app.set_accels_for_action("app.focus-previous-pane", &["<Control><Alt>Left"]);
+    app.set_accels_for_action("app.focus-next-pane", &["<Control><Alt>Right"]);
+    app.set_accels_for_action("app.toggle-maximize-pane", &["<Control><Shift>Return"]);
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
     app.set_accels_for_action("app.settings", &["<Control>comma"]);
-    app.set_accels_for_action("app.toggle-sidebar", &["<Control>b"]);
+    app.set_accels_for_action("app.toggle-sidebar", &["F9", "<Control>b"]);
     if quake_mode {
         app.set_accels_for_action("app.toggle-quake", &["F12"]);
     }
@@ -2362,10 +2485,10 @@ fn refresh_sidebar(
 ) {
     let snapshot = sidebar_snapshot(state);
     if let Some(name) = snapshot.active_workspace_name.as_deref() {
-        ui.workspace_title.set_label(name);
+        ui.workspace_title_label.set_label(name);
         ui.workspace_title.set_sensitive(true);
     } else {
-        ui.workspace_title.set_label("");
+        ui.workspace_title_label.set_label("");
         ui.workspace_title.set_sensitive(false);
     }
     if let Some(label) = snapshot.active_status_label.as_deref() {
@@ -2374,6 +2497,15 @@ fn refresh_sidebar(
     } else {
         ui.status_location.set_label("");
         ui.status_location.set_sensitive(false);
+    }
+    if let Some(label) = snapshot.active_pane_label.as_deref() {
+        ui.pane_status.set_label(label);
+        ui.pane_status.set_tooltip_text(Some(label));
+        ui.pane_status.set_visible(true);
+    } else {
+        ui.pane_status.set_label("");
+        ui.pane_status.set_tooltip_text(None);
+        ui.pane_status.set_visible(false);
     }
 
     if !force {
@@ -2418,10 +2550,6 @@ fn refresh_sidebar(
         let card = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(2)
-            .margin_top(2)
-            .margin_bottom(2)
-            .margin_start(4)
-            .margin_end(4)
             .build();
         card.add_css_class("workspace-card");
 
@@ -2445,9 +2573,13 @@ fn refresh_sidebar(
         top.append(&dot);
         top.append(&name);
         if row_data.surface_count > 1 {
+            let count_icon = gtk::Image::from_icon_name("view-grid-symbolic");
+            count_icon.add_css_class("workspace-count-icon");
+            count_icon.set_tooltip_text(Some(&format!("{} panes", row_data.surface_count)));
             let count_label = gtk::Label::new(Some(&row_data.surface_count.to_string()));
             count_label.add_css_class("workspace-count");
             count_label.set_tooltip_text(Some(&format!("{} panes", row_data.surface_count)));
+            top.append(&count_icon);
             top.append(&count_label);
         }
 
@@ -2567,6 +2699,7 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             rows: Vec::new(),
             active_workspace_name: None,
             active_status_label: None,
+            active_pane_label: None,
             signature: "lock-poisoned".to_string(),
         };
     };
@@ -2598,10 +2731,31 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             .unwrap_or_else(|| compact_path(&workspace.working_dir));
         format!("{} · {}", workspace.name, cwd)
     });
+    let active_pane_label = active_workspace.and_then(|workspace| {
+        let leaves = collect_leaves(&workspace.pane_tree);
+        let pane_count = leaves.len();
+        let index = leaves
+            .iter()
+            .position(|surface_id| surface_id == &workspace.focused_surface_id)?;
+        let title = model
+            .surface(&workspace.focused_surface_id)
+            .map(surface_title)
+            .unwrap_or("Terminal");
+        if pane_count <= 1 {
+            // With a single pane the "Pane 1/1" prefix is noise; the cwd is
+            // already shown in status_location. Only surface a custom title.
+            if title == "Terminal" {
+                return None;
+            }
+            return Some(title.to_string());
+        }
+        Some(format!("Pane {}/{} · {}", index + 1, pane_count, title))
+    });
     let mut signature = format!(
-        "active={:?};status={:?};rows={};",
+        "active={:?};status={:?};pane={:?};rows={};",
         active_workspace_id,
         active_status_label,
+        active_pane_label,
         rows.len()
     );
     for row in &rows {
@@ -2622,6 +2776,7 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         rows,
         active_workspace_name,
         active_status_label,
+        active_pane_label,
         signature,
     }
 }
@@ -2667,6 +2822,32 @@ fn close_sidebar_context_menu(ui: &SidebarUi) {
         }
     }
     ui.context_menu_open.set(false);
+}
+
+fn focus_relative_pane(state: &SocketAppState, delta: isize) -> bool {
+    let mut model = match state.model.lock() {
+        Ok(model) => model,
+        Err(_) => return false,
+    };
+    let Some(workspace) = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.active)
+        .or_else(|| model.list_workspaces().into_iter().next())
+    else {
+        return false;
+    };
+    let leaves = collect_leaves(&workspace.pane_tree);
+    if leaves.len() < 2 {
+        return false;
+    }
+    let current = leaves
+        .iter()
+        .position(|surface_id| surface_id == &workspace.focused_surface_id)
+        .unwrap_or(0);
+    let len = leaves.len() as isize;
+    let next = (current as isize + delta).rem_euclid(len) as usize;
+    model.focus_surface(&leaves[next])
 }
 
 fn format_metadata_summary(
@@ -2729,13 +2910,16 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
         return;
     };
     if let Err(err) = state.terminal.spawn(SpawnRequest {
-        surface_id: surface.id,
-        workspace_id: surface.workspace_id,
+        surface_id: surface.id.clone(),
+        workspace_id: surface.workspace_id.clone(),
         shell: state.shell.clone(),
-        cwd: surface.cwd,
+        cwd: surface.cwd.clone(),
         socket_path: state.socket_path.clone(),
         extra_env: Vec::new(),
     }) {
+        if let Ok(mut model) = state.model.lock() {
+            let _ = model.close_surface(&surface.id);
+        }
         eprintln!("Failed to spawn split terminal: {err}");
     }
 }
@@ -2758,14 +2942,24 @@ fn close_active_surface(state: &SocketAppState) {
     };
 
     {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        if model.surface(&focused).is_none() {
+            return;
+        }
+    }
+    if let Err(err) = state.terminal.close(&focused) {
+        eprintln!("Failed to close terminal surface: {err}");
+        return;
+    }
+    {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
         };
         let _ = model.close_surface(&focused);
-    }
-    if let Err(err) = state.terminal.close(&focused) {
-        eprintln!("Failed to close terminal surface: {err}");
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep focused terminal alive: {err}");
@@ -2805,24 +2999,134 @@ fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), Termina
     })
 }
 
-#[allow(dead_code)] // wired up in later UI polish tasks (titlebar + status bar)
-fn show_workspace_switcher(parent: &adw::ApplicationWindow, state: &SocketAppState) {
-    // "workspace" is a stable substring of the workspace command labels
-    // ("New Workspace", "Close Workspace") emitted by `append_command_row`
-    // below. Setting it as the initial query narrows the palette to workspace
-    // commands without inventing a new mode. (It deliberately excludes
-    // "New Worktree..." whose label uses "worktree".)
-    show_command_palette_with_query(parent, state, "workspace");
+fn show_workspace_popover<W: IsA<gtk::Widget>>(
+    anchor: &W,
+    state: &SocketAppState,
+    controller: &Rc<RefCell<VteController>>,
+) {
+    let popover = gtk::Popover::new();
+    popover.add_css_class("ft-workspace-popover");
+    popover.set_has_arrow(false);
+    popover.set_autohide(true);
+    popover.set_parent(anchor);
+
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    container.add_css_class("ft-workspace-popover-list");
+    container.set_width_request(300);
+
+    let (active_id, workspaces) = {
+        let Ok(model) = state.model.lock() else {
+            return;
+        };
+        (model.active_workspace_id(), model.list_workspaces())
+    };
+
+    if workspaces.is_empty() {
+        let empty = gtk::Label::builder().label("No workspaces").build();
+        empty.add_css_class("ft-workspace-popover-empty");
+        container.append(&empty);
+    } else {
+        for ws in workspaces {
+            let is_active = active_id.as_deref() == Some(ws.id.as_str());
+            let row = gtk::Button::builder().has_frame(false).build();
+            row.add_css_class("flat");
+            row.add_css_class("ft-workspace-popover-row");
+            if is_active {
+                row.add_css_class("active");
+            }
+
+            let inner = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            inner.add_css_class("ft-workspace-popover-row-inner");
+
+            let check = gtk::Image::from_icon_name("emblem-ok-symbolic");
+            check.add_css_class("ft-workspace-popover-check");
+            if !is_active {
+                check.set_opacity(0.0);
+            }
+            inner.append(&check);
+
+            let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            body.set_hexpand(true);
+            let name = gtk::Label::builder()
+                .label(&ws.name)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .build();
+            name.add_css_class("ft-workspace-popover-name");
+            let path = gtk::Label::builder()
+                .label(compact_path(&ws.working_dir))
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::Middle)
+                .build();
+            path.add_css_class("ft-workspace-popover-path");
+            body.append(&name);
+            body.append(&path);
+            inner.append(&body);
+            row.set_child(Some(&inner));
+
+            let popover_for_row = popover.clone();
+            let state_for_row = state.clone();
+            let controller_for_row = controller.clone();
+            let ws_id = ws.id.clone();
+            row.connect_clicked(move |_| {
+                popover_for_row.popdown();
+                select_sidebar_workspace(&state_for_row, &ws_id, &controller_for_row);
+            });
+            container.append(&row);
+        }
+    }
+
+    let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+    separator.add_css_class("ft-workspace-popover-separator");
+    container.append(&separator);
+
+    let new_btn = gtk::Button::builder().has_frame(false).build();
+    new_btn.add_css_class("flat");
+    new_btn.add_css_class("ft-workspace-popover-row");
+    new_btn.add_css_class("ft-workspace-popover-action");
+    let new_inner = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    new_inner.add_css_class("ft-workspace-popover-row-inner");
+    let new_icon = gtk::Image::from_icon_name("tab-new-symbolic");
+    new_icon.add_css_class("ft-workspace-popover-action-icon");
+    new_inner.append(&new_icon);
+    let new_label = gtk::Label::builder()
+        .label("New Workspace")
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    new_inner.append(&new_label);
+    new_btn.set_child(Some(&new_inner));
+    let popover_for_new = popover.clone();
+    let state_for_new = state.clone();
+    new_btn.connect_clicked(move |_| {
+        popover_for_new.popdown();
+        create_plain_workspace(&state_for_new);
+    });
+    container.append(&new_btn);
+
+    popover.set_child(Some(&container));
+
+    let popover_for_cleanup = popover.clone();
+    popover.connect_closed(move |_| {
+        popover_for_cleanup.unparent();
+    });
+
+    popover.popup();
 }
 
-fn show_command_palette(parent: &adw::ApplicationWindow, state: &SocketAppState) {
-    show_command_palette_with_query(parent, state, "");
+fn show_command_palette_with_controller(
+    parent: &adw::ApplicationWindow,
+    state: &SocketAppState,
+    controller: Option<Rc<RefCell<VteController>>>,
+) {
+    show_command_palette_with_query(parent, state, "", controller);
 }
 
 fn show_command_palette_with_query(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
     initial_query: &str,
+    controller: Option<Rc<RefCell<VteController>>>,
 ) {
     let dialog = gtk::Window::builder()
         .title("Command Palette")
@@ -2832,6 +3136,7 @@ fn show_command_palette_with_query(
         .default_height(360)
         .build();
     dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
     install_escape_close(&dialog);
 
     let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -2916,6 +3221,39 @@ fn show_command_palette_with_query(
             dialog.close();
         }
     });
+    command!("Focus Previous Pane", Some("Ctrl+Alt+Left"), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            focus_relative_pane(&state, -1);
+            if let Some(controller) = &controller {
+                controller.borrow_mut().rebuild_layout();
+            }
+            dialog.close();
+        }
+    });
+    command!("Focus Next Pane", Some("Ctrl+Alt+Right"), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            focus_relative_pane(&state, 1);
+            if let Some(controller) = &controller {
+                controller.borrow_mut().rebuild_layout();
+            }
+            dialog.close();
+        }
+    });
+    if let Some(controller) = controller.clone() {
+        command!("Toggle Maximize Pane", Some("Ctrl+Shift+Enter"), {
+            let dialog = dialog.clone();
+            move || {
+                controller.borrow_mut().toggle_maximized_pane();
+                dialog.close();
+            }
+        });
+    }
     command!("Close Workspace", None, {
         let state = state.clone();
         let dialog = dialog.clone();
@@ -3057,6 +3395,7 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
         .default_height(260)
         .build();
     dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
 
     let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
     header.add_css_class("ft-dialog-header");
@@ -3191,9 +3530,7 @@ fn open_worktree_from_gtk(
     name: &str,
     action: WorktreeAction,
 ) -> Result<(), String> {
-    if name.trim().is_empty() {
-        return Err("Branch name is required".to_string());
-    }
+    let name = validate_worktree_name_for_gtk(name)?;
     let cwd = active_workspace_cwd(state)
         .or_else(|| std::env::current_dir().ok())
         .ok_or_else(|| "Cannot resolve current workspace directory".to_string())?;
@@ -3209,19 +3546,23 @@ fn open_worktree_from_gtk(
     }
     .map_err(|err| err.to_string())?;
 
-    let workspace = {
+    let (workspace, previous_active_id) = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model.create_worktree_workspace(
-            &info.branch,
-            PathBuf::from(&info.path),
-            &info.branch,
-            &info.worktree_name,
+        let previous_active_id = model.active_workspace_id();
+        (
+            model.create_worktree_workspace(
+                &info.branch,
+                PathBuf::from(&info.path),
+                &info.branch,
+                &info.worktree_name,
+            ),
+            previous_active_id,
         )
     };
-    state
+    if let Err(err) = state
         .terminal
         .spawn(SpawnRequest {
             surface_id: workspace.focused_surface_id.clone(),
@@ -3231,14 +3572,16 @@ fn open_worktree_from_gtk(
             socket_path: state.socket_path.clone(),
             extra_env: Vec::new(),
         })
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| err.to_string())
+    {
+        rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)?;
+        return Err(err);
+    }
     Ok(())
 }
 
 fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), String> {
-    if name.trim().is_empty() {
-        return Err("Branch or worktree name is required".to_string());
-    }
+    let name = validate_worktree_name_for_gtk(name)?;
     let cwd = active_workspace_cwd_string(state)?;
     let fallback_path = worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
     let mut workspace_worktree_name = name.to_string();
@@ -3259,9 +3602,7 @@ fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), St
 }
 
 fn merge_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<String, String> {
-    if name.trim().is_empty() {
-        return Err("Branch or worktree name is required".to_string());
-    }
+    let name = validate_worktree_name_for_gtk(name)?;
     let cwd = active_workspace_cwd_string(state)?;
     let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
     Ok(if result.trim().is_empty() {
@@ -3269,6 +3610,42 @@ fn merge_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<String,
     } else {
         result
     })
+}
+
+fn validate_worktree_name_for_gtk(name: &str) -> Result<&str, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Branch or worktree name is required".to_string());
+    }
+    if trimmed.len() > 255 {
+        return Err("Branch or worktree name must be 255 bytes or fewer".to_string());
+    }
+    if trimmed.contains('\0') || trimmed.contains('\\') {
+        return Err("Branch or worktree name contains unsupported characters".to_string());
+    }
+    if trimmed
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err("Branch or worktree name contains an unsafe path segment".to_string());
+    }
+    Ok(trimmed)
+}
+
+fn rollback_workspace_creation_gtk(
+    state: &SocketAppState,
+    workspace_id: &str,
+    previous_active_id: Option<String>,
+) -> Result<(), String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let _ = model.close_workspace(WorkspaceSelector::Id(workspace_id));
+    if let Some(previous_active_id) = previous_active_id {
+        let _ = model.select_workspace(WorkspaceSelector::Id(&previous_active_id));
+    }
+    Ok(())
 }
 
 fn active_workspace_cwd_string(state: &SocketAppState) -> Result<String, String> {
@@ -3332,6 +3709,7 @@ fn show_notification_panel(parent: &adw::ApplicationWindow, state: &SocketAppSta
         .default_height(420)
         .build();
     dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
     install_escape_close(&dialog);
 
     let header_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -3478,10 +3856,11 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .title("Settings")
         .transient_for(parent)
         .modal(true)
-        .default_width(520)
-        .default_height(540)
+        .default_width(640)
+        .default_height(620)
         .build();
     dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
     install_escape_close(&dialog);
     let loaded = config::load_config().unwrap_or_default();
 
@@ -3493,9 +3872,11 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     font_family.set_tooltip_text(Some("Terminal font family"));
     let font_size = gtk::SpinButton::with_range(8.0, 64.0, 1.0);
     font_size.set_value(f64::from(loaded.appearance.font_size));
+    font_size.set_numeric(true);
+    font_size.set_width_chars(4);
     let notification_command = gtk::Entry::builder()
         .text(&loaded.general.notification_command)
-        .placeholder_text("Optional command to run on notification")
+        .placeholder_text("/usr/bin/notify-send ForkTTY")
         .hexpand(true)
         .build();
     let worktree_layout = combo_with_ids(
@@ -3521,15 +3902,15 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         &loaded.appearance.sidebar_position,
     );
     sidebar_position.set_tooltip_text(Some("Side of the window where the workspace list appears"));
-    let desktop_notifications = gtk::CheckButton::builder()
-        .label("Show desktop notifications")
+    let desktop_notifications = gtk::Switch::builder()
         .active(loaded.notifications.desktop)
         .tooltip_text("Forward ForkTTY notifications to the system notification daemon")
+        .valign(gtk::Align::Center)
         .build();
-    let notification_sound = gtk::CheckButton::builder()
-        .label("Play a sound on alert")
+    let notification_sound = gtk::Switch::builder()
         .active(loaded.notifications.sound)
         .tooltip_text("Play the default system alert sound when a notification fires")
+        .valign(gtk::Align::Center)
         .build();
     let status = gtk::Label::builder()
         .xalign(0.0)
@@ -3543,7 +3924,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     let title = gtk::Label::builder().label("Settings").xalign(0.0).build();
     title.add_css_class("ft-dialog-title");
     let subtitle = gtk::Label::builder()
-        .label("Changes are saved to the user config file.")
+        .label("Saved preferences update the user config file.")
         .xalign(0.0)
         .build();
     subtitle.add_css_class("ft-dialog-subtitle");
@@ -3552,60 +3933,155 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
 
     let body = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(6)
+        .spacing(12)
         .build();
     body.add_css_class("ft-dialog-body");
 
-    fn settings_row<W>(label_text: &str, widget: &W) -> gtk::Box
+    fn settings_group(title: &str) -> gtk::Box {
+        let outer = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(6)
+            .build();
+        let header = gtk::Label::builder().label(title).xalign(0.0).build();
+        header.add_css_class("ft-section-title");
+        let group = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(0)
+            .build();
+        group.add_css_class("settings-group");
+        outer.append(&header);
+        outer.append(&group);
+        outer
+    }
+
+    fn settings_group_body(group: &gtk::Box) -> gtk::Box {
+        group
+            .last_child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .expect("settings group body")
+    }
+
+    fn settings_row<W>(
+        label_text: &str,
+        description: &str,
+        widget: &W,
+        control_width: i32,
+        expand_control: bool,
+    ) -> gtk::Box
     where
         W: IsA<gtk::Accessible> + IsA<gtk::Widget>,
     {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        row.add_css_class("ft-form-row");
+        row.add_css_class("settings-row");
+        row.set_valign(gtk::Align::Center);
+        let text = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .hexpand(true)
+            .build();
         let label = gtk::Label::builder()
             .label(label_text)
             .xalign(0.0)
-            .width_chars(20)
+            .wrap(true)
             .build();
         label.add_css_class("ft-form-label");
+        let hint = gtk::Label::builder()
+            .label(description)
+            .xalign(0.0)
+            .wrap(true)
+            .build();
+        hint.add_css_class("ft-form-hint");
         let accessible_label = label.upcast_ref::<gtk::Accessible>();
         widget.update_relation(&[gtk::accessible::Relation::LabelledBy(&[accessible_label])]);
-        row.append(&label);
-        widget.set_hexpand(true);
+        text.append(&label);
+        text.append(&hint);
+        row.append(&text);
+        widget.set_hexpand(expand_control);
+        if control_width > 0 {
+            widget.set_width_request(control_width);
+        }
         row.append(widget);
         row
     }
 
-    fn section_header(label: &str) -> gtk::Label {
-        let header = gtk::Label::builder().label(label).xalign(0.0).build();
-        header.add_css_class("ft-section-title");
-        header
-    }
+    let terminal_group = settings_group("Terminal");
+    let terminal_rows = settings_group_body(&terminal_group);
+    terminal_rows.append(&settings_row(
+        "Shell",
+        "Used for new terminal sessions. Applies after restart.",
+        &shell_entry,
+        320,
+        true,
+    ));
+    terminal_rows.append(&settings_row(
+        "Font family",
+        "Applied to open VTE terminals when saved.",
+        &font_family,
+        320,
+        true,
+    ));
+    terminal_rows.append(&settings_row(
+        "Font size",
+        "Terminal text size, from 8 to 64 pt.",
+        &font_size,
+        92,
+        false,
+    ));
+    body.append(&terminal_group);
 
-    body.append(&section_header("Terminal"));
-    body.append(&settings_row("Shell", &shell_entry));
-    body.append(&settings_row("Font family", &font_family));
-    body.append(&settings_row("Font size", &font_size));
+    let workspace_group = settings_group("Workspaces");
+    let workspace_rows = settings_group_body(&workspace_group);
+    workspace_rows.append(&settings_row(
+        "Worktree layout",
+        "Where new worktrees are placed relative to the repository root.",
+        &worktree_layout,
+        240,
+        false,
+    ));
+    body.append(&workspace_group);
 
-    body.append(&section_header("Workspaces"));
-    body.append(&settings_row("Worktree layout", &worktree_layout));
+    let appearance_group = settings_group("Appearance");
+    let appearance_rows = settings_group_body(&appearance_group);
+    appearance_rows.append(&settings_row(
+        "Window mode",
+        "Quake mode uses a borderless drop-down window after restart.",
+        &window_mode,
+        240,
+        false,
+    ));
+    appearance_rows.append(&settings_row(
+        "Sidebar position",
+        "Side of the main window used for workspaces.",
+        &sidebar_position,
+        240,
+        false,
+    ));
+    body.append(&appearance_group);
 
-    body.append(&section_header("Appearance"));
-    body.append(&settings_row("Window mode", &window_mode));
-    body.append(&settings_row("Sidebar position", &sidebar_position));
-
-    body.append(&section_header("Notifications"));
-    body.append(&settings_row("Custom command", &notification_command));
-    let checks = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(6)
-        .margin_top(2)
-        .margin_start(0)
-        .build();
-    checks.add_css_class("ft-form-row");
-    checks.append(&desktop_notifications);
-    checks.append(&notification_sound);
-    body.append(&checks);
+    let notification_group = settings_group("Notifications");
+    let notification_rows = settings_group_body(&notification_group);
+    notification_rows.append(&settings_row(
+        "Custom command",
+        "Optional absolute command to run when a notification fires.",
+        &notification_command,
+        320,
+        true,
+    ));
+    notification_rows.append(&settings_row(
+        "Desktop notifications",
+        "Forward alerts to the system notification daemon.",
+        &desktop_notifications,
+        0,
+        false,
+    ));
+    notification_rows.append(&settings_row(
+        "Alert sound",
+        "Play the default system alert sound for alerts.",
+        &notification_sound,
+        0,
+        false,
+    ));
+    body.append(&notification_group);
 
     body.append(&status);
 
@@ -3614,8 +4090,9 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     let cancel = gtk::Button::with_label("Close");
-    let save = gtk::Button::with_label("Save Changes");
+    let save = gtk::Button::with_label("Save");
     save.add_css_class("suggested-action");
+    save.set_sensitive(false);
     footer.append(&spacer);
     footer.append(&cancel);
     footer.append(&save);
@@ -3623,7 +4100,54 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     let dialog_for_cancel = dialog.clone();
     cancel.connect_clicked(move |_| dialog_for_cancel.close());
 
+    let mark_dirty = Rc::new({
+        let save = save.clone();
+        let status = status.clone();
+        move || {
+            save.set_sensitive(true);
+            status.set_visible(false);
+        }
+    });
+    shell_entry.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    font_family.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    font_size.connect_value_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    notification_command.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    worktree_layout.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    window_mode.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    sidebar_position.connect_changed({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    desktop_notifications.connect_active_notify({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+    notification_sound.connect_active_notify({
+        let mark_dirty = mark_dirty.clone();
+        move |_| mark_dirty()
+    });
+
     let status_for_save = status.clone();
+    let save_for_save = save.clone();
+    let shell_entry_for_focus = shell_entry.clone();
     let initial_shell = loaded.general.shell.clone();
     let initial_window_mode = loaded.appearance.window_mode.clone();
     save.connect_clicked(move |_| {
@@ -3653,10 +4177,11 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         match config::save_config(&next) {
             Ok(()) => {
                 on_apply(&next);
+                save_for_save.set_sensitive(false);
                 let message = if next.general.shell != initial_shell
                     || next.appearance.window_mode != initial_window_mode
                 {
-                    "Saved. Font and layout applied; shell/window mode apply after restart."
+                    "Saved. Font, layout and notifications are applied now; shell/window mode apply after restart."
                 } else {
                     "Saved. Changes applied."
                 };
@@ -3678,6 +4203,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
     dialog.set_default_widget(Some(&save));
     dialog.set_child(Some(&content));
     dialog.present();
+    shell_entry_for_focus.grab_focus();
 }
 
 fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText {
@@ -3741,22 +4267,27 @@ fn font_family_combo(_parent: &impl IsA<gtk::Widget>, active_family: &str) -> gt
 
 fn create_plain_workspace(state: &SocketAppState) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let workspace = {
+    let (workspace, previous_active_id) = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
         };
         let count = model.list_workspaces().len() + 1;
-        model.create_workspace(format!("workspace-{count}"), cwd)
+        let previous_active_id = model.active_workspace_id();
+        (
+            model.create_workspace(format!("workspace-{count}"), cwd),
+            previous_active_id,
+        )
     };
     if let Err(err) = state.terminal.spawn(SpawnRequest {
-        surface_id: workspace.focused_surface_id,
-        workspace_id: workspace.id,
+        surface_id: workspace.focused_surface_id.clone(),
+        workspace_id: workspace.id.clone(),
         shell: state.shell.clone(),
-        cwd: workspace.working_dir,
+        cwd: workspace.working_dir.clone(),
         socket_path: state.socket_path.clone(),
         extra_env: Vec::new(),
     }) {
+        let _ = rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id);
         eprintln!("Failed to create workspace terminal: {err}");
     }
 }
@@ -3934,5 +4465,17 @@ mod tests {
             first_fontconfig_family("Noto Sans Mono,Noto Sans Mono Regular\n"),
             Some("Noto Sans Mono".to_string())
         );
+    }
+
+    #[test]
+    fn validates_worktree_names_for_gtk_actions() {
+        assert_eq!(
+            validate_worktree_name_for_gtk(" feature/login ").unwrap(),
+            "feature/login"
+        );
+        assert!(validate_worktree_name_for_gtk("../escape").is_err());
+        assert!(validate_worktree_name_for_gtk("feature//empty").is_err());
+        assert!(validate_worktree_name_for_gtk("feature\\windows").is_err());
+        assert!(validate_worktree_name_for_gtk("").is_err());
     }
 }

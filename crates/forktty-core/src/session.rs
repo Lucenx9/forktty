@@ -1,5 +1,6 @@
 use crate::model::{PaneNode, SplitAxis, Workspace};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -273,6 +274,8 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
     if data.version != SESSION_FORMAT_VERSION {
         return Err(SessionError::UnsupportedVersion(data.version));
     }
+    let mut workspace_ids = HashSet::new();
+    let mut surface_ids = HashSet::new();
     if let Some(active_id) = &data.active_workspace_id {
         if !data
             .workspaces
@@ -285,11 +288,37 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         }
     }
     for workspace in &data.workspaces {
+        if workspace.id.trim().is_empty() {
+            return Err(SessionError::InvalidData(
+                "workspace id must not be empty".to_string(),
+            ));
+        }
+        if !workspace_ids.insert(workspace.id.as_str()) {
+            return Err(SessionError::InvalidData(format!(
+                "duplicate workspace id: {}",
+                workspace.id
+            )));
+        }
         let leaf_count = validate_pane_tree(&workspace.pane_tree, 0)?;
         if leaf_count == 0 {
             return Err(SessionError::InvalidData(
                 "workspace pane tree has no leaves".to_string(),
             ));
+        }
+        let mut workspace_leaf_ids = Vec::new();
+        collect_pane_surface_ids(&workspace.pane_tree, &mut workspace_leaf_ids);
+        if !workspace_leaf_ids.contains(&workspace.focused_surface_id) {
+            return Err(SessionError::InvalidData(format!(
+                "workspace {} focused surface id is not present",
+                workspace.id
+            )));
+        }
+        for surface_id in workspace_leaf_ids {
+            if !surface_ids.insert(surface_id.clone()) {
+                return Err(SessionError::InvalidData(format!(
+                    "duplicate pane surface id: {surface_id}"
+                )));
+            }
         }
     }
     Ok(())
@@ -329,6 +358,17 @@ fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, Sess
                 leaf_count += validate_pane_tree(child, split_depth + 1)?;
             }
             Ok(leaf_count)
+        }
+    }
+}
+
+fn collect_pane_surface_ids(node: &PaneNode, ids: &mut Vec<String>) {
+    match node {
+        PaneNode::Leaf { surface_id } => ids.push(surface_id.clone()),
+        PaneNode::Split { children, .. } => {
+            for child in children {
+                collect_pane_surface_ids(child, ids);
+            }
         }
     }
 }
@@ -395,6 +435,51 @@ mod tests {
 
         save_session_to_path(&path, &data).unwrap();
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
+    }
+
+    #[test]
+    fn rejects_session_with_duplicate_workspace_ids() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp/main");
+        model.create_workspace("other", "/tmp/other");
+        let mut data = model.to_session_data();
+        data.workspaces[1].id = data.workspaces[0].id.clone();
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_missing_focused_surface() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.workspaces[0].focused_surface_id = "missing-surface".to_string();
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_duplicate_surface_ids() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("main", "/tmp/main");
+        let second = model.create_workspace("other", "/tmp/other");
+        let mut data = model.to_session_data();
+        data.workspaces[1].pane_tree = PaneNode::Leaf {
+            surface_id: first.focused_surface_id.clone(),
+        };
+        data.workspaces[1].focused_surface_id = first.focused_surface_id;
+        data.active_workspace_id = Some(second.id);
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
     }
 
     #[test]
