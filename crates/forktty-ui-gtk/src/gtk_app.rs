@@ -156,6 +156,7 @@ struct VteController {
     container: gtk::Box,
     model: Arc<Mutex<WorkspaceModel>>,
     widgets: BTreeMap<String, VteTerminalWidget>,
+    last_layout_signature: Option<String>,
 }
 
 impl VteController {
@@ -164,6 +165,7 @@ impl VteController {
             container,
             model,
             widgets: BTreeMap::new(),
+            last_layout_signature: None,
         }
     }
 
@@ -210,7 +212,7 @@ impl VteController {
         }
     }
 
-    fn rebuild_layout(&self) {
+    fn rebuild_layout(&mut self) {
         while let Some(child) = self.container.first_child() {
             self.container.remove(&child);
         }
@@ -218,19 +220,24 @@ impl VteController {
             widget.unparent();
         }
 
-        let pane_tree = self.model.lock().ok().and_then(|model| {
-            model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.active)
-                .or_else(|| model.list_workspaces().into_iter().next())
-                .map(|workspace| workspace.pane_tree)
-        });
-        let Some(pane_tree) = pane_tree else {
+        let Some((signature, pane_tree, focused_surface_id)) = active_layout_snapshot(&self.model)
+        else {
+            self.last_layout_signature = None;
             return;
         };
         let widget = self.widget_for_pane(&pane_tree);
         self.container.append(&widget);
+        if let Some(widget) = self.widgets.get(&focused_surface_id) {
+            widget.grab_focus();
+        }
+        self.last_layout_signature = Some(signature);
+    }
+
+    fn ensure_layout_current(&mut self) {
+        let signature = active_layout_snapshot(&self.model).map(|(signature, _, _)| signature);
+        if signature != self.last_layout_signature {
+            self.rebuild_layout();
+        }
     }
 
     fn widget_for_pane(&self, node: &PaneNode) -> gtk::Widget {
@@ -250,6 +257,22 @@ impl VteController {
             }
         }
     }
+}
+
+fn active_layout_snapshot(
+    model: &Arc<Mutex<WorkspaceModel>>,
+) -> Option<(String, PaneNode, String)> {
+    let model = model.lock().ok()?;
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.active)
+        .or_else(|| model.list_workspaces().into_iter().next())?;
+    let signature = format!(
+        "{}:{}:{:?}",
+        workspace.id, workspace.focused_surface_id, workspace.pane_tree
+    );
+    Some((signature, workspace.pane_tree, workspace.focused_surface_id))
 }
 
 fn apply_vte_font(widget: &VteTerminalWidget) {
@@ -713,6 +736,7 @@ fn build_ui(app: &adw::Application) {
         while let Ok(command) = terminal_rx.try_recv() {
             controller_for_timer.borrow_mut().handle(command);
         }
+        controller_for_timer.borrow_mut().ensure_layout_current();
         glib::ControlFlow::Continue
     });
     refresh_sidebar(&sidebar, &model);
@@ -1063,7 +1087,7 @@ fn select_sidebar_workspace(
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to spawn selected workspace terminal: {err}");
     }
-    controller.borrow().rebuild_layout();
+    controller.borrow_mut().rebuild_layout();
 }
 
 fn workspace_id_at_index(model: &WorkspaceModel, index: i32) -> Option<String> {

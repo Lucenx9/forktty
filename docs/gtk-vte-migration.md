@@ -97,6 +97,9 @@ Tauri/React implementation.
   branch/worktree metadata, agent status metadata, and unread/attention state.
   Activating a sidebar row selects that workspace and rebuilds the VTE split
   layout from the active workspace's pane tree.
+- The GTK VTE controller tracks the active workspace pane tree and focused
+  surface, so socket/CLI-driven workspace or pane focus changes are reflected in
+  the rendered GTK layout without requiring a manual sidebar click.
 - VTE `bell` and `child-exited` signals now update the core model, creating
   notifications that drive unread/attention state.
 - VTE termprop events are wired for `xterm.title`, `vte.shell.precmd`,
