@@ -685,17 +685,39 @@ fn apply_vte_appearance(widget: &VteTerminalWidget) {
 }
 
 fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDescription {
-    let family = config.appearance.font_family.trim();
-    let family = if family.is_empty() {
-        "monospace"
+    let configured = config.appearance.font_family.trim();
+    let family = if configured.is_empty() {
+        preferred_terminal_font_family()
     } else {
-        family
+        configured.to_string()
     };
     gtk::pango::FontDescription::from_string(&format!("{} {}", family, config.appearance.font_size))
 }
 
 fn rgba(value: &str) -> gtk::gdk::RGBA {
     gtk::gdk::RGBA::parse(value).unwrap_or(gtk::gdk::RGBA::BLACK)
+}
+
+fn preferred_terminal_font_family() -> String {
+    let context = gtk::pango::Context::new();
+    let families = context.list_families();
+    for preferred in [
+        "JetBrainsMono Nerd Font Mono",
+        "JetBrainsMono Nerd Font",
+        "FantasqueSansM Nerd Font Mono",
+        "FiraCode Nerd Font Mono",
+        "Hack Nerd Font Mono",
+        "Iosevka Nerd Font Mono",
+        "Symbols Nerd Font Mono",
+    ] {
+        if families
+            .iter()
+            .any(|family| family.name().as_str() == preferred)
+        {
+            return preferred.to_string();
+        }
+    }
+    "monospace".to_string()
 }
 
 fn attach_vte_signal_handlers(
