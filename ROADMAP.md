@@ -64,7 +64,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] More complete command palette search/filter parity.
 - [ ] Rich branch picker UI with query highlighting.
 - [ ] Better notification inbox grouping and actions.
-- [ ] Light mode and explicit theme switching.
+- [ ] Explicit theme switching UI and full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
 - [ ] Built-in browser pane.

@@ -3,7 +3,11 @@ use crate::{SpawnRequest, TerminalError};
 #[cfg(feature = "vte")]
 use gtk4::glib;
 #[cfg(feature = "vte")]
+use std::cell::{Cell, RefCell};
+#[cfg(feature = "vte")]
 use std::collections::BTreeMap;
+#[cfg(feature = "vte")]
+use std::rc::Rc;
 #[cfg(feature = "vte")]
 pub use vte4::prelude::TerminalExt;
 #[cfg(feature = "vte")]
@@ -37,21 +41,34 @@ where
     terminal.set_scrollback_lines(20_000);
 
     let env_storage = child_environment(request);
-    let envv = env_storage.iter().map(String::as_str).collect::<Vec<_>>();
-    let argv = [request.shell.as_str()];
+    let argv_storage = vec![request.shell.clone()];
     let cwd_storage = request.cwd.to_string_lossy().to_string();
+    let on_spawn_result = Rc::new(RefCell::new(Some(on_spawn_result)));
+    let spawned = Rc::new(Cell::new(false));
 
-    terminal.spawn_async(
-        vte4::PtyFlags::DEFAULT,
-        Some(cwd_storage.as_str()),
-        &argv,
-        &envv,
-        glib::SpawnFlags::DEFAULT,
-        || {},
-        -1,
-        None::<&gtk4::gio::Cancellable>,
-        on_spawn_result,
-    );
+    terminal.connect_realize(move |terminal| {
+        if spawned.replace(true) {
+            return;
+        }
+        let argv = argv_storage.iter().map(String::as_str).collect::<Vec<_>>();
+        let envv = env_storage.iter().map(String::as_str).collect::<Vec<_>>();
+        let callback = on_spawn_result.clone();
+        terminal.spawn_async(
+            vte4::PtyFlags::DEFAULT,
+            Some(cwd_storage.as_str()),
+            &argv,
+            &envv,
+            glib::SpawnFlags::DEFAULT,
+            || {},
+            -1,
+            None::<&gtk4::gio::Cancellable>,
+            move |result| {
+                if let Some(on_spawn_result) = callback.borrow_mut().take() {
+                    on_spawn_result(result);
+                }
+            },
+        );
+    });
 
     Ok(terminal)
 }

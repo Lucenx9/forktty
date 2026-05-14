@@ -103,6 +103,7 @@ notification_command = ""
 font_family = ""
 font_size = 14
 sidebar_position = "left"
+sidebar_visible = true
 terminal_renderer = "vte"
 window_mode = "normal"
 
@@ -111,7 +112,7 @@ desktop = true
 sound = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, worktree layout, font size, sidebar position, window mode, renderer value, and notification command.
+Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, worktree layout, font size, sidebar position, window mode, renderer value, and notification command. `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
 
 ## Socket API
 
@@ -149,7 +150,7 @@ Implemented categories:
 | -------- | ------- |
 | System | `system.ping` |
 | Workspace | `workspace.list`, `workspace.create`, `workspace.select`, `workspace.close` |
-| Surface | `surface.list`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close`, `surface.read_screen` |
+| Surface | `surface.list`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
 | Notification | `notification.create`, `notification.list`, `notification.clear` |
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |

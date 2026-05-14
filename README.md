@@ -73,6 +73,22 @@ sudo dpkg -i target/packaging/deb/forktty_*.deb
 
 The old Tauri/React/WebKit implementation has been removed from the primary tree. The supported desktop app is the native GTK4/libadwaita/VTE binary installed as `forktty`.
 
+### First Run Basics
+
+ForkTTY opens the current directory as the `main` workspace. Use the command palette for most navigation and pane actions:
+
+- `Ctrl+Shift+P`: command palette
+- `Ctrl+Shift+N`: new workspace
+- `Ctrl+Shift+O`: open workspace
+- `Ctrl+Shift+H`: split pane right
+- `Ctrl+Shift+E`: split pane down
+- `Ctrl+Alt+Left` / `Ctrl+Alt+Right`: focus previous/next pane
+- `Ctrl+Shift+W`: close pane
+- `Ctrl+B` or `F9`: toggle workspace sidebar
+- `Ctrl+Shift+M`: notifications
+- `F1`: keyboard shortcuts
+- `Ctrl+,`: settings
+
 ### Container Development
 
 If you do not want to install the build dependencies on the host, use the Ubuntu container wrapper:
@@ -159,6 +175,7 @@ notification_command = ""
 font_family = ""
 font_size = 14
 sidebar_position = "left" # "left" or "right"
+sidebar_visible = true
 terminal_renderer = "vte"
 window_mode = "normal" # "normal" or "quake"
 
@@ -168,6 +185,8 @@ sound = true
 ```
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
+
+`terminal_renderer` is kept for config compatibility; the native GTK app uses VTE.
 
 ## Session Restore
 
@@ -197,7 +216,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Light mode, multi-window, persistent scrollback, and browser panes are backlog items.
+- Full theme customization, multi-window, persistent scrollback, and browser panes are backlog items.
 
 ## Contributing
 
