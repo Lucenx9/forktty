@@ -40,9 +40,18 @@ const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_millis(750);
 #[derive(Debug)]
 enum GtkTerminalCommand {
     Spawn(SpawnRequest),
-    SendText { surface_id: String, text: String },
-    Resize,
-    Close { surface_id: String },
+    SendText {
+        surface_id: String,
+        text: String,
+    },
+    Resize {
+        surface_id: String,
+        cols: u16,
+        rows: u16,
+    },
+    Close {
+        surface_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +122,11 @@ impl TerminalBackend for GtkVteBackend {
         surface.cols = cols;
         surface.rows = rows;
         drop(surfaces);
-        self.send_command(GtkTerminalCommand::Resize)
+        self.send_command(GtkTerminalCommand::Resize {
+            surface_id: surface_id.to_string(),
+            cols,
+            rows,
+        })
     }
 
     fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
@@ -162,7 +175,15 @@ impl VteController {
                     vte_send_text(widget, &text);
                 }
             }
-            GtkTerminalCommand::Resize => {}
+            GtkTerminalCommand::Resize {
+                surface_id,
+                cols,
+                rows,
+            } => {
+                if let Some(widget) = self.widgets.get(&surface_id) {
+                    widget.set_size(cols.into(), rows.into());
+                }
+            }
             GtkTerminalCommand::Close { surface_id } => {
                 if let Some(widget) = self.widgets.remove(&surface_id) {
                     widget.unparent();

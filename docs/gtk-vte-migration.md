@@ -60,7 +60,8 @@ Tauri/React implementation.
   `clear-logs`.
 - GTK app startup now binds the local Unix socket and routes terminal backend
   commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
-  VTE through this adapter.
+  VTE through this adapter, and backend resize requests call VTE's terminal
+  resize API for the addressed surface.
 - GTK split panes are rendered from the core `PaneNode` tree. UI split buttons
   and socket `surface.split` both create real VTE-backed surfaces and rebuild
   the GTK `Paned` layout from the model.
