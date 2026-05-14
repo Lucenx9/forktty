@@ -183,7 +183,6 @@ struct SidebarUi {
     last_signature: Rc<RefCell<Option<String>>>,
     context_menu_open: Rc<Cell<bool>>,
     context_popover: Rc<RefCell<Option<gtk::Popover>>>,
-    context_menu_position: Rc<Cell<gtk::PositionType>>,
 }
 
 type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
@@ -1724,9 +1723,6 @@ fn build_ui(app: &adw::Application) {
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.add_css_class("workspace-paned");
     let sidebar_on_right = app_config.appearance.sidebar_position == "right";
-    let context_menu_position = Rc::new(Cell::new(context_menu_position_for_sidebar(
-        &app_config.appearance.sidebar_position,
-    )));
     if sidebar_on_right {
         paned.set_start_child(Some(&*terminal_stack.borrow()));
         paned.set_resize_start_child(true);
@@ -1826,7 +1822,6 @@ fn build_ui(app: &adw::Application) {
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
-        context_menu_position: context_menu_position.clone(),
     };
     let controller_for_timer = controller.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -1867,7 +1862,6 @@ fn build_ui(app: &adw::Application) {
         &paned,
         &sidebar_shell,
         &terminal_stack_for_settings,
-        context_menu_position.clone(),
     );
 
     let settings_parent = window.clone();
@@ -1908,7 +1902,6 @@ fn settings_apply_callback(
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
     terminal_stack: &gtk::Box,
-    context_menu_position: Rc<Cell<gtk::PositionType>>,
 ) -> SettingsApplyCallback {
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
@@ -1920,9 +1913,6 @@ fn settings_apply_callback(
             &terminal_stack,
             &config.appearance.sidebar_position,
         );
-        context_menu_position.set(context_menu_position_for_sidebar(
-            &config.appearance.sidebar_position,
-        ));
     })
 }
 
@@ -1952,14 +1942,6 @@ fn apply_sidebar_position(
         paned.set_shrink_end_child(false);
     }
     sidebar_shell.set_visible(sidebar_visible);
-}
-
-fn context_menu_position_for_sidebar(position: &str) -> gtk::PositionType {
-    if position == "right" {
-        gtk::PositionType::Left
-    } else {
-        gtk::PositionType::Right
-    }
 }
 
 fn configured_shell(config: &config::AppConfig) -> String {
@@ -2465,14 +2447,8 @@ fn refresh_sidebar(
                 );
             });
             popover.set_parent(&row_for_menu);
-            let context_menu_position = ui_for_menu.context_menu_position.get();
-            popover.set_position(context_menu_position);
-            let x = match context_menu_position {
-                gtk::PositionType::Left => 0,
-                gtk::PositionType::Right => row_for_menu.width().max(1),
-                _ => x as i32,
-            };
-            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x, y as i32, 1, 1)));
+            popover.set_position(gtk::PositionType::Bottom);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             *ui_for_menu.context_popover.borrow_mut() = Some(popover.clone());
             popover.popup();
         });
