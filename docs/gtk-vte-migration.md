@@ -51,7 +51,7 @@ Tauri/React implementation.
   backend overrides are applied.
 - Worktree create, attach, list, remove, merge, status, and hook execution in
   `forktty-core`, with direct socket dispatch that opens/closes matching
-  worktree-backed workspaces.
+  worktree-backed workspaces and closes their terminal backends on removal.
 - CLI surface commands: `surfaces`, `split-surface`, `focus-surface`, and
   `close-surface`. `send-text` and `split-surface` can target the focused
   surface of the active workspace when no explicit surface id is provided.

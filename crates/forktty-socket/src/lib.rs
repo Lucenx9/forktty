@@ -287,17 +287,38 @@ pub async fn dispatch(
                 }
             }
             worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
-            {
+            let surface_ids = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
+                let workspace_id = model
+                    .list_workspaces()
+                    .into_iter()
+                    .find(|workspace| {
+                        workspace.worktree_name.as_deref() == Some(workspace_worktree_name.as_str())
+                    })
+                    .map(|workspace| workspace.id);
+                let surface_ids = workspace_id
+                    .as_deref()
+                    .map(|workspace_id| {
+                        model
+                            .list_surfaces(Some(workspace_id))
+                            .into_iter()
+                            .map(|surface| surface.id)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 let _ = model.close_workspace(WorkspaceSelector::WorktreeName(
                     workspace_worktree_name.as_str(),
                 ));
                 if model.list_workspaces().is_empty() {
                     model.create_workspace("main", PathBuf::from(&cwd));
                 }
+                surface_ids
+            };
+            for surface_id in surface_ids {
+                let _ = state.terminal.close(&surface_id);
             }
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!({"removed": name}))
@@ -1272,8 +1293,9 @@ mod tests {
         assert_eq!(created["branch"], "topic/socket");
         assert_ne!(created["worktree_name"], "topic/socket");
         let workspace_id = created["id"].as_str().unwrap();
+        let surface_id = "surface-2";
         assert!(backend
-            .env("surface-2")
+            .env(surface_id)
             .unwrap()
             .contains(&("FORKTTY_WORKSPACE_ID".to_string(), workspace_id.to_string())));
 
@@ -1301,6 +1323,10 @@ mod tests {
             .unwrap()
             .iter()
             .any(|workspace| workspace["git_branch"] == "topic/socket"));
+        assert!(matches!(
+            backend.sent_text(surface_id),
+            Err(forktty_terminal::TerminalError::NotFound(_))
+        ));
     }
 
     #[tokio::test]
