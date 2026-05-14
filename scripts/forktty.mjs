@@ -359,6 +359,7 @@ Selector flags:
 Notes:
   - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
   - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
+  - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
 `);
 }
@@ -536,16 +537,12 @@ async function handleSendText(context, args) {
       : positionals.length > 0
         ? positionals.join(" ")
         : stdinText;
-  const surfaceId =
-    typeof options["surface-id"] === "string" && options["surface-id"].trim()
-      ? options["surface-id"].trim()
-      : typeof context.env.FORKTTY_SURFACE_ID === "string" &&
-          context.env.FORKTTY_SURFACE_ID.trim()
-        ? context.env.FORKTTY_SURFACE_ID.trim()
-        : "";
+  const surfaceId = await resolveSendTextSurfaceId(context, options);
 
   if (!surfaceId) {
-    throw new Error("send-text requires --surface-id or FORKTTY_SURFACE_ID");
+    throw new Error(
+      "send-text requires --surface-id, FORKTTY_SURFACE_ID, or an active workspace surface",
+    );
   }
   if (!text) {
     throw new Error("send-text requires text or stdin");
@@ -561,6 +558,30 @@ async function handleSendText(context, args) {
   } else {
     process.stdout.write("Sent text\n");
   }
+}
+
+async function resolveSendTextSurfaceId(context, options) {
+  if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
+    return options["surface-id"].trim();
+  }
+  if (
+    typeof context.env.FORKTTY_SURFACE_ID === "string" &&
+    context.env.FORKTTY_SURFACE_ID.trim()
+  ) {
+    return context.env.FORKTTY_SURFACE_ID.trim();
+  }
+  const workspaces = await sendSocketRequest(context.socketPath, "workspace.list", {});
+  return surfaceIdFromWorkspaceList(workspaces);
+}
+
+function surfaceIdFromWorkspaceList(workspaces) {
+  if (!Array.isArray(workspaces) || workspaces.length === 0) {
+    return "";
+  }
+  const workspace =
+    workspaces.find((candidate) => candidate.active) ||
+    workspaces.find((candidate) => candidate?.focused_surface_id || candidate?.focusedSurfaceId);
+  return workspace?.focused_surface_id || workspace?.focusedSurfaceId || "";
 }
 
 function surfaceIdFromArgs(options, positionals, env = process.env) {
@@ -1504,6 +1525,7 @@ export {
   mergeHookConfig,
   parseFlags,
   shellQuote,
+  surfaceIdFromWorkspaceList,
 };
 
 const isMainModule =

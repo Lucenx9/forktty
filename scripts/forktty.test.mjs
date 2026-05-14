@@ -12,6 +12,7 @@ import {
   buildWorktreeStatusParams,
   defaultSocketPath,
   mergeHookConfig,
+  surfaceIdFromWorkspaceList,
 } from "./forktty.mjs";
 
 describe("forktty CLI helpers", () => {
@@ -170,6 +171,19 @@ describe("forktty CLI helpers", () => {
     ).toEqual({
       surface_id: "surface-1",
     });
+  });
+
+  it("resolves send-text fallback from the active workspace surface", () => {
+    expect(
+      surfaceIdFromWorkspaceList([
+        { id: "workspace-1", active: false, focused_surface_id: "surface-1" },
+        { id: "workspace-2", active: true, focused_surface_id: "surface-2" },
+      ]),
+    ).toBe("surface-2");
+    expect(surfaceIdFromWorkspaceList([{ id: "workspace-1", focusedSurfaceId: "surface-1" }])).toBe(
+      "surface-1",
+    );
+    expect(surfaceIdFromWorkspaceList([])).toBe("");
   });
 
   it("builds surface split params with axis validation", () => {
