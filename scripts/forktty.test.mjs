@@ -11,6 +11,7 @@ import {
   buildSurfaceSplitParams,
   buildWorktreeStatusParams,
   defaultSocketPath,
+  formatNotificationLine,
   mergeHookConfig,
   surfaceIdFromWorkspaceList,
 } from "./forktty.mjs";
@@ -28,6 +29,17 @@ describe("forktty CLI helpers", () => {
     const socketPath = defaultSocketPath({});
     expect(socketPath.startsWith(os.tmpdir())).toBe(true);
     expect(socketPath.endsWith("forktty.sock")).toBe(true);
+  });
+
+  it("formats global notifications without leaking undefined workspace text", () => {
+    expect(
+      formatNotificationLine({
+        read: false,
+        kind: "info",
+        title: "Smoke",
+        body: "GTK",
+      }),
+    ).toBe("[unread] global · info · Smoke — GTK");
   });
 
   it("shell-quotes the generated hook command", () => {

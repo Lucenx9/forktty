@@ -994,7 +994,8 @@ function formatNotificationLine(notification) {
   const state = notification.read ? "read" : "unread";
   const title = notification.title || "ForkTTY";
   const body = notification.body ? ` — ${notification.body}` : "";
-  return `[${state}] ${notification.workspaceName} · ${notification.kind} · ${title}${body}`;
+  const workspace = notification.workspaceName || notification.workspace_id || "global";
+  return `[${state}] ${workspace} · ${notification.kind} · ${title}${body}`;
 }
 
 async function handleNotifications(context) {
@@ -1551,6 +1552,7 @@ export {
   buildSurfaceSplitParams,
   buildWorktreeStatusParams,
   defaultSocketPath,
+  formatNotificationLine,
   mergeHookConfig,
   parseFlags,
   shellQuote,
