@@ -61,6 +61,9 @@ Tauri/React implementation.
 - CLI metadata commands: `set-status`, `list-status`, `clear-status`,
   `set-progress`, `list-progress`, `clear-progress`, `log`, `logs`, and
   `clear-logs`.
+- Codex, Claude, and Gemini hook events now update agent status metadata and
+  append workspace logs; attention/failure events also create prompt/error
+  notifications through the direct socket path.
 - GTK app startup now binds the local Unix socket and routes terminal backend
   commands to VTE widgets on the GTK main thread. `surface.send_text` reaches
   VTE through this adapter, and backend resize requests call VTE's terminal
