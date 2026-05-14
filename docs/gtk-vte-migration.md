@@ -53,7 +53,8 @@ Tauri/React implementation.
   `forktty-core`, with direct socket dispatch that opens/closes matching
   worktree-backed workspaces.
 - CLI surface commands: `surfaces`, `split-surface`, `focus-surface`, and
-  `close-surface`.
+  `close-surface`. `send-text` and `split-surface` can target the focused
+  surface of the active workspace when no explicit surface id is provided.
 - CLI worktree commands: `worktree-list`, `worktree-status`,
   `worktree-create`, `worktree-attach`, `worktree-remove`, and
   `worktree-merge`.
