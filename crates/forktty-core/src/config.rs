@@ -143,7 +143,9 @@ pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
     let mut content = String::new();
     file.take(MAX_CONFIG_SIZE_BYTES)
         .read_to_string(&mut content)?;
-    Ok(normalize_loaded_config(toml::from_str(&content)?))
+    let config = normalize_loaded_config(toml::from_str(&content)?);
+    validate_config(&config)?;
+    Ok(config)
 }
 
 pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
@@ -240,12 +242,28 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
             "general.notification_command must not be empty".to_string(),
         ));
     };
+    if is_shell_trampoline(program, parts.get(1).map(String::as_str)) {
+        return Err(ConfigError::Invalid(
+            "general.notification_command must not invoke a shell with -c".to_string(),
+        ));
+    }
     if !is_executable_file(Path::new(program)) {
         return Err(ConfigError::Invalid(format!(
             "general.notification_command must start with an absolute path to an executable file: {program}"
         )));
     }
     Ok(())
+}
+
+fn is_shell_trampoline(program: &str, first_arg: Option<&str>) -> bool {
+    if first_arg != Some("-c") {
+        return false;
+    }
+    let shell = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    matches!(shell, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh") || shell.ends_with("sh")
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -313,5 +331,35 @@ mod tests {
         config.general.shell = "/bin/sh".to_string();
         config.appearance.terminal_renderer = "vte".to_string();
         validate_config(&config).unwrap();
+    }
+
+    #[test]
+    fn loaded_config_rejects_invalid_saved_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "relative-shell"
+            "#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            load_config_from_path(&path),
+            Err(ConfigError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn notification_command_rejects_shell_trampoline() {
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.general.notification_command = "/bin/sh -c notify-send".to_string();
+
+        let error = validate_config(&config).unwrap_err();
+
+        assert!(error.to_string().contains("must not invoke a shell"));
     }
 }

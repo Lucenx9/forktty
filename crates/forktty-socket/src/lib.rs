@@ -136,12 +136,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("workspace");
-            let cwd = params
-                .get("workingDir")
-                .or_else(|| params.get("working_dir"))
-                .and_then(Value::as_str)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+            let cwd = resolve_workspace_cwd_param(&params)?;
             let workspace = {
                 let mut model = state
                     .model
@@ -238,11 +233,11 @@ pub async fn dispatch(
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
+            let name = validate_worktree_name_param(name)?;
             let cwd = resolve_cwd_param(&params)?;
             let layout = worktree_layout();
             let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
             let workspace = open_worktree_workspace(state, &info).await?;
-            let _ = worktree::run_hook(&info.path, "setup");
             Ok(json!({
                 "id": workspace.id,
                 "name": info.name,
@@ -257,11 +252,11 @@ pub async fn dispatch(
                 .or_else(|| params.get("branch"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
+            let name = validate_worktree_name_param(name)?;
             let cwd = resolve_cwd_param(&params)?;
             let layout = worktree_layout();
             let info = worktree::attach(&cwd, name, &layout).map_err(|err| err.to_string())?;
             let workspace = open_worktree_workspace(state, &info).await?;
-            let _ = worktree::run_hook(&info.path, "setup");
             Ok(json!({
                 "id": workspace.id,
                 "name": info.name,
@@ -275,7 +270,10 @@ pub async fn dispatch(
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
+            let name = validate_worktree_name_param(name)?;
             let cwd = resolve_cwd_param(&params)?;
+            let fallback_path =
+                worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
             let mut workspace_worktree_name = name.to_string();
             if let Ok(existing) = worktree::list(&cwd) {
                 if let Some(info) = existing
@@ -283,7 +281,6 @@ pub async fn dispatch(
                     .find(|info| info.worktree_name == name || info.branch == name)
                 {
                     workspace_worktree_name = info.worktree_name.clone();
-                    let _ = worktree::run_hook(&info.path, "teardown");
                 }
             }
             worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
@@ -313,7 +310,7 @@ pub async fn dispatch(
                     workspace_worktree_name.as_str(),
                 ));
                 if model.list_workspaces().is_empty() {
-                    model.create_workspace("main", PathBuf::from(&cwd));
+                    model.create_workspace("main", fallback_path);
                 }
                 surface_ids
             };
@@ -328,6 +325,7 @@ pub async fn dispatch(
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
+            let name = validate_worktree_name_param(name)?;
             let cwd = resolve_cwd_param(&params)?;
             let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
             Ok(json!(result))
@@ -702,14 +700,68 @@ async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<
         .map_err(|err| err.to_string())
 }
 
+fn resolve_workspace_cwd_param(params: &Value) -> Result<PathBuf, String> {
+    resolve_existing_dir_param(params, &["workingDir", "working_dir", "cwd"])
+}
+
 fn resolve_cwd_param(params: &Value) -> Result<String, String> {
-    let path = params
-        .get("cwd")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-    Ok(path.to_string_lossy().to_string())
+    Ok(resolve_existing_dir_param(params, &["cwd"])?
+        .to_string_lossy()
+        .to_string())
+}
+
+fn resolve_existing_dir_param(params: &Value, keys: &[&str]) -> Result<PathBuf, String> {
+    for key in keys {
+        let Some(value) = params.get(*key) else {
+            continue;
+        };
+        let raw = value
+            .as_str()
+            .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
+        if raw.trim().is_empty() {
+            return Err(format!("Invalid parameter {key}: path must not be empty"));
+        }
+        return canonical_existing_dir(Path::new(raw), key);
+    }
+    Ok(fallback_cwd())
+}
+
+fn canonical_existing_dir(path: &Path, key: &str) -> Result<PathBuf, String> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|err| format!("Invalid parameter {key}: cannot resolve path: {err}"))?;
+    let metadata = fs::metadata(&canonical)
+        .map_err(|err| format!("Invalid parameter {key}: cannot read path metadata: {err}"))?;
+    if !metadata.is_dir() {
+        return Err(format!("Invalid parameter {key}: path must be a directory"));
+    }
+    Ok(canonical)
+}
+
+fn fallback_cwd() -> PathBuf {
+    std::env::current_dir()
+        .ok()
+        .and_then(|path| canonical_existing_dir(&path, "cwd").ok())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+fn validate_worktree_name_param(name: &str) -> Result<&str, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Invalid worktree name: must not be empty".to_string());
+    }
+    if trimmed.len() > 255 {
+        return Err("Invalid worktree name: must be 255 bytes or fewer".to_string());
+    }
+    if trimmed.contains('\0') || trimmed.contains('\\') {
+        return Err("Invalid worktree name: contains unsupported characters".to_string());
+    }
+    if trimmed
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err("Invalid worktree name: contains an unsafe path segment".to_string());
+    }
+    Ok(trimmed)
 }
 
 fn worktree_layout() -> String {
@@ -1327,6 +1379,29 @@ mod tests {
             backend.sent_text(surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn validates_worktree_name_params() {
+        assert_eq!(
+            validate_worktree_name_param(" feature/x ").unwrap(),
+            "feature/x"
+        );
+        assert!(validate_worktree_name_param("../escape").is_err());
+        assert!(validate_worktree_name_param("feature//empty").is_err());
+        assert!(validate_worktree_name_param("feature\\windows").is_err());
+        assert!(validate_worktree_name_param("").is_err());
+    }
+
+    #[test]
+    fn resolves_cwd_params_to_existing_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = resolve_workspace_cwd_param(&json!({"workingDir": dir.path()})).unwrap();
+        assert_eq!(resolved, fs::canonicalize(dir.path()).unwrap());
+
+        let missing = dir.path().join("missing");
+        let error = resolve_cwd_param(&json!({"cwd": missing})).unwrap_err();
+        assert!(error.contains("cannot resolve path"));
     }
 
     #[tokio::test]

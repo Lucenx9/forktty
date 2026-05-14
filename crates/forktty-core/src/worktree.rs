@@ -1,7 +1,10 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use thiserror::Error;
+
+const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Error, Debug)]
 pub enum WorktreeError {
@@ -23,6 +26,10 @@ pub enum WorktreeError {
     TargetDirty,
     #[error("Worktree '{0}' has uncommitted changes or conflicts; commit, stash, or resolve them before removing")]
     WorktreeDirty(String),
+    #[error("Worktree hook '{0}' timed out")]
+    HookTimedOut(String),
+    #[error("Worktree hook '{0}' failed with exit code {1}")]
+    HookFailed(String, i32),
     #[error("Worktree '{0}' already exists")]
     AlreadyExists(String),
     #[error("{0}")]
@@ -72,6 +79,7 @@ pub fn create(
         }
         return Err(err.into());
     }
+    run_hook(&wt_path.to_string_lossy(), "setup")?;
     Ok(info(branch, wt_path, worktree_name))
 }
 
@@ -97,6 +105,7 @@ pub fn attach(
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
     repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
+    run_hook(&wt_path.to_string_lossy(), "setup")?;
     Ok(info(branch, wt_path, worktree_name))
 }
 
@@ -126,6 +135,7 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
     if has_uncommitted_changes(&wt_repo)? {
         return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
     }
+    run_hook(&wt_path.to_string_lossy(), "teardown")?;
     let branch = get_worktree_branch(&wt_path);
     let mut opts = git2::WorktreePruneOptions::new();
     opts.valid(true).working_tree(true);
@@ -229,6 +239,16 @@ pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
     Ok(if has_changes { "dirty" } else { "clean" }.to_string())
 }
 
+pub fn repository_root(repo_path: &str) -> Result<PathBuf, WorktreeError> {
+    let repo = open_repo(repo_path)?;
+    let common_dir = repo.commondir();
+    common_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .or_else(|| repo.workdir().map(Path::to_path_buf))
+        .ok_or_else(|| WorktreeError::Other("Cannot resolve repository root".to_string()))
+}
+
 pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, WorktreeError> {
     if hook_name != "setup" && hook_name != "teardown" {
         return Err(WorktreeError::Other(format!(
@@ -248,10 +268,25 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
             "Hook path escapes worktree boundary".to_string(),
         ));
     }
-    let status = std::process::Command::new(&canonical_hook)
+    let mut child = std::process::Command::new(&canonical_hook)
         .current_dir(worktree_path)
-        .status()?;
-    Ok(Some(status.code().unwrap_or(-1)))
+        .spawn()?;
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let code = status.code().unwrap_or(-1);
+            if code == 0 {
+                return Ok(Some(code));
+            }
+            return Err(WorktreeError::HookFailed(hook_name.to_string(), code));
+        }
+        if start.elapsed() >= HOOK_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(WorktreeError::HookTimedOut(hook_name.to_string()));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn open_repo(path: &str) -> Result<Repository, WorktreeError> {

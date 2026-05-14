@@ -7,7 +7,8 @@ use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
 use forktty_terminal::vte::{
-    send_text as vte_send_text, spawn_vte_terminal, Format, TerminalExt, VteTerminalWidget,
+    send_text as vte_send_text, spawn_vte_terminal_with_callback, Format, TerminalExt,
+    VteTerminalWidget,
 };
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
 use global_hotkey::{
@@ -22,7 +23,9 @@ use libloading::Library;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::CString;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -199,7 +202,30 @@ impl VteController {
         if self.widgets.contains_key(&request.surface_id) {
             return;
         }
-        match spawn_vte_terminal(&request) {
+        let spawn_model = self.model.clone();
+        let spawn_workspace_id = request.workspace_id.clone();
+        let spawn_surface_id = request.surface_id.clone();
+        match spawn_vte_terminal_with_callback(&request, move |result| {
+            if let Err(err) = result {
+                if let Ok(mut model) = spawn_model.lock() {
+                    let _ = model.set_status(
+                        &spawn_workspace_id,
+                        surface_status_key(&spawn_surface_id),
+                        "Terminal",
+                        "Spawn failed",
+                        Some("red".to_string()),
+                    );
+                    let notification = model.create_notification(
+                        "Terminal spawn failed",
+                        err.to_string(),
+                        NotificationKind::Error,
+                        Some(spawn_workspace_id.clone()),
+                        Some(spawn_surface_id.clone()),
+                    );
+                    dispatch_notification_with_loaded_config(&notification);
+                }
+            }
+        }) {
             Ok(widget) => {
                 apply_vte_appearance(&widget);
                 attach_vte_signal_handlers(&widget, &self.model, &request);
@@ -830,10 +856,41 @@ fn build_ui(app: &adw::Application) {
 
 fn configured_shell(config: &config::AppConfig) -> String {
     let shell = config.general.shell.trim();
-    if shell.is_empty() {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-    } else {
+    if is_executable_shell(shell) {
         shell.to_string()
+    } else if let Ok(env_shell) = std::env::var("SHELL") {
+        let env_shell = env_shell.trim();
+        if is_executable_shell(env_shell) {
+            env_shell.to_string()
+        } else {
+            "/bin/sh".to_string()
+        }
+    } else {
+        "/bin/sh".to_string()
+    }
+}
+
+fn is_executable_shell(shell: &str) -> bool {
+    !shell.is_empty() && is_executable_path(Path::new(shell))
+}
+
+fn is_executable_path(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 
@@ -1596,7 +1653,6 @@ fn open_worktree_from_gtk(
             extra_env: Vec::new(),
         })
         .map_err(|err| err.to_string())?;
-    let _ = worktree::run_hook(&info.path, "setup");
     Ok(())
 }
 
@@ -1605,6 +1661,7 @@ fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), St
         return Err("Branch or worktree name is required".to_string());
     }
     let cwd = active_workspace_cwd_string(state)?;
+    let fallback_path = worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
     let mut workspace_worktree_name = name.to_string();
     if let Ok(existing) = worktree::list(&cwd) {
         if let Some(info) = existing
@@ -1612,11 +1669,10 @@ fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), St
             .find(|info| info.worktree_name == name || info.branch == name)
         {
             workspace_worktree_name = info.worktree_name.clone();
-            let _ = worktree::run_hook(&info.path, "teardown");
         }
     }
     worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
-    close_workspace_by_worktree_name(state, &workspace_worktree_name);
+    close_workspace_by_worktree_name(state, &workspace_worktree_name, fallback_path);
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
@@ -1643,7 +1699,11 @@ fn active_workspace_cwd_string(state: &SocketAppState) -> Result<String, String>
         .ok_or_else(|| "Cannot resolve current workspace directory".to_string())
 }
 
-fn close_workspace_by_worktree_name(state: &SocketAppState, worktree_name: &str) {
+fn close_workspace_by_worktree_name(
+    state: &SocketAppState,
+    worktree_name: &str,
+    fallback_path: PathBuf,
+) {
     let surface_ids = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
@@ -1664,10 +1724,7 @@ fn close_workspace_by_worktree_name(state: &SocketAppState, worktree_name: &str)
             .collect::<Vec<_>>();
         let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
         if model.list_workspaces().is_empty() {
-            model.create_workspace(
-                "main",
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-            );
+            model.create_workspace("main", fallback_path);
         }
         surface_ids
     };
@@ -2015,9 +2072,19 @@ mod tests {
     #[test]
     fn uses_configured_shell_for_gtk_spawn() {
         let mut config = config::AppConfig::default();
-        config.general.shell = "/bin/zsh".to_string();
+        config.general.shell = "/bin/sh".to_string();
 
-        assert_eq!(configured_shell(&config), "/bin/zsh");
+        assert_eq!(configured_shell(&config), "/bin/sh");
+    }
+
+    #[test]
+    fn configured_shell_ignores_non_executable_paths() {
+        let mut config = config::AppConfig::default();
+        config.general.shell = "relative-shell".to_string();
+
+        let shell = configured_shell(&config);
+
+        assert!(is_executable_path(Path::new(&shell)));
     }
 
     #[test]

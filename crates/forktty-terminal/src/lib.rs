@@ -31,20 +31,28 @@ pub struct SpawnRequest {
 
 impl SpawnRequest {
     pub fn forktty_env(&self) -> Vec<(String, String)> {
-        let mut env = vec![
-            (
-                "FORKTTY_WORKSPACE_ID".to_string(),
-                self.workspace_id.clone(),
-            ),
-            ("FORKTTY_SURFACE_ID".to_string(), self.surface_id.clone()),
-            (
-                "FORKTTY_SOCKET_PATH".to_string(),
-                self.socket_path.to_string_lossy().to_string(),
-            ),
-        ];
-        env.extend(self.extra_env.clone());
+        let mut env = self
+            .extra_env
+            .iter()
+            .filter(|(key, _)| !is_reserved_terminal_env(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        env.push((
+            "FORKTTY_WORKSPACE_ID".to_string(),
+            self.workspace_id.clone(),
+        ));
+        env.push(("FORKTTY_SURFACE_ID".to_string(), self.surface_id.clone()));
+        env.push((
+            "FORKTTY_SOCKET_PATH".to_string(),
+            self.socket_path.to_string_lossy().to_string(),
+        ));
+        env.push(("TERM".to_string(), "xterm-256color".to_string()));
         env
     }
+}
+
+fn is_reserved_terminal_env(key: &str) -> bool {
+    key == "TERM" || key.starts_with("FORKTTY_")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -193,7 +201,11 @@ mod tests {
             shell: "/bin/sh".to_string(),
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
-            extra_env: vec![("EXTRA".to_string(), "1".to_string())],
+            extra_env: vec![
+                ("EXTRA".to_string(), "1".to_string()),
+                ("TERM".to_string(), "dumb".to_string()),
+                ("FORKTTY_SURFACE_ID".to_string(), "spoofed".to_string()),
+            ],
         };
 
         backend.spawn(request).unwrap();
@@ -209,6 +221,10 @@ mod tests {
             "FORKTTY_SOCKET_PATH".to_string(),
             "/tmp/forktty.sock".to_string()
         )));
+        assert!(env.contains(&("TERM".to_string(), "xterm-256color".to_string())));
+        assert!(env.contains(&("EXTRA".to_string(), "1".to_string())));
+        assert!(!env.contains(&("FORKTTY_SURFACE_ID".to_string(), "spoofed".to_string())));
+        assert!(!env.contains(&("TERM".to_string(), "dumb".to_string())));
         assert_eq!(backend.sent_text("surface-1").unwrap(), vec!["echo ok\n"]);
         backend.close("surface-1").unwrap();
         assert!(matches!(

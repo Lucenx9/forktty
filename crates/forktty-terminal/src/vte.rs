@@ -16,6 +16,21 @@ pub type VteTerminalWidget = vte4::Terminal;
 
 #[cfg(feature = "vte")]
 pub fn spawn_vte_terminal(request: &SpawnRequest) -> Result<VteTerminalWidget, TerminalError> {
+    spawn_vte_terminal_with_callback(request, |result| {
+        if let Err(err) = result {
+            eprintln!("Failed to spawn VTE terminal: {err}");
+        }
+    })
+}
+
+#[cfg(feature = "vte")]
+pub fn spawn_vte_terminal_with_callback<F>(
+    request: &SpawnRequest,
+    on_spawn_result: F,
+) -> Result<VteTerminalWidget, TerminalError>
+where
+    F: FnOnce(Result<glib::Pid, glib::Error>) + 'static,
+{
     let terminal = vte4::Terminal::new();
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
@@ -36,11 +51,7 @@ pub fn spawn_vte_terminal(request: &SpawnRequest) -> Result<VteTerminalWidget, T
         || {},
         -1,
         None::<&gtk4::gio::Cancellable>,
-        |result| {
-            if let Err(err) = result {
-                eprintln!("Failed to spawn VTE terminal: {err}");
-            }
-        },
+        on_spawn_result,
     );
 
     Ok(terminal)
