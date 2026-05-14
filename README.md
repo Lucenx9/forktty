@@ -93,22 +93,6 @@ ForkTTY opens the current directory as the `main` workspace. Use the command pal
 - `F1`: keyboard shortcuts
 - `Ctrl+,`: settings
 
-### Container Development
-
-If you do not want to install the build dependencies on the host, use the Ubuntu container wrapper:
-
-```bash
-./scripts/ubuntu-dev.sh
-```
-
-Useful one-off commands:
-
-```bash
-./scripts/ubuntu-dev.sh cargo test --workspace
-./scripts/ubuntu-dev.sh cargo build -p forktty-ui-gtk --features gtk-vte
-./scripts/ubuntu-build-deb.sh
-```
-
 ## Socket CLI
 
 ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
