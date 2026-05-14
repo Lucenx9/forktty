@@ -167,8 +167,8 @@ Implemented operations:
 - attach existing branch/worktree;
 - remove worktree after dirty-state and metadata validation;
 - merge worktree branch with dirty-target/conflict checks;
-- run `.forktty/setup` after open/create;
-- run `.forktty/teardown` before removal.
+- run `.forktty/setup` after open/create as advisory setup; failures are reported but do not hide an already-created worktree;
+- run `.forktty/teardown` before removal; failures block removal, and dirty state is rechecked after the hook before deleting files.
 
 Worktree and hook paths are canonicalized. Hook execution is limited to `.forktty/setup` and `.forktty/teardown` inside verified worktrees.
 

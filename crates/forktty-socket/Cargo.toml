@@ -12,11 +12,11 @@ description = "ForkTTY Unix socket JSON-RPC server"
 [dependencies]
 forktty-core = { path = "../forktty-core" }
 forktty-terminal = { path = "../forktty-terminal" }
+git2.workspace = true
 libc.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-git2.workspace = true
 tempfile.workspace = true

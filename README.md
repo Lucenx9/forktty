@@ -139,7 +139,7 @@ Hooks report status, progress, logs, and prompt notifications through the same l
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
 - Direct Unix socket JSON-RPC server for workspace, surface, notification, worktree, and metadata automation.
-- Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees.
+- Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
 - Bounded config/session/socket handling and local-only privacy defaults.
@@ -185,7 +185,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 - Unix socket defaults to `$XDG_RUNTIME_DIR/forktty.sock` with `/tmp/forktty-<uid>/forktty.sock` fallback and owner-only permissions.
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
-- Worktree names, paths, and hook locations are validated before mutation or execution.
+- Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.
 - ForkTTY makes no telemetry, update-check, or external network calls.
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).

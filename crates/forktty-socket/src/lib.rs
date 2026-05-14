@@ -101,7 +101,10 @@ pub fn bind_socket_listener(
     }
     let listener = StdUnixListener::bind(socket_path)?;
     listener.set_nonblocking(true)?;
-    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
+    if let Err(err) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600)) {
+        let _ = fs::remove_file(socket_path);
+        return Err(err);
+    }
     Ok(listener)
 }
 
@@ -215,17 +218,13 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "worktree.list" => {
-            let cwd = resolve_cwd_param(&params)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let worktrees = worktree::list(&cwd).map_err(|err| err.to_string())?;
             Ok(json!(worktrees))
         }
         "worktree.status" => {
-            let path = params
-                .get("path")
-                .or_else(|| params.get("cwd"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| "Missing path".to_string())?;
-            let status = worktree::status(path).map_err(|err| err.to_string())?;
+            let path = resolve_open_repo_cwd_param(state, &params, &["path", "cwd"])?;
+            let status = worktree::status(&path).map_err(|err| err.to_string())?;
             Ok(json!({"status": status}))
         }
         "worktree.create" => {
@@ -234,7 +233,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_cwd_param(&params)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let layout = worktree_layout();
             let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
             let workspace = open_worktree_workspace(state, &info).await?;
@@ -253,7 +252,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_cwd_param(&params)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let layout = worktree_layout();
             let info = worktree::attach(&cwd, name, &layout).map_err(|err| err.to_string())?;
             let workspace = open_worktree_workspace(state, &info).await?;
@@ -271,7 +270,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_cwd_param(&params)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let fallback_path =
                 worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
             let mut workspace_worktree_name = name.to_string();
@@ -326,7 +325,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Missing name".to_string())?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_cwd_param(&params)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
             Ok(json!(result))
         }
@@ -704,10 +703,21 @@ fn resolve_workspace_cwd_param(params: &Value) -> Result<PathBuf, String> {
     resolve_existing_dir_param(params, &["workingDir", "working_dir", "cwd"])
 }
 
+#[cfg(test)]
 fn resolve_cwd_param(params: &Value) -> Result<String, String> {
     Ok(resolve_existing_dir_param(params, &["cwd"])?
         .to_string_lossy()
         .to_string())
+}
+
+fn resolve_open_repo_cwd_param(
+    state: &SocketAppState,
+    params: &Value,
+    keys: &[&str],
+) -> Result<String, String> {
+    let cwd = resolve_existing_dir_param(params, keys)?;
+    validate_socket_cwd_against_open_workspaces(state, &cwd)?;
+    Ok(cwd.to_string_lossy().to_string())
 }
 
 fn resolve_existing_dir_param(params: &Value, keys: &[&str]) -> Result<PathBuf, String> {
@@ -735,6 +745,34 @@ fn canonical_existing_dir(path: &Path, key: &str) -> Result<PathBuf, String> {
         return Err(format!("Invalid parameter {key}: path must be a directory"));
     }
     Ok(canonical)
+}
+
+fn validate_socket_cwd_against_open_workspaces(
+    state: &SocketAppState,
+    cwd: &Path,
+) -> Result<(), String> {
+    let candidate = canonical_repo_common_dir(cwd)?;
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let allowed = model
+        .list_workspaces()
+        .into_iter()
+        .filter_map(|workspace| canonical_repo_common_dir(&workspace.working_dir).ok())
+        .any(|open_repo| open_repo == candidate);
+    if allowed {
+        Ok(())
+    } else {
+        Err("cwd must be inside the git repository of an open workspace".to_string())
+    }
+}
+
+fn canonical_repo_common_dir(path: &Path) -> Result<PathBuf, String> {
+    let repo = git2::Repository::discover(path)
+        .map_err(|_| format!("cwd must be inside a git repository: {}", path.display()))?;
+    fs::canonicalize(repo.commondir())
+        .map_err(|err| format!("Cannot resolve git common directory: {err}"))
 }
 
 fn fallback_cwd() -> PathBuf {
@@ -1093,7 +1131,7 @@ fn effective_uid() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forktty_terminal::HeadlessTerminalBackend;
+    use forktty_terminal::{HeadlessTerminalBackend, TerminalBackend};
     use git2::Repository;
     use std::fs;
     use std::sync::Arc;
@@ -1333,6 +1371,13 @@ mod tests {
     async fn dispatches_worktree_lifecycle_methods_and_updates_workspace_model() {
         let repo_dir = make_temp_repo();
         let (state, backend) = test_state();
+        dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "repo", "workingDir": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
 
         let created = dispatch(
             &state,
@@ -1345,9 +1390,15 @@ mod tests {
         assert_eq!(created["branch"], "topic/socket");
         assert_ne!(created["worktree_name"], "topic/socket");
         let workspace_id = created["id"].as_str().unwrap();
-        let surface_id = "surface-2";
+        let surface_id = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.workspace_id == workspace_id)
+            .unwrap()
+            .surface_id;
         assert!(backend
-            .env(surface_id)
+            .env(&surface_id)
             .unwrap()
             .contains(&("FORKTTY_WORKSPACE_ID".to_string(), workspace_id.to_string())));
 
@@ -1376,9 +1427,36 @@ mod tests {
             .iter()
             .any(|workspace| workspace["git_branch"] == "topic/socket"));
         assert!(matches!(
-            backend.sent_text(surface_id),
+            backend.sent_text(&surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn worktree_socket_rejects_unopened_repo_cwd() {
+        let open_repo = make_temp_repo();
+        let unopened_repo = make_temp_repo();
+        let (state, _backend) = test_state();
+        dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "open", "workingDir": open_repo.path()}),
+        )
+        .await
+        .unwrap();
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": "blocked", "cwd": unopened_repo.path()}),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("open workspace"));
+        assert!(worktree::list(unopened_repo.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

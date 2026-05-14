@@ -79,7 +79,9 @@ pub fn create(
         }
         return Err(err.into());
     }
-    run_hook(&wt_path.to_string_lossy(), "setup")?;
+    if let Err(err) = run_hook(&wt_path.to_string_lossy(), "setup") {
+        eprintln!("ForkTTY setup hook failed for {}: {err}", wt_path.display());
+    }
     Ok(info(branch, wt_path, worktree_name))
 }
 
@@ -105,7 +107,9 @@ pub fn attach(
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
     repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
-    run_hook(&wt_path.to_string_lossy(), "setup")?;
+    if let Err(err) = run_hook(&wt_path.to_string_lossy(), "setup") {
+        eprintln!("ForkTTY setup hook failed for {}: {err}", wt_path.display());
+    }
     Ok(info(branch, wt_path, worktree_name))
 }
 
@@ -136,6 +140,11 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
         return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
     }
     run_hook(&wt_path.to_string_lossy(), "teardown")?;
+    let wt_repo = Repository::open(&wt_path)
+        .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
+    if has_uncommitted_changes(&wt_repo)? {
+        return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
+    }
     let branch = get_worktree_branch(&wt_path);
     let mut opts = git2::WorktreePruneOptions::new();
     opts.valid(true).working_tree(true);
@@ -605,6 +614,18 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn failing_setup_hook_is_advisory() {
+        let dir = make_repo();
+        commit_file(dir.path(), ".forktty/setup", "#!/bin/sh\nexit 9\n");
+
+        let info = create(dir.path().to_str().unwrap(), "setup-fails", "nested").unwrap();
+
+        assert!(Path::new(&info.path).exists());
+        assert_eq!(info.branch, "setup-fails");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn attach_runs_setup_hook() {
         let dir = make_repo();
         let marker = dir.path().join("attach-marker");
@@ -652,6 +673,26 @@ mod tests {
             Err(WorktreeError::HookFailed(hook, 7)) if hook == "teardown"
         ));
         assert!(Path::new(&info.path).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn teardown_dirty_recheck_prevents_remove() {
+        let dir = make_repo();
+        commit_file(
+            dir.path(),
+            ".forktty/teardown",
+            "#!/bin/sh\nprintf dirty > dirty-after-teardown.txt\n",
+        );
+        let info = create(dir.path().to_str().unwrap(), "teardown-dirties", "nested").unwrap();
+
+        let result = remove(dir.path().to_str().unwrap(), "teardown-dirties", true);
+
+        assert!(matches!(result, Err(WorktreeError::WorktreeDirty(_))));
+        assert!(Path::new(&info.path).exists());
+        assert!(Path::new(&info.path)
+            .join("dirty-after-teardown.txt")
+            .exists());
     }
 
     #[test]
