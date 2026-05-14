@@ -197,6 +197,7 @@ struct SidebarSnapshot {
     rows: Vec<SidebarWorkspaceRow>,
     active_workspace_name: Option<String>,
     active_status_label: Option<String>,
+    active_full_path: Option<String>,
     active_pane_label: Option<String>,
     signature: String,
 }
@@ -1157,6 +1158,16 @@ fn attach_vte_signal_handlers(
     let exit_model = model.clone();
     widget.connect_child_exited(move |_, status| {
         if let Ok(mut model) = exit_model.lock() {
+            if status == 0 {
+                let _ = model.set_status(
+                    &workspace_id,
+                    surface_status_key(&surface_id),
+                    "Terminal",
+                    "Closed",
+                    None,
+                );
+                return;
+            }
             let _ = model.set_status(
                 &workspace_id,
                 surface_status_key(&surface_id),
@@ -2614,13 +2625,15 @@ fn build_ui(app: &adw::Application) {
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(&sidebar_shell));
-        paned.set_resize_end_child(false);
+        paned.set_resize_end_child(true);
         paned.set_shrink_end_child(false);
     } else {
         paned.set_start_child(Some(&sidebar_shell));
-        paned.set_resize_start_child(false);
+        paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(&*terminal_stack.borrow()));
+        paned.set_resize_end_child(true);
+        paned.set_shrink_end_child(false);
     }
     sidebar_shell.set_visible(app_config.appearance.sidebar_visible);
 
@@ -2629,7 +2642,7 @@ fn build_ui(app: &adw::Application) {
     let status_location = gtk::Button::builder().label("").has_frame(false).build();
     status_location.add_css_class("flat");
     status_location.add_css_class("status-location");
-    status_location.set_tooltip_text(Some("Switch workspace"));
+    status_location.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
     status_location.set_sensitive(false);
     let status_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     status_spacer.set_hexpand(true);
@@ -2672,10 +2685,15 @@ fn build_ui(app: &adw::Application) {
         .content(&content)
         .build();
     if quake_mode {
-        window.set_decorated(false);
-        if !configure_quake_layer_shell(&window) {
-            eprintln!(
-                "GTK layer-shell unavailable; quake mode will use a normal undecorated window"
+        if configure_quake_layer_shell(&window) {
+            window.set_decorated(false);
+        } else {
+            eprintln!("GTK layer-shell unavailable; quake mode will use a normal decorated window");
+            create_global_notification(
+                &state,
+                "Quake Mode Degraded",
+                "Layer-shell is not available in this desktop session. ForkTTY opened a normal movable window instead.",
+                NotificationKind::Info,
             );
         }
     }
@@ -2893,11 +2911,11 @@ fn apply_sidebar_position(
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(sidebar_shell));
-        paned.set_resize_end_child(false);
+        paned.set_resize_end_child(true);
         paned.set_shrink_end_child(false);
     } else {
         paned.set_start_child(Some(sidebar_shell));
-        paned.set_resize_start_child(false);
+        paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(terminal_stack));
         paned.set_resize_end_child(true);
@@ -3337,6 +3355,14 @@ fn refresh_sidebar(
     }
     if let Some(label) = snapshot.active_status_label.as_deref() {
         ui.status_location.set_label(label);
+        if let Some(path) = snapshot.active_full_path.as_deref() {
+            ui.status_location.set_tooltip_text(Some(&format!(
+                "Switch workspace (Ctrl+Shift+P)\nFull path: {path}"
+            )));
+        } else {
+            ui.status_location
+                .set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
+        }
         ui.status_location
             .update_property(&[gtk::accessible::Property::Label(&format!(
                 "Workspace location: {label}"
@@ -3344,6 +3370,8 @@ fn refresh_sidebar(
         ui.status_location.set_sensitive(true);
     } else {
         ui.status_location.set_label("");
+        ui.status_location
+            .set_tooltip_text(Some("No active workspace location"));
         ui.status_location
             .update_property(&[gtk::accessible::Property::Label(
                 "No active workspace location",
@@ -3639,6 +3667,7 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             rows: Vec::new(),
             active_workspace_name: None,
             active_status_label: None,
+            active_full_path: None,
             active_pane_label: None,
             signature: "lock-poisoned".to_string(),
         };
@@ -3696,6 +3725,12 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             .unwrap_or_else(|| compact_path(&workspace.working_dir));
         format!("{} · {}", workspace.name, cwd)
     });
+    let active_full_path = active_workspace.map(|workspace| {
+        model
+            .surface(&workspace.focused_surface_id)
+            .map(|surface| surface.cwd.to_string_lossy().to_string())
+            .unwrap_or_else(|| workspace.working_dir.to_string_lossy().to_string())
+    });
     let active_pane_label = active_workspace.and_then(|workspace| {
         let leaves = collect_leaves(&workspace.pane_tree);
         let pane_count = leaves.len();
@@ -3721,9 +3756,10 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         Some(format!("Pane {}/{} · {}", index + 1, pane_count, title))
     });
     let mut signature = format!(
-        "active={:?};status={:?};pane={:?};rows={};",
+        "active={:?};status={:?};path={:?};pane={:?};rows={};",
         active_workspace_id,
         active_status_label,
+        active_full_path,
         active_pane_label,
         rows.len()
     );
@@ -3748,6 +3784,7 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         rows,
         active_workspace_name,
         active_status_label,
+        active_full_path,
         active_pane_label,
         signature,
     }
@@ -4676,6 +4713,38 @@ fn show_command_palette_with_query(
             empty_for_search.set_visible(true);
         }
     });
+
+    let rows_for_nav = command_rows.clone();
+    let list_for_nav = list.clone();
+    let nav = gtk::EventControllerKey::new();
+    nav.connect_key_pressed(move |_, key, _, _| {
+        let delta = match key {
+            gtk::gdk::Key::Down => 1,
+            gtk::gdk::Key::Up => -1,
+            _ => return glib::Propagation::Proceed,
+        };
+        let visible_rows = rows_for_nav
+            .iter()
+            .filter(|(_, row, _)| row.is_visible())
+            .map(|(_, row, _)| row.clone())
+            .collect::<Vec<_>>();
+        if visible_rows.is_empty() {
+            return glib::Propagation::Stop;
+        }
+        let current_index = list_for_nav
+            .selected_row()
+            .and_then(|selected| visible_rows.iter().position(|row| row == &selected));
+        let next_index = match (current_index, delta) {
+            (Some(index), 1) => (index + 1).min(visible_rows.len().saturating_sub(1)),
+            (Some(index), -1) => index.saturating_sub(1),
+            (None, 1) => 0,
+            (None, -1) => visible_rows.len().saturating_sub(1),
+            _ => 0,
+        };
+        list_for_nav.select_row(Some(&visible_rows[next_index]));
+        glib::Propagation::Stop
+    });
+    search.add_controller(nav);
 
     let rows_for_activate = command_rows.clone();
     let list_for_activate = list.clone();
@@ -6241,12 +6310,6 @@ fn close_active_workspace(state: &SocketAppState) {
             Err(_) => return,
         };
         let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
-        if model.list_workspaces().is_empty() {
-            model.create_workspace(
-                "main",
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-            );
-        }
     }
     for surface_id in surface_ids {
         let _ = state.terminal.close(&surface_id);
