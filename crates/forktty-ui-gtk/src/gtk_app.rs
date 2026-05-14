@@ -33,6 +33,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_ID: &str = "dev.forktty.ForkTTY";
 const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
+const SYSTEM_MONOSPACE_FONT_FAMILY_ID: &str = "__forktty_system_monospace__";
 const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "JetBrainsMono Nerd Font Mono",
     "JetBrainsMono Nerd Font",
@@ -741,6 +742,13 @@ fn default_terminal_font_family(installed_families: &[String]) -> String {
         .find(|family| family.eq_ignore_ascii_case("monospace"))
         .cloned()
         .unwrap_or_else(|| "monospace".to_string())
+}
+
+fn resolved_system_monospace_family(context: &gtk::pango::Context) -> Option<String> {
+    let description = gtk::pango::FontDescription::from_string("monospace 12");
+    context
+        .load_font(&description)
+        .and_then(|font| font.describe().family().map(|family| family.to_string()))
 }
 
 fn attach_vte_signal_handlers(
@@ -3584,10 +3592,10 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         next.general.shell = shell_entry.text().to_string();
         if let Some(family) = font_family.active_id() {
             let family = family.to_string();
-            next.appearance.font_family = if family == DEFAULT_FONT_FAMILY_ID {
-                String::new()
-            } else {
-                family
+            next.appearance.font_family = match family.as_str() {
+                DEFAULT_FONT_FAMILY_ID => String::new(),
+                SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
+                _ => family,
             };
         }
         next.appearance.font_size = font_size.value() as u16;
@@ -3662,6 +3670,12 @@ fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk
         Some(DEFAULT_FONT_FAMILY_ID),
         &format!("Default terminal font ({default_family})"),
     );
+    let system_monospace = resolved_system_monospace_family(&context)
+        .unwrap_or_else(|| "monospace".to_string());
+    combo.append(
+        Some(SYSTEM_MONOSPACE_FONT_FAMILY_ID),
+        &format!("System monospace ({system_monospace})"),
+    );
 
     let mut names = families
         .iter()
@@ -3677,7 +3691,7 @@ fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk
     names.sort_by_key(|name| name.to_ascii_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
 
-    let mut has_active = active_family.is_empty();
+    let mut has_active = active_family.is_empty() || active_family.eq_ignore_ascii_case("monospace");
     for name in &names {
         if name == active_family {
             has_active = true;
@@ -3690,6 +3704,8 @@ fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk
 
     let active_id = if active_family.is_empty() {
         DEFAULT_FONT_FAMILY_ID
+    } else if active_family.eq_ignore_ascii_case("monospace") {
+        SYSTEM_MONOSPACE_FONT_FAMILY_ID
     } else {
         active_family
     };
