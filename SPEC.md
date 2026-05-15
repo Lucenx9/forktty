@@ -62,7 +62,7 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 
 1. A workspace or split creates a surface in `WorkspaceModel`.
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
-3. The VTE adapter creates a VTE terminal, sets font/colors, enables legacy OSC777 translation, and spawns the configured shell.
+3. The VTE adapter creates a VTE terminal, applies appearance (font, colors, scrollback) settings, and spawns the configured shell.
 4. Child processes inherit:
    - `FORKTTY_WORKSPACE_ID`
    - `FORKTTY_SURFACE_ID`
