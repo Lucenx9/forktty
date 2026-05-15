@@ -4,7 +4,12 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Moved the GTK polish design note into `docs/design/` and removed stale GTK/Tauri-era repository artifacts.
+- Workspace-scoped notifications without a surface target now raise workspace attention until they are read or dismissed.
+
 ### Fixed
+- `Open Latest` in the notification panel now resolves the current latest openable notification at click time, so dismissing a notification cannot leave the button targeting a removed item.
 - Cleared the persisted workspace attention badge on session restore so freshly restarted sessions no longer show stale unread state when no surfaces are unread and no notifications carry over.
 - `Ctrl+Shift+W` and the close-pane button now succeed when the underlying terminal has already exited; the model surface is removed even if the backend reports it as `NotFound`, matching the socket close path.
 - Rejected hand-edited session files that disagree about which workspace is active (multiple `active: true` flags, or a flag pointing to a workspace different from `active_workspace_id`) so loads quarantine corrupt state instead of silently picking one.

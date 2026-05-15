@@ -5816,6 +5816,19 @@ fn notification_target_exists(state: &SocketAppState, notification: &Notificatio
         .is_some_and(|surface_id| model.surface(surface_id).is_some())
 }
 
+fn latest_openable_notification(state: &SocketAppState) -> Option<NotificationItem> {
+    let notifications = state
+        .model
+        .lock()
+        .ok()
+        .map(|model| model.list_notifications())
+        .unwrap_or_default();
+    notifications
+        .into_iter()
+        .rev()
+        .find(|notification| notification_target_exists(state, notification))
+}
+
 fn notification_target_label(
     state: &SocketAppState,
     notification: &NotificationItem,
@@ -5933,12 +5946,6 @@ fn show_notification_panel(
         })
         .unwrap_or_default();
     let has_notifications = !notifications.is_empty();
-    let latest_openable = notifications
-        .iter()
-        .rev()
-        .find(|notification| notification_target_exists(state, notification))
-        .cloned();
-
     let subtitle = gtk::Label::builder()
         .label(if has_notifications {
             format!(
@@ -5969,7 +5976,7 @@ fn show_notification_panel(
 
     let close_button = gtk::Button::with_label("Close");
     let jump = gtk::Button::with_label("Open Latest");
-    jump.set_sensitive(latest_openable.is_some());
+    jump.set_sensitive(latest_openable_notification(state).is_some());
     jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
     let clear = gtk::Button::with_label("Clear All");
     clear.set_sensitive(has_notifications);
@@ -5994,6 +6001,14 @@ fn show_notification_panel(
             subtitle.set_label("No notifications");
             clear.set_sensitive(false);
             jump.set_sensitive(false);
+        })
+    };
+
+    let refresh_jump_state = {
+        let state = state.clone();
+        let jump = jump.clone();
+        Rc::new(move || {
+            jump.set_sensitive(latest_openable_notification(&state).is_some());
         })
     };
 
@@ -6070,6 +6085,7 @@ fn show_notification_panel(
             let row_for_dismiss = row.clone();
             let subtitle_for_dismiss = subtitle.clone();
             let show_empty_for_dismiss = show_empty_state.clone();
+            let refresh_jump_for_dismiss = refresh_jump_state.clone();
             dismiss.connect_clicked(move |_| {
                 let remaining = state_for_dismiss
                     .model
@@ -6090,6 +6106,7 @@ fn show_notification_panel(
                         format!("{remaining} notifications")
                     };
                     subtitle_for_dismiss.set_label(&label);
+                    refresh_jump_for_dismiss();
                 }
             });
             top.append(&dismiss);
@@ -6130,11 +6147,16 @@ fn show_notification_panel(
     let dialog_for_close = dialog.clone();
     close_button.connect_clicked(move |_| dialog_for_close.close());
 
-    if let Some(notification) = latest_openable {
+    {
         let state_for_jump = state.clone();
         let controller_for_jump = controller.clone();
         let dialog_for_jump = dialog.clone();
+        let jump_for_click = jump.clone();
         jump.connect_clicked(move |_| {
+            let Some(notification) = latest_openable_notification(&state_for_jump) else {
+                jump_for_click.set_sensitive(false);
+                return;
+            };
             if open_notification_target(
                 &state_for_jump,
                 controller_for_jump.as_ref(),

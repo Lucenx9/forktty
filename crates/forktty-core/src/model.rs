@@ -520,7 +520,17 @@ impl WorkspaceModel {
             surface_id,
         };
         if let Some(surface_id) = &item.surface_id {
-            let _ = self.mark_surface_unread(surface_id, true);
+            if !self.mark_surface_unread(surface_id, true) {
+                if let Some(workspace_id) = &item.workspace_id {
+                    if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
+                        workspace.needs_attention = true;
+                    }
+                }
+            }
+        } else if let Some(workspace_id) = &item.workspace_id {
+            if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
+                workspace.needs_attention = true;
+            }
         }
         self.notifications.push(item.clone());
         item
@@ -711,15 +721,24 @@ impl WorkspaceModel {
             .filter_map(|notification| notification.surface_id.as_ref())
             .cloned()
             .collect::<BTreeSet<_>>();
+        let unread_workspace_ids = self
+            .notifications
+            .iter()
+            .filter(|notification| !notification.read)
+            .filter_map(|notification| notification.workspace_id.as_ref())
+            .cloned()
+            .collect::<BTreeSet<_>>();
         for surface in self.surfaces.values_mut() {
             let unread = unread_surface_ids.contains(&surface.id);
             surface.unread = unread;
             surface.needs_attention = unread;
         }
         for workspace in self.workspaces.values_mut() {
-            workspace.needs_attention = self.surfaces.values().any(|surface| {
-                surface.workspace_id == workspace.id && (surface.unread || surface.needs_attention)
-            });
+            workspace.needs_attention = unread_workspace_ids.contains(&workspace.id)
+                || self.surfaces.values().any(|surface| {
+                    surface.workspace_id == workspace.id
+                        && (surface.unread || surface.needs_attention)
+                });
         }
     }
 
@@ -1539,6 +1558,39 @@ mod tests {
 
         assert!(!model.list_workspaces()[0].needs_attention);
         assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
+    }
+
+    #[test]
+    fn workspace_notification_marks_workspace_attention_without_surface() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let _ = model.create_notification(
+            "Workspace",
+            "Needs input",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+
+        assert!(model.list_workspaces()[0].needs_attention);
+        assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
+
+        model.mark_notifications_read();
+
+        assert!(!model.list_workspaces()[0].needs_attention);
+
+        let notification = model.create_notification(
+            "Workspace",
+            "Needs input again",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+        assert!(model.list_workspaces()[0].needs_attention);
+
+        assert!(model.dismiss_notification(&notification.id));
+
+        assert!(!model.list_workspaces()[0].needs_attention);
     }
 
     #[test]

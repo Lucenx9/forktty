@@ -25,6 +25,7 @@ CLAUDE.md
 .claude/
 .claude/settings.local.json
 plans/
+docs/superpowers/
 
 # Test artifacts
 .playwright-cli/
