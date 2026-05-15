@@ -307,7 +307,6 @@ impl VteController {
                 }
                 apply_vte_appearance(&widget);
                 attach_vte_signal_handlers(&widget, &self.model, &request);
-                widget.grab_focus();
                 let chrome = build_pane_chrome(
                     &request.surface_id,
                     &widget,
@@ -369,7 +368,7 @@ impl VteController {
         }
         self.container.append(&widget);
         if let Some(widget) = self.widgets.get(&focused_surface_id) {
-            widget.grab_focus();
+            queue_widget_focus(widget.clone().upcast());
         }
         self.last_layout_signature = Some(signature);
     }
@@ -2394,6 +2393,10 @@ fn schedule_paned_ratio(
     paned.add_tick_callback(move |paned, _| {
         let attempt = attempts.get().saturating_add(1);
         attempts.set(attempt);
+        if paned.root().is_none() {
+            ready.set(true);
+            return glib::ControlFlow::Break;
+        }
         let applied = apply_paned_ratio(paned, orientation, ratio);
         let done =
             (applied && attempt >= PANED_RATIO_APPLY_FRAMES) || attempt >= PANED_RATIO_MAX_FRAMES;
@@ -2425,6 +2428,14 @@ fn apply_paned_ratio(paned: &gtk::Paned, orientation: gtk::Orientation, ratio: f
     };
     paned.set_position(position.max(1));
     true
+}
+
+fn queue_widget_focus(widget: gtk::Widget) {
+    glib::idle_add_local_once(move || {
+        if widget.root().is_some() {
+            widget.grab_focus();
+        }
+    });
 }
 
 fn detach_widget(widget: &gtk::Widget) {
