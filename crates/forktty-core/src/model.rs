@@ -134,6 +134,9 @@ pub struct WorkspaceModel {
 }
 
 const MAX_LOG_ENTRIES: usize = 200;
+const MAX_NOTIFICATION_ENTRIES: usize = 200;
+const MAX_NOTIFICATION_TITLE_LEN: usize = 256;
+const MAX_NOTIFICATION_BODY_LEN: usize = 4096;
 
 impl WorkspaceModel {
     pub fn new() -> Self {
@@ -417,10 +420,15 @@ impl WorkspaceModel {
         workspace_id: Option<WorkspaceId>,
         surface_id: Option<SurfaceId>,
     ) -> NotificationItem {
+        let mut title = title.into();
+        title.truncate(MAX_NOTIFICATION_TITLE_LEN);
+        let mut body = body.into();
+        body.truncate(MAX_NOTIFICATION_BODY_LEN);
+
         let item = NotificationItem {
             id: self.next_notification_id(),
-            title: title.into(),
-            body: body.into(),
+            title,
+            body,
             kind,
             created_at_ms: now_ms(),
             read: false,
@@ -431,6 +439,10 @@ impl WorkspaceModel {
             let _ = self.mark_surface_unread(surface_id, true);
         }
         self.notifications.push(item.clone());
+        if self.notifications.len() > MAX_NOTIFICATION_ENTRIES {
+            let excess = self.notifications.len() - MAX_NOTIFICATION_ENTRIES;
+            self.notifications.drain(0..excess);
+        }
         item
     }
 
@@ -798,6 +810,43 @@ mod tests {
         let surface = model.surface(&workspace.focused_surface_id).unwrap();
         assert!(surface.unread);
         assert!(model.list_workspaces()[0].needs_attention);
+    }
+
+
+    #[test]
+    fn notifications_are_capped_and_trimmed() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        let long_title = "t".repeat(300);
+        let long_body = "b".repeat(5000);
+        let item = model.create_notification(
+            long_title,
+            long_body,
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+
+        assert_eq!(item.title.len(), MAX_NOTIFICATION_TITLE_LEN);
+        assert_eq!(item.body.len(), MAX_NOTIFICATION_BODY_LEN);
+
+        for i in 0..(MAX_NOTIFICATION_ENTRIES + 10) {
+            model.create_notification(
+                format!("n-{i}"),
+                "body",
+                NotificationKind::Info,
+                Some(workspace.id.clone()),
+                Some(workspace.focused_surface_id.clone()),
+            );
+        }
+
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), MAX_NOTIFICATION_ENTRIES);
+        assert_eq!(
+            notifications.first().map(|entry| entry.title.as_str()),
+            Some("n-10")
+        );
     }
 
     #[test]
