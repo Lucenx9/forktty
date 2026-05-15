@@ -1,10 +1,13 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
+const HOOK_SPAWN_RETRIES: usize = 5;
+const HOOK_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 #[derive(Error, Debug)]
 pub enum WorktreeError {
@@ -277,9 +280,7 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
             "Hook path escapes worktree boundary".to_string(),
         ));
     }
-    let mut child = std::process::Command::new(&canonical_hook)
-        .current_dir(worktree_path)
-        .spawn()?;
+    let mut child = spawn_hook(&canonical_hook, worktree_path)?;
     let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait()? {
@@ -296,6 +297,28 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn spawn_hook(canonical_hook: &Path, worktree_path: &str) -> Result<Child, WorktreeError> {
+    let mut attempts = 0;
+    loop {
+        match Command::new(canonical_hook)
+            .current_dir(worktree_path)
+            .spawn()
+        {
+            Ok(child) => return Ok(child),
+            Err(err) if attempts < HOOK_SPAWN_RETRIES && is_transient_text_file_busy(&err) => {
+                attempts += 1;
+                std::thread::sleep(HOOK_SPAWN_RETRY_DELAY);
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+fn is_transient_text_file_busy(err: &std::io::Error) -> bool {
+    // Linux can briefly return ETXTBSY when executing a freshly checked-out hook.
+    err.raw_os_error() == Some(26)
 }
 
 fn open_repo(path: &str) -> Result<Repository, WorktreeError> {
@@ -546,6 +569,16 @@ mod tests {
             contents,
             marker.display()
         )
+    }
+
+    #[test]
+    fn detects_transient_text_file_busy_spawn_error() {
+        assert!(is_transient_text_file_busy(
+            &std::io::Error::from_raw_os_error(26)
+        ));
+        assert!(!is_transient_text_file_busy(
+            &std::io::Error::from_raw_os_error(2)
+        ));
     }
 
     #[test]

@@ -20,6 +20,7 @@ All notable changes to ForkTTY are documented here.
 - Added per-notification dismiss so users do not have to clear the entire notification list.
 - Dismissing the last notification now collapses the panel to the empty state and disables the Clear All and Open Latest actions.
 - Closing the last unread pane in a workspace now clears the workspace's attention badge instead of leaving it pinned to a removed surface.
+- Retried transient text-file-busy hook spawns so freshly checked-out worktree hooks do not flake under CI load.
 
 ## [0.2.0-alpha.1] - 2026-05-14
 
