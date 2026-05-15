@@ -276,6 +276,17 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
     }
     let mut workspace_ids = HashSet::new();
     let mut surface_ids = HashSet::new();
+    let active_flag_workspaces: Vec<&str> = data
+        .workspaces
+        .iter()
+        .filter(|workspace| workspace.active)
+        .map(|workspace| workspace.id.as_str())
+        .collect();
+    if active_flag_workspaces.len() > 1 {
+        return Err(SessionError::InvalidData(
+            "multiple workspaces are marked active".to_string(),
+        ));
+    }
     if let Some(active_id) = &data.active_workspace_id {
         if !data
             .workspaces
@@ -284,6 +295,14 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         {
             return Err(SessionError::InvalidData(
                 "active workspace id is not present".to_string(),
+            ));
+        }
+        if active_flag_workspaces
+            .first()
+            .is_some_and(|id| *id != active_id.as_str())
+        {
+            return Err(SessionError::InvalidData(
+                "active workspace flag disagrees with active_workspace_id".to_string(),
             ));
         }
     }
@@ -444,6 +463,47 @@ mod tests {
         model.create_workspace("other", "/tmp/other");
         let mut data = model.to_session_data();
         data.workspaces[1].id = data.workspaces[0].id.clone();
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_multiple_active_workspaces() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp/main");
+        model.create_workspace("other", "/tmp/other");
+        let mut data = model.to_session_data();
+        // Forge an inconsistent session where both workspaces report `active`.
+        for workspace in &mut data.workspaces {
+            workspace.active = true;
+        }
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+
+        data.active_workspace_id = None;
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_when_active_flag_disagrees_with_active_workspace_id() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("main", "/tmp/main");
+        model.create_workspace("other", "/tmp/other");
+        let mut data = model.to_session_data();
+        // Active_workspace_id points to `other` (set by the second create), but
+        // we forge the active flag onto the first workspace.
+        for workspace in &mut data.workspaces {
+            workspace.active = workspace.id == first.id;
+        }
 
         assert!(matches!(
             validate_session_data(&data),

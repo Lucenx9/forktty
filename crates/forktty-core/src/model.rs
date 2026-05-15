@@ -1156,6 +1156,32 @@ mod tests {
     }
 
     #[test]
+    fn update_split_partition_ratio_clamps_out_of_range_input() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+
+        let left = vec![workspace.focused_surface_id.clone()];
+        let right = vec![second.id.clone()];
+        // Caller passes a wildly out-of-range value (negative). The model must
+        // clamp into the valid (0.01, 0.99) band rather than corrupt sizes.
+        assert!(model.update_split_partition_ratio(&workspace.id, &left, &right, -5.0));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { sizes, .. } = workspace.pane_tree else {
+            panic!("expected split pane tree");
+        };
+        let total: f64 = sizes.iter().sum();
+        assert!((total - 1.0).abs() < 1e-6);
+        assert!(sizes.iter().all(|size| size.is_finite() && *size > 0.0));
+        assert!(sizes[0] < sizes[1]);
+        // Validation requires every size to be strictly positive and finite.
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
     fn update_split_partition_ratio_rejects_unknown_partition() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -1399,6 +1425,120 @@ mod tests {
         assert!(model.list_progress(&workspace.id).is_empty());
         assert!(model.clear_logs(&workspace.id));
         assert!(model.list_logs(&workspace.id).is_empty());
+    }
+
+    #[test]
+    fn restore_session_collapses_multiple_active_flags_to_active_workspace_id() {
+        let mut source = WorkspaceModel::new();
+        source.create_workspace("first", "/tmp/a");
+        let second = source.create_workspace("second", "/tmp/b");
+        let mut data = source.to_session_data();
+        // Two workspaces flagged active simultaneously must be reduced to a
+        // single active by restore_session, following active_workspace_id.
+        for workspace in &mut data.workspaces {
+            workspace.active = true;
+        }
+        data.active_workspace_id = Some(second.id.clone());
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let actives: Vec<_> = restored
+            .list_workspaces()
+            .into_iter()
+            .filter(|workspace| workspace.active)
+            .map(|workspace| workspace.id)
+            .collect();
+        assert_eq!(actives, vec![second.id]);
+    }
+
+    #[test]
+    fn restore_session_assigns_first_workspace_active_when_id_is_missing() {
+        let mut source = WorkspaceModel::new();
+        source.create_workspace("first", "/tmp/a");
+        source.create_workspace("second", "/tmp/b");
+        let mut data = source.to_session_data();
+        for workspace in &mut data.workspaces {
+            workspace.active = false;
+        }
+        data.active_workspace_id = None;
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let workspaces = restored.list_workspaces();
+        assert!(workspaces[0].active);
+        assert!(!workspaces[1].active);
+    }
+
+    #[test]
+    fn restore_session_repairs_focused_surface_id_pointing_outside_pane_tree() {
+        let mut source = WorkspaceModel::new();
+        let workspace = source.create_workspace("main", "/tmp");
+        let mut data = source.to_session_data();
+        data.workspaces[0].focused_surface_id = "surface-99".to_string();
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let restored_workspace = &restored.list_workspaces()[0];
+        // The focus is normalised to a leaf that actually exists in the pane
+        // tree, not the bogus id we forged.
+        assert_ne!(restored_workspace.focused_surface_id, "surface-99");
+        assert_eq!(
+            restored_workspace.focused_surface_id,
+            workspace.focused_surface_id
+        );
+        assert!(restored
+            .surface(&restored_workspace.focused_surface_id)
+            .is_some());
+    }
+
+    #[test]
+    fn close_workspace_keeps_single_active_workspace_invariant() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("first", "/tmp/a");
+        let second = model.create_workspace("second", "/tmp/b");
+        let third = model.create_workspace("third", "/tmp/c");
+        // Third is active because create_workspace always activates the new one.
+        assert_eq!(
+            model.active_workspace_id().as_deref(),
+            Some(third.id.as_str())
+        );
+
+        model
+            .close_workspace(WorkspaceSelector::Id(&third.id))
+            .unwrap();
+
+        let actives: Vec<_> = model
+            .list_workspaces()
+            .into_iter()
+            .filter(|workspace| workspace.active)
+            .map(|workspace| workspace.id)
+            .collect();
+        assert_eq!(actives.len(), 1);
+        // Falls back to the first workspace in insertion order.
+        assert_eq!(actives[0], first.id);
+        let _ = second;
+    }
+
+    #[test]
+    fn dismissing_only_notification_for_surface_clears_workspace_attention() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let notification = model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        assert!(model.list_workspaces()[0].needs_attention);
+
+        assert!(model.dismiss_notification(&notification.id));
+
+        assert!(!model.list_workspaces()[0].needs_attention);
+        assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
     }
 
     #[test]

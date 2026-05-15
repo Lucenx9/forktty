@@ -738,6 +738,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sanitize_worktree_name_strips_unsafe_segments() {
+        assert_eq!(sanitize_worktree_name("feature/x"), "feature-x");
+        assert_eq!(sanitize_worktree_name("../escape"), "escape");
+        assert_eq!(sanitize_worktree_name(".hidden"), "hidden");
+        assert_eq!(sanitize_worktree_name("with spaces"), "with-spaces");
+        assert_eq!(sanitize_worktree_name("a//b\\c"), "a-b-c");
+    }
+
+    #[test]
+    fn derive_worktree_name_disambiguates_collisions() {
+        let dir = make_repo();
+        // Both branch names sanitise to the same worktree directory base, so
+        // the second one must get a numeric suffix to avoid clobbering.
+        let first = create(dir.path().to_str().unwrap(), "topic-x", "nested").unwrap();
+        let second = create(dir.path().to_str().unwrap(), "topic/x", "nested").unwrap();
+
+        assert_eq!(first.worktree_name, "topic-x");
+        assert_ne!(second.worktree_name, first.worktree_name);
+        assert!(second.worktree_name.starts_with("topic-x"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn run_hook_rejects_symlink_escape() {

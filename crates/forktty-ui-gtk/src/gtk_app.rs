@@ -4423,9 +4423,12 @@ fn close_active_surface(state: &SocketAppState) {
             return;
         }
     }
-    if let Err(err) = state.terminal.close(&focused) {
-        eprintln!("Failed to close terminal surface: {err}");
-        return;
+    match state.terminal.close(&focused) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+        Err(err) => {
+            eprintln!("Failed to close terminal surface: {err}");
+            return;
+        }
     }
     {
         let mut model = match state.model.lock() {
