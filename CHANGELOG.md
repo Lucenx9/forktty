@@ -7,6 +7,7 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - Moved the GTK polish design note into `docs/design/` and removed stale GTK/Tauri-era repository artifacts.
 - Workspace-scoped notifications without a surface target now raise workspace attention until they are read or dismissed.
+- Updated GTK/runtime helper dependencies (`gtk4`, `global-hotkey`, and `libloading`) after validating the GTK/VTE build and Debian package.
 
 ### Fixed
 - `Open Latest` in the notification panel now resolves the current latest openable notification at click time, so dismissing a notification cannot leave the button targeting a removed item.
