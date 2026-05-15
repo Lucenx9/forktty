@@ -6,14 +6,19 @@ All notable changes to ForkTTY are documented here.
 
 ### Added
 - Added a README screenshot of the GTK/VTE app running on Ubuntu.
+- Added a release QA checklist for GTK/VTE runtime and Debian package smoke testing.
+- Added an existing-worktree chooser for Merge and Remove in the worktree dialog.
 
 ### Changed
 - Removed the Ubuntu Docker development wrapper from the main workflow; native dependency installation and CI remain the supported build paths.
 - Updated README release links to point directly at the current prerelease.
+- Opening the notification panel now marks notifications read while preserving history.
 
 ### Fixed
 - Added GTK actions for terminal copy/paste so `Ctrl+Shift+C` and `Ctrl+Shift+V` target the focused VTE pane.
 - Moved terminal context menus out of clipped pane widgets so right-click paste remains reachable in heavily split layouts.
+- Added per-notification dismiss so users do not have to clear the entire notification list.
+- Dismissing the last notification now collapses the panel to the empty state and disables the Clear All and Open Latest actions.
 
 ## [0.2.0-alpha.1] - 2026-05-14
 

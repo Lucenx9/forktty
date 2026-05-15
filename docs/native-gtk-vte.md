@@ -17,6 +17,9 @@ cargo build -p forktty-ui-gtk --features gtk-vte --release
 bash scripts/build-deb.sh
 ```
 
+Before tagging an alpha, run the runtime and package checklist in
+[release-qa.md](release-qa.md).
+
 The installed binary is `forktty`.
 
 ## System Dependencies

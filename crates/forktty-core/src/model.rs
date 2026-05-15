@@ -518,12 +518,34 @@ impl WorkspaceModel {
         self.notifications.clone()
     }
 
+    pub fn unread_notification_count(&self) -> usize {
+        self.notifications
+            .iter()
+            .filter(|notification| !notification.read)
+            .count()
+    }
+
+    pub fn mark_notifications_read(&mut self) {
+        for notification in &mut self.notifications {
+            notification.read = true;
+        }
+        self.recompute_notification_attention();
+    }
+
+    pub fn dismiss_notification(&mut self, notification_id: &str) -> bool {
+        let before = self.notifications.len();
+        self.notifications
+            .retain(|notification| notification.id != notification_id);
+        let removed = self.notifications.len() != before;
+        if removed {
+            self.recompute_notification_attention();
+        }
+        removed
+    }
+
     pub fn clear_notifications(&mut self) {
         self.notifications.clear();
-        let surface_ids = self.surfaces.keys().cloned().collect::<Vec<_>>();
-        for surface_id in surface_ids {
-            let _ = self.mark_surface_unread(&surface_id, false);
-        }
+        self.recompute_notification_attention();
     }
 
     pub fn set_status(
@@ -667,6 +689,26 @@ impl WorkspaceModel {
     fn next_notification_id(&mut self) -> String {
         self.next_notification += 1;
         format!("notification-{}", self.next_notification)
+    }
+
+    fn recompute_notification_attention(&mut self) {
+        let unread_surface_ids = self
+            .notifications
+            .iter()
+            .filter(|notification| !notification.read)
+            .filter_map(|notification| notification.surface_id.as_ref())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for surface in self.surfaces.values_mut() {
+            let unread = unread_surface_ids.contains(&surface.id);
+            surface.unread = unread;
+            surface.needs_attention = unread;
+        }
+        for workspace in self.workspaces.values_mut() {
+            workspace.needs_attention = self.surfaces.values().any(|surface| {
+                surface.workspace_id == workspace.id && (surface.unread || surface.needs_attention)
+            });
+        }
     }
 
     fn next_log_id(&mut self) -> String {
@@ -1181,6 +1223,55 @@ mod tests {
         assert!(model.list_notifications().is_empty());
         assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
         assert!(!model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn mark_notifications_read_keeps_items_and_clears_attention() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+
+        model.mark_notifications_read();
+
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].read);
+        assert_eq!(model.unread_notification_count(), 0);
+        assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
+        assert!(!model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn dismiss_notification_keeps_attention_when_unread_target_remains() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        model.create_notification(
+            "Prompt",
+            "Still ready",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+
+        assert!(model.dismiss_notification(&first.id));
+
+        assert_eq!(model.list_notifications().len(), 1);
+        assert_eq!(model.unread_notification_count(), 1);
+        assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
+        assert!(model.list_workspaces()[0].needs_attention);
     }
 
     #[test]

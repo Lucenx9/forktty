@@ -221,6 +221,7 @@ bash scripts/build-deb.sh
 ```
 
 See [SPEC.md](SPEC.md), [ROADMAP.md](ROADMAP.md), and [docs/native-gtk-vte.md](docs/native-gtk-vte.md).
+Use [docs/release-qa.md](docs/release-qa.md) before tagging alpha releases.
 
 ## Inspiration
 

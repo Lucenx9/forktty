@@ -1599,22 +1599,34 @@ fn clear_status_message(label: &gtk::Label) {
 }
 
 fn refresh_notification_indicator(button: &gtk::Button, state: &SocketAppState) {
-    let count = state
+    let (total, unread) = state
         .model
         .lock()
         .ok()
-        .map(|model| model.list_notifications().len())
-        .unwrap_or(0);
-    if count == 0 {
+        .map(|model| {
+            (
+                model.list_notifications().len(),
+                model.unread_notification_count(),
+            )
+        })
+        .unwrap_or((0, 0));
+    if unread == 0 {
         button.remove_css_class("needs-attention");
-        button.set_tooltip_text(Some("Notifications (Ctrl+Shift+M)"));
-        set_accessible_button_text(button, "Notifications", Some("Ctrl+Shift+M"));
+        let label = if total == 0 {
+            "Notifications".to_string()
+        } else if total == 1 {
+            "Notifications: 1 read".to_string()
+        } else {
+            format!("Notifications: {total} read")
+        };
+        button.set_tooltip_text(Some(&format!("{label} (Ctrl+Shift+M)")));
+        set_accessible_button_text(button, &label, Some("Ctrl+Shift+M"));
     } else {
         button.add_css_class("needs-attention");
-        let label = if count == 1 {
-            "Notifications: 1 pending".to_string()
+        let label = if unread == 1 {
+            "Notifications: 1 unread".to_string()
         } else {
-            format!("Notifications: {count} pending")
+            format!("Notifications: {unread} unread")
         };
         button.set_tooltip_text(Some(&format!("{label} (Ctrl+Shift+M)")));
         set_accessible_button_text(button, &label, Some("Ctrl+Shift+M"));
@@ -5124,6 +5136,41 @@ where
     (row, button)
 }
 
+#[derive(Clone, Debug)]
+struct WorktreeDialogChoice {
+    selector: String,
+    label: String,
+}
+
+fn worktree_dialog_choices(state: &SocketAppState) -> Vec<WorktreeDialogChoice> {
+    let Ok(cwd) = active_workspace_cwd_string(state) else {
+        return Vec::new();
+    };
+    let Ok(mut worktrees) = worktree::list(&cwd) else {
+        return Vec::new();
+    };
+    worktrees.sort_by(|left, right| {
+        left.worktree_name
+            .cmp(&right.worktree_name)
+            .then(left.branch.cmp(&right.branch))
+    });
+    worktrees
+        .into_iter()
+        .map(|info| {
+            let path = compact_path(Path::new(&info.path));
+            let label = if info.branch == info.worktree_name {
+                format!("{} · {path}", info.worktree_name)
+            } else {
+                format!("{} · {} · {path}", info.worktree_name, info.branch)
+            };
+            WorktreeDialogChoice {
+                selector: info.worktree_name,
+                label,
+            }
+        })
+        .collect()
+}
+
 fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
     let dialog = gtk::Window::builder()
         .title("Worktree")
@@ -5204,6 +5251,18 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
     entry.set_tooltip_text(Some(
         "Branch name for Create/Attach, or existing worktree name for Remove/Merge",
     ));
+    let existing_worktrees = worktree_dialog_choices(state);
+    let existing = gtk::ComboBoxText::new();
+    existing.add_css_class("worktree-existing");
+    existing.set_tooltip_text(Some("Existing worktree to merge or remove"));
+    existing.update_property(&[gtk::accessible::Property::Label("Existing worktree")]);
+    for choice in &existing_worktrees {
+        existing.append(Some(&choice.selector), &choice.label);
+    }
+    if !existing_worktrees.is_empty() {
+        existing.set_active(Some(0));
+    }
+    existing.set_visible(false);
     let hint = gtk::Label::builder()
         .label(WorktreeDialogMode::Create.hint())
         .xalign(0.0)
@@ -5232,6 +5291,7 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
     body.append(&context);
     body.append(&mode_selector);
     body.append(&entry);
+    body.append(&existing);
     body.append(&hint);
     body.append(&status);
 
@@ -5253,7 +5313,11 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
     install_escape_close(&dialog);
 
     let controls = WorktreeDialogControls {
+        title: title.clone(),
+        subtitle: subtitle.clone(),
         entry: entry.clone(),
+        existing: existing.clone(),
+        has_existing_worktrees: !existing_worktrees.is_empty(),
         hint: hint.clone(),
         status: status.clone(),
         primary: primary.clone(),
@@ -5272,6 +5336,16 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
     entry.connect_changed({
         let refresh = refresh.clone();
         move |_| refresh(true)
+    });
+    existing.connect_changed({
+        let entry = entry.clone();
+        let refresh = refresh.clone();
+        move |combo| {
+            if let Some(selector) = combo.active_id() {
+                entry.set_text(selector.as_str());
+            }
+            refresh(true);
+        }
     });
 
     for (button, next_mode) in [
@@ -5349,7 +5423,11 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
 
 #[derive(Clone)]
 struct WorktreeDialogControls {
+    title: gtk::Label,
+    subtitle: gtk::Label,
     entry: gtk::Entry,
+    existing: gtk::ComboBoxText,
+    has_existing_worktrees: bool,
     hint: gtk::Label,
     status: gtk::Label,
     primary: gtk::Button,
@@ -5366,6 +5444,28 @@ enum WorktreeDialogMode {
 }
 
 impl WorktreeDialogMode {
+    fn dialog_title(self) -> &'static str {
+        match self {
+            WorktreeDialogMode::Create => "Create Worktree",
+            WorktreeDialogMode::Attach => "Attach Worktree",
+            WorktreeDialogMode::Merge => "Merge Worktree",
+            WorktreeDialogMode::Remove => "Remove Worktree",
+        }
+    }
+
+    fn dialog_subtitle(self) -> &'static str {
+        match self {
+            WorktreeDialogMode::Create => "Create a new isolated git worktree workspace.",
+            WorktreeDialogMode::Attach => "Open an existing branch or linked worktree.",
+            WorktreeDialogMode::Merge => {
+                "Choose an existing worktree to merge into the base checkout."
+            }
+            WorktreeDialogMode::Remove => {
+                "Choose an existing worktree to remove after dirty-state checks."
+            }
+        }
+    }
+
     fn action_label(self) -> &'static str {
         match self {
             WorktreeDialogMode::Create => "Create Worktree",
@@ -5424,6 +5524,10 @@ impl WorktreeDialogMode {
     fn destructive(self) -> bool {
         self == WorktreeDialogMode::Remove
     }
+
+    fn uses_existing_chooser(self) -> bool {
+        matches!(self, WorktreeDialogMode::Merge | WorktreeDialogMode::Remove)
+    }
 }
 
 fn worktree_mode_button(label: &str, active: bool) -> gtk::ToggleButton {
@@ -5440,11 +5544,29 @@ fn refresh_worktree_dialog(
     controls: &WorktreeDialogControls,
     validate: bool,
 ) {
+    controls.title.set_label(mode.dialog_title());
+    controls.subtitle.set_label(mode.dialog_subtitle());
     controls
         .entry
         .set_placeholder_text(Some(mode.placeholder()));
     controls.entry.set_tooltip_text(Some(mode.tooltip()));
-    controls.hint.set_label(mode.hint());
+    let use_existing_chooser = mode.uses_existing_chooser() && controls.has_existing_worktrees;
+    controls.entry.set_visible(!use_existing_chooser);
+    controls.existing.set_visible(use_existing_chooser);
+    if use_existing_chooser {
+        if let Some(selector) = controls.existing.active_id() {
+            if controls.entry.text().as_str() != selector.as_str() {
+                controls.entry.set_text(selector.as_str());
+            }
+        }
+    }
+    controls.hint.set_label(
+        if mode.uses_existing_chooser() && !controls.has_existing_worktrees {
+            "No linked worktrees were found for this repository. Type a worktree or branch name manually."
+        } else {
+            mode.hint()
+        },
+    );
     controls.primary_icon.set_icon_name(Some(mode.icon_name()));
     controls.primary_label.set_text(mode.action_label());
     controls.primary.set_tooltip_text(Some(mode.tooltip()));
@@ -5457,7 +5579,15 @@ fn refresh_worktree_dialog(
         controls.primary.add_css_class("suggested-action");
     }
 
-    let name = controls.entry.text();
+    let name = if use_existing_chooser {
+        controls
+            .existing
+            .active_id()
+            .map(|selector| selector.to_string())
+            .unwrap_or_default()
+    } else {
+        controls.entry.text().to_string()
+    };
     let trimmed = name.trim();
     let valid = if trimmed.is_empty() {
         false
@@ -5793,7 +5923,11 @@ fn show_notification_panel(
         .model
         .lock()
         .ok()
-        .map(|model| model.list_notifications())
+        .map(|mut model| {
+            let notifications = model.list_notifications();
+            model.mark_notifications_read();
+            notifications
+        })
         .unwrap_or_default();
     let has_notifications = !notifications.is_empty();
     let latest_openable = notifications
@@ -5805,7 +5939,7 @@ fn show_notification_panel(
     let subtitle = gtk::Label::builder()
         .label(if has_notifications {
             format!(
-                "{} {} pending",
+                "{} {}",
                 notifications.len(),
                 if notifications.len() == 1 {
                     "notification"
@@ -5814,7 +5948,7 @@ fn show_notification_panel(
                 }
             )
         } else {
-            "No pending notifications".to_string()
+            "No notifications".to_string()
         })
         .xalign(0.0)
         .build();
@@ -5830,13 +5964,38 @@ fn show_notification_panel(
         .build();
     list.add_css_class("notification-list");
 
+    let close_button = gtk::Button::with_label("Close");
+    let jump = gtk::Button::with_label("Open Latest");
+    jump.set_sensitive(latest_openable.is_some());
+    jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
+    let clear = gtk::Button::with_label("Clear All");
+    clear.set_sensitive(has_notifications);
+    clear.add_css_class("destructive-action");
+    clear.set_tooltip_text(Some("Clear pending notifications"));
+
+    let show_empty_state = {
+        let body = body.clone();
+        let subtitle = subtitle.clone();
+        let clear = clear.clone();
+        let jump = jump.clone();
+        Rc::new(move || {
+            while let Some(child) = body.first_child() {
+                body.remove(&child);
+            }
+            let empty = compact_status_page(
+                "preferences-system-notifications-symbolic",
+                "All Clear",
+                "Prompts and alerts will appear here.",
+            );
+            body.append(&empty);
+            subtitle.set_label("No notifications");
+            clear.set_sensitive(false);
+            jump.set_sensitive(false);
+        })
+    };
+
     if !has_notifications {
-        let empty = compact_status_page(
-            "preferences-system-notifications-symbolic",
-            "All Clear",
-            "Prompts and alerts will appear here.",
-        );
-        body.append(&empty);
+        show_empty_state();
     } else {
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -5853,6 +6012,9 @@ fn show_notification_panel(
                 .spacing(4)
                 .build();
             card.add_css_class("notification-row");
+            if !notification.read {
+                card.add_css_class("unread");
+            }
 
             let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let badge = gtk::Label::new(Some(notification_kind_label(notification.kind)));
@@ -5893,6 +6055,41 @@ fn show_notification_panel(
                 });
                 top.append(&open);
             }
+            let dismiss = gtk::Button::builder()
+                .icon_name("window-close-symbolic")
+                .tooltip_text("Dismiss notification")
+                .build();
+            dismiss.add_css_class("flat");
+            dismiss.add_css_class("notification-dismiss");
+            set_accessible_button_text(&dismiss, "Dismiss notification", None);
+            let state_for_dismiss = state.clone();
+            let notification_id = notification.id.clone();
+            let row_for_dismiss = row.clone();
+            let subtitle_for_dismiss = subtitle.clone();
+            let show_empty_for_dismiss = show_empty_state.clone();
+            dismiss.connect_clicked(move |_| {
+                let remaining = state_for_dismiss
+                    .model
+                    .lock()
+                    .ok()
+                    .map(|mut model| {
+                        model.dismiss_notification(&notification_id);
+                        model.list_notifications().len()
+                    })
+                    .unwrap_or(0);
+                row_for_dismiss.set_visible(false);
+                if remaining == 0 {
+                    show_empty_for_dismiss();
+                } else {
+                    let label = if remaining == 1 {
+                        "1 notification".to_string()
+                    } else {
+                        format!("{remaining} notifications")
+                    };
+                    subtitle_for_dismiss.set_label(&label);
+                }
+            });
+            top.append(&dismiss);
 
             let body_label = gtk::Label::builder()
                 .label(&notification.body)
@@ -5922,15 +6119,6 @@ fn show_notification_panel(
     footer.add_css_class("ft-dialog-footer");
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
-    let close_button = gtk::Button::with_label("Close");
-    let jump = gtk::Button::with_label("Open Latest");
-    jump.set_sensitive(latest_openable.is_some());
-    jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
-    let clear = gtk::Button::with_label("Clear All");
-    clear.set_sensitive(has_notifications);
-    clear.add_css_class("destructive-action");
-    clear.set_tooltip_text(Some("Clear pending notifications"));
-
     footer.append(&spacer);
     footer.append(&close_button);
     footer.append(&jump);
@@ -5955,26 +6143,12 @@ fn show_notification_panel(
     }
 
     let state_for_clear = state.clone();
-    let body_for_clear = body.clone();
-    let subtitle_for_clear = subtitle.clone();
-    let clear_for_clear = clear.clone();
-    let jump_for_clear = jump.clone();
+    let show_empty_for_clear = show_empty_state.clone();
     clear.connect_clicked(move |_| {
         if let Ok(mut model) = state_for_clear.model.lock() {
             model.clear_notifications();
         }
-        while let Some(child) = body_for_clear.first_child() {
-            body_for_clear.remove(&child);
-        }
-        let empty = compact_status_page(
-            "preferences-system-notifications-symbolic",
-            "All Clear",
-            "Prompts and alerts will appear here.",
-        );
-        body_for_clear.append(&empty);
-        subtitle_for_clear.set_label("No pending notifications");
-        clear_for_clear.set_sensitive(false);
-        jump_for_clear.set_sensitive(false);
+        show_empty_for_clear();
     });
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
