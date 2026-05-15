@@ -47,12 +47,21 @@ impl SpawnRequest {
             self.socket_path.to_string_lossy().to_string(),
         ));
         env.push(("TERM".to_string(), "xterm-256color".to_string()));
+        env.push(("COLORTERM".to_string(), "truecolor".to_string()));
+        env.push(("TERM_PROGRAM".to_string(), "ForkTTY".to_string()));
+        env.push((
+            "TERM_PROGRAM_VERSION".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        ));
         env
     }
 }
 
 fn is_reserved_terminal_env(key: &str) -> bool {
-    key == "TERM" || key.starts_with("FORKTTY_")
+    matches!(
+        key,
+        "TERM" | "COLORTERM" | "TERM_PROGRAM" | "TERM_PROGRAM_VERSION"
+    ) || key.starts_with("FORKTTY_")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,6 +213,7 @@ mod tests {
             extra_env: vec![
                 ("EXTRA".to_string(), "1".to_string()),
                 ("TERM".to_string(), "dumb".to_string()),
+                ("COLORTERM".to_string(), "8bit".to_string()),
                 ("FORKTTY_SURFACE_ID".to_string(), "spoofed".to_string()),
             ],
         };
@@ -222,9 +232,16 @@ mod tests {
             "/tmp/forktty.sock".to_string()
         )));
         assert!(env.contains(&("TERM".to_string(), "xterm-256color".to_string())));
+        assert!(env.contains(&("COLORTERM".to_string(), "truecolor".to_string())));
+        assert!(env.contains(&("TERM_PROGRAM".to_string(), "ForkTTY".to_string())));
+        assert!(env.contains(&(
+            "TERM_PROGRAM_VERSION".to_string(),
+            env!("CARGO_PKG_VERSION").to_string()
+        )));
         assert!(env.contains(&("EXTRA".to_string(), "1".to_string())));
         assert!(!env.contains(&("FORKTTY_SURFACE_ID".to_string(), "spoofed".to_string())));
         assert!(!env.contains(&("TERM".to_string(), "dumb".to_string())));
+        assert!(!env.contains(&("COLORTERM".to_string(), "8bit".to_string())));
         assert_eq!(backend.sent_text("surface-1").unwrap(), vec!["echo ok\n"]);
         backend.close("surface-1").unwrap();
         assert!(matches!(

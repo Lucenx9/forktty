@@ -49,6 +49,10 @@ pub struct AppearanceConfig {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: u16,
+    #[serde(default = "default_scrollback_lines")]
+    pub scrollback_lines: u32,
+    #[serde(default = "default_terminal_audible_bell")]
+    pub terminal_audible_bell: bool,
     #[serde(default = "default_sidebar_position")]
     pub sidebar_position: String,
     #[serde(default = "default_sidebar_visible")]
@@ -85,6 +89,8 @@ impl Default for AppearanceConfig {
         Self {
             font_family: default_font_family(),
             font_size: default_font_size(),
+            scrollback_lines: default_scrollback_lines(),
+            terminal_audible_bell: default_terminal_audible_bell(),
             sidebar_position: default_sidebar_position(),
             sidebar_visible: default_sidebar_visible(),
             terminal_renderer: default_terminal_renderer(),
@@ -182,6 +188,11 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
     if !(8..=64).contains(&config.appearance.font_size) {
         return Err(ConfigError::Invalid(
             "appearance.font_size must be between 8 and 64".to_string(),
+        ));
+    }
+    if config.appearance.scrollback_lines > 500_000 {
+        return Err(ConfigError::Invalid(
+            "appearance.scrollback_lines must be 500000 or fewer".to_string(),
         ));
     }
     if !matches!(
@@ -304,6 +315,12 @@ fn default_font_family() -> String {
 fn default_font_size() -> u16 {
     14
 }
+fn default_scrollback_lines() -> u32 {
+    20_000
+}
+fn default_terminal_audible_bell() -> bool {
+    true
+}
 fn default_sidebar_position() -> String {
     "left".to_string()
 }
@@ -329,6 +346,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
         assert_eq!(config.appearance.font_size, 14);
+        assert_eq!(config.appearance.scrollback_lines, 20_000);
+        assert!(config.appearance.terminal_audible_bell);
     }
 
     #[test]
@@ -374,6 +393,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
         assert!(config.appearance.sidebar_visible);
+    }
+
+    #[test]
+    fn scrollback_lines_are_bounded() {
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.appearance.scrollback_lines = 500_001;
+
+        let error = validate_config(&config).unwrap_err();
+
+        assert!(error.to_string().contains("scrollback_lines"));
     }
 
     #[test]

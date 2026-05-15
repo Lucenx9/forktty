@@ -10,15 +10,15 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.2)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.3)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
 
-[Download v0.2.0-alpha.2](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.2)
+[Download v0.2.0-alpha.3](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.3)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.2). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
+> **Status**: Early alpha (v0.2.0-alpha.3). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
 
 <p align="center">
   <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />
@@ -58,7 +58,7 @@ Arch / CachyOS:
 sudo pacman -S base-devel openssl gtk4 libadwaita vte4 desktop-file-utils
 ```
 
-ForkTTY currently builds with VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
+ForkTTY currently builds with libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
 
 ### Build and Run
 
@@ -162,6 +162,8 @@ notification_command = ""
 [appearance]
 font_family = ""
 font_size = 14
+scrollback_lines = 20000
+terminal_audible_bell = true
 sidebar_position = "left" # "left" or "right"
 sidebar_visible = true
 terminal_renderer = "vte"
@@ -174,7 +176,7 @@ sound = true
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
-`terminal_renderer` is kept for config compatibility; the native GTK app uses VTE.
+`scrollback_lines` controls VTE scrollback per pane; set it to `0` to disable scrollback. `terminal_renderer` is kept for config compatibility; the native GTK app uses VTE.
 
 ## Session Restore
 

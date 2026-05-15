@@ -52,7 +52,7 @@ Arch-style names:
 - `vte4`
 - `desktop-file-utils`
 
-ForkTTY currently requires VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. `gtk4-layer-shell` is optional and only improves quake/dropdown placement on supported Wayland compositors.
+ForkTTY currently requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. `gtk4-layer-shell` is optional and only improves quake/dropdown placement on supported Wayland compositors.
 
 ## Runtime Notes
 

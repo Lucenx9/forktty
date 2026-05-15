@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 #[cfg(feature = "vte")]
 use std::rc::Rc;
 #[cfg(feature = "vte")]
-pub use vte4::prelude::TerminalExt;
-#[cfg(feature = "vte")]
 use vte4::prelude::*;
 #[cfg(feature = "vte")]
-pub use vte4::Format;
+pub use vte4::prelude::{TerminalExt, TerminalExtManual};
+#[cfg(feature = "vte")]
+pub use vte4::{CursorBlinkMode, CursorShape, Format};
 
 #[cfg(feature = "vte")]
 pub type VteTerminalWidget = vte4::Terminal;

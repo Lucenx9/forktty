@@ -7,14 +7,15 @@ use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
 };
 use forktty_terminal::vte::{
-    send_text as vte_send_text, spawn_vte_terminal_with_callback, Format, TerminalExt,
-    VteTerminalWidget,
+    send_text as vte_send_text, spawn_vte_terminal_with_callback, CursorBlinkMode, CursorShape,
+    Format, TerminalExt, TerminalExtManual, VteTerminalWidget,
 };
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
 use global_hotkey::{
     hotkey::{Code, HotKey},
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
 };
+use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 use gtk::glib::translate::ToGlibPtr;
@@ -379,7 +380,7 @@ impl VteController {
         self.rebuild_layout();
     }
 
-    fn focused_widget(&self) -> Option<VteTerminalWidget> {
+    fn model_focused_widget(&self) -> Option<VteTerminalWidget> {
         let surface_id = {
             let model = self.model.lock().ok()?;
             model
@@ -392,8 +393,18 @@ impl VteController {
         self.widgets.get(&surface_id).cloned()
     }
 
+    fn gtk_focused_widget(&self) -> Option<VteTerminalWidget> {
+        self.widgets
+            .values()
+            .find(|widget| widget.has_focus())
+            .cloned()
+    }
+
+    // App-wide clipboard accelerators must only affect a terminal that currently
+    // owns GTK focus; the model focus can legitimately be stale while dialogs or
+    // search entries are active.
     fn copy_focused_terminal(&self) -> bool {
-        let Some(widget) = self.focused_widget() else {
+        let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
         widget.copy_clipboard_format(Format::Text);
@@ -401,10 +412,60 @@ impl VteController {
     }
 
     fn paste_focused_terminal(&self) -> bool {
-        let Some(widget) = self.focused_widget() else {
+        let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
         widget.paste_clipboard();
+        true
+    }
+
+    fn select_all_focused_terminal(&self) -> bool {
+        let Some(widget) = self.gtk_focused_widget() else {
+            return false;
+        };
+        widget.select_all();
+        true
+    }
+
+    fn reset_focused_terminal(&self) -> bool {
+        let Some(widget) = self.gtk_focused_widget() else {
+            return false;
+        };
+        reset_and_redraw_terminal(&widget);
+        true
+    }
+
+    // Explicit commands from the command palette intentionally target the active
+    // terminal, because the palette itself owns GTK focus while the user chooses.
+    fn copy_active_terminal(&self) -> bool {
+        let Some(widget) = self.model_focused_widget() else {
+            return false;
+        };
+        widget.copy_clipboard_format(Format::Text);
+        true
+    }
+
+    fn paste_active_terminal(&self) -> bool {
+        let Some(widget) = self.model_focused_widget() else {
+            return false;
+        };
+        widget.paste_clipboard();
+        true
+    }
+
+    fn select_all_active_terminal(&self) -> bool {
+        let Some(widget) = self.model_focused_widget() else {
+            return false;
+        };
+        widget.select_all();
+        true
+    }
+
+    fn reset_active_terminal(&self) -> bool {
+        let Some(widget) = self.model_focused_widget() else {
+            return false;
+        };
+        reset_and_redraw_terminal(&widget);
         true
     }
 
@@ -926,23 +987,83 @@ fn apply_vte_appearance(widget: &VteTerminalWidget) {
     let font = terminal_font_description(&config);
     widget.add_css_class("vte-terminal");
     widget.set_font(Some(&font));
-    if terminal_prefers_dark_palette(&config) {
-        widget.set_color_background(&rgba("#1c1d2a"));
-        widget.set_color_foreground(&rgba("#cdd6f4"));
-        widget.set_color_bold(Some(&rgba("#f5f6fb")));
-        widget.set_color_cursor(Some(&rgba("#89b4fa")));
-        widget.set_color_cursor_foreground(Some(&rgba("#0a0c12")));
-        widget.set_color_highlight(Some(&rgba("#2f3146")));
-        widget.set_color_highlight_foreground(Some(&rgba("#f5f6fb")));
+    widget.set_scrollback_lines(i64::from(config.appearance.scrollback_lines));
+    widget.set_audible_bell(config.appearance.terminal_audible_bell);
+    widget.set_mouse_autohide(true);
+    widget.set_scroll_on_keystroke(true);
+    widget.set_allow_hyperlink(true);
+    widget.set_bold_is_bright(false);
+    widget.set_cursor_blink_mode(CursorBlinkMode::System);
+    widget.set_cursor_shape(CursorShape::Block);
+    widget.set_word_char_exceptions("-#%&+,./:=?@_~");
+    let colors = if terminal_prefers_dark_palette(&config) {
+        &DARK_TERMINAL_COLORS
     } else {
-        widget.set_color_background(&rgba("#fbfbfe"));
-        widget.set_color_foreground(&rgba("#1f2328"));
-        widget.set_color_bold(Some(&rgba("#0b0d12")));
-        widget.set_color_cursor(Some(&rgba("#1f6feb")));
-        widget.set_color_cursor_foreground(Some(&rgba("#ffffff")));
-        widget.set_color_highlight(Some(&rgba("#dbeafe")));
-        widget.set_color_highlight_foreground(Some(&rgba("#111827")));
-    }
+        &LIGHT_TERMINAL_COLORS
+    };
+    apply_terminal_colors(widget, colors);
+}
+
+struct TerminalColors {
+    background: &'static str,
+    foreground: &'static str,
+    bold: &'static str,
+    cursor: &'static str,
+    cursor_foreground: &'static str,
+    highlight: &'static str,
+    highlight_foreground: &'static str,
+    ansi: [&'static str; 16],
+}
+
+const DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#20222c",
+    foreground: "#d7dce7",
+    bold: "#f2f4f8",
+    cursor: "#8ab4f8",
+    cursor_foreground: "#101216",
+    highlight: "#3a3d4d",
+    highlight_foreground: "#ffffff",
+    ansi: [
+        "#242932", "#ff6b6b", "#63c174", "#d5a03f", "#6ca9ff", "#c792ea", "#56c7d8", "#d7dce7",
+        "#7d8590", "#ff8f87", "#7bd88f", "#e3b75a", "#8ab4ff", "#d6a6ff", "#73d7e5", "#f2f4f8",
+    ],
+};
+
+const LIGHT_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#fbfbfe",
+    foreground: "#24292f",
+    bold: "#0b0d12",
+    cursor: "#0969da",
+    cursor_foreground: "#ffffff",
+    highlight: "#dbeafe",
+    highlight_foreground: "#111827",
+    ansi: [
+        "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#1b7c83", "#57606a",
+        "#6e7781", "#a40e26", "#116329", "#7d4e00", "#0550ae", "#6639ba", "#0a6971", "#24292f",
+    ],
+};
+
+fn apply_terminal_colors(widget: &VteTerminalWidget, colors: &TerminalColors) {
+    let foreground = rgba(colors.foreground);
+    let background = rgba(colors.background);
+    let ansi = colors
+        .ansi
+        .iter()
+        .map(|color| rgba(color))
+        .collect::<Vec<_>>();
+    let ansi_refs = ansi.iter().collect::<Vec<&gdk::RGBA>>();
+
+    widget.set_colors(Some(&foreground), Some(&background), &ansi_refs);
+    widget.set_color_bold(Some(&rgba(colors.bold)));
+    widget.set_color_cursor(Some(&rgba(colors.cursor)));
+    widget.set_color_cursor_foreground(Some(&rgba(colors.cursor_foreground)));
+    widget.set_color_highlight(Some(&rgba(colors.highlight)));
+    widget.set_color_highlight_foreground(Some(&rgba(colors.highlight_foreground)));
+}
+
+fn reset_and_redraw_terminal(widget: &VteTerminalWidget) {
+    widget.reset(true, true);
+    vte_send_text(widget, "\x0c");
 }
 
 fn terminal_prefers_dark_palette(config: &config::AppConfig) -> bool {
@@ -2020,6 +2141,26 @@ fn build_terminal_context_menu(
         "Paste",
         false,
         move || terminal_for_paste.paste_clipboard(),
+    );
+
+    let terminal_for_select = terminal.clone();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "edit-select-all-symbolic",
+        "Select All",
+        false,
+        move || terminal_for_select.select_all(),
+    );
+
+    let terminal_for_reset = terminal.clone();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "edit-clear-all-symbolic",
+        "Reset and Clear",
+        false,
+        move || reset_and_redraw_terminal(&terminal_for_reset),
     );
 
     add_context_menu_separator(&menu);
@@ -3497,6 +3638,18 @@ fn install_actions(
             controller.borrow().paste_focused_terminal();
         }
     });
+    add_action(app, "select-all", {
+        let controller = controller.clone();
+        move || {
+            controller.borrow().select_all_focused_terminal();
+        }
+    });
+    add_action(app, "reset-terminal", {
+        let controller = controller.clone();
+        move || {
+            controller.borrow().reset_focused_terminal();
+        }
+    });
     add_action(app, "close-pane", {
         let window = window.clone();
         let state = state.clone();
@@ -3553,6 +3706,7 @@ fn install_actions(
     app.set_accels_for_action("app.restart-pane", &[RESTART_PANE_ACCEL]);
     app.set_accels_for_action("app.copy", &["<Control><Shift>C"]);
     app.set_accels_for_action("app.paste", &["<Control><Shift>V"]);
+    app.set_accels_for_action("app.select-all", &["<Control><Shift>A"]);
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
     app.set_accels_for_action("app.focus-previous-pane", &["<Control><Alt>Left"]);
     app.set_accels_for_action("app.focus-next-pane", &["<Control><Alt>Right"]);
@@ -4670,6 +4824,8 @@ fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         &[
             ("Copy", "Ctrl+Shift+C"),
             ("Paste", "Ctrl+Shift+V"),
+            ("Select All", "Ctrl+Shift+A"),
+            ("Reset and Clear", "Command Palette / Context Menu"),
             ("Context Menu", "Right Click"),
         ],
     );
@@ -4893,7 +5049,7 @@ fn show_command_palette_with_query(
         let dialog = dialog.clone();
         move || {
             if let Some(controller) = &controller {
-                controller.borrow().copy_focused_terminal();
+                controller.borrow().copy_active_terminal();
             }
             dialog.close();
         }
@@ -4903,7 +5059,27 @@ fn show_command_palette_with_query(
         let dialog = dialog.clone();
         move || {
             if let Some(controller) = &controller {
-                controller.borrow().paste_focused_terminal();
+                controller.borrow().paste_active_terminal();
+            }
+            dialog.close();
+        }
+    });
+    command!("Select All", Some("Ctrl+Shift+A"), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow().select_all_active_terminal();
+            }
+            dialog.close();
+        }
+    });
+    command!("Reset and Clear Terminal", None, {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow().reset_active_terminal();
             }
             dialog.close();
         }
@@ -6197,40 +6373,144 @@ fn show_notification_panel(
 }
 
 fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApplyCallback) {
-    let dialog = gtk::Window::builder()
+    let dialog = adw::PreferencesWindow::builder()
         .title("Settings")
         .transient_for(parent)
         .modal(true)
-        .default_width(640)
-        .default_height(620)
+        .default_width(840)
+        .default_height(680)
+        .search_enabled(true)
         .build();
-    dialog.add_css_class("ft-dialog");
-    apply_dialog_chrome(&dialog);
-    install_escape_close(&dialog);
-    restore_focus_after_hide(&dialog, parent);
     let loaded = config::load_config().unwrap_or_default();
+    let current = Rc::new(RefCell::new(loaded.clone()));
+    let suppress_updates = Rc::new(Cell::new(false));
 
-    let shell_entry = gtk::Entry::builder()
+    install_escape_close(dialog.upcast_ref::<gtk::Window>());
+    restore_focus_after_hide(dialog.upcast_ref::<gtk::Window>(), parent);
+
+    let terminal_page = adw::PreferencesPage::builder()
+        .title("Terminal")
+        .icon_name("utilities-terminal-symbolic")
+        .build();
+    let shell_group = adw::PreferencesGroup::builder()
+        .title("Shell")
+        .description("Controls how new terminal sessions are started.")
+        .build();
+    let shell_entry = adw::EntryRow::builder()
+        .title("Shell command")
         .text(&loaded.general.shell)
-        .hexpand(true)
+        .show_apply_button(true)
+        .tooltip_text("Absolute path to the shell executable")
+        .build();
+    shell_group.add(&shell_entry);
+    terminal_page.add(&shell_group);
+
+    let font_group = adw::PreferencesGroup::builder()
+        .title("Text")
+        .description("Applied immediately to all open VTE panes.")
         .build();
     let font_family = font_family_combo(parent, &loaded.appearance.font_family);
     font_family.set_tooltip_text(Some("Terminal font family"));
-    let font_size = gtk::SpinButton::with_range(8.0, 64.0, 1.0);
-    font_size.set_value(f64::from(loaded.appearance.font_size));
-    font_size.set_numeric(true);
-    font_size.set_width_chars(4);
-    let notification_command = gtk::Entry::builder()
-        .text(&loaded.general.notification_command)
-        .placeholder_text("/usr/bin/notify-send ForkTTY")
-        .hexpand(true)
+    font_family.set_width_request(360);
+    font_family.set_valign(gtk::Align::Center);
+    let font_family_row = settings_action_row(
+        "Font family",
+        "Prefer a monospace font with symbol coverage for terminal prompts.",
+    );
+    font_family_row.add_suffix(&font_family);
+    font_family_row.set_activatable_widget(Some(&font_family));
+    font_group.add(&font_family_row);
+
+    let (font_size_row, font_size) = settings_number_row(
+        "Font size",
+        "Terminal text size in points.",
+        8,
+        64,
+        1,
+        i64::from(loaded.appearance.font_size),
+        96,
+    );
+    font_group.add(&font_size_row);
+    terminal_page.add(&font_group);
+
+    let behavior_group = adw::PreferencesGroup::builder()
+        .title("Behavior")
+        .description("Runtime behavior for VTE panes.")
         .build();
-    let theme_source = combo_with_ids(
+    let (scrollback_lines_row, scrollback_lines) = settings_number_row(
+        "Scrollback lines",
+        "Set to 0 to disable saved scrollback for each pane.",
+        0,
+        500_000,
+        1000,
+        i64::from(loaded.appearance.scrollback_lines),
+        128,
+    );
+    behavior_group.add(&scrollback_lines_row);
+    let terminal_audible_bell = adw::SwitchRow::builder()
+        .title("Audible bell")
+        .subtitle("Let terminal bell sequences play the system alert sound.")
+        .active(loaded.appearance.terminal_audible_bell)
+        .build();
+    behavior_group.add(&terminal_audible_bell);
+    terminal_page.add(&behavior_group);
+    dialog.add(&terminal_page);
+
+    let appearance_page = adw::PreferencesPage::builder()
+        .title("Interface")
+        .icon_name("preferences-desktop-theme-symbolic")
+        .build();
+    let theme_group = adw::PreferencesGroup::builder()
+        .title("Theme")
+        .description("Keeps the GTK chrome and terminal palette in sync.")
+        .build();
+    let (theme_source_row, theme_source) = settings_combo_row(
+        "Color scheme",
+        "Use the system preference or force a light/dark app theme.",
         &[("auto", "System"), ("light", "Light"), ("dark", "Dark")],
         &loaded.general.theme_source,
     );
-    theme_source.set_tooltip_text(Some("Application color scheme"));
-    let worktree_layout = combo_with_ids(
+    theme_group.add(&theme_source_row);
+    appearance_page.add(&theme_group);
+
+    let window_group = adw::PreferencesGroup::builder()
+        .title("Window")
+        .description("Window layout and workspace sidebar behavior.")
+        .build();
+    let (window_mode_row, window_mode) = settings_combo_row(
+        "Window mode",
+        "Quake mode uses a drop-down window after restart.",
+        &[("normal", "Normal"), ("quake", "Quake")],
+        &loaded.appearance.window_mode,
+    );
+    window_group.add(&window_mode_row);
+    let (sidebar_position_row, sidebar_position) = settings_combo_row(
+        "Sidebar position",
+        "Side of the main window used for workspaces.",
+        &[("left", "Left"), ("right", "Right")],
+        &loaded.appearance.sidebar_position,
+    );
+    window_group.add(&sidebar_position_row);
+    let sidebar_visible = adw::SwitchRow::builder()
+        .title("Show sidebar on startup")
+        .subtitle("You can still toggle it with Ctrl+B or F9.")
+        .active(loaded.appearance.sidebar_visible)
+        .build();
+    window_group.add(&sidebar_visible);
+    appearance_page.add(&window_group);
+    dialog.add(&appearance_page);
+
+    let automation_page = adw::PreferencesPage::builder()
+        .title("Automation")
+        .icon_name("system-run-symbolic")
+        .build();
+    let worktree_group = adw::PreferencesGroup::builder()
+        .title("Git Worktrees")
+        .description("Controls where new worktree directories are created.")
+        .build();
+    let (worktree_layout_row, worktree_layout) = settings_combo_row(
+        "Worktree layout",
+        "Placement for new worktree directories relative to the repository root.",
         &[
             ("nested", "Nested"),
             ("sibling", "Sibling"),
@@ -6238,393 +6518,468 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         ],
         &loaded.general.worktree_layout,
     );
-    worktree_layout.set_tooltip_text(Some(
-        "Where new worktrees are placed relative to the repository root",
-    ));
-    let window_mode = combo_with_ids(
-        &[("normal", "Normal"), ("quake", "Quake")],
-        &loaded.appearance.window_mode,
-    );
-    window_mode.set_tooltip_text(Some(
-        "Quake mode shows a borderless drop-down window toggled with F12",
-    ));
-    let sidebar_position = combo_with_ids(
-        &[("left", "Left"), ("right", "Right")],
-        &loaded.appearance.sidebar_position,
-    );
-    sidebar_position.set_tooltip_text(Some("Side of the window where the workspace list appears"));
-    let sidebar_visible = gtk::Switch::builder()
-        .active(loaded.appearance.sidebar_visible)
-        .tooltip_text("Show the workspace sidebar on startup")
-        .valign(gtk::Align::Center)
+    worktree_group.add(&worktree_layout_row);
+    automation_page.add(&worktree_group);
+
+    let notification_group = adw::PreferencesGroup::builder()
+        .title("Notifications")
+        .description("In-app notifications always remain available in the notification panel.")
         .build();
-    let desktop_notifications = gtk::Switch::builder()
+    let notification_command = adw::EntryRow::builder()
+        .title("Custom command")
+        .text(&loaded.general.notification_command)
+        .show_apply_button(true)
+        .tooltip_text("Optional absolute command to run when a notification fires")
+        .build();
+    notification_command.set_input_purpose(gtk::InputPurpose::Terminal);
+    notification_group.add(&notification_command);
+    let desktop_notifications = adw::SwitchRow::builder()
+        .title("Desktop notifications")
+        .subtitle("Forward alerts to the system notification daemon.")
         .active(loaded.notifications.desktop)
-        .tooltip_text("Forward ForkTTY notifications to the system notification daemon")
-        .valign(gtk::Align::Center)
         .build();
-    let notification_sound = gtk::Switch::builder()
+    notification_group.add(&desktop_notifications);
+    let notification_sound = adw::SwitchRow::builder()
+        .title("Alert sound")
+        .subtitle("Play the default system alert sound for ForkTTY alerts.")
         .active(loaded.notifications.sound)
-        .tooltip_text("Play the default system alert sound when a notification fires")
-        .valign(gtk::Align::Center)
         .build();
-    let status = gtk::Label::builder()
-        .xalign(0.0)
-        .wrap(true)
-        .visible(false)
+    notification_group.add(&notification_sound);
+    automation_page.add(&notification_group);
+
+    let maintenance_group = adw::PreferencesGroup::builder()
+        .title("Advanced")
+        .description("Preferences are saved to the user config file immediately.")
         .build();
-    status.add_css_class("ft-inline-status");
+    let reset_row = settings_action_row(
+        "Reset to defaults",
+        "Restore the default shell, appearance, workspace and notification preferences.",
+    );
+    let reset = gtk::Button::with_label("Reset");
+    reset.add_css_class("destructive-action");
+    reset_row.add_suffix(&reset);
+    reset_row.set_activatable_widget(Some(&reset));
+    maintenance_group.add(&reset_row);
+    automation_page.add(&maintenance_group);
+    dialog.add(&automation_page);
 
-    let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    header.add_css_class("ft-dialog-header");
-    let title = gtk::Label::builder().label("Settings").xalign(0.0).build();
-    title.add_css_class("ft-dialog-title");
-    let subtitle = gtk::Label::builder()
-        .label("Saved preferences update the user config file.")
-        .xalign(0.0)
-        .build();
-    subtitle.add_css_class("ft-dialog-subtitle");
-    header.append(&title);
-    header.append(&subtitle);
-
-    let body = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
-        .build();
-    body.add_css_class("ft-dialog-body");
-
-    fn settings_group(title: &str) -> gtk::Box {
-        let outer = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(6)
-            .build();
-        let header = gtk::Label::builder().label(title).xalign(0.0).build();
-        header.add_css_class("ft-section-title");
-        let group = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(0)
-            .build();
-        group.add_css_class("settings-group");
-        outer.append(&header);
-        outer.append(&group);
-        outer
-    }
-
-    fn settings_group_body(group: &gtk::Box) -> gtk::Box {
-        group
-            .last_child()
-            .and_then(|child| child.downcast::<gtk::Box>().ok())
-            .expect("settings group body")
-    }
-
-    fn settings_row<W>(
-        label_text: &str,
-        description: &str,
-        widget: &W,
-        control_width: i32,
-        expand_control: bool,
-    ) -> gtk::Box
-    where
-        W: IsA<gtk::Accessible> + IsA<gtk::Widget>,
-    {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        row.add_css_class("settings-row");
-        row.set_valign(gtk::Align::Center);
-        let text = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(2)
-            .hexpand(true)
-            .build();
-        let label = gtk::Label::builder()
-            .label(label_text)
-            .xalign(0.0)
-            .wrap(true)
-            .build();
-        label.add_css_class("ft-form-label");
-        let hint = gtk::Label::builder()
-            .label(description)
-            .xalign(0.0)
-            .wrap(true)
-            .build();
-        hint.add_css_class("ft-form-hint");
-        let accessible_label = label.upcast_ref::<gtk::Accessible>();
-        widget.update_relation(&[gtk::accessible::Relation::LabelledBy(&[accessible_label])]);
-        text.append(&label);
-        text.append(&hint);
-        row.append(&text);
-        widget.set_hexpand(expand_control);
-        if control_width > 0 {
-            widget.set_width_request(control_width);
+    shell_entry.connect_apply({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        move |row: &adw::EntryRow| {
+            let mut next = current.borrow().clone();
+            next.general.shell = row.text().to_string();
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                next,
+                "Shell saved. Restart ForkTTY to use it.",
+            );
         }
-        row.append(widget);
-        row
-    }
-
-    let terminal_group = settings_group("Terminal");
-    let terminal_rows = settings_group_body(&terminal_group);
-    terminal_rows.append(&settings_row(
-        "Shell",
-        "Used for new terminal sessions. Applies after restart.",
-        &shell_entry,
-        320,
-        true,
-    ));
-    terminal_rows.append(&settings_row(
-        "Font family",
-        "Applied to open VTE terminals when saved.",
-        &font_family,
-        320,
-        true,
-    ));
-    terminal_rows.append(&settings_row(
-        "Font size",
-        "Terminal text size, from 8 to 64 pt.",
-        &font_size,
-        92,
-        false,
-    ));
-    body.append(&terminal_group);
-
-    let workspace_group = settings_group("Workspaces");
-    let workspace_rows = settings_group_body(&workspace_group);
-    workspace_rows.append(&settings_row(
-        "Worktree layout",
-        "Where new worktrees are placed relative to the repository root.",
-        &worktree_layout,
-        240,
-        false,
-    ));
-    body.append(&workspace_group);
-
-    let appearance_group = settings_group("Appearance");
-    let appearance_rows = settings_group_body(&appearance_group);
-    appearance_rows.append(&settings_row(
-        "Theme",
-        "Use the system preference or force a light/dark app theme.",
-        &theme_source,
-        240,
-        false,
-    ));
-    appearance_rows.append(&settings_row(
-        "Window mode",
-        "Quake mode uses a borderless drop-down window after restart.",
-        &window_mode,
-        240,
-        false,
-    ));
-    appearance_rows.append(&settings_row(
-        "Sidebar position",
-        "Side of the main window used for workspaces.",
-        &sidebar_position,
-        240,
-        false,
-    ));
-    appearance_rows.append(&settings_row(
-        "Sidebar visible",
-        "Show the workspace sidebar by default. You can still toggle it with Ctrl+B or F9.",
-        &sidebar_visible,
-        0,
-        false,
-    ));
-    body.append(&appearance_group);
-
-    let notification_group = settings_group("Notifications");
-    let notification_rows = settings_group_body(&notification_group);
-    notification_rows.append(&settings_row(
-        "Custom command",
-        "Optional absolute command to run when a notification fires.",
-        &notification_command,
-        320,
-        true,
-    ));
-    notification_rows.append(&settings_row(
-        "Desktop notifications",
-        "Forward alerts to the system notification daemon.",
-        &desktop_notifications,
-        0,
-        false,
-    ));
-    notification_rows.append(&settings_row(
-        "Alert sound",
-        "Play the default system alert sound for alerts.",
-        &notification_sound,
-        0,
-        false,
-    ));
-    body.append(&notification_group);
-
-    body.append(&status);
-
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    footer.add_css_class("ft-dialog-footer");
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    let reset = gtk::Button::with_label("Reset to Defaults");
-    reset.add_css_class("flat");
-    let cancel = gtk::Button::with_label("Close");
-    let save = gtk::Button::with_label("Save");
-    save.add_css_class("suggested-action");
-    save.set_sensitive(false);
-    footer.append(&reset);
-    footer.append(&spacer);
-    footer.append(&cancel);
-    footer.append(&save);
-
-    let dialog_for_cancel = dialog.clone();
-    cancel.connect_clicked(move |_| dialog_for_cancel.close());
-
-    let mark_dirty = Rc::new({
-        let save = save.clone();
-        let status = status.clone();
-        move || {
-            save.set_sensitive(true);
-            status.set_visible(false);
-        }
-    });
-    shell_entry.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
     });
     font_family.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |combo| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(family) = combo.active_id() {
+                let family = family.to_string();
+                let mut next = current.borrow().clone();
+                next.appearance.font_family = match family.as_str() {
+                    DEFAULT_FONT_FAMILY_ID => String::new(),
+                    SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
+                    _ => family,
+                };
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    next,
+                    "Terminal font applied.",
+                );
+            }
+        }
     });
-    font_size.connect_value_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+    connect_settings_number_control(&font_size, {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |value| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.appearance.font_size = value as u16;
+            persist_settings_change(&dialog, &current, &on_apply, next, "Font size applied.");
+        }
     });
-    notification_command.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+    connect_settings_number_control(&scrollback_lines, {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |value| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.appearance.scrollback_lines = value as u32;
+            persist_settings_change(&dialog, &current, &on_apply, next, "Scrollback updated.");
+        }
+    });
+    terminal_audible_bell.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.appearance.terminal_audible_bell = row.is_active();
+            persist_settings_change(&dialog, &current, &on_apply, next, "Terminal bell updated.");
+        }
     });
     theme_source.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
-    });
-    worktree_layout.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |combo| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(theme) = combo.active_id() {
+                let mut next = current.borrow().clone();
+                next.general.theme_source = theme.to_string();
+                persist_settings_change(&dialog, &current, &on_apply, next, "Theme applied.");
+            }
+        }
     });
     window_mode.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |combo| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(mode) = combo.active_id() {
+                let mut next = current.borrow().clone();
+                next.appearance.window_mode = mode.to_string();
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    next,
+                    "Window mode saved. Restart ForkTTY to use it.",
+                );
+            }
+        }
     });
     sidebar_position.connect_changed({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |combo| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(position) = combo.active_id() {
+                let mut next = current.borrow().clone();
+                next.appearance.sidebar_position = position.to_string();
+                persist_settings_change(&dialog, &current, &on_apply, next, "Sidebar moved.");
+            }
+        }
     });
-    sidebar_visible.connect_active_notify({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+    sidebar_visible.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.appearance.sidebar_visible = row.is_active();
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                next,
+                "Sidebar visibility updated.",
+            );
+        }
     });
-    desktop_notifications.connect_active_notify({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+    worktree_layout.connect_changed({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |combo| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(layout) = combo.active_id() {
+                let mut next = current.borrow().clone();
+                next.general.worktree_layout = layout.to_string();
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    next,
+                    "Worktree layout saved.",
+                );
+            }
+        }
     });
-    notification_sound.connect_active_notify({
-        let mark_dirty = mark_dirty.clone();
-        move |_| mark_dirty()
+    notification_command.connect_apply({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        move |row: &adw::EntryRow| {
+            let mut next = current.borrow().clone();
+            next.general.notification_command = row.text().to_string();
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                next,
+                "Notification command saved.",
+            );
+        }
     });
-
-    {
-        let shell_entry = shell_entry.clone();
-        let font_family = font_family.clone();
-        let font_size = font_size.clone();
-        let notification_command = notification_command.clone();
-        let theme_source = theme_source.clone();
-        let worktree_layout = worktree_layout.clone();
-        let window_mode = window_mode.clone();
-        let sidebar_position = sidebar_position.clone();
-        let sidebar_visible = sidebar_visible.clone();
-        let desktop_notifications = desktop_notifications.clone();
-        let notification_sound = notification_sound.clone();
-        let status = status.clone();
-        let save = save.clone();
-        reset.connect_clicked(move |_| {
+    desktop_notifications.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.notifications.desktop = row.is_active();
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                next,
+                "Desktop notifications updated.",
+            );
+        }
+    });
+    notification_sound.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.notifications.sound = row.is_active();
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                next,
+                "Notification sound updated.",
+            );
+        }
+    });
+    reset.connect_clicked({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |_| {
             let defaults = config::AppConfig::default();
+            suppress_updates.set(true);
             shell_entry.set_text(&defaults.general.shell);
             let _ = font_family.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
-            font_size.set_value(f64::from(defaults.appearance.font_size));
-            notification_command.set_text(&defaults.general.notification_command);
+            font_size.set_value(i64::from(defaults.appearance.font_size));
+            scrollback_lines.set_value(i64::from(defaults.appearance.scrollback_lines));
+            terminal_audible_bell.set_active(defaults.appearance.terminal_audible_bell);
             let _ = theme_source.set_active_id(Some(&defaults.general.theme_source));
-            let _ = worktree_layout.set_active_id(Some(&defaults.general.worktree_layout));
             let _ = window_mode.set_active_id(Some(&defaults.appearance.window_mode));
             let _ = sidebar_position.set_active_id(Some(&defaults.appearance.sidebar_position));
             sidebar_visible.set_active(defaults.appearance.sidebar_visible);
+            let _ = worktree_layout.set_active_id(Some(&defaults.general.worktree_layout));
+            notification_command.set_text(&defaults.general.notification_command);
             desktop_notifications.set_active(defaults.notifications.desktop);
             notification_sound.set_active(defaults.notifications.sound);
-            save.set_sensitive(true);
-            set_status_message(
-                &status,
-                "Defaults staged. Save to apply them.",
-                StatusKind::Success,
-            );
-        });
-    }
-
-    let status_for_save = status.clone();
-    let save_for_save = save.clone();
-    let shell_entry_for_focus = shell_entry.clone();
-    let initial_shell = loaded.general.shell.clone();
-    let initial_window_mode = loaded.appearance.window_mode.clone();
-    save.connect_clicked(move |_| {
-        let mut next = config::load_config().unwrap_or_default();
-        next.general.shell = shell_entry.text().to_string();
-        if let Some(family) = font_family.active_id() {
-            let family = family.to_string();
-            next.appearance.font_family = match family.as_str() {
-                DEFAULT_FONT_FAMILY_ID => String::new(),
-                SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
-                _ => family,
-            };
-        }
-        next.appearance.font_size = font_size.value() as u16;
-        next.general.notification_command = notification_command.text().to_string();
-        if let Some(theme) = theme_source.active_id() {
-            next.general.theme_source = theme.to_string();
-        }
-        if let Some(layout) = worktree_layout.active_id() {
-            next.general.worktree_layout = layout.to_string();
-        }
-        if let Some(mode) = window_mode.active_id() {
-            next.appearance.window_mode = mode.to_string();
-        }
-        if let Some(position) = sidebar_position.active_id() {
-            next.appearance.sidebar_position = position.to_string();
-        }
-        next.appearance.sidebar_visible = sidebar_visible.is_active();
-        next.notifications.desktop = desktop_notifications.is_active();
-        next.notifications.sound = notification_sound.is_active();
-        match config::save_config(&next) {
-            Ok(()) => {
-                on_apply(&next);
-                save_for_save.set_sensitive(false);
-                let message = if next.general.shell != initial_shell
-                    || next.appearance.window_mode != initial_window_mode
-                {
-                    "Saved. Font, layout and notifications are applied now; shell/window mode apply after restart."
-                } else {
-                    "Saved. Changes applied."
-                };
-                set_status_message(&status_for_save, message, StatusKind::Success);
-            }
-            Err(err) => set_status_message(&status_for_save, &err.to_string(), StatusKind::Error),
+            suppress_updates.set(false);
+            persist_settings_change(&dialog, &current, &on_apply, defaults, "Defaults restored.");
         }
     });
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content.append(&header);
-    let scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vexpand(true)
-        .child(&body)
-        .build();
-    content.append(&scroll);
-    content.append(&footer);
-    dialog.set_default_widget(Some(&save));
-    dialog.set_child(Some(&content));
     dialog.present();
-    shell_entry_for_focus.grab_focus();
+}
+
+fn settings_action_row(title: &str, subtitle: &str) -> adw::ActionRow {
+    adw::ActionRow::builder()
+        .title(title)
+        .subtitle(subtitle)
+        .subtitle_lines(2)
+        .build()
+}
+
+fn settings_combo_row(
+    title: &str,
+    subtitle: &str,
+    items: &[(&str, &str)],
+    active_id: &str,
+) -> (adw::ActionRow, gtk::ComboBoxText) {
+    let row = settings_action_row(title, subtitle);
+    let combo = combo_with_ids(items, active_id);
+    combo.set_valign(gtk::Align::Center);
+    combo.set_width_request(180);
+    row.add_suffix(&combo);
+    row.set_activatable_widget(Some(&combo));
+    (row, combo)
+}
+
+#[derive(Clone)]
+struct SettingsNumberControl {
+    entry: gtk::Entry,
+    decrement: gtk::Button,
+    increment: gtk::Button,
+    min: i64,
+    max: i64,
+    step: i64,
+}
+
+impl SettingsNumberControl {
+    fn value(&self) -> i64 {
+        self.entry
+            .text()
+            .trim()
+            .parse::<i64>()
+            .unwrap_or(self.min)
+            .clamp(self.min, self.max)
+    }
+
+    fn set_value(&self, value: i64) {
+        self.entry
+            .set_text(&value.clamp(self.min, self.max).to_string());
+    }
+
+    fn stepped_value(&self, delta: i64) -> i64 {
+        self.value().saturating_add(delta).clamp(self.min, self.max)
+    }
+}
+
+fn settings_number_row(
+    title: &str,
+    subtitle: &str,
+    min: i64,
+    max: i64,
+    step: i64,
+    value: i64,
+    width: i32,
+) -> (adw::ActionRow, SettingsNumberControl) {
+    let row = settings_action_row(title, subtitle);
+    let control = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    control.add_css_class("settings-number-control");
+    control.set_valign(gtk::Align::Center);
+    control.set_halign(gtk::Align::End);
+
+    let entry = gtk::Entry::builder()
+        .text(value.clamp(min, max).to_string())
+        .width_request(width)
+        .input_purpose(gtk::InputPurpose::Digits)
+        .build();
+    entry.add_css_class("settings-number-entry");
+    gtk::prelude::EntryExt::set_alignment(&entry, 1.0);
+
+    let decrement = gtk::Button::with_label("-");
+    decrement.add_css_class("settings-number-button");
+    decrement.set_tooltip_text(Some("Decrease"));
+    set_accessible_button_text(&decrement, "Decrease", None);
+
+    let increment = gtk::Button::with_label("+");
+    increment.add_css_class("settings-number-button");
+    increment.set_tooltip_text(Some("Increase"));
+    set_accessible_button_text(&increment, "Increase", None);
+
+    control.append(&decrement);
+    control.append(&entry);
+    control.append(&increment);
+    row.add_suffix(&control);
+    row.set_activatable_widget(Some(&entry));
+
+    (
+        row,
+        SettingsNumberControl {
+            entry,
+            decrement,
+            increment,
+            min,
+            max,
+            step,
+        },
+    )
+}
+
+fn connect_settings_number_control<F>(control: &SettingsNumberControl, apply: F)
+where
+    F: Fn(i64) + 'static,
+{
+    let apply: Rc<dyn Fn(i64)> = Rc::new(apply);
+
+    control.decrement.connect_clicked({
+        let control = control.clone();
+        let apply = apply.clone();
+        move |_| {
+            let value = control.stepped_value(-control.step);
+            control.set_value(value);
+            apply(value);
+        }
+    });
+
+    control.increment.connect_clicked({
+        let control = control.clone();
+        let apply = apply.clone();
+        move |_| {
+            let value = control.stepped_value(control.step);
+            control.set_value(value);
+            apply(value);
+        }
+    });
+
+    control.entry.connect_activate({
+        let control = control.clone();
+        let apply = apply.clone();
+        move |_| {
+            let value = control.value();
+            control.set_value(value);
+            apply(value);
+        }
+    });
+
+    let focus = gtk::EventControllerFocus::new();
+    focus.connect_leave({
+        let control = control.clone();
+        move |_| {
+            let value = control.value();
+            control.set_value(value);
+            apply(value);
+        }
+    });
+    control.entry.add_controller(focus);
 }
 
 fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText {
@@ -6636,6 +6991,30 @@ fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText 
         combo.set_active(Some(0));
     }
     combo
+}
+
+fn persist_settings_change(
+    dialog: &adw::PreferencesWindow,
+    current: &Rc<RefCell<config::AppConfig>>,
+    on_apply: &SettingsApplyCallback,
+    next: config::AppConfig,
+    message: &str,
+) -> bool {
+    if *current.borrow() == next {
+        return true;
+    }
+    match config::save_config(&next) {
+        Ok(()) => {
+            *current.borrow_mut() = next.clone();
+            on_apply(&next);
+            dialog.add_toast(adw::Toast::new(message));
+            true
+        }
+        Err(err) => {
+            dialog.add_toast(adw::Toast::new(&err.to_string()));
+            false
+        }
+    }
 }
 
 fn font_family_combo(_parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
