@@ -438,7 +438,8 @@ impl WorkspaceModel {
     pub fn close_surface(&mut self, surface_id: &str) -> Option<Surface> {
         let surface = self.surfaces.get(surface_id)?.clone();
         let replacement_id = self.next_surface_id();
-        let workspace = self.workspaces.get_mut(&surface.workspace_id)?;
+        let workspace_id = surface.workspace_id.clone();
+        let workspace = self.workspaces.get_mut(&workspace_id)?;
         let removed_root = remove_leaf(&mut workspace.pane_tree, surface_id)?;
         let removed = self.surfaces.remove(surface_id)?;
         let next_focus = if removed_root {
@@ -451,7 +452,7 @@ impl WorkspaceModel {
         } else {
             let replacement = Surface {
                 id: replacement_id.clone(),
-                workspace_id: workspace.id.clone(),
+                workspace_id: workspace_id.clone(),
                 cwd: workspace.working_dir.clone(),
                 title: String::from("shell"),
                 unread: false,
@@ -462,6 +463,13 @@ impl WorkspaceModel {
             };
             workspace.focused_surface_id = replacement_id.clone();
             self.surfaces.insert(replacement_id, replacement);
+        }
+        let workspace_needs_attention = self
+            .surfaces
+            .values()
+            .any(|candidate| candidate.workspace_id == workspace_id && candidate.unread);
+        if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+            workspace.needs_attention = workspace_needs_attention;
         }
         Some(removed)
     }
@@ -1272,6 +1280,27 @@ mod tests {
         assert_eq!(model.unread_notification_count(), 1);
         assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
         assert!(model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn close_surface_clears_workspace_attention_when_unread_pane_is_removed() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let split = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        model.create_notification(
+            "Prompt",
+            "Needs input",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(split.id.clone()),
+        );
+        assert!(model.list_workspaces()[0].needs_attention);
+
+        model.close_surface(&split.id).unwrap();
+
+        assert!(!model.list_workspaces()[0].needs_attention);
     }
 
     #[test]
