@@ -7,6 +7,9 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - Refreshed the README screenshot and updated terminal environment documentation after the alpha.3 release.
 
+### Fixed
+- Resolved terminal font discovery through GTK/Pango instead of spawning `fc-list`/`fc-match` by name, removing a PATH-hijack risk when ForkTTY is launched from an untrusted environment.
+
 ## [0.2.0-alpha.3] - 2026-05-15
 
 ### Added

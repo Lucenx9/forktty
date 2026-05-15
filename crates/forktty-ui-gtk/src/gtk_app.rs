@@ -28,7 +28,6 @@ use std::ffi::CString;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -984,7 +983,7 @@ fn layout_structure_signature(node: &PaneNode, out: &mut String) {
 
 fn apply_vte_appearance(widget: &VteTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
-    let font = terminal_font_description(&config);
+    let font = terminal_font_description(widget, &config);
     widget.add_css_class("vte-terminal");
     widget.set_font(Some(&font));
     widget.set_scrollback_lines(i64::from(config.appearance.scrollback_lines));
@@ -1075,10 +1074,13 @@ fn terminal_prefers_dark_palette(config: &config::AppConfig) -> bool {
     }
 }
 
-fn terminal_font_description(config: &config::AppConfig) -> gtk::pango::FontDescription {
+fn terminal_font_description(
+    widget: &impl IsA<gtk::Widget>,
+    config: &config::AppConfig,
+) -> gtk::pango::FontDescription {
     let configured = config.appearance.font_family.trim();
     let family = if configured.is_empty() {
-        default_terminal_font_family(&installed_font_families())
+        default_terminal_font_family(&installed_font_families(widget))
     } else {
         configured.to_string()
     };
@@ -1118,58 +1120,43 @@ fn default_terminal_font_family(installed_families: &[String]) -> String {
         .unwrap_or_else(|| "monospace".to_string())
 }
 
-fn installed_font_families() -> Vec<String> {
-    fontconfig_list_families(":").unwrap_or_default()
+fn installed_font_families(widget: &impl IsA<gtk::Widget>) -> Vec<String> {
+    pango_font_families(widget, false)
 }
 
-fn installed_monospace_font_families() -> Vec<String> {
-    fontconfig_list_families(":spacing=mono").unwrap_or_else(installed_font_families)
+fn installed_monospace_font_families(widget: &impl IsA<gtk::Widget>) -> Vec<String> {
+    pango_font_families(widget, true)
 }
 
-fn fontconfig_list_families(pattern: &str) -> Option<Vec<String>> {
-    let output = Command::new("fc-list")
-        .args([pattern, "family"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(parse_fontconfig_families(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
+fn pango_font_families(widget: &impl IsA<gtk::Widget>, monospace_only: bool) -> Vec<String> {
+    let context = widget.as_ref().pango_context();
+    let names = context
+        .list_families()
+        .into_iter()
+        .filter(|family| !monospace_only || family.is_monospace())
+        .map(|family| family.name().to_string());
+    dedupe_font_family_names(names)
 }
 
-fn resolved_system_monospace_family() -> Option<String> {
-    let output = Command::new("fc-match")
-        .args(["-f", "%{family}\n", "monospace"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    first_fontconfig_family(&String::from_utf8_lossy(&output.stdout))
+fn resolved_system_monospace_family(widget: &impl IsA<gtk::Widget>) -> Option<String> {
+    let context = widget.as_ref().pango_context();
+    let description = gtk::pango::FontDescription::from_string("monospace");
+    context
+        .load_font(&description)
+        .and_then(|font| font.describe().family().map(|family| family.to_string()))
+        .filter(|family| !family.trim().is_empty())
+        .or_else(|| installed_monospace_font_families(widget).into_iter().next())
 }
 
-fn parse_fontconfig_families(output: &str) -> Vec<String> {
+fn dedupe_font_family_names(raw_names: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut names = BTreeSet::new();
-    for line in output.lines() {
-        for name in line.split(',') {
-            let name = name.trim();
-            if !name.is_empty() {
-                names.insert(name.to_string());
-            }
+    for name in raw_names {
+        let name = name.trim();
+        if !name.is_empty() {
+            names.insert(name.to_string());
         }
     }
     names.into_iter().collect()
-}
-
-fn first_fontconfig_family(output: &str) -> Option<String> {
-    output
-        .lines()
-        .flat_map(|line| line.split(','))
-        .map(str::trim)
-        .find(|name| !name.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 fn attach_vte_signal_handlers(
@@ -7017,23 +7004,23 @@ fn persist_settings_change(
     }
 }
 
-fn font_family_combo(_parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
+fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     let active_family = active_family.trim();
-    let all_names = installed_font_families();
+    let all_names = installed_font_families(parent);
     let default_family = default_terminal_font_family(&all_names);
     combo.append(
         Some(DEFAULT_FONT_FAMILY_ID),
         &format!("Default terminal font ({default_family})"),
     );
     let system_monospace =
-        resolved_system_monospace_family().unwrap_or_else(|| "monospace".to_string());
+        resolved_system_monospace_family(parent).unwrap_or_else(|| "monospace".to_string());
     combo.append(
         Some(SYSTEM_MONOSPACE_FONT_FAMILY_ID),
         &format!("System monospace ({system_monospace})"),
     );
 
-    let mut names = installed_monospace_font_families();
+    let mut names = installed_monospace_font_families(parent);
     if names.is_empty() {
         names = all_names;
     }
@@ -7399,7 +7386,8 @@ mod tests {
         config.appearance.font_family = "JetBrains Mono".to_string();
         config.appearance.font_size = 16;
 
-        let description = terminal_font_description(&config);
+        let description =
+            terminal_font_description_with_family(&config, "JetBrains Mono".to_string());
 
         assert!(description.to_string().contains("JetBrains Mono"));
         assert!(description.to_string().contains("16"));
@@ -7419,22 +7407,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_fontconfig_family_lists() {
-        let families = parse_fontconfig_families(
-            "JetBrainsMono Nerd Font Mono,JetBrainsMono NFM\nNoto Sans Mono\n\n",
-        );
+    fn dedupes_font_family_names() {
+        let families = dedupe_font_family_names([
+            " JetBrainsMono Nerd Font Mono ".to_string(),
+            "JetBrainsMono Nerd Font Mono".to_string(),
+            "".to_string(),
+            "Noto Sans Mono".to_string(),
+        ]);
 
+        assert_eq!(families.len(), 2);
         assert!(families.contains(&"JetBrainsMono Nerd Font Mono".to_string()));
-        assert!(families.contains(&"JetBrainsMono NFM".to_string()));
         assert!(families.contains(&"Noto Sans Mono".to_string()));
-    }
-
-    #[test]
-    fn first_fontconfig_family_preserves_match_order() {
-        assert_eq!(
-            first_fontconfig_family("Noto Sans Mono,Noto Sans Mono Regular\n"),
-            Some("Noto Sans Mono".to_string())
-        );
     }
 
     #[test]
