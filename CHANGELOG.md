@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Cleared the persisted workspace attention badge on session restore so freshly restarted sessions no longer show stale unread state when no surfaces are unread and no notifications carry over.
+
 ## [0.2.0-alpha.2] - 2026-05-15
 
 ### Added

@@ -213,6 +213,10 @@ impl WorkspaceModel {
 
         for mut workspace in data.workspaces {
             workspace.active = active_id.as_deref() == Some(workspace.id.as_str());
+            // Notifications and per-surface unread state are not persisted, so
+            // clear any saved attention flag to avoid stale sidebar badges on
+            // a fresh boot where no unread items actually exist.
+            workspace.needs_attention = false;
             let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
             if !leaf_ids.contains(&workspace.focused_surface_id) {
                 if let Some(first_leaf) = leaf_ids.first() {
@@ -1043,6 +1047,34 @@ mod tests {
         assert_eq!(repaired.focused_surface_id, first);
         assert!(model.surface(&second.id).is_none());
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn restore_session_clears_stale_workspace_attention() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.create_notification(
+            "Prompt",
+            "Needs input",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        assert!(model.list_workspaces()[0].needs_attention);
+        let data = model.to_session_data();
+
+        let mut fresh = WorkspaceModel::new();
+        fresh.restore_session(data);
+
+        // Notifications are not persisted, so the restored workspace must not
+        // keep the saved attention badge.
+        assert!(!fresh.list_workspaces()[0].needs_attention);
+        assert!(
+            !fresh
+                .surface(&fresh.list_workspaces()[0].focused_surface_id)
+                .unwrap()
+                .unread
+        );
     }
 
     #[test]
