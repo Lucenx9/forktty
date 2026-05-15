@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Refreshed the README screenshot and updated terminal environment documentation after the alpha.3 release.
+
 ## [0.2.0-alpha.3] - 2026-05-15
 
 ### Added

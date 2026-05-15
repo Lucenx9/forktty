@@ -64,6 +64,10 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
 3. The VTE adapter creates a VTE terminal, applies appearance (font, colors, scrollback) settings, and spawns the configured shell.
 4. Child processes inherit:
+   - `TERM=xterm-256color`
+   - `COLORTERM=truecolor`
+   - `TERM_PROGRAM=ForkTTY`
+   - `TERM_PROGRAM_VERSION`
    - `FORKTTY_WORKSPACE_ID`
    - `FORKTTY_SURFACE_ID`
    - `FORKTTY_SOCKET_PATH`

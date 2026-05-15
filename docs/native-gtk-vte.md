@@ -57,7 +57,7 @@ ForkTTY currently requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubunt
 ## Runtime Notes
 
 - VTE owns the child PTY; ForkTTY drives terminals through VTE widgets rather than a separate portable-pty stream.
-- Spawned shells receive `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`.
+- Spawned shells receive `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=ForkTTY`, `TERM_PROGRAM_VERSION`, `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`.
 - Prompt/metadata detection uses VTE shell integration signals and a bounded visible-tail prompt fallback.
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.

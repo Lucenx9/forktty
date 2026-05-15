@@ -22,7 +22,7 @@ ForkTTY stores local application data only:
 
 | File | Location | Purpose |
 | ---- | -------- | ------- |
-| Configuration | `~/.config/forktty/config.toml` | Font, shell, worktree, notification, sidebar, renderer, and window settings |
+| Configuration | `~/.config/forktty/config.toml` | Theme, font, shell, scrollback, terminal bell, worktree, notification, sidebar, renderer, and window settings |
 | Native session data | `~/.local/share/forktty/session-v2.json` | Workspace layout and metadata needed for GTK/VTE session restore |
 | Legacy session import | `~/.local/share/forktty/session.json` | Imported if present; native saves do not overwrite it |
 | Quarantined sessions | `~/.local/share/forktty/session-v2.json.bad-*` | Invalid/corrupt session files kept for debugging |

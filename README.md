@@ -114,6 +114,10 @@ ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
 
 Spawned shells receive:
 
+- `TERM=xterm-256color`
+- `COLORTERM=truecolor`
+- `TERM_PROGRAM=ForkTTY`
+- `TERM_PROGRAM_VERSION`
 - `FORKTTY_WORKSPACE_ID`
 - `FORKTTY_SURFACE_ID`
 - `FORKTTY_SOCKET_PATH`
