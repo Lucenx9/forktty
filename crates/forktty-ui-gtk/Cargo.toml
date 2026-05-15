@@ -24,5 +24,5 @@ forktty-terminal = { path = "../forktty-terminal" }
 adw = { package = "libadwaita", version = "0.8", optional = true }
 global-hotkey = { version = "0.7", optional = true }
 gtk4 = { version = "0.10", optional = true }
-libloading = { version = "0.8", optional = true }
+libloading = { version = "0.9", optional = true }
 tokio.workspace = true
