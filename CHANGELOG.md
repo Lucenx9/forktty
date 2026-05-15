@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.2] - 2026-05-15
+
 ### Added
 - Added a README screenshot of the GTK/VTE app running on Ubuntu.
 - Added a release QA checklist for GTK/VTE runtime and Debian package smoke testing.

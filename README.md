@@ -10,15 +10,15 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.1)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.2)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
 
-[Download v0.2.0-alpha.1](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.1)
+[Download v0.2.0-alpha.2](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.2)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.1). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
+> **Status**: Early alpha (v0.2.0-alpha.2). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
 
 <p align="center">
   <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />

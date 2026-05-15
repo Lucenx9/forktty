@@ -442,7 +442,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "forktty-core"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 dependencies = [
  "chrono",
  "dirs",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-socket"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 dependencies = [
  "forktty-core",
  "forktty-terminal",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-terminal"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 dependencies = [
  "forktty-core",
  "gtk4",
@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-ui-gtk"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 dependencies = [
  "forktty-core",
  "forktty-socket",
