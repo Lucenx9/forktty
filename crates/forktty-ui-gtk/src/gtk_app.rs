@@ -35,6 +35,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const APP_ID: &str = "dev.forktty.ForkTTY";
 const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
 const SYSTEM_MONOSPACE_FONT_FAMILY_ID: &str = "__forktty_system_monospace__";
+const INSTALLED_FONT_FAMILY_ID_PREFIX: &str = "font:";
 const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "JetBrainsMono Nerd Font Mono",
     "JetBrainsMono Nerd Font",
@@ -1974,6 +1975,7 @@ fn build_workspace_context_menu(
         add_context_menu_separator(&menu);
 
         let state_ = state.clone();
+        let ws_id = workspace_id.clone();
         let name_ = name.clone();
         add_context_menu_item(
             &menu,
@@ -1981,14 +1983,18 @@ fn build_workspace_context_menu(
             "emblem-ok-symbolic",
             "Merge Worktree",
             false,
-            move || match merge_worktree_from_gtk(&state_, &name_) {
-                Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
-                Err(err) => create_local_notification(&state_, "Merge Failed", &err),
+            move || {
+                focus_workspace(&state_, &ws_id);
+                match merge_worktree_from_gtk(&state_, &name_) {
+                    Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
+                    Err(err) => create_local_notification(&state_, "Merge Failed", &err),
+                }
             },
         );
 
         let state_ = state.clone();
         let parent_ = parent.clone();
+        let ws_id = workspace_id.clone();
         let name_ = name.clone();
         add_context_menu_item(
             &menu,
@@ -1998,6 +2004,7 @@ fn build_workspace_context_menu(
             true,
             move || {
                 let state_confirm = state_.clone();
+                let ws_id_confirm = ws_id.clone();
                 let name_confirm = name_.clone();
                 show_destructive_confirmation(
                     &parent_,
@@ -2007,6 +2014,7 @@ fn build_workspace_context_menu(
                     ),
                     "Remove Worktree",
                     move || {
+                        focus_workspace(&state_confirm, &ws_id_confirm);
                         if let Err(err) = remove_worktree_from_gtk(&state_confirm, &name_confirm) {
                             create_local_notification(&state_confirm, "Remove Failed", &err);
                         }
@@ -4015,23 +4023,23 @@ fn refresh_sidebar(
             let state_for_closed = state_for_menu.clone();
             let controller_for_closed = controller_for_menu.clone();
             popover.connect_closed(move |popover| {
-                ui_for_closed.context_menu_open.set(false);
-                let should_clear = ui_for_closed
+                let is_current = ui_for_closed
                     .context_popover
                     .borrow()
                     .as_ref()
                     .is_some_and(|current| current == popover);
-                if should_clear {
+                if is_current {
+                    ui_for_closed.context_menu_open.set(false);
                     ui_for_closed.context_popover.borrow_mut().take();
+                    schedule_sidebar_refresh(
+                        ui_for_closed.clone(),
+                        state_for_closed.clone(),
+                        controller_for_closed.clone(),
+                    );
                 }
                 if popover.parent().is_some() {
                     popover.unparent();
                 }
-                schedule_sidebar_refresh(
-                    ui_for_closed.clone(),
-                    state_for_closed.clone(),
-                    controller_for_closed.clone(),
-                );
             });
             popover.set_parent(&row_for_menu);
             popover.set_position(gtk::PositionType::Bottom);
@@ -6581,7 +6589,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
                 next.appearance.font_family = match family.as_str() {
                     DEFAULT_FONT_FAMILY_ID => String::new(),
                     SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
-                    _ => family,
+                    _ => decode_font_family_row_id(&family),
                 };
                 persist_settings_change(
                     &dialog,
@@ -7004,6 +7012,16 @@ fn persist_settings_change(
     }
 }
 
+fn installed_font_family_row_id(name: &str) -> String {
+    format!("{INSTALLED_FONT_FAMILY_ID_PREFIX}{name}")
+}
+
+fn decode_font_family_row_id(id: &str) -> String {
+    id.strip_prefix(INSTALLED_FONT_FAMILY_ID_PREFIX)
+        .unwrap_or(id)
+        .to_string()
+}
+
 fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     let active_family = active_family.trim();
@@ -7033,20 +7051,23 @@ fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk
         if name == active_family {
             has_active = true;
         }
-        combo.append(Some(name), name);
+        combo.append(Some(&installed_font_family_row_id(name)), name);
     }
     if !has_active {
-        combo.append(Some(active_family), &format!("{active_family} (saved)"));
+        combo.append(
+            Some(&installed_font_family_row_id(active_family)),
+            &format!("{active_family} (saved)"),
+        );
     }
 
     let active_id = if active_family.is_empty() {
-        DEFAULT_FONT_FAMILY_ID
+        DEFAULT_FONT_FAMILY_ID.to_string()
     } else if active_family.eq_ignore_ascii_case("monospace") {
-        SYSTEM_MONOSPACE_FONT_FAMILY_ID
+        SYSTEM_MONOSPACE_FONT_FAMILY_ID.to_string()
     } else {
-        active_family
+        installed_font_family_row_id(active_family)
     };
-    if !combo.set_active_id(Some(active_id)) {
+    if !combo.set_active_id(Some(&active_id)) {
         combo.set_active(Some(0));
     }
     combo
