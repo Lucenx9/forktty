@@ -468,13 +468,7 @@ impl WorkspaceModel {
             workspace.focused_surface_id = replacement_id.clone();
             self.surfaces.insert(replacement_id, replacement);
         }
-        let workspace_needs_attention = self
-            .surfaces
-            .values()
-            .any(|candidate| candidate.workspace_id == workspace_id && candidate.unread);
-        if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
-            workspace.needs_attention = workspace_needs_attention;
-        }
+        self.recompute_workspace_attention(&workspace_id);
         Some(removed)
     }
 
@@ -484,12 +478,8 @@ impl WorkspaceModel {
         };
         surface.unread = unread;
         surface.needs_attention = unread;
-        if let Some(workspace) = self.workspaces.get_mut(&surface.workspace_id) {
-            workspace.needs_attention = self
-                .surfaces
-                .values()
-                .any(|candidate| candidate.workspace_id == workspace.id && candidate.unread);
-        }
+        let workspace_id = surface.workspace_id.clone();
+        self.recompute_workspace_attention(&workspace_id);
         true
     }
 
@@ -713,6 +703,21 @@ impl WorkspaceModel {
         format!("notification-{}", self.next_notification)
     }
 
+    fn recompute_workspace_attention(&mut self, workspace_id: &str) {
+        let has_unread_surface = self
+            .surfaces
+            .values()
+            .any(|surface| surface.workspace_id == workspace_id && surface.unread);
+        let has_unread_workspace_notification = self.notifications.iter().any(|notification| {
+            !notification.read
+                && notification.surface_id.is_none()
+                && notification.workspace_id.as_deref() == Some(workspace_id)
+        });
+        if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
+            workspace.needs_attention = has_unread_surface || has_unread_workspace_notification;
+        }
+    }
+
     fn recompute_notification_attention(&mut self) {
         let unread_surface_ids = self
             .notifications
@@ -725,6 +730,7 @@ impl WorkspaceModel {
             .notifications
             .iter()
             .filter(|notification| !notification.read)
+            .filter(|notification| notification.surface_id.is_none())
             .filter_map(|notification| notification.workspace_id.as_ref())
             .cloned()
             .collect::<BTreeSet<_>>();
@@ -1381,6 +1387,50 @@ mod tests {
     }
 
     #[test]
+    fn close_surface_preserves_workspace_only_notification_attention() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let split = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        model.create_notification(
+            "Workspace",
+            "Needs input",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+
+        model.close_surface(&split.id).unwrap();
+
+        assert!(model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn closed_surface_notification_does_not_revive_workspace_attention() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let split = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        model.create_notification(
+            "Prompt",
+            "Needs input",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(split.id.clone()),
+        );
+
+        model.close_surface(&split.id).unwrap();
+        assert!(!model.list_workspaces()[0].needs_attention);
+
+        let focused_surface_id = model.list_workspaces()[0].focused_surface_id.clone();
+        assert!(model.mark_surface_unread(&focused_surface_id, false));
+
+        assert!(!model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
     fn can_update_surface_title() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -1558,6 +1608,22 @@ mod tests {
 
         assert!(!model.list_workspaces()[0].needs_attention);
         assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
+    }
+
+    #[test]
+    fn clearing_surface_unread_preserves_workspace_only_notification_attention() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.create_notification(
+            "Workspace",
+            "Needs input",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+
+        assert!(model.mark_surface_unread(&workspace.focused_surface_id, false));
+        assert!(model.list_workspaces()[0].needs_attention);
     }
 
     #[test]
