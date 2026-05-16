@@ -1974,6 +1974,7 @@ fn build_workspace_context_menu(
         add_context_menu_separator(&menu);
 
         let state_ = state.clone();
+        let ws_id = workspace_id.clone();
         let name_ = name.clone();
         add_context_menu_item(
             &menu,
@@ -1981,14 +1982,18 @@ fn build_workspace_context_menu(
             "emblem-ok-symbolic",
             "Merge Worktree",
             false,
-            move || match merge_worktree_from_gtk(&state_, &name_) {
-                Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
-                Err(err) => create_local_notification(&state_, "Merge Failed", &err),
+            move || {
+                focus_workspace(&state_, &ws_id);
+                match merge_worktree_from_gtk(&state_, &name_) {
+                    Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
+                    Err(err) => create_local_notification(&state_, "Merge Failed", &err),
+                }
             },
         );
 
         let state_ = state.clone();
         let parent_ = parent.clone();
+        let ws_id = workspace_id.clone();
         let name_ = name.clone();
         add_context_menu_item(
             &menu,
@@ -1998,6 +2003,7 @@ fn build_workspace_context_menu(
             true,
             move || {
                 let state_confirm = state_.clone();
+                let ws_id_confirm = ws_id.clone();
                 let name_confirm = name_.clone();
                 show_destructive_confirmation(
                     &parent_,
@@ -2007,6 +2013,7 @@ fn build_workspace_context_menu(
                     ),
                     "Remove Worktree",
                     move || {
+                        focus_workspace(&state_confirm, &ws_id_confirm);
                         if let Err(err) = remove_worktree_from_gtk(&state_confirm, &name_confirm) {
                             create_local_notification(&state_confirm, "Remove Failed", &err);
                         }
