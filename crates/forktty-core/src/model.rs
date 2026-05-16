@@ -490,13 +490,10 @@ impl WorkspaceModel {
                 .surfaces
                 .values()
                 .any(|candidate| candidate.workspace_id == workspace.id && candidate.unread);
-            let has_unread_workspace_notification = self
-                .notifications
-                .iter()
-                .any(|notification| {
-                    !notification.read
-                        && notification.workspace_id.as_deref() == Some(workspace.id.as_str())
-                });
+            let has_unread_workspace_notification = self.notifications.iter().any(|notification| {
+                !notification.read
+                    && notification.workspace_id.as_deref() == Some(workspace.id.as_str())
+            });
             workspace.needs_attention = has_unread_surface || has_unread_workspace_notification;
         }
         true
