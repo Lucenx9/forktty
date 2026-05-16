@@ -4016,23 +4016,23 @@ fn refresh_sidebar(
             let state_for_closed = state_for_menu.clone();
             let controller_for_closed = controller_for_menu.clone();
             popover.connect_closed(move |popover| {
-                ui_for_closed.context_menu_open.set(false);
-                let should_clear = ui_for_closed
+                let is_current = ui_for_closed
                     .context_popover
                     .borrow()
                     .as_ref()
                     .is_some_and(|current| current == popover);
-                if should_clear {
+                if is_current {
+                    ui_for_closed.context_menu_open.set(false);
                     ui_for_closed.context_popover.borrow_mut().take();
+                    schedule_sidebar_refresh(
+                        ui_for_closed.clone(),
+                        state_for_closed.clone(),
+                        controller_for_closed.clone(),
+                    );
                 }
                 if popover.parent().is_some() {
                     popover.unparent();
                 }
-                schedule_sidebar_refresh(
-                    ui_for_closed.clone(),
-                    state_for_closed.clone(),
-                    controller_for_closed.clone(),
-                );
             });
             popover.set_parent(&row_for_menu);
             popover.set_position(gtk::PositionType::Bottom);
