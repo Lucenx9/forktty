@@ -35,6 +35,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const APP_ID: &str = "dev.forktty.ForkTTY";
 const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
 const SYSTEM_MONOSPACE_FONT_FAMILY_ID: &str = "__forktty_system_monospace__";
+const INSTALLED_FONT_FAMILY_ID_PREFIX: &str = "font:";
 const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "JetBrainsMono Nerd Font Mono",
     "JetBrainsMono Nerd Font",
@@ -6581,7 +6582,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
                 next.appearance.font_family = match family.as_str() {
                     DEFAULT_FONT_FAMILY_ID => String::new(),
                     SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
-                    _ => family,
+                    _ => decode_font_family_row_id(&family),
                 };
                 persist_settings_change(
                     &dialog,
@@ -7004,6 +7005,16 @@ fn persist_settings_change(
     }
 }
 
+fn installed_font_family_row_id(name: &str) -> String {
+    format!("{INSTALLED_FONT_FAMILY_ID_PREFIX}{name}")
+}
+
+fn decode_font_family_row_id(id: &str) -> String {
+    id.strip_prefix(INSTALLED_FONT_FAMILY_ID_PREFIX)
+        .unwrap_or(id)
+        .to_string()
+}
+
 fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     let active_family = active_family.trim();
@@ -7033,20 +7044,23 @@ fn font_family_combo(parent: &impl IsA<gtk::Widget>, active_family: &str) -> gtk
         if name == active_family {
             has_active = true;
         }
-        combo.append(Some(name), name);
+        combo.append(Some(&installed_font_family_row_id(name)), name);
     }
     if !has_active {
-        combo.append(Some(active_family), &format!("{active_family} (saved)"));
+        combo.append(
+            Some(&installed_font_family_row_id(active_family)),
+            &format!("{active_family} (saved)"),
+        );
     }
 
     let active_id = if active_family.is_empty() {
-        DEFAULT_FONT_FAMILY_ID
+        DEFAULT_FONT_FAMILY_ID.to_string()
     } else if active_family.eq_ignore_ascii_case("monospace") {
-        SYSTEM_MONOSPACE_FONT_FAMILY_ID
+        SYSTEM_MONOSPACE_FONT_FAMILY_ID.to_string()
     } else {
-        active_family
+        installed_font_family_row_id(active_family)
     };
-    if !combo.set_active_id(Some(active_id)) {
+    if !combo.set_active_id(Some(&active_id)) {
         combo.set_active(Some(0));
     }
     combo
