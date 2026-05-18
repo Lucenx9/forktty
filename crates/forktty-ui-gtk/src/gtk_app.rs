@@ -1554,6 +1554,7 @@ fn show_destructive_confirmation<W, F>(
     dialog.set_default_widget(Some(&cancel));
     dialog.set_child(Some(&content));
     dialog.present();
+    cancel.grab_focus();
 }
 
 fn show_rename_workspace_dialog<W>(
@@ -2944,12 +2945,12 @@ fn build_ui(app: &adw::Application) {
     section_label.add_css_class("sidebar-section-label");
     let sidebar_add = gtk::Button::builder()
         .icon_name("tab-new-symbolic")
-        .tooltip_text("New Workspace")
+        .tooltip_text("New Workspace (Ctrl+Shift+N)")
         .has_frame(false)
         .build();
     sidebar_add.add_css_class("flat");
     sidebar_add.add_css_class("sidebar-add");
-    set_accessible_button_text(&sidebar_add, "New Workspace", None);
+    set_accessible_button_text(&sidebar_add, "New Workspace", Some("Ctrl+Shift+N"));
     sidebar_add.set_action_name(Some("app.new-workspace"));
     sidebar_header.append(&section_label);
     sidebar_header.append(&sidebar_add);
@@ -3007,7 +3008,7 @@ fn build_ui(app: &adw::Application) {
     let palette_hint = gtk::Button::builder()
         .label("Ctrl+Shift+P")
         .has_frame(false)
-        .tooltip_text("Open Command Palette")
+        .tooltip_text("Open Command Palette (Ctrl+Shift+P)")
         .build();
     palette_hint.add_css_class("flat");
     palette_hint.add_css_class("keycap");
@@ -4214,6 +4215,12 @@ fn select_sidebar_workspace(
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to spawn selected workspace terminal: {err}");
+        create_global_notification(
+            state,
+            "Workspace Switch Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
     }
     controller.borrow_mut().rebuild_layout();
 }
@@ -4482,6 +4489,12 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
             let _ = model.close_surface(&surface.id);
         }
         eprintln!("Failed to spawn split terminal: {err}");
+        create_global_notification(
+            state,
+            "Split Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
     } else {
         save_session_from_state(state);
     }
@@ -4534,6 +4547,12 @@ fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool {
         Ok(()) | Err(TerminalError::NotFound(_)) => {}
         Err(err) => {
             eprintln!("Failed to restart terminal surface {surface_id}: {err}");
+            create_global_notification(
+                state,
+                "Restart Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
             return false;
         }
     }
@@ -4587,6 +4606,12 @@ fn close_active_surface(state: &SocketAppState) {
         Ok(()) | Err(TerminalError::NotFound(_)) => {}
         Err(err) => {
             eprintln!("Failed to close terminal surface: {err}");
+            create_global_notification(
+                state,
+                "Close Pane Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
             return;
         }
     }
@@ -6084,6 +6109,12 @@ fn open_notification_target(
 
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to open notification target: {err}");
+        create_global_notification(
+            state,
+            "Open Notification Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
     }
     if let Some(controller) = controller {
         controller.borrow_mut().rebuild_layout();
@@ -6418,7 +6449,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
 
     let (font_size_row, font_size) = settings_number_row(
         "Font size",
-        "Terminal text size in points.",
+        "Terminal text size in points. Range: 8–64.",
         8,
         64,
         1,
@@ -6434,7 +6465,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .build();
     let (scrollback_lines_row, scrollback_lines) = settings_number_row(
         "Scrollback lines",
-        "Set to 0 to disable saved scrollback for each pane.",
+        "Set to 0 to disable saved scrollback for each pane. Range: 0–500000.",
         0,
         500_000,
         1000,
@@ -7166,6 +7197,12 @@ fn create_plain_workspace(state: &SocketAppState) {
     }) {
         let _ = rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id);
         eprintln!("Failed to create workspace terminal: {err}");
+        create_global_notification(
+            state,
+            "Workspace Create Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
     } else {
         save_session_from_state(state);
     }
