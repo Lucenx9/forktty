@@ -1277,7 +1277,9 @@ mod tests {
         let second = model
             .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
             .unwrap();
-        let third = model.split_surface(&second.id, SplitAxis::Vertical).unwrap();
+        let third = model
+            .split_surface(&second.id, SplitAxis::Vertical)
+            .unwrap();
         let fourth = model
             .split_surface(&workspace.focused_surface_id, SplitAxis::Vertical)
             .unwrap();
