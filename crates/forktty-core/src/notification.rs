@@ -72,6 +72,9 @@ fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<
         .split_first()
         .ok_or_else(|| "Empty notification command".to_string())?;
     let program_path = Path::new(program);
+    if is_shell_trampoline(program, args.first().map(String::as_str)) {
+        return Err("notification_command must not invoke a shell with -c".to_string());
+    }
     if !is_executable_file(program_path) {
         return Err(format!(
             "notification_command must start with an absolute executable file: {program}"
@@ -111,6 +114,17 @@ fn notification_kind_name(notification: &NotificationItem) -> &'static str {
         crate::NotificationKind::Info => "info",
         crate::NotificationKind::Custom => "custom",
     }
+}
+
+fn is_shell_trampoline(program: &str, first_arg: Option<&str>) -> bool {
+    if first_arg != Some("-c") {
+        return false;
+    }
+    let shell = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    matches!(shell, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh") || shell.ends_with("sh")
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -163,6 +177,22 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].channel, "custom_command");
         assert!(errors[0].message.contains("absolute executable"));
+    }
+
+    #[test]
+    fn rejects_shell_trampoline_custom_command() {
+        let mut config = AppConfig::default();
+        config.notifications.desktop = false;
+        config.general.notification_command = "/bin/sh -c notify-send".to_string();
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+
+        let errors = dispatch_notification(&config, &notification);
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].channel, "custom_command");
+        assert!(errors[0].message.contains("must not invoke a shell"));
     }
 
     #[test]

@@ -1126,7 +1126,8 @@ fn probe_forktty_socket(mut stream: StdUnixStream) -> io::Result<bool> {
     if reader.read_line(&mut response)? == 0 {
         return Ok(false);
     }
-    let value: Value = serde_json::from_str(response.trim_end())?;
+    let value: Value = serde_json::from_str(response.trim_end())
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     Ok(value.get("ok").and_then(Value::as_bool) == Some(true)
         && value.get("result").and_then(Value::as_str) == Some("pong"))
 }

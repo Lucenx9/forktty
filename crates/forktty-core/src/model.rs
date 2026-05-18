@@ -843,7 +843,8 @@ fn rebalance_split_sizes(sizes: &mut Vec<f64>, len: usize) {
 
 fn remove_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<bool> {
     match node {
-        PaneNode::Leaf { surface_id } => Some(surface_id == target_surface_id),
+        PaneNode::Leaf { surface_id } if surface_id == target_surface_id => Some(true),
+        PaneNode::Leaf { .. } => None,
         PaneNode::Split {
             children, sizes, ..
         } => {
@@ -854,8 +855,8 @@ fn remove_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<bool> {
                         remove_index = Some(index);
                         break;
                     }
-                    Some(false) => {}
-                    None => return None,
+                    Some(false) => return Some(false),
+                    None => {}
                 }
             }
             let index = remove_index?;
@@ -1267,6 +1268,28 @@ mod tests {
         let workspace = model.list_workspaces().remove(0);
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 1);
         assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
+    }
+
+    #[test]
+    fn can_close_surface_nested_after_unrelated_split() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let third = model.split_surface(&second.id, SplitAxis::Vertical).unwrap();
+        let fourth = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Vertical)
+            .unwrap();
+
+        let removed = model.close_surface(&third.id).unwrap();
+
+        assert_eq!(removed.id, third.id);
+        assert!(model.surface(&third.id).is_none());
+        assert!(model.surface(&fourth.id).is_some());
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 3);
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]
