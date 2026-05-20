@@ -1375,3 +1375,34 @@ window.ft-dialog,
   color: var(--ft-text-muted);
   font-size: 0.86em;
 }
+
+/* --------------------------------------------------------------------------
+ * Scrollbars
+ * -------------------------------------------------------------------------- */
+
+scrollbar {
+  background: transparent;
+  border: none;
+  transition: opacity 150ms ease-out;
+}
+
+scrollbar slider {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 999px;
+  background-color: alpha(var(--window-fg-color), 0.15);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 90ms ease-out, min-width 90ms ease-out;
+}
+
+scrollbar slider:hover,
+scrollbar slider:active {
+  background-color: alpha(var(--window-fg-color), 0.35);
+  min-width: 8px;
+}
+
+scrollbar trough {
+  background: transparent;
+  border: none;
+}
