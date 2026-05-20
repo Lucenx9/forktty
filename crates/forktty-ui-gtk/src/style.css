@@ -24,7 +24,6 @@
   --ft-text: alpha(var(--window-fg-color), 0.85);
   --ft-text-muted: alpha(var(--window-fg-color), 0.60);
   --ft-text-faint: alpha(var(--window-fg-color), 0.40);
-  --dim-opacity: 0.82;
 
   --ft-accent: var(--accent-color);
   --ft-accent-hover: var(--accent-bg-color);
@@ -117,7 +116,7 @@ window {
   color: var(--ft-text-muted);
   font-size: 0.92em;
   font-weight: 600;
-  transition: background-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .app-header-title:hover {
@@ -140,7 +139,7 @@ window {
   background: transparent;
   border: 0;
   box-shadow: none;
-  transition: background-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .app-header .header-action image {
@@ -195,7 +194,7 @@ window {
   background: transparent;
   color: var(--ft-text-muted);
   box-shadow: none;
-  transition: background-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .app-header button.titlebutton image {
@@ -344,7 +343,7 @@ popover.ft-context-menu contents {
   color: var(--ft-text-muted);
   background: transparent;
   border: 0;
-  transition: background-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .sidebar-add:hover {
@@ -367,7 +366,7 @@ popover.ft-context-menu contents {
   margin: 0;
   background: transparent;
   padding: 0;
-  transition: background-color 90ms ease;
+  transition: background-color 90ms ease-out;
 }
 
 .navigation-sidebar row:hover {
@@ -395,7 +394,7 @@ popover.ft-context-menu contents {
   border-radius: 7px;
   background: transparent;
   border: 1px solid transparent;
-  transition: background-color 90ms ease, border-color 90ms ease, box-shadow 90ms ease;
+  transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .navigation-sidebar row:hover .workspace-card {
@@ -666,7 +665,7 @@ popover.ft-workspace-popover contents {
   background: var(--ft-pane-bg);
   border: 1px solid var(--ft-border-subtle);
   border-top: 2px solid transparent;
-  transition: border-color 90ms ease, background-color 90ms ease, box-shadow 90ms ease;
+  transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .terminal-pane.active {
@@ -734,7 +733,7 @@ popover.ft-workspace-popover contents {
 .terminal-pane-actions {
   margin-left: 6px;
   opacity: 0;
-  transition: opacity 90ms ease;
+  transition: opacity 90ms ease-out;
 }
 
 .terminal-pane-actions.revealed,
@@ -752,7 +751,7 @@ popover.ft-workspace-popover contents {
   border: 0;
   background: transparent;
   color: var(--ft-text-muted);
-  transition: background-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .terminal-pane-action image {
@@ -798,7 +797,7 @@ popover.ft-workspace-popover contents {
   background: alpha(var(--ft-bg-2), 0.88);
   box-shadow: 0 2px 8px alpha(black, 0.18);
   opacity: 0.68;
-  transition: opacity 90ms ease, background-color 90ms ease, border-color 90ms ease;
+  transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out;
 }
 
 .single-pane-actions:hover,
@@ -858,7 +857,7 @@ textview {
   border-radius: 8px;
   padding: 6px 8px;
   min-height: 30px;
-  transition: border-color 90ms ease, background-color 90ms ease;
+  transition: border-color 90ms ease-out, background-color 90ms ease-out;
 }
 
 entry:hover,
@@ -921,7 +920,7 @@ button {
   color: var(--ft-text);
   background: var(--ft-bg-2);
   border: 1px solid var(--ft-border);
-  transition: background-color 90ms ease, border-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
 }
 
 button:hover {
@@ -1012,7 +1011,7 @@ window.ft-dialog,
   border-radius: 6px;
   background: transparent;
   border: 1px solid transparent;
-  transition: background-color 90ms ease, color 90ms ease;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .ft-dialog-close image {
@@ -1172,17 +1171,21 @@ window.ft-dialog,
   border-radius: 8px;
   margin: 1px 0;
   padding: 0;
-  transition: background-color 90ms ease;
+  transition: background-color 90ms ease-out;
 }
 
 .command-list row:hover,
-.command-list row:focus-visible,
-.command-list row:selected {
+.command-list row:focus-visible {
   background: var(--ft-bg-2);
 }
 
+.command-list row:selected {
+  background: var(--ft-bg-3);
+  box-shadow: inset 3px 0 0 var(--ft-accent);
+}
+
 .command-list row:selected button.flat {
-  background: var(--ft-bg-2);
+  background: var(--ft-bg-3);
 }
 
 .command-list row:selected button.flat:focus-visible {
@@ -1216,17 +1219,6 @@ window.ft-dialog,
   color: var(--ft-text);
   font-weight: 600;
   font-size: 0.9em;
-}
-
-.workspace-meta,
-.workspace-summary,
-.ft-dialog-subtitle,
-.ft-form-hint,
-.command-item-hint,
-.notification-body,
-.notification-target,
-.notification-time {
-  opacity: var(--dim-opacity);
 }
 
 /* --------------------------------------------------------------------------
