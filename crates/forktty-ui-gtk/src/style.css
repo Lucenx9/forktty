@@ -857,13 +857,15 @@ textview {
   border-radius: 8px;
   padding: 6px 8px;
   min-height: 30px;
-  transition: border-color 90ms ease-out, background-color 90ms ease-out;
+  box-shadow: inset 0 1px 2px alpha(black, 0.05), 0 0 0 0 transparent;
+  transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 entry:hover,
 spinbutton:hover,
 combobox:hover button {
   border-color: var(--ft-border-strong);
+  box-shadow: inset 0 1px 2px alpha(black, 0.08), 0 0 0 0 transparent;
 }
 
 entry:focus,
@@ -874,6 +876,7 @@ textview:focus,
 textview:focus-within {
   border-color: var(--ft-accent);
   background: var(--ft-bg-2);
+  box-shadow: inset 0 1px 2px alpha(black, 0.05), 0 0 0 2px alpha(var(--ft-accent), 0.25);
 }
 
 entry:disabled,
@@ -883,6 +886,7 @@ textview:disabled {
   color: var(--ft-text-faint);
   background: var(--ft-bg-1);
   border-color: var(--ft-border-subtle);
+  box-shadow: none;
 }
 
 entry placeholder {
