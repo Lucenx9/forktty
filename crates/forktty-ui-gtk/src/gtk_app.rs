@@ -1708,6 +1708,12 @@ fn clear_status_message(label: &gtk::Label) {
 }
 
 fn refresh_notification_indicator(button: &gtk::Button, state: &SocketAppState) {
+    let badge = button
+        .child()
+        .and_then(|child| child.downcast::<gtk::Box>().ok())
+        .and_then(|box_| box_.last_child())
+        .and_then(|child| child.downcast::<gtk::Label>().ok());
+
     let (total, unread) = state
         .model
         .lock()
@@ -1721,6 +1727,9 @@ fn refresh_notification_indicator(button: &gtk::Button, state: &SocketAppState) 
         .unwrap_or((0, 0));
     if unread == 0 {
         button.remove_css_class("needs-attention");
+        if let Some(badge) = &badge {
+            badge.set_visible(false);
+        }
         let label = if total == 0 {
             "Notifications".to_string()
         } else if total == 1 {
@@ -1732,6 +1741,10 @@ fn refresh_notification_indicator(button: &gtk::Button, state: &SocketAppState) 
         set_accessible_button_text(button, &label, Some("Ctrl+Shift+M"));
     } else {
         button.add_css_class("needs-attention");
+        if let Some(badge) = &badge {
+            badge.set_text(&unread.to_string());
+            badge.set_visible(true);
+        }
         let label = if unread == 1 {
             "Notifications: 1 unread".to_string()
         } else {
@@ -2898,8 +2911,17 @@ fn build_ui(app: &adw::Application) {
         .icon_name("system-search-symbolic")
         .tooltip_text("Command Palette (Ctrl+Shift+P)")
         .build();
+    let notif_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    notif_box.set_halign(gtk::Align::Center);
+    let notif_icon = gtk::Image::from_icon_name("preferences-system-notifications-symbolic");
+    let notif_badge = gtk::Label::new(None);
+    notif_badge.add_css_class("notification-badge");
+    notif_badge.set_visible(false);
+    notif_box.append(&notif_icon);
+    notif_box.append(&notif_badge);
+
     let notifications = gtk::Button::builder()
-        .icon_name("preferences-system-notifications-symbolic")
+        .child(&notif_box)
         .tooltip_text("Notifications (Ctrl+Shift+M)")
         .build();
     let settings = gtk::Button::builder()

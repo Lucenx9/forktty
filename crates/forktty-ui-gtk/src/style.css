@@ -1277,6 +1277,18 @@ window.ft-dialog,
   font-size: 0.78em;
 }
 
+.notification-badge {
+  background: var(--ft-warning);
+  color: var(--ft-bg-0);
+  border-radius: 999px;
+  font-size: 0.65em;
+  font-weight: 800;
+  padding: 0 5px;
+  min-width: 14px;
+  min-height: 14px;
+  margin: 4px 2px 4px 0;
+}
+
 .notification-open {
   min-height: 24px;
   padding: 1px 7px;
