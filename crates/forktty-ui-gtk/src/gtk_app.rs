@@ -2889,7 +2889,7 @@ fn build_ui(app: &adw::Application) {
     let workspace_title = gtk::Button::builder().label("").has_frame(false).build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");
-    workspace_title.set_tooltip_text(Some("Switch workspace"));
+    workspace_title.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
     workspace_title.set_sensitive(false);
     set_accessible_button_text(&workspace_title, "No active workspace", None);
     header.set_title_widget(Some(&workspace_title));

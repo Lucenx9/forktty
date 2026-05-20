@@ -23,7 +23,7 @@
   --ft-text-strong: var(--window-fg-color);
   --ft-text: alpha(var(--window-fg-color), 0.85);
   --ft-text-muted: alpha(var(--window-fg-color), 0.60);
-  --ft-text-faint: alpha(var(--window-fg-color), 0.55);
+  --ft-text-faint: alpha(var(--window-fg-color), 0.40);
   --dim-opacity: 0.82;
 
   --ft-accent: var(--accent-color);
@@ -1172,7 +1172,7 @@ window.ft-dialog,
   border-radius: 8px;
   margin: 1px 0;
   padding: 0;
-  transition: background-color 100ms ease;
+  transition: background-color 90ms ease;
 }
 
 .command-list row:hover,
