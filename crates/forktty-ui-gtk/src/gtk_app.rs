@@ -673,7 +673,6 @@ fn build_pane_chrome(
     attention_dot.update_property(&[gtk::accessible::Property::Label("Pane needs attention")]);
     let focus_marker = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     focus_marker.add_css_class("pane-focus-marker");
-    focus_marker.set_size_request(8, 8);
     focus_marker.set_valign(gtk::Align::Center);
     focus_marker.set_visible(false);
     let title = gtk::Label::builder()
@@ -1508,8 +1507,8 @@ fn show_destructive_confirmation<W, F>(
         .title(title)
         .transient_for(parent)
         .modal(true)
-        .default_width(380)
-        .default_height(160)
+        .default_width(400)
+        .default_height(200)
         .build();
     dialog.add_css_class("ft-dialog");
     apply_dialog_chrome(&dialog);
@@ -1520,14 +1519,17 @@ fn show_destructive_confirmation<W, F>(
     header.add_css_class("ft-dialog-header");
     let title_label = gtk::Label::builder().label(title).xalign(0.0).build();
     title_label.add_css_class("ft-dialog-title");
+    header.append(&title_label);
+
+    let body_container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body_container.add_css_class("ft-dialog-body");
     let body_label = gtk::Label::builder()
         .label(body)
         .xalign(0.0)
         .wrap(true)
         .build();
-    body_label.add_css_class("ft-dialog-subtitle");
-    header.append(&title_label);
-    header.append(&body_label);
+    body_label.add_css_class("ft-dialog-confirm-body");
+    body_container.append(&body_label);
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     footer.add_css_class("ft-dialog-footer");
@@ -1550,6 +1552,7 @@ fn show_destructive_confirmation<W, F>(
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&header);
+    content.append(&body_container);
     content.append(&footer);
     dialog.set_default_widget(Some(&cancel));
     dialog.set_child(Some(&content));
@@ -3766,7 +3769,7 @@ fn refresh_sidebar(
         );
         ui.workspace_title.set_sensitive(true);
     } else {
-        ui.workspace_title.set_label("");
+        ui.workspace_title.set_label("No workspace");
         ui.workspace_title
             .set_tooltip_text(Some("No active workspace"));
         set_accessible_button_text(&ui.workspace_title, "No active workspace", None);
@@ -4735,8 +4738,20 @@ fn show_workspace_popover<W: IsA<gtk::Widget>>(
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .build();
             name.add_css_class("ft-workspace-popover-name");
+            let mut meta_parts: Vec<String> = Vec::new();
+            let branch = ws.git_branch.trim();
+            if !branch.is_empty() {
+                meta_parts.push(branch.to_string());
+            }
+            if let Some(wt) = ws.worktree_name.as_deref() {
+                let wt = wt.trim();
+                if !wt.is_empty() {
+                    meta_parts.push(format!("wt:{wt}"));
+                }
+            }
+            meta_parts.push(compact_path(&ws.working_dir));
             let path = gtk::Label::builder()
-                .label(compact_path(&ws.working_dir))
+                .label(meta_parts.join(" · "))
                 .xalign(0.0)
                 .ellipsize(gtk::pango::EllipsizeMode::Middle)
                 .build();

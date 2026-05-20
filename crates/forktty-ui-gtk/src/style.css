@@ -1064,6 +1064,13 @@ window.ft-dialog,
   font-size: 0.86em;
 }
 
+/* Body copy for destructive confirmations — readable, not muted-tiny. */
+.ft-dialog-confirm-body {
+  color: var(--ft-text);
+  font-size: 0.94em;
+  line-height: 1.45;
+}
+
 .ft-dialog-body {
   padding: 12px 16px 16px 16px;
 }
@@ -1377,6 +1384,33 @@ window.ft-dialog,
 }
 
 .empty-state-body {
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
+}
+
+/* Compact AdwStatusPage used inside dialogs and placeholders. AdwStatusPage
+ * defaults to a poster-sized icon/title; we tighten it for in-dialog use. */
+statuspage.compact > scrolledwindow > viewport > box {
+  margin: 6px 12px;
+  padding: 0;
+}
+
+statuspage.compact .icon {
+  -gtk-icon-size: 36px;
+  color: var(--ft-text-faint);
+  margin-bottom: 8px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+statuspage.compact .title {
+  font-size: 1.02em;
+  font-weight: 700;
+  color: var(--ft-text-strong);
+  margin-bottom: 2px;
+}
+
+statuspage.compact .description {
   color: var(--ft-text-muted);
   font-size: 0.86em;
 }
