@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -99,6 +99,7 @@ struct PathState {
     exists: bool,
     is_regular_file: bool,
     is_dir: bool,
+    is_socket: bool,
     mode: Option<u32>,
     size: Option<u64>,
     error: Option<String>,
@@ -143,6 +144,7 @@ fn collect_report() -> DoctorReport {
     let socket_parent_path = socket.parent().map(PathBuf::from);
     let socket_parent = describe_path("socket dir", socket_parent_path);
     let socket_state = describe_path("forktty.sock", Some(socket));
+    append_socket_path_warning(&mut warnings, &socket_state);
     if let Some(mode) = socket_parent.mode {
         let world_perms = mode & 0o077;
         if world_perms != 0 && socket_parent.exists {
@@ -197,6 +199,7 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             exists: false,
             is_regular_file: false,
             is_dir: false,
+            is_socket: false,
             mode: None,
             size: None,
             error: Some("could not resolve path (no XDG base dir)".to_string()),
@@ -209,6 +212,7 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             exists: true,
             is_regular_file: meta.file_type().is_file(),
             is_dir: meta.file_type().is_dir(),
+            is_socket: meta.file_type().is_socket(),
             mode: Some(meta.permissions().mode()),
             size: Some(meta.len()),
             error: None,
@@ -219,6 +223,7 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             exists: false,
             is_regular_file: false,
             is_dir: false,
+            is_socket: false,
             mode: None,
             size: None,
             error: None,
@@ -229,10 +234,20 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             exists: false,
             is_regular_file: false,
             is_dir: false,
+            is_socket: false,
             mode: None,
             size: None,
             error: Some(err.to_string()),
         },
+    }
+}
+
+fn append_socket_path_warning(warnings: &mut Vec<String>, state: &PathState) {
+    if state.exists && !state.is_socket && state.error.is_none() {
+        warnings.push(format!(
+            "socket path {} exists but is not a Unix socket; ForkTTY will refuse to replace it.",
+            path_display(state)
+        ));
     }
 }
 
@@ -436,6 +451,8 @@ fn format_path(state: &PathState) -> String {
         .unwrap_or_else(|| "----".to_string());
     let kind = if state.is_dir {
         "dir"
+    } else if state.is_socket {
+        "socket"
     } else if state.is_regular_file {
         "file"
     } else if state.exists {
@@ -594,6 +611,33 @@ mod tests {
             warning.contains(&directory.display().to_string())
                 && warning.contains("not a regular file")
         }));
+    }
+
+    #[test]
+    fn doctor_warns_when_socket_path_is_not_a_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        fs::write(&socket_path, "not a socket").unwrap();
+        let state = describe_path("forktty.sock", Some(socket_path.clone()));
+        let mut warnings = Vec::new();
+
+        append_socket_path_warning(&mut warnings, &state);
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains(&socket_path.display().to_string())
+                && warning.contains("not a Unix socket")
+        }));
+    }
+
+    #[test]
+    fn doctor_formats_unix_socket_paths_as_sockets() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let state = describe_path("forktty.sock", Some(socket_path));
+
+        assert!(state.is_socket);
+        assert!(format_path(&state).contains("[socket mode"));
     }
 
     #[test]

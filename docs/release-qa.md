@@ -132,6 +132,8 @@ rebuilding.
   environment, or 2 with explicit warning lines on a misconfigured one.
 - With an oversized `$XDG_DATA_HOME/forktty/session-v2.json`, `forktty doctor`
   warns that the session will be quarantined on launch.
+- With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`
+  warns that the socket path is not a Unix socket before launch fails.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
   hook paths under that temporary home, matching `hooks setup` fallback paths.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
