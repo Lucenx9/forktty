@@ -62,6 +62,7 @@ rebuilding.
 - `forktty list` — returns at least one workspace.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
+- `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
 - `FORKTTY_WORKSPACE_ID=" workspace-1 " forktty set-status --key qa --value ok` — trims the inherited workspace id before targeting metadata.

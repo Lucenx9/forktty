@@ -717,6 +717,10 @@ describe("forktty CLI helpers", () => {
         ),
       /--surface-id requires a value/,
     );
+    assert.throws(
+      () => buildSurfaceActionParams({}, ["   "], { FORKTTY_SURFACE_ID: "surface-env" }),
+      /surface id requires a value/,
+    );
   });
 
   it("resolves send-text fallback from the active workspace surface", () => {
@@ -766,6 +770,10 @@ describe("forktty CLI helpers", () => {
       [{ id: "my-feature" }, { name: "my-feature" }],
     );
     assert.deepEqual(
+      resolveSelectorParams({}, [" my-feature "], {}),
+      [{ id: "my-feature" }, { name: "my-feature" }],
+    );
+    assert.deepEqual(
       resolveSelectorParams({ "workspace-name": " release " }, ["ignored"], {}),
       [{ name: "release" }],
     );
@@ -776,6 +784,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => resolveSelectorParams({ "workspace-name": "   " }, ["ignored"], {}),
       /--workspace-name requires a value/,
+    );
+    assert.throws(
+      () => resolveSelectorParams({}, ["   "], { FORKTTY_WORKSPACE_ID: "ws-env" }),
+      /workspace selector requires a value/,
     );
     assert.equal(resolveSelectorParams({}, [], {}), null);
   });
@@ -833,6 +845,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => worktreeParams({ branch: "" }, [], true, { PWD: "/repo/current" }),
       /--branch requires a value/,
+    );
+    assert.throws(
+      () => worktreeParams({ name: "feature/x" }, ["   "], true, { PWD: "/repo/current" }),
+      /worktree command requires a branch or worktree name/,
     );
   });
 });

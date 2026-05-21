@@ -682,8 +682,11 @@ function resolveSelectorParams(options, positionals, env = process.env) {
   if (worktreeName) {
     return [{ worktreeName }];
   }
-  if (positionals[0]) {
-    const selector = positionals[0];
+  if (positionals.length > 0) {
+    const selector = positionals[0].trim();
+    if (!selector) {
+      throw new Error("workspace selector requires a value");
+    }
     // Workspace ids and names both routinely contain dashes (e.g. `workspace-1`
     // vs. `my-feature`), so we can't tell them apart by string shape. Try the
     // id first and fall back to the name, matching `handleFocus`.
@@ -807,8 +810,12 @@ function surfaceIdFromArgs(options, positionals, env = process.env) {
   if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
     return options["surface-id"].trim();
   }
-  if (positionals[0]) {
-    return positionals[0].trim();
+  if (positionals.length > 0) {
+    const surfaceId = positionals[0].trim();
+    if (!surfaceId) {
+      throw new Error("surface id requires a value");
+    }
+    return surfaceId;
   }
   if (typeof env.FORKTTY_SURFACE_ID === "string" && env.FORKTTY_SURFACE_ID.trim()) {
     return env.FORKTTY_SURFACE_ID.trim();
@@ -932,7 +939,11 @@ function worktreeParams(
   requireNonBlankStringOption(options, "cwd");
   requireNonBlankStringOption(options, "name");
   const params = {};
-  const name = positionals[0] || options.name || options.branch;
+  const positionalName = positionals.length > 0 ? positionals[0].trim() : "";
+  if (positionals.length > 0 && !positionalName) {
+    throw new Error("worktree command requires a branch or worktree name");
+  }
+  const name = positionalName || options.name || options.branch;
   if (requireName && (!name || typeof name !== "string")) {
     throw new Error("worktree command requires a branch or worktree name");
   }
