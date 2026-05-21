@@ -1351,6 +1351,21 @@ async function ensureParentDir(filePath) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 }
 
+async function hookConfigWritePath(filePath) {
+  try {
+    const stat = await fs.lstat(filePath);
+    if (stat.isSymbolicLink()) {
+      return await fs.realpath(filePath);
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return filePath;
+    }
+    throw error;
+  }
+  return filePath;
+}
+
 async function backupFile(filePath) {
   try {
     await fs.access(filePath);
@@ -1431,9 +1446,10 @@ async function handleHooksSetup(context, args) {
 
     let backupPath = null;
     if (changed && !dryRun) {
-      await ensureParentDir(configPath);
-      backupPath = await backupFile(configPath);
-      await atomicWriteFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      const writePath = await hookConfigWritePath(configPath);
+      await ensureParentDir(writePath);
+      backupPath = await backupFile(writePath);
+      await atomicWriteFile(writePath, `${JSON.stringify(config, null, 2)}\n`);
     }
 
     summaries.push({

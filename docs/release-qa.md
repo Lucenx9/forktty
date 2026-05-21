@@ -109,6 +109,8 @@ rebuilding.
 - Inspect one generated hook command — it starts with the absolute Node executable path that ran setup, not bare `node`, so hooks keep working when an agent runs with a minimal `PATH`.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 - `node scripts/forktty.mjs hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
+- Symlink `~/.codex/hooks.json` to a real managed JSON file, then run `hooks setup codex` —
+  the target file is updated and backed up, and the symlink remains a symlink.
 - Modify an existing agent hook config and re-run setup twice quickly — each changed run creates a distinct `.bak-*` file and does not overwrite a prior backup.
 - Corrupt `~/.codex/hooks.json` (`echo '{ not json' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message names both the agent and the path; the file is left untouched.
 - Replace `~/.codex/hooks.json` with a JSON array (`echo '[]' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message says the top-level config must be a JSON object; the file is left untouched.

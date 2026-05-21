@@ -943,6 +943,38 @@ describe("hook installer", () => {
     assert.ok(parsed.hooks?.SessionStart?.length > 0);
   });
 
+  it("updates symlinked hook config targets without replacing the symlink", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    const managedDir = path.join(tmpDir, "managed-codex");
+    await fs.mkdir(codexDir, { recursive: true });
+    await fs.mkdir(managedDir, { recursive: true });
+    const targetPath = path.join(managedDir, "hooks.json");
+    const configPath = path.join(codexDir, "hooks.json");
+    await fs.writeFile(targetPath, `${JSON.stringify({ customKey: "managed" })}\n`);
+    await fs.symlink(targetPath, configPath);
+
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    assert.ok((await fs.lstat(configPath)).isSymbolicLink());
+    assert.equal(await fs.readlink(configPath), targetPath);
+    const parsed = JSON.parse(await fs.readFile(targetPath, "utf8"));
+    assert.equal(parsed.customKey, "managed");
+    assert.ok(parsed.hooks?.SessionStart?.length > 0);
+    const backups = (await fs.readdir(managedDir)).filter((name) =>
+      name.startsWith("hooks.json.bak-"),
+    );
+    assert.equal(backups.length, 1);
+    assert.deepEqual(await fs.readdir(codexDir), ["hooks.json"]);
+  });
+
   it("creates distinct backups when changed setups share the same clock tick", async () => {
     const context = makeContext();
     const codexDir = context.env.CODEX_HOME;
