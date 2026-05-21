@@ -54,6 +54,7 @@ rebuilding.
 
 ## Session Restore Smoke
 
+- Change a workspace or split pane, then confirm `$XDG_DATA_HOME/forktty/` does not accumulate `session-v2.json.tmp-*` files after normal autosave/restart.
 - Stop the app, then corrupt `$XDG_DATA_HOME/forktty/session-v2.json` (`echo "{ broken" >$XDG_DATA_HOME/forktty/session-v2.json`). Relaunch; ForkTTY should start with a fresh workspace, the corrupt file should now be renamed `*.bad-<timestamp>`, and stderr should log the quarantine reason.
 - Stop the app, truncate the session to >1 MiB (`yes x | head -c 2000000 >$XDG_DATA_HOME/forktty/session-v2.json`). Relaunch; same behavior.
 

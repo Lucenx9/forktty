@@ -94,14 +94,20 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
         .unwrap_or_default()
         .as_nanos();
     let tmp_path = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
-    let mut tmp_file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)?;
-    tmp_file.write_all(json.as_bytes())?;
-    tmp_file.sync_all()?;
-    fs::rename(&tmp_path, path)?;
-    Ok(())
+    let result = (|| -> Result<(), SessionError> {
+        let mut tmp_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        tmp_file.write_all(json.as_bytes())?;
+        tmp_file.sync_all()?;
+        fs::rename(&tmp_path, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionError> {
@@ -475,6 +481,30 @@ mod tests {
 
         save_session_to_path(&path, &data).unwrap();
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
+    }
+
+    #[test]
+    fn save_session_to_path_removes_temp_file_when_rename_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        fs::create_dir(&path).unwrap();
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let data = model.to_session_data();
+
+        let result = save_session_to_path(&path, &data);
+
+        assert!(matches!(result, Err(SessionError::Io(_))));
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .all(|name| !name.to_string_lossy().contains(".tmp-")),
+            "unexpected temp session file sibling: {siblings:?}"
+        );
     }
 
     #[test]
