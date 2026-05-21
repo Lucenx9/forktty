@@ -1325,16 +1325,31 @@ fn emit_prompt_notification(
         *last_prompt = Some(now);
     }
 
-    if let Ok(mut model) = model.lock() {
-        let notification = model.create_notification(
-            "Terminal prompt",
-            body,
-            NotificationKind::Prompt,
-            Some(workspace_id.to_string()),
-            Some(surface_id.to_string()),
-        );
+    if let Some(notification) =
+        create_prompt_notification_if_surface_exists(model, workspace_id, surface_id, body)
+    {
         dispatch_notification_with_loaded_config(&notification);
     }
+}
+
+fn create_prompt_notification_if_surface_exists(
+    model: &Arc<Mutex<WorkspaceModel>>,
+    workspace_id: &str,
+    surface_id: &str,
+    body: &str,
+) -> Option<NotificationItem> {
+    let mut model = model.lock().ok()?;
+    let surface = model.surface(surface_id)?;
+    if surface.workspace_id != workspace_id {
+        return None;
+    }
+    Some(model.create_notification(
+        "Terminal prompt",
+        body,
+        NotificationKind::Prompt,
+        Some(workspace_id.to_string()),
+        Some(surface_id.to_string()),
+    ))
 }
 
 fn looks_like_prompt(text: &str) -> bool {
@@ -7329,6 +7344,71 @@ mod tests {
         assert!(looks_like_prompt("? Continue (Y/n)"));
         assert!(looks_like_prompt("Do you want to proceed?"));
         assert!(!looks_like_prompt("ordinary terminal output"));
+    }
+
+    #[test]
+    fn prompt_notification_ignores_closed_surface() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, closed_surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let split = model
+                .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+                .unwrap();
+            model.close_surface(&split.id).unwrap();
+            (workspace.id, split.id)
+        };
+
+        let notification = create_prompt_notification_if_surface_exists(
+            &model,
+            &workspace_id,
+            &closed_surface_id,
+            "Continue?",
+        );
+
+        assert!(notification.is_none());
+        assert!(model.lock().unwrap().list_notifications().is_empty());
+    }
+
+    #[test]
+    fn prompt_notification_requires_surface_workspace_match() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let first = model.create_workspace("first", "/tmp/first");
+            let second = model.create_workspace("second", "/tmp/second");
+            (first.id, second.focused_surface_id)
+        };
+
+        let notification = create_prompt_notification_if_surface_exists(
+            &model,
+            &workspace_id,
+            &surface_id,
+            "Continue?",
+        );
+
+        assert!(notification.is_none());
+        assert!(model.lock().unwrap().list_notifications().is_empty());
+    }
+
+    #[test]
+    fn prompt_notification_records_live_surface() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        let notification = create_prompt_notification_if_surface_exists(
+            &model,
+            &workspace_id,
+            &surface_id,
+            "Continue?",
+        );
+
+        assert!(notification.is_some());
+        assert_eq!(model.lock().unwrap().list_notifications().len(), 1);
     }
 
     #[test]
