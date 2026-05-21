@@ -401,12 +401,18 @@ pub async fn dispatch(
             Ok(json!(result))
         }
         "surface.list" => {
-            let workspace_id = params.get("workspace_id").and_then(Value::as_str);
             let model = state
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            Ok(json!(model.list_surfaces(workspace_id)))
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    resolve_existing_workspace_id(&model, selector)
+                        .ok_or(DispatchError::NotFound("workspace"))?,
+                ),
+                Err(_) => None,
+            };
+            Ok(json!(model.list_surfaces(workspace_id.as_deref())))
         }
         "surface.send_text" => {
             let surface_id = required_surface_id(&params)?;
@@ -1008,6 +1014,29 @@ fn validate_notification_target(
     Ok((workspace_id, surface_id))
 }
 
+fn resolve_existing_workspace_id(
+    model: &WorkspaceModel,
+    selector: WorkspaceSelector<'_>,
+) -> Option<String> {
+    match selector {
+        WorkspaceSelector::Id(id) => model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == id)
+            .map(|workspace| workspace.id),
+        WorkspaceSelector::Name(name) => model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.name == name)
+            .map(|workspace| workspace.id),
+        WorkspaceSelector::WorktreeName(name) => model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
+            .map(|workspace| workspace.id),
+    }
+}
+
 fn required_f64(params: &Value, key: &str) -> Result<f64, String> {
     optional_f64(params, key)?.ok_or_else(|| format!("Missing {key}"))
 }
@@ -1034,26 +1063,8 @@ fn resolve_workspace_id_for_metadata(
         .lock()
         .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
     if let Ok(selector) = workspace_selector_from_params(params) {
-        return match selector {
-            WorkspaceSelector::Id(id) => model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.id == id)
-                .map(|workspace| workspace.id)
-                .ok_or(DispatchError::NotFound("workspace")),
-            WorkspaceSelector::Name(name) => model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.name == name)
-                .map(|workspace| workspace.id)
-                .ok_or(DispatchError::NotFound("workspace")),
-            WorkspaceSelector::WorktreeName(name) => model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
-                .map(|workspace| workspace.id)
-                .ok_or(DispatchError::NotFound("workspace")),
-        };
+        return resolve_existing_workspace_id(&model, selector)
+            .ok_or(DispatchError::NotFound("workspace"));
     }
     model
         .active_workspace_id()
@@ -1700,6 +1711,29 @@ mod tests {
             backend.sent_text(feature_surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn surface_list_respects_workspace_selectors() {
+        let (state, _backend) = test_state();
+        let feature = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "feature", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+
+        let main_surfaces = dispatch(&state, "surface.list", json!({"workspace_name": "main"}))
+            .await
+            .unwrap();
+        assert_eq!(main_surfaces.as_array().unwrap().len(), 1);
+        assert_ne!(main_surfaces[0]["workspace_id"], feature["id"]);
+
+        let missing = dispatch(&state, "surface.list", json!({"workspace_name": "missing"}))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.code(), "not_found");
     }
 
     #[tokio::test]
