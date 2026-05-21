@@ -76,11 +76,21 @@ pub fn save_session(data: &SessionData) -> Result<(), SessionError> {
 }
 
 pub fn load_session() -> Result<Option<SessionData>, SessionError> {
-    let current_path = session_path()?;
-    if let Some(data) = load_session_from_path(&current_path)? {
+    load_session_from_paths(&session_path()?, &legacy_session_path()?)
+}
+
+fn load_session_from_paths(
+    current_path: &Path,
+    legacy_path: &Path,
+) -> Result<Option<SessionData>, SessionError> {
+    let had_current_session = fs::symlink_metadata(current_path).is_ok();
+    if let Some(data) = load_session_from_path(current_path)? {
         return Ok(Some(data));
     }
-    load_session_from_path(&legacy_session_path()?)
+    if had_current_session {
+        return Ok(None);
+    }
+    load_session_from_path(legacy_path)
 }
 
 pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), SessionError> {
@@ -508,6 +518,54 @@ mod tests {
     }
 
     #[test]
+    fn loads_legacy_session_when_current_session_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let current_path = dir.path().join("session-v2.json");
+        let legacy_path = dir.path().join("session.json");
+        write_legacy_session_file(&legacy_path);
+
+        let loaded = load_session_from_paths(&current_path, &legacy_path)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(loaded.version, SESSION_FORMAT_VERSION);
+        assert_eq!(loaded.active_workspace_id.as_deref(), Some("workspace-1"));
+        assert_eq!(loaded.workspaces[0].name, "legacy");
+        assert!(legacy_path.exists());
+    }
+
+    #[test]
+    fn skips_legacy_session_after_current_session_is_quarantined() {
+        let dir = tempfile::tempdir().unwrap();
+        let current_path = dir.path().join("session-v2.json");
+        let legacy_path = dir.path().join("session.json");
+        fs::write(&current_path, "{ broken").unwrap();
+        write_legacy_session_file(&legacy_path);
+
+        let loaded = load_session_from_paths(&current_path, &legacy_path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(
+            !current_path.exists(),
+            "corrupt current session was not moved"
+        );
+        assert!(
+            legacy_path.exists(),
+            "legacy session should be left untouched"
+        );
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .any(|name| name.to_string_lossy().contains("session-v2.json.bad-")),
+            "expected a quarantined v2 session sibling, got {siblings:?}"
+        );
+    }
+
+    #[test]
     fn rejects_session_with_duplicate_workspace_ids() {
         let mut model = WorkspaceModel::new();
         model.create_workspace("main", "/tmp/main");
@@ -730,5 +788,26 @@ mod tests {
         let loaded = load_session_from_path(&path).unwrap();
         assert!(loaded.is_none());
         assert!(!path.exists());
+    }
+
+    fn write_legacy_session_file(path: &Path) {
+        fs::write(
+            path,
+            r#"{
+              "version": 1,
+              "active_workspace_index": 0,
+              "workspaces": [
+                {
+                  "name": "legacy",
+                  "working_dir": "/repo/legacy",
+                  "git_branch": "main",
+                  "worktree_dir": "",
+                  "worktree_name": "",
+                  "pane_tree": { "type": "leaf" }
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
     }
 }
