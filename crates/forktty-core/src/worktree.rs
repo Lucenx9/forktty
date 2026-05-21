@@ -5,6 +5,8 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+use crate::{validate_worktree_name, WorktreeNameError};
+
 const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SPAWN_RETRIES: usize = 5;
 const HOOK_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
@@ -35,6 +37,8 @@ pub enum WorktreeError {
     HookFailed(String, i32),
     #[error("Worktree '{0}' already exists")]
     AlreadyExists(String),
+    #[error("Invalid worktree name: {0}")]
+    InvalidName(WorktreeNameError),
     #[error("{0}")]
     Other(String),
 }
@@ -55,6 +59,7 @@ pub fn create(
     layout: &str,
 ) -> Result<WorktreeInfo, WorktreeError> {
     let repo = open_repo(repo_path)?;
+    let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
     let head_commit = repo
         .head()
         .map_err(|e| WorktreeError::Other(format!("No HEAD: {e}")))?
@@ -94,6 +99,7 @@ pub fn attach(
     layout: &str,
 ) -> Result<WorktreeInfo, WorktreeError> {
     let repo = open_repo(repo_path)?;
+    let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
         .map_err(|_| WorktreeError::BranchNotFound(branch_name.to_string()))?;
@@ -132,6 +138,7 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
 
 pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
     let repo = open_repo(repo_path)?;
+    let selector = validate_worktree_name(selector).map_err(WorktreeError::InvalidName)?;
     let worktree_name = resolve_worktree_name(&repo, selector)?;
     let wt = repo
         .find_worktree(&worktree_name)
@@ -166,6 +173,7 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
 pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
     let repo = open_repo(repo_path)?;
     ensure_clean_checkout(&repo)?;
+    let selector = validate_worktree_name(selector).map_err(WorktreeError::InvalidName)?;
     let branch_name = resolve_branch_name(&repo, selector)?;
     let source_branch = repo
         .find_branch(&branch_name, BranchType::Local)
@@ -578,6 +586,18 @@ mod tests {
         ));
         assert!(!is_transient_text_file_busy(
             &std::io::Error::from_raw_os_error(2)
+        ));
+    }
+
+    #[test]
+    fn public_worktree_operations_reject_invalid_names() {
+        let dir = make_repo();
+
+        let result = create(dir.path().to_str().unwrap(), "../escape", "nested");
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::InvalidName(WorktreeNameError::UnsafeSegment))
         ));
     }
 

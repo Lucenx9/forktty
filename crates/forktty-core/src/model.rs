@@ -363,6 +363,11 @@ impl WorkspaceModel {
             .or_else(|| self.workspace_order.first().cloned())
     }
 
+    pub fn active_workspace(&self) -> Option<Workspace> {
+        self.active_workspace_id()
+            .and_then(|id| self.workspaces.get(&id).cloned())
+    }
+
     pub fn list_surfaces(&self, workspace_id: Option<&str>) -> Vec<Surface> {
         self.surfaces
             .values()
@@ -1614,6 +1619,26 @@ mod tests {
         // Falls back to the first workspace in insertion order.
         assert_eq!(actives[0], first.id);
         let _ = second;
+    }
+
+    #[test]
+    fn active_workspace_returns_active_or_first_workspace() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("first", "/tmp/a");
+        let second = model.create_workspace("second", "/tmp/b");
+
+        assert_eq!(
+            model.active_workspace().map(|workspace| workspace.id),
+            Some(second.id.clone())
+        );
+
+        model.workspaces.get_mut(&first.id).unwrap().active = false;
+        model.workspaces.get_mut(&second.id).unwrap().active = false;
+
+        assert_eq!(
+            model.active_workspace().map(|workspace| workspace.id),
+            Some(first.id)
+        );
     }
 
     #[test]

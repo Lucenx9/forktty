@@ -409,11 +409,7 @@ pub async fn dispatch(
             Ok(json!(model.list_surfaces(workspace_id)))
         }
         "surface.send_text" => {
-            let surface_id = params
-                .get("surface_id")
-                .or_else(|| params.get("surfaceId"))
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("surface_id"))?;
+            let surface_id = required_surface_id(&params)?;
             let text = params
                 .get("text")
                 .and_then(Value::as_str)
@@ -432,11 +428,7 @@ pub async fn dispatch(
             Ok(json!({"sent": true}))
         }
         "surface.split" => {
-            let surface_id = params
-                .get("surface_id")
-                .or_else(|| params.get("surfaceId"))
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("surface_id"))?;
+            let surface_id = required_surface_id(&params)?;
             let axis = match params.get("axis").and_then(Value::as_str) {
                 Some("vertical") => SplitAxis::Vertical,
                 _ => SplitAxis::Horizontal,
@@ -457,11 +449,7 @@ pub async fn dispatch(
             Ok(json!(surface))
         }
         "surface.focus" => {
-            let surface_id = params
-                .get("surface_id")
-                .or_else(|| params.get("surfaceId"))
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("surface_id"))?;
+            let surface_id = required_surface_id(&params)?;
             let focused = {
                 let mut model = state
                     .model
@@ -476,11 +464,7 @@ pub async fn dispatch(
             }
         }
         "surface.close" => {
-            let surface_id = params
-                .get("surface_id")
-                .or_else(|| params.get("surfaceId"))
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("surface_id"))?;
+            let surface_id = required_surface_id(&params)?;
             {
                 let model = state
                     .model
@@ -764,14 +748,11 @@ fn spawn_workspace_terminal(
 ) -> Result<(), String> {
     state
         .terminal
-        .spawn(SpawnRequest {
-            surface_id: workspace.focused_surface_id.clone(),
-            workspace_id: workspace.id.clone(),
-            shell: state.shell.clone(),
-            cwd: workspace.working_dir.clone(),
-            socket_path: state.socket_path.clone(),
-            extra_env: Vec::new(),
-        })
+        .spawn(SpawnRequest::for_workspace(
+            workspace,
+            state.shell.clone(),
+            state.socket_path.clone(),
+        ))
         .map_err(|err| err.to_string())
 }
 
@@ -781,14 +762,11 @@ fn spawn_surface_terminal(
 ) -> Result<(), String> {
     state
         .terminal
-        .spawn(SpawnRequest {
-            surface_id: surface.id.clone(),
-            workspace_id: surface.workspace_id.clone(),
-            shell: state.shell.clone(),
-            cwd: surface.cwd.clone(),
-            socket_path: state.socket_path.clone(),
-            extra_env: Vec::new(),
-        })
+        .spawn(SpawnRequest::for_surface(
+            surface,
+            state.shell.clone(),
+            state.socket_path.clone(),
+        ))
         .map_err(|err| err.to_string())
 }
 
@@ -833,11 +811,7 @@ async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+        model.active_workspace()
     };
     let Some(workspace) = workspace else {
         return Ok(());
@@ -853,14 +827,11 @@ async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<
     }
     state
         .terminal
-        .spawn(SpawnRequest {
-            surface_id: workspace.focused_surface_id.clone(),
-            workspace_id: workspace.id.clone(),
-            shell: state.shell.clone(),
-            cwd: workspace.working_dir.clone(),
-            socket_path: state.socket_path.clone(),
-            extra_env: Vec::new(),
-        })
+        .spawn(SpawnRequest::for_workspace(
+            &workspace,
+            state.shell.clone(),
+            state.socket_path.clone(),
+        ))
         .map_err(|err| err.to_string())
 }
 
@@ -978,6 +949,15 @@ fn required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> 
         .ok_or_else(|| format!("Missing {key}"))
 }
 
+fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
+    params
+        .get("surface_id")
+        .or_else(|| params.get("surfaceId"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(DispatchError::MissingParam("surface_id"))
+}
+
 fn required_f64(params: &Value, key: &str) -> Result<f64, String> {
     optional_f64(params, key)?.ok_or_else(|| format!("Missing {key}"))
 }
@@ -1065,7 +1045,7 @@ pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Resu
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        if let Some(existing) = model.list_workspaces().into_iter().next() {
+        if let Some(existing) = model.active_workspace() {
             existing
         } else {
             model.create_workspace("main", cwd)
@@ -1073,14 +1053,11 @@ pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Resu
     };
     state
         .terminal
-        .spawn(SpawnRequest {
-            surface_id: workspace.focused_surface_id,
-            workspace_id: workspace.id,
-            shell: state.shell.clone(),
-            cwd: workspace.working_dir,
-            socket_path: state.socket_path.clone(),
-            extra_env: Vec::new(),
-        })
+        .spawn(SpawnRequest::for_workspace(
+            &workspace,
+            state.shell.clone(),
+            state.socket_path.clone(),
+        ))
         .map_err(|err| err.to_string())
 }
 
@@ -1857,6 +1834,23 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "missing_param");
         assert!(err.to_string().contains("text"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_accepts_camel_case_surface_id_alias() {
+        let (state, backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surfaceId": surface_id, "text": "echo camel\n"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(backend.sent_text(surface_id).unwrap(), vec!["echo camel\n"]);
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use forktty_core::{SurfaceId, WorkspaceId};
+use forktty_core::{Surface, SurfaceId, Workspace, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,6 +30,36 @@ pub struct SpawnRequest {
 }
 
 impl SpawnRequest {
+    pub fn for_workspace(
+        workspace: &Workspace,
+        shell: impl Into<String>,
+        socket_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            surface_id: workspace.focused_surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            shell: shell.into(),
+            cwd: workspace.working_dir.clone(),
+            socket_path: socket_path.into(),
+            extra_env: Vec::new(),
+        }
+    }
+
+    pub fn for_surface(
+        surface: &Surface,
+        shell: impl Into<String>,
+        socket_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            surface_id: surface.id.clone(),
+            workspace_id: surface.workspace_id.clone(),
+            shell: shell.into(),
+            cwd: surface.cwd.clone(),
+            socket_path: socket_path.into(),
+            extra_env: Vec::new(),
+        }
+    }
+
     pub fn forktty_env(&self) -> Vec<(String, String)> {
         let mut env = self
             .extra_env
@@ -248,5 +278,25 @@ mod tests {
             backend.sent_text("surface-1"),
             Err(TerminalError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn spawn_request_builders_preserve_workspace_and_surface_identity() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp/main");
+        let surface = model.surface(&workspace.focused_surface_id).unwrap();
+
+        let workspace_request =
+            SpawnRequest::for_workspace(&workspace, "/bin/sh", "/tmp/forktty.sock");
+        assert_eq!(workspace_request.surface_id, workspace.focused_surface_id);
+        assert_eq!(workspace_request.workspace_id, workspace.id);
+        assert_eq!(workspace_request.cwd, PathBuf::from("/tmp/main"));
+        assert_eq!(workspace_request.extra_env, Vec::<(String, String)>::new());
+
+        let surface_request = SpawnRequest::for_surface(surface, "/bin/zsh", "/tmp/other.sock");
+        assert_eq!(surface_request.surface_id, surface.id);
+        assert_eq!(surface_request.workspace_id, surface.workspace_id);
+        assert_eq!(surface_request.cwd, surface.cwd);
+        assert_eq!(surface_request.shell, "/bin/zsh");
     }
 }

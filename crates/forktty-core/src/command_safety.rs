@@ -87,6 +87,19 @@ pub enum WorktreeNameError {
     UnsafeSegment,
 }
 
+impl std::fmt::Display for WorktreeNameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorktreeNameError::Empty => f.write_str("must not be empty"),
+            WorktreeNameError::TooLong => f.write_str("must be 255 bytes or fewer"),
+            WorktreeNameError::UnsupportedCharacters => {
+                f.write_str("contains unsupported characters")
+            }
+            WorktreeNameError::UnsafeSegment => f.write_str("contains an unsafe path segment"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

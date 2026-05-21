@@ -1,8 +1,9 @@
 use adw::prelude::*;
 use forktty_core::{
-    config, dispatch_notification, session, validate_worktree_name, worktree, LogLevel,
-    NotificationItem, NotificationKind, PaneNode, ProgressEntry, SplitAxis, StatusEntry, Surface,
-    WorkspaceModel, WorkspaceSelector, WorktreeNameError,
+    command_safety::is_executable_file, config, dispatch_notification, session,
+    validate_worktree_name, worktree, LogLevel, NotificationItem, NotificationKind, PaneNode,
+    ProgressEntry, SplitAxis, StatusEntry, Surface, WorkspaceModel, WorkspaceSelector,
+    WorktreeNameError,
 };
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
@@ -26,8 +27,6 @@ use libloading::Library;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CString;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
@@ -384,12 +383,7 @@ impl VteController {
     fn model_focused_widget(&self) -> Option<VteTerminalWidget> {
         let surface_id = {
             let model = self.model.lock().ok()?;
-            model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.active)
-                .or_else(|| model.list_workspaces().into_iter().next())?
-                .focused_surface_id
+            model.active_workspace()?.focused_surface_id
         };
         self.widgets.get(&surface_id).cloned()
     }
@@ -503,12 +497,7 @@ impl VteController {
             let Ok(model) = self.model.lock() else {
                 return;
             };
-            let Some(workspace) = model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.active)
-                .or_else(|| model.list_workspaces().into_iter().next())
-            else {
+            let Some(workspace) = model.active_workspace() else {
                 return;
             };
             let statuses = model.list_status(&workspace.id);
@@ -534,14 +523,11 @@ impl VteController {
             let surface_id = surface.id.clone();
             let workspace_id = surface.workspace_id.clone();
             self.pending_spawns.insert(surface_id.clone());
-            if let Err(err) = state.terminal.spawn(SpawnRequest {
-                surface_id: surface_id.clone(),
-                workspace_id: workspace_id.clone(),
-                shell: state.shell.clone(),
-                cwd: surface.cwd.clone(),
-                socket_path: state.socket_path.clone(),
-                extra_env: Vec::new(),
-            }) {
+            if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
+                &surface,
+                state.shell.clone(),
+                state.socket_path.clone(),
+            )) {
                 self.pending_spawns.remove(&surface_id);
                 record_terminal_spawn_failure(
                     &self.model,
@@ -558,10 +544,7 @@ impl VteController {
             return;
         };
         let focused_surface_id = model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+            .active_workspace()
             .map(|workspace| workspace.focused_surface_id);
         for (surface_id, chrome) in &self.chromes {
             if let Some(surface) = model.surface(surface_id) {
@@ -846,20 +829,13 @@ fn focus_surface_and<F: FnOnce(&SocketAppState)>(
 fn focused_surface_id(state: &SocketAppState) -> Option<String> {
     let model = state.model.lock().ok()?;
     model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.active)
-        .or_else(|| model.list_workspaces().into_iter().next())
+        .active_workspace()
         .map(|workspace| workspace.focused_surface_id)
 }
 
 fn active_workspace_snapshot(state: &SocketAppState) -> Option<forktty_core::Workspace> {
     let model = state.model.lock().ok()?;
-    model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.active)
-        .or_else(|| model.list_workspaces().into_iter().next())
+    model.active_workspace()
 }
 
 fn show_close_pane_confirmation(
@@ -944,11 +920,7 @@ fn active_layout_snapshot(
     model: &Arc<Mutex<WorkspaceModel>>,
 ) -> Option<(String, PaneNode, String, String)> {
     let model = model.lock().ok()?;
-    let workspace = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.active)
-        .or_else(|| model.list_workspaces().into_iter().next())?;
+    let workspace = model.active_workspace()?;
     let mut structure = String::new();
     layout_structure_signature(&workspace.pane_tree, &mut structure);
     let signature = format!("{}:{}", workspace.id, structure);
@@ -3363,27 +3335,7 @@ fn apply_color_scheme(config: &config::AppConfig) {
 }
 
 fn is_executable_shell(shell: &str) -> bool {
-    !shell.is_empty() && is_executable_path(Path::new(shell))
-}
-
-fn is_executable_path(path: &Path) -> bool {
-    if !path.is_absolute() {
-        return false;
-    }
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    !shell.is_empty() && is_executable_file(Path::new(shell))
 }
 
 fn restore_or_bootstrap_workspaces(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -4290,12 +4242,7 @@ fn focus_relative_pane(state: &SocketAppState, delta: isize) -> bool {
         Ok(model) => model,
         Err(_) => return false,
     };
-    let Some(workspace) = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.active)
-        .or_else(|| model.list_workspaces().into_iter().next())
-    else {
+    let Some(workspace) = model.active_workspace() else {
         return false;
     };
     let leaves = collect_leaves(&workspace.pane_tree);
@@ -4512,12 +4459,7 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
                 return;
             }
         };
-        let Some(workspace) = model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
-        else {
+        let Some(workspace) = model.active_workspace() else {
             return;
         };
         model.split_surface(&workspace.focused_surface_id, axis)
@@ -4526,14 +4468,11 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
     let Some(surface) = surface else {
         return;
     };
-    if let Err(err) = state.terminal.spawn(SpawnRequest {
-        surface_id: surface.id.clone(),
-        workspace_id: surface.workspace_id.clone(),
-        shell: state.shell.clone(),
-        cwd: surface.cwd.clone(),
-        socket_path: state.socket_path.clone(),
-        extra_env: Vec::new(),
-    }) {
+    if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
+        &surface,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    )) {
         if let Ok(mut model) = state.model.lock() {
             let _ = model.close_surface(&surface.id);
         }
@@ -4556,10 +4495,7 @@ fn restart_active_surface(state: &SocketAppState) {
             Err(_) => return,
         };
         model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+            .active_workspace()
             .map(|workspace| workspace.focused_surface_id)
     };
     let Some(focused) = focused else {
@@ -4606,14 +4542,11 @@ fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool {
         }
     }
 
-    if let Err(err) = state.terminal.spawn(SpawnRequest {
-        surface_id: surface.id.clone(),
-        workspace_id: surface.workspace_id.clone(),
-        shell: state.shell.clone(),
-        cwd: surface.cwd.clone(),
-        socket_path: state.socket_path.clone(),
-        extra_env: Vec::new(),
-    }) {
+    if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
+        &surface,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    )) {
         record_terminal_spawn_failure(
             &state.model,
             &surface.workspace_id,
@@ -4632,10 +4565,7 @@ fn close_active_surface(state: &SocketAppState) {
             Err(_) => return,
         };
         model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+            .active_workspace()
             .map(|workspace| workspace.focused_surface_id)
     };
     let Some(focused) = focused else {
@@ -4683,11 +4613,7 @@ fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), Termina
             .model
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
-        model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+        model.active_workspace()
     };
     let Some(workspace) = workspace else {
         return Ok(());
@@ -4700,14 +4626,11 @@ fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), Termina
     {
         return Ok(());
     }
-    state.terminal.spawn(SpawnRequest {
-        surface_id: workspace.focused_surface_id,
-        workspace_id: workspace.id,
-        shell: state.shell.clone(),
-        cwd: workspace.working_dir,
-        socket_path: state.socket_path.clone(),
-        extra_env: Vec::new(),
-    })
+    state.terminal.spawn(SpawnRequest::for_workspace(
+        &workspace,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    ))
 }
 
 fn show_workspace_popover<W: IsA<gtk::Widget>>(
@@ -5472,18 +5395,13 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
         .lock()
         .ok()
         .and_then(|model| {
-            model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.active)
-                .or_else(|| model.list_workspaces().into_iter().next())
-                .map(|workspace| {
-                    format!(
-                        "Base: {} · {}",
-                        workspace.name,
-                        compact_path(&workspace.working_dir)
-                    )
-                })
+            model.active_workspace().map(|workspace| {
+                format!(
+                    "Base: {} · {}",
+                    workspace.name,
+                    compact_path(&workspace.working_dir)
+                )
+            })
         })
         .unwrap_or_else(|| {
             std::env::current_dir()
@@ -5924,14 +5842,11 @@ fn open_worktree_from_gtk(
     };
     if let Err(err) = state
         .terminal
-        .spawn(SpawnRequest {
-            surface_id: workspace.focused_surface_id.clone(),
-            workspace_id: workspace.id.clone(),
-            shell: state.shell.clone(),
-            cwd: workspace.working_dir.clone(),
-            socket_path: state.socket_path.clone(),
-            extra_env: Vec::new(),
-        })
+        .spawn(SpawnRequest::for_workspace(
+            &workspace,
+            state.shell.clone(),
+            state.socket_path.clone(),
+        ))
         .map_err(|err| err.to_string())
     {
         rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)?;
@@ -6049,10 +5964,7 @@ fn close_workspace_by_worktree_name(
 fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
     state.model.lock().ok().and_then(|model| {
         model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+            .active_workspace()
             .map(|workspace| workspace.working_dir)
     })
 }
@@ -7214,14 +7126,11 @@ fn open_workspace_from_path(state: &SocketAppState, path: PathBuf) -> Result<(),
         let previous_active_id = model.active_workspace_id();
         (model.create_workspace(name, path), previous_active_id)
     };
-    if let Err(err) = state.terminal.spawn(SpawnRequest {
-        surface_id: workspace.focused_surface_id.clone(),
-        workspace_id: workspace.id.clone(),
-        shell: state.shell.clone(),
-        cwd: workspace.working_dir.clone(),
-        socket_path: state.socket_path.clone(),
-        extra_env: Vec::new(),
-    }) {
+    if let Err(err) = state.terminal.spawn(SpawnRequest::for_workspace(
+        &workspace,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    )) {
         rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)?;
         return Err(err.to_string());
     }
@@ -7243,14 +7152,11 @@ fn create_plain_workspace(state: &SocketAppState) {
             previous_active_id,
         )
     };
-    if let Err(err) = state.terminal.spawn(SpawnRequest {
-        surface_id: workspace.focused_surface_id.clone(),
-        workspace_id: workspace.id.clone(),
-        shell: state.shell.clone(),
-        cwd: workspace.working_dir.clone(),
-        socket_path: state.socket_path.clone(),
-        extra_env: Vec::new(),
-    }) {
+    if let Err(err) = state.terminal.spawn(SpawnRequest::for_workspace(
+        &workspace,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    )) {
         let _ = rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id);
         eprintln!("Failed to create workspace terminal: {err}");
         create_global_notification(
@@ -7302,12 +7208,7 @@ fn close_active_workspace(state: &SocketAppState) {
             Ok(model) => model,
             Err(_) => return,
         };
-        let Some(workspace) = model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
-        else {
+        let Some(workspace) = model.active_workspace() else {
             return;
         };
         let surface_ids = model
@@ -7349,10 +7250,7 @@ fn create_global_notification(
 fn create_local_notification(state: &SocketAppState, title: &str, body: &str) {
     let target = state.model.lock().ok().and_then(|model| {
         model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.active)
-            .or_else(|| model.list_workspaces().into_iter().next())
+            .active_workspace()
             .map(|workspace| (workspace.id, workspace.focused_surface_id))
     });
     let Some((workspace_id, surface_id)) = target else {
@@ -7491,7 +7389,7 @@ mod tests {
 
         let shell = configured_shell(&config);
 
-        assert!(is_executable_path(Path::new(&shell)));
+        assert!(is_executable_file(Path::new(&shell)));
     }
 
     #[test]
