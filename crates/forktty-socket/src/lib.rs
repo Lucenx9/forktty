@@ -1017,6 +1017,13 @@ fn optional_non_blank_string_param<'a>(
     }
 }
 
+fn optional_surface_id_param(params: &Value) -> Result<Option<&str>, DispatchError> {
+    if params.get("surface_id").is_some() {
+        return optional_non_blank_string_param(params, "surface_id");
+    }
+    optional_non_blank_string_param(params, "surfaceId")
+}
+
 fn ensure_model_surface_exists(
     state: &SocketAppState,
     surface_id: &str,
@@ -1048,12 +1055,7 @@ fn resolve_notification_target(
         Err(DispatchError::MissingParam(_)) => None,
         Err(err) => return Err(err),
     };
-    let surface_id = params
-        .get("surface_id")
-        .or_else(|| params.get("surfaceId"))
-        .and_then(Value::as_str)
-        .filter(|surface_id| !surface_id.trim().is_empty())
-        .map(|surface_id| surface_id.trim().to_string());
+    let surface_id = optional_surface_id_param(params)?.map(str::to_string);
 
     if let Some(surface_id) = surface_id {
         let surface = model
@@ -1133,38 +1135,31 @@ fn resolve_workspace_id_for_metadata(
 }
 
 fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, DispatchError> {
-    if let Some(id) = string_param(params, "id") {
+    if let Some(id) = optional_non_blank_string_param(params, "id")? {
         return Ok(WorkspaceSelector::Id(id));
     }
-    if let Some(id) = string_param(params, "workspace_id") {
+    if let Some(id) = optional_non_blank_string_param(params, "workspace_id")? {
         return Ok(WorkspaceSelector::Id(id));
     }
-    if let Some(id) = string_param(params, "workspaceId") {
+    if let Some(id) = optional_non_blank_string_param(params, "workspaceId")? {
         return Ok(WorkspaceSelector::Id(id));
     }
-    if let Some(name) = string_param(params, "name") {
+    if let Some(name) = optional_non_blank_string_param(params, "name")? {
         return Ok(WorkspaceSelector::Name(name));
     }
-    if let Some(name) = string_param(params, "workspace_name") {
+    if let Some(name) = optional_non_blank_string_param(params, "workspace_name")? {
         return Ok(WorkspaceSelector::Name(name));
     }
-    if let Some(name) = string_param(params, "workspaceName") {
+    if let Some(name) = optional_non_blank_string_param(params, "workspaceName")? {
         return Ok(WorkspaceSelector::Name(name));
     }
-    if let Some(worktree_name) =
-        string_param(params, "worktreeName").or_else(|| string_param(params, "worktree_name"))
-    {
+    if let Some(worktree_name) = optional_non_blank_string_param(params, "worktreeName")? {
+        return Ok(WorkspaceSelector::WorktreeName(worktree_name));
+    }
+    if let Some(worktree_name) = optional_non_blank_string_param(params, "worktree_name")? {
         return Ok(WorkspaceSelector::WorktreeName(worktree_name));
     }
     Err(DispatchError::MissingParam("workspace selector"))
-}
-
-fn string_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -1794,6 +1789,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn notification_create_rejects_invalid_surface_targets() {
+        let (state, _backend) = test_state();
+
+        for surface_id in [json!(""), json!(42)] {
+            let error = dispatch(
+                &state,
+                "notification.create",
+                json!({"title": "Prompt", "surface_id": surface_id}),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter surface_id"));
+        }
+
+        let notifications = dispatch(&state, "notification.list", json!({}))
+            .await
+            .unwrap();
+        assert!(notifications.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn notification_create_respects_workspace_selectors() {
         let (state, _backend) = test_state();
         let created = dispatch(
@@ -1839,6 +1857,34 @@ mod tests {
 
         assert_eq!(error.code(), "not_found");
         assert_eq!(error.to_string(), "Workspace not found");
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_reject_invalid_workspace_selectors() {
+        let (state, _backend) = test_state();
+
+        for workspace_id in [json!(""), json!(42)] {
+            let error = dispatch(
+                &state,
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "agent:codex",
+                    "label": "Codex",
+                    "value": "Running"
+                }),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter workspace_id"));
+        }
+
+        let statuses = dispatch(&state, "metadata.list_status", json!({}))
+            .await
+            .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2458,11 +2504,23 @@ mod tests {
             assert_eq!(err.code(), "missing_param");
             assert!(err.to_string().contains("workspace selector"));
         }
+    }
 
-        let err = dispatch(&state, "workspace.select", json!({"workspace_id": "  "}))
+    #[tokio::test]
+    async fn dispatch_rejects_invalid_workspace_command_selectors() {
+        let (state, _backend) = test_state();
+
+        for workspace_id in [json!("  "), json!(42)] {
+            let err = dispatch(
+                &state,
+                "workspace.select",
+                json!({"workspace_id": workspace_id}),
+            )
             .await
             .unwrap_err();
-        assert_eq!(err.code(), "missing_param");
+            assert_eq!(err.code(), "error");
+            assert!(err.to_string().contains("Invalid parameter workspace_id"));
+        }
     }
 
     #[tokio::test]
