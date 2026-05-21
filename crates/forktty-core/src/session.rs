@@ -121,10 +121,11 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
 }
 
 pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let metadata = fs::symlink_metadata(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
     if !metadata.file_type().is_file() {
         log_quarantine_reason(path, "session path is not a regular file");
         quarantine_corrupt_session(path)?;
@@ -452,8 +453,10 @@ fn quarantine_corrupt_session_with_timestamp(
     path: &Path,
     timestamp: &str,
 ) -> Result<Option<PathBuf>, SessionError> {
-    if !path.exists() {
-        return Ok(None);
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
     }
     let quarantine_path = available_bad_session_path(path, timestamp);
     fs::rename(path, &quarantine_path)?;
@@ -741,6 +744,34 @@ mod tests {
                 .iter()
                 .any(|name| name.to_string_lossy().contains(".bad-")),
             "expected a .bad-* quarantine sibling, got {siblings:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantines_broken_session_symlink_instead_of_treating_it_as_missing() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        symlink(dir.path().join("missing-session-v2.json"), &path).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(
+            fs::symlink_metadata(&path).is_err(),
+            "broken session symlink should be renamed aside"
+        );
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .any(|name| name.to_string_lossy().contains("session-v2.json.bad-")),
+            "expected a quarantined session symlink sibling, got {siblings:?}"
         );
     }
 

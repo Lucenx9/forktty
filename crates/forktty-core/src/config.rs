@@ -185,6 +185,11 @@ pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if fs::symlink_metadata(path).is_ok() {
+                return Err(ConfigError::Invalid(
+                    "Config path points to a missing file".to_string(),
+                ));
+            }
             return Ok(AppConfig::default());
         }
         Err(err) => return Err(err.into()),
@@ -334,7 +339,8 @@ fn quarantine_bad_config_with_timestamp(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    if !metadata.file_type().is_file() {
+    let file_type = metadata.file_type();
+    if !file_type.is_file() && !file_type.is_symlink() {
         return Ok(None);
     }
     let quarantine_path = available_bad_config_path(path, &timestamp);
@@ -502,6 +508,32 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .contains(".bad-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_quarantines_broken_config_symlink_and_returns_defaults() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        symlink(dir.path().join("missing-config.toml"), &path).unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        assert_eq!(config, AppConfig::default());
+        assert!(
+            fs::symlink_metadata(&path).is_err(),
+            "broken config symlink should be renamed aside"
+        );
+        let quarantined_path = recovery
+            .expect("expected recovery details")
+            .quarantined_path
+            .expect("expected quarantined path");
+        assert!(fs::symlink_metadata(&quarantined_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

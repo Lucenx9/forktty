@@ -36,6 +36,7 @@ bash scripts/build-deb.sh
 ## Config Recovery Smoke
 
 - Stop the app, then corrupt `$XDG_CONFIG_HOME/forktty/config.toml` (`echo "{ broken" >$XDG_CONFIG_HOME/forktty/config.toml`). Relaunch; ForkTTY should start with defaults, show a Config Issue notification that names the quarantined file, and rename the corrupt config to `*.bad-<timestamp>` or `*.bad-<timestamp>-N` if that name already exists.
+- Replace `$XDG_CONFIG_HOME/forktty/config.toml` with a broken symlink, then relaunch; ForkTTY should start with defaults and rename the symlink aside instead of repeatedly treating it as a missing config.
 
 ## Socket API Smoke
 
@@ -58,6 +59,7 @@ rebuilding.
 
 - Change a workspace or split pane, then confirm `$XDG_DATA_HOME/forktty/` does not accumulate `session-v2.json.tmp-*` files after normal autosave/restart.
 - Stop the app, then corrupt `$XDG_DATA_HOME/forktty/session-v2.json` (`echo "{ broken" >$XDG_DATA_HOME/forktty/session-v2.json`). Relaunch; ForkTTY should start with a fresh workspace even if an old `session.json` exists, the corrupt file should now be renamed `*.bad-<timestamp>` or `*.bad-<timestamp>-N` if that name already exists, and stderr should log the quarantine reason.
+- Replace `$XDG_DATA_HOME/forktty/session-v2.json` with a broken symlink, then relaunch; ForkTTY should start fresh and rename the symlink aside instead of silently leaving the bad path in place.
 - Stop the app, truncate the session to >1 MiB (`yes x | head -c 2000000 >$XDG_DATA_HOME/forktty/session-v2.json`). Relaunch; same behavior.
 
 ## Hook Installer Smoke
