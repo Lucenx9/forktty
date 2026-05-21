@@ -1007,6 +1007,24 @@ describe("hook installer", () => {
     assert.equal(await fs.readFile(configPath, "utf8"), "[]\n");
   });
 
+  it("rejects hook config paths that are not regular files", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    await fs.mkdir(codexDir, { recursive: true });
+    const configPath = path.join(codexDir, "hooks.json");
+    await fs.mkdir(configPath);
+
+    await assert.rejects(
+      handleHooksSetup(context, ["codex"]),
+      (error) =>
+        /codex/.test(error.message) &&
+        error.message.includes(configPath) &&
+        /not a regular file/.test(error.message),
+    );
+    assert.ok((await fs.stat(configPath)).isDirectory());
+    assert.deepEqual(await fs.readdir(codexDir), ["hooks.json"]);
+  });
+
   it("readAgentConfig returns {} for whitespace-only files without throwing", async () => {
     const configPath = path.join(tmpDir, "whitespace.json");
     await fs.writeFile(configPath, "   \n\t  \n");

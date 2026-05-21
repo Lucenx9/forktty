@@ -1298,16 +1298,21 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
 }
 
 async function readJsonFile(filePath) {
+  let stat;
   try {
-    const text = await fs.readFile(filePath, "utf8");
-    if (!text.trim()) return {};
-    return JSON.parse(text);
+    stat = await fs.stat(filePath);
   } catch (error) {
     if (error && typeof error === "object" && error.code === "ENOENT") {
       return {};
     }
     throw error;
   }
+  if (!stat.isFile()) {
+    throw new Error("path exists but is not a regular file");
+  }
+  const text = await fs.readFile(filePath, "utf8");
+  if (!text.trim()) return {};
+  return JSON.parse(text);
 }
 
 async function readAgentConfig(agent, filePath) {
