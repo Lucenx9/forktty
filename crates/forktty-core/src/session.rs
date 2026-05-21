@@ -95,7 +95,8 @@ fn load_session_from_paths(
 
 pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), SessionError> {
     validate_session_data(data)?;
-    if let Some(parent) = path.parent() {
+    let write_path = session_write_path(path)?;
+    if let Some(parent) = write_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(data)?;
@@ -103,7 +104,7 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let tmp_path = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+    let tmp_path = write_path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
     let result = (|| -> Result<(), SessionError> {
         let mut tmp_file = fs::OpenOptions::new()
             .write(true)
@@ -111,7 +112,7 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
             .open(&tmp_path)?;
         tmp_file.write_all(json.as_bytes())?;
         tmp_file.sync_all()?;
-        fs::rename(&tmp_path, path)?;
+        fs::rename(&tmp_path, &write_path)?;
         Ok(())
     })();
     if result.is_err() {
@@ -120,11 +121,33 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
     result
 }
 
+fn session_write_path(path: &Path) -> Result<PathBuf, SessionError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionError> {
-    let metadata = match fs::symlink_metadata(path) {
+    let link_metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
+    };
+    let metadata = if link_metadata.file_type().is_symlink() {
+        match fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                log_quarantine_reason(path, "session path is a broken symlink");
+                quarantine_corrupt_session(path)?;
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        }
+    } else {
+        link_metadata
     };
     if !metadata.file_type().is_file() {
         log_quarantine_reason(path, "session path is not a regular file");
@@ -525,6 +548,54 @@ mod tests {
 
         save_session_to_path(&path, &data).unwrap();
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_and_load_session_through_symlink_preserves_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let link_dir = dir.path().join("data");
+        let managed_dir = dir.path().join("managed");
+        fs::create_dir_all(&link_dir).unwrap();
+        fs::create_dir_all(&managed_dir).unwrap();
+        let path = link_dir.join("session-v2.json");
+        let target = managed_dir.join("session-v2.json");
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let data = SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: model.list_workspaces(),
+            active_workspace_id: Some(workspace.id),
+        };
+        save_session_to_path(&target, &data).unwrap();
+        symlink(&target, &path).unwrap();
+
+        assert_eq!(load_session_from_path(&path).unwrap(), Some(data.clone()));
+        save_session_to_path(&path, &data).unwrap();
+
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
+        let link_siblings: Vec<_> = fs::read_dir(&link_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(link_siblings, [std::ffi::OsString::from("session-v2.json")]);
+        let managed_siblings: Vec<_> = fs::read_dir(&managed_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            managed_siblings
+                .iter()
+                .all(|name| !name.to_string_lossy().contains(".tmp-")),
+            "unexpected temp session file sibling: {managed_siblings:?}"
+        );
     }
 
     #[test]

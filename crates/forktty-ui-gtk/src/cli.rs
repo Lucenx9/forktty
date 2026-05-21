@@ -151,7 +151,7 @@ fn collect_report() -> DoctorReport {
     let data_root = dirs::data_dir().map(|d| d.join("forktty"));
     let data_dir = describe_path("data dir", data_root.clone());
     let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
-    let session = describe_path("session-v2.json", session_path);
+    let session = describe_session_path(session_path);
     append_path_error_warning(&mut warnings, &data_dir);
     append_path_error_warning(&mut warnings, &session);
     append_launch_quarantine_warnings(
@@ -222,6 +222,10 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
 
 fn describe_config_path(path: Option<PathBuf>) -> PathState {
     describe_path_with_symlink_policy("config.toml", path, true)
+}
+
+fn describe_session_path(path: Option<PathBuf>) -> PathState {
+    describe_path_with_symlink_policy("session-v2.json", path, true)
 }
 
 fn describe_path_with_symlink_policy(
@@ -787,6 +791,35 @@ mod tests {
             warning.contains(&directory.display().to_string())
                 && warning.contains("not a regular file")
         }));
+    }
+
+    #[test]
+    fn doctor_treats_valid_session_symlink_as_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        let target = dir.path().join("managed-session-v2.json");
+        fs::write(&target, "{\"version\":2,\"workspaces\":[]}").unwrap();
+        symlink(&target, &path).unwrap();
+        let state = describe_session_path(Some(path.clone()));
+        let mut warnings = Vec::new();
+
+        append_path_error_warning(&mut warnings, &state);
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_SESSION_SIZE_BYTES,
+            "Session",
+        );
+
+        assert!(state.is_regular_file);
+        assert!(format_path(&state).contains("[file mode"));
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

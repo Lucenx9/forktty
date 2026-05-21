@@ -99,6 +99,8 @@ rebuilding.
 ## Session Restore Smoke
 
 - Change a workspace or split pane, then confirm `$XDG_DATA_HOME/forktty/` does not accumulate `session-v2.json.tmp-*` files after normal autosave/restart.
+- Symlink `$XDG_DATA_HOME/forktty/session-v2.json` to a real managed JSON file,
+  then change a workspace; the target file updates and the symlink remains a symlink.
 - Stop the app, then corrupt `$XDG_DATA_HOME/forktty/session-v2.json` (`echo "{ broken" >$XDG_DATA_HOME/forktty/session-v2.json`). Relaunch; ForkTTY should start with a fresh workspace even if an old `session.json` exists, the corrupt file should now be renamed `*.bad-<timestamp>` or `*.bad-<timestamp>-N` if that name already exists, and stderr should log the quarantine reason.
 - Stop the app, then blank the saved workspace name in `$XDG_DATA_HOME/forktty/session-v2.json` (`python3 - <<'PY'\nimport json, os, pathlib\np = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home()/".local/share"))/"forktty/session-v2.json"\ndata = json.loads(p.read_text())\ndata["workspaces"][0]["name"] = ""\np.write_text(json.dumps(data))\nPY`). Relaunch; ForkTTY should quarantine the session and bootstrap a usable workspace instead of showing a nameless workspace row.
 - Replace `$XDG_DATA_HOME/forktty/session-v2.json` with a broken symlink, then relaunch; ForkTTY should start fresh and rename the symlink aside instead of silently leaving the bad path in place.
@@ -158,6 +160,8 @@ rebuilding.
   `forktty doctor` reports it as a file and does not warn that it will be quarantined.
 - With an oversized `$XDG_DATA_HOME/forktty/session-v2.json`, `forktty doctor`
   warns that the session will be quarantined on launch.
+- With `$XDG_DATA_HOME/forktty/session-v2.json` symlinked to a real JSON file,
+  `forktty doctor` reports it as a file and does not warn that it will be quarantined.
 - With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`
   warns that the socket path is not a Unix socket before launch fails.
 - With `$XDG_RUNTIME_DIR` pointing at a regular file, `forktty doctor` warns
