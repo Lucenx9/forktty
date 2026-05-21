@@ -149,7 +149,7 @@ fn collect_report() -> DoctorReport {
     );
 
     let data_root = dirs::data_dir().map(|d| d.join("forktty"));
-    let data_dir = describe_path("data dir", data_root.clone());
+    let data_dir = describe_followed_path("data dir", data_root.clone());
     let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
     let session = describe_session_path(session_path);
     append_path_error_warning(&mut warnings, &data_dir);
@@ -163,7 +163,7 @@ fn collect_report() -> DoctorReport {
 
     let socket = socket_path_from_env(std::env::var("FORKTTY_SOCKET_PATH").ok());
     let socket_parent_path = socket.parent().map(PathBuf::from);
-    let socket_parent = describe_path("socket dir", socket_parent_path);
+    let socket_parent = describe_followed_path("socket dir", socket_parent_path);
     let socket_state = describe_path("forktty.sock", Some(socket));
     append_path_error_warning(&mut warnings, &socket_parent);
     append_path_error_warning(&mut warnings, &socket_state);
@@ -218,6 +218,10 @@ fn collect_report() -> DoctorReport {
 
 fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
     describe_path_with_symlink_policy(label, path, false)
+}
+
+fn describe_followed_path(label: &'static str, path: Option<PathBuf>) -> PathState {
+    describe_path_with_symlink_policy(label, path, true)
 }
 
 fn describe_config_path(path: Option<PathBuf>) -> PathState {
@@ -949,6 +953,31 @@ mod tests {
             warning.contains(&parent_path.display().to_string())
                 && warning.contains("not a directory")
         }));
+    }
+
+    #[test]
+    fn doctor_treats_valid_socket_parent_symlink_as_dir() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("runtime-target");
+        let link = dir.path().join("runtime-link");
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(&target, &link).unwrap();
+        let state = describe_followed_path("socket dir", Some(link.clone()));
+        let mut warnings = Vec::new();
+
+        append_path_error_warning(&mut warnings, &state);
+        append_socket_parent_warning(&mut warnings, &state);
+
+        assert!(state.is_dir);
+        assert!(format_path(&state).contains("[dir mode"));
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

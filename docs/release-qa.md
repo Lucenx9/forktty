@@ -170,6 +170,8 @@ rebuilding.
   warns that it could not be inspected and will be quarantined on launch.
 - With `FORKTTY_SOCKET_PATH=/tmp/forktty-doctor.sock`, `forktty doctor` reports
   `/tmp/forktty-doctor.sock`; with `FORKTTY_SOCKET_PATH=relative.sock`, it reports the default socket path.
+- With `XDG_RUNTIME_DIR` symlinked to a private real directory, `forktty doctor`
+  reports the socket parent as a directory instead of warning that it is not one.
 - With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`
   warns that the socket path is not a Unix socket before launch fails.
 - With `$XDG_RUNTIME_DIR` pointing at a regular file, `forktty doctor` warns
