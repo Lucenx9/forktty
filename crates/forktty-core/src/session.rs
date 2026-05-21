@@ -109,7 +109,20 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
         return Ok(None);
     }
     let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file() || metadata.len() > MAX_SESSION_SIZE_BYTES {
+    if !metadata.file_type().is_file() {
+        log_quarantine_reason(path, "session path is not a regular file");
+        quarantine_corrupt_session(path)?;
+        return Ok(None);
+    }
+    if metadata.len() > MAX_SESSION_SIZE_BYTES {
+        log_quarantine_reason(
+            path,
+            &format!(
+                "session file is {} bytes, exceeds limit of {} bytes",
+                metadata.len(),
+                MAX_SESSION_SIZE_BYTES
+            ),
+        );
         quarantine_corrupt_session(path)?;
         return Ok(None);
     }
@@ -117,16 +130,24 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
     match parse_session_content(&content) {
         Ok(data) => match validate_session_data(&data) {
             Ok(()) => Ok(Some(data)),
-            Err(_) => {
+            Err(err) => {
+                log_quarantine_reason(path, &format!("validation failed: {err}"));
                 quarantine_corrupt_session(path)?;
                 Ok(None)
             }
         },
-        Err(_) => {
+        Err(err) => {
+            log_quarantine_reason(path, &format!("parse failed: {err}"));
             quarantine_corrupt_session(path)?;
             Ok(None)
         }
     }
+}
+
+fn log_quarantine_reason(path: &Path, reason: &str) {
+    // Operators need to know *why* a session disappeared on startup — silent
+    // quarantine masks broken migrations and on-disk corruption.
+    eprintln!("Quarantining session at {}: {reason}", path.display());
 }
 
 fn parse_session_content(content: &str) -> Result<SessionData, SessionError> {
@@ -590,5 +611,94 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn quarantines_corrupted_session_file_instead_of_returning_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        fs::write(&path, "{ this is not valid JSON ::: ").unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(!path.exists(), "corrupt file should be renamed aside");
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .any(|name| name.to_string_lossy().contains(".bad-")),
+            "expected a .bad-* quarantine sibling, got {siblings:?}"
+        );
+    }
+
+    #[test]
+    fn quarantines_oversized_session_file_without_reading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        let oversized = "x".repeat((MAX_SESSION_SIZE_BYTES + 1) as usize);
+        fs::write(&path, oversized).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+        assert!(loaded.is_none());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn rejects_session_pane_tree_with_non_finite_sizes() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.workspaces[0].pane_tree = PaneNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![
+                PaneNode::Leaf {
+                    surface_id: data.workspaces[0].focused_surface_id.clone(),
+                },
+                PaneNode::Leaf {
+                    surface_id: "extra-leaf".to_string(),
+                },
+            ],
+            sizes: vec![f64::NAN, 0.5],
+        };
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_legacy_session_with_out_of_bounds_focused_leaf_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        fs::write(
+            &path,
+            r#"{
+              "version": 1,
+              "active_workspace_index": 0,
+              "workspaces": [
+                {
+                  "name": "feature",
+                  "working_dir": "/tmp",
+                  "git_branch": "feature",
+                  "worktree_dir": "",
+                  "worktree_name": "",
+                  "focused_leaf_index": 7,
+                  "pane_tree": { "type": "leaf" }
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        // Out-of-bounds focused_leaf_index is an InvalidData failure during
+        // migration; load_session_from_path should quarantine, not panic.
+        let loaded = load_session_from_path(&path).unwrap();
+        assert!(loaded.is_none());
+        assert!(!path.exists());
     }
 }
