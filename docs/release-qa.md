@@ -87,6 +87,7 @@ rebuilding.
 - Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"request_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `request_too_large` instead of reporting a response-id mismatch.
 - Close a split pane, then send `surface.send_text` or `notification.create` for that closed pane's `surface_id` — response includes `"code":"not_found"` and no notification row is added.
 - Close the last workspace over the socket from a project directory — ForkTTY creates the replacement `main` workspace in that project directory, not the app launch directory.
+- If a terminal backend close fails during `workspace.close`, the socket returns the close error and keeps the workspace in the model instead of orphaning its panes.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"workspace-missing","key":"agent:test","label":"Test","value":"Running"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"not_found"`.
 - `python3 -c 'import json,sys; sys.stdout.write(json.dumps({"id":"x","method":"surface.send_text","params":{"surface_id":"main:1","text":"x"*300000}})+"\n")' | nc -U "$XDG_RUNTIME_DIR/forktty.sock"` — response includes `"code":"payload_too_large"` (the 256 KiB `surface.send_text` cap).
 

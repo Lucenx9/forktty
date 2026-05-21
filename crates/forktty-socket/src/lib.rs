@@ -245,8 +245,8 @@ pub async fn dispatch(
         }
         "workspace.close" => {
             let selector = workspace_selector_from_params(&params)?;
-            let (workspace, surface_ids) = {
-                let mut model = state
+            let (workspace_id, workspace, surface_ids) = {
+                let model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
@@ -259,15 +259,24 @@ pub async fn dispatch(
                     .map(|surface| surface.id)
                     .collect::<Vec<_>>();
                 let workspace = model
+                    .list_workspaces()
+                    .into_iter()
+                    .find(|workspace| workspace.id == workspace_id)
+                    .ok_or(DispatchError::NotFound("workspace"))?;
+                (workspace_id, workspace, surface_ids)
+            };
+            close_terminal_surfaces_if_present(state, &surface_ids)?;
+            {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
                     .close_workspace(WorkspaceSelector::Id(&workspace_id))
                     .ok_or(DispatchError::NotFound("workspace"))?;
                 if model.list_workspaces().is_empty() {
                     model.create_workspace("main", workspace.working_dir.clone());
                 }
-                (workspace, surface_ids)
-            };
-            for surface_id in surface_ids {
-                let _ = state.terminal.close(&surface_id);
             }
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(workspace))
@@ -710,6 +719,16 @@ fn close_terminal_surface_if_present(
         Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
         Err(err) => Err(err.to_string()),
     }
+}
+
+fn close_terminal_surfaces_if_present(
+    state: &SocketAppState,
+    surface_ids: &[String],
+) -> Result<(), String> {
+    for surface_id in surface_ids {
+        close_terminal_surface_if_present(state, surface_id)?;
+    }
+    Ok(())
 }
 
 fn rollback_workspace_creation(
@@ -2583,6 +2602,43 @@ mod tests {
         .unwrap();
         assert_eq!(surfaces.as_array().unwrap().len(), 1);
         assert_eq!(surfaces[0]["id"], surface_id);
+    }
+
+    #[tokio::test]
+    async fn workspace_close_keeps_model_when_backend_close_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(FailingCloseBackend::default());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let error = dispatch(&state, "workspace.close", json!({"id": workspace_id}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("close failed"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["id"], workspace_id);
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+        assert_eq!(surfaces[0]["id"], surface_id);
+        assert_eq!(backend.surfaces().unwrap().len(), 1);
     }
 
     #[tokio::test]
