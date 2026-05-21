@@ -1,5 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -31,6 +33,8 @@ pub enum WorktreeError {
     TargetDirty,
     #[error("Worktree '{0}' has uncommitted changes or conflicts; commit, stash, or resolve them before removing")]
     WorktreeDirty(String),
+    #[error("Worktree '{0}' has uncommitted changes or conflicts; commit, stash, or resolve them before merging")]
+    SourceDirty(String),
     #[error("Worktree hook '{0}' timed out")]
     HookTimedOut(String),
     #[error("Worktree hook '{0}' failed with exit code {1}")]
@@ -76,6 +80,7 @@ pub fn create(
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    ensure_local_exclude_for_worktree_path(&repo, workdir, &wt_path)?;
     let branch = repo.branch(branch_name, &head_commit, false)?;
     let branch_ref = branch.into_reference();
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
@@ -111,6 +116,7 @@ pub fn attach(
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    ensure_local_exclude_for_worktree_path(&repo, workdir, &wt_path)?;
     let branch_ref = branch.into_reference();
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
     let mut opts = git2::WorktreeAddOptions::new();
@@ -174,6 +180,7 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
     let repo = open_repo(repo_path)?;
     ensure_clean_checkout(&repo)?;
     let selector = validate_worktree_name(selector).map_err(WorktreeError::InvalidName)?;
+    ensure_clean_source_worktree(&repo, selector)?;
     let branch_name = resolve_branch_name(&repo, selector)?;
     let source_branch = repo
         .find_branch(&branch_name, BranchType::Local)
@@ -427,6 +434,22 @@ fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {
     Ok(())
 }
 
+fn ensure_clean_source_worktree(repo: &Repository, selector: &str) -> Result<(), WorktreeError> {
+    let Ok(worktree_name) = resolve_worktree_name(repo, selector) else {
+        return Ok(());
+    };
+    let wt = repo
+        .find_worktree(&worktree_name)
+        .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
+    let wt_path = verify_linked_worktree_path(repo, &worktree_name, wt.path())?;
+    let wt_repo = Repository::open(&wt_path)
+        .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
+    if has_uncommitted_changes(&wt_repo)? {
+        return Err(WorktreeError::SourceDirty(worktree_name));
+    }
+    Ok(())
+}
+
 fn has_uncommitted_changes(repo: &Repository) -> Result<bool, WorktreeError> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
@@ -471,6 +494,50 @@ fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> Result<PathBu
         }
         _ => Ok(repo_workdir.join(".worktrees").join(name)),
     }
+}
+
+fn ensure_local_exclude_for_worktree_path(
+    repo: &Repository,
+    repo_workdir: &Path,
+    wt_path: &Path,
+) -> Result<(), WorktreeError> {
+    if !is_nested_worktree_path(repo_workdir, wt_path) {
+        return Ok(());
+    }
+
+    let exclude_path = repo.path().join("info").join("exclude");
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    if existing
+        .lines()
+        .map(str::trim)
+        .any(|line| line == ".worktrees/" || line == "/.worktrees/")
+    {
+        return Ok(());
+    }
+    if let Some(parent) = exclude_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude_path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file)?;
+    }
+    writeln!(file, ".worktrees/")?;
+    Ok(())
+}
+
+fn is_nested_worktree_path(repo_workdir: &Path, wt_path: &Path) -> bool {
+    wt_path
+        .strip_prefix(repo_workdir)
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .and_then(|component| match component {
+            std::path::Component::Normal(value) => Some(value == ".worktrees"),
+            _ => None,
+        })
+        .unwrap_or(false)
 }
 
 fn worktree_exists(repo: &Repository, name: &str) -> bool {
@@ -614,6 +681,17 @@ mod tests {
     }
 
     #[test]
+    fn nested_worktree_layout_does_not_dirty_target_checkout() {
+        let dir = make_repo();
+        let _info = create(dir.path().to_str().unwrap(), "nested-clean", "nested").unwrap();
+
+        assert_eq!(status(dir.path().to_str().unwrap()).unwrap(), "clean");
+
+        let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert!(exclude.lines().any(|line| line.trim() == ".worktrees/"));
+    }
+
+    #[test]
     fn remove_rejects_dirty_worktree() {
         let dir = make_repo();
         let info = create(dir.path().to_str().unwrap(), "remove-dirty", "nested").unwrap();
@@ -646,6 +724,20 @@ mod tests {
         let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
 
         assert!(matches!(result, Err(WorktreeError::TargetDirty)));
+    }
+
+    #[test]
+    fn merge_rejects_dirty_source_worktree() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "merge-source-dirty", "nested").unwrap();
+        fs::write(Path::new(&info.path).join("uncommitted.txt"), "dirty\n").unwrap();
+
+        let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::SourceDirty(name)) if name == info.worktree_name
+        ));
     }
 
     #[test]
