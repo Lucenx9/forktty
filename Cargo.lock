@@ -493,6 +493,7 @@ dependencies = [
  "gtk4",
  "libadwaita",
  "libloading",
+ "tempfile",
  "tokio",
 ]
 

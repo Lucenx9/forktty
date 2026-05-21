@@ -126,7 +126,13 @@ rebuilding.
 - Launch `forktty` from a terminal.
 - Launch ForkTTY from the desktop/app launcher.
 - Confirm the app icon and desktop name render correctly.
-- Confirm `forktty --help` exits cleanly if CLI flags are supported, or document the current behavior.
+- `forktty --version` prints the workspace version and exits 0.
+- `forktty --help` prints usage and exits 0.
+- `forktty doctor` prints the diagnostics report and exits 0 on a clean
+  environment, or 2 with explicit warning lines on a misconfigured one.
+- `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
+- `sha256sum -c SHA256SUMS` (run from the release download dir) prints
+  `OK` for the published `.deb`.
 - Remove the package and confirm `/usr/bin/forktty` and the desktop entry are removed.
 
 ## Suggested Matrix

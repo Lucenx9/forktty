@@ -246,8 +246,8 @@ fn resolve_shell_from_path(
     shell_env: Option<String>,
 ) -> (Option<String>, bool, Option<String>) {
     let mut warning = None;
-    let from_config = config_path.and_then(|path| {
-        match forktty_core::config::load_config_from_path(path) {
+    let from_config = config_path.and_then(
+        |path| match forktty_core::config::load_config_from_path(path) {
             Ok(config) => Some(config.general.shell.clone()),
             Err(err) => {
                 warning = Some(format!(
@@ -256,8 +256,8 @@ fn resolve_shell_from_path(
                 ));
                 None
             }
-        }
-    });
+        },
+    );
     let resolved = from_config
         .filter(|s| !s.trim().is_empty())
         .or(shell_env)
@@ -455,5 +455,35 @@ mod tests {
         assert!(rendered.contains("config.toml"));
         assert!(rendered.contains("forktty.sock"));
         assert!(rendered.contains("Agent hook configs"));
+    }
+
+    #[test]
+    fn doctor_shell_resolution_does_not_quarantine_bad_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "{ broken").unwrap();
+
+        let (shell, executable, warning) =
+            resolve_shell_from_path(Some(&path), Some("/bin/sh".to_string()));
+
+        assert_eq!(shell.as_deref(), Some("/bin/sh"));
+        assert!(executable);
+        assert!(warning
+            .as_deref()
+            .is_some_and(|message| message.contains("could not be loaded")));
+        assert!(
+            path.exists(),
+            "doctor must not quarantine config while diagnosing it"
+        );
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .all(|name| !name.to_string_lossy().contains(".bad-")),
+            "doctor unexpectedly created quarantine files: {siblings:?}"
+        );
     }
 }
