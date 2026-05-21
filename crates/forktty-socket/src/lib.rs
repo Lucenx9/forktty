@@ -505,10 +505,17 @@ pub async fn dispatch(
                 .unwrap_or("ForkTTY");
             let body = params.get("body").and_then(Value::as_str).unwrap_or("");
             let kind = match params.get("kind").and_then(Value::as_str) {
+                None | Some("") | Some("info") => NotificationKind::Info,
                 Some("prompt") => NotificationKind::Prompt,
                 Some("error") => NotificationKind::Error,
                 Some("custom") => NotificationKind::Custom,
-                _ => NotificationKind::Info,
+                Some(_) => {
+                    return Err(
+                        "Invalid parameter kind: expected info, prompt, error, or custom"
+                            .to_string()
+                            .into(),
+                    )
+                }
             };
             let (workspace_id, surface_id) = resolve_notification_target(state, &params)?;
             let item = {
@@ -1701,6 +1708,26 @@ mod tests {
 
         assert_eq!(stale_workspace.code(), "not_found");
         assert_eq!(stale_surface.code(), "not_found");
+        let notifications = dispatch(&state, "notification.list", json!({}))
+            .await
+            .unwrap();
+        assert!(notifications.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn notification_create_rejects_invalid_kind() {
+        let (state, _backend) = test_state();
+
+        let error = dispatch(
+            &state,
+            "notification.create",
+            json!({"title": "Prompt", "kind": "promtp"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.code(), "error");
+        assert!(error.to_string().contains("Invalid parameter kind"));
         let notifications = dispatch(&state, "notification.list", json!({}))
             .await
             .unwrap();
