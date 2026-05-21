@@ -143,6 +143,8 @@ rebuilding.
   warns that the socket path is not a Unix socket before launch fails.
 - With `$XDG_RUNTIME_DIR` pointing at a regular file, `forktty doctor` warns
   that the socket parent is not a directory before launch fails.
+- With `$XDG_RUNTIME_DIR` pointing under a regular file path, `forktty doctor`
+  warns that the socket path could not be inspected and exits 2.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
   hook paths under that temporary home, matching `hooks setup` fallback paths.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.

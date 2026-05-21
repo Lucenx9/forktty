@@ -122,6 +122,7 @@ fn collect_report() -> DoctorReport {
 
     let config_path = forktty_core::config::config_path().ok();
     let config = describe_path("config.toml", config_path.clone());
+    append_path_error_warning(&mut warnings, &config);
     append_launch_quarantine_warnings(
         &mut warnings,
         &config,
@@ -133,6 +134,8 @@ fn collect_report() -> DoctorReport {
     let data_dir = describe_path("data dir", data_root.clone());
     let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
     let session = describe_path("session-v2.json", session_path);
+    append_path_error_warning(&mut warnings, &data_dir);
+    append_path_error_warning(&mut warnings, &session);
     append_launch_quarantine_warnings(
         &mut warnings,
         &session,
@@ -144,6 +147,8 @@ fn collect_report() -> DoctorReport {
     let socket_parent_path = socket.parent().map(PathBuf::from);
     let socket_parent = describe_path("socket dir", socket_parent_path);
     let socket_state = describe_path("forktty.sock", Some(socket));
+    append_path_error_warning(&mut warnings, &socket_parent);
+    append_path_error_warning(&mut warnings, &socket_state);
     append_socket_parent_warning(&mut warnings, &socket_parent);
     append_socket_path_warning(&mut warnings, &socket_state);
     if let Some(mode) = socket_parent.mode {
@@ -247,6 +252,16 @@ fn append_socket_parent_warning(warnings: &mut Vec<String>, state: &PathState) {
     if state.exists && !state.is_dir && state.error.is_none() {
         warnings.push(format!(
             "socket parent {} exists but is not a directory; ForkTTY cannot bind its socket there.",
+            path_display(state)
+        ));
+    }
+}
+
+fn append_path_error_warning(warnings: &mut Vec<String>, state: &PathState) {
+    if let Some(error) = &state.error {
+        warnings.push(format!(
+            "{} {} could not be inspected: {error}",
+            state.label,
             path_display(state)
         ));
     }
@@ -652,6 +667,24 @@ mod tests {
         assert!(warnings.iter().any(|warning| {
             warning.contains(&parent_path.display().to_string())
                 && warning.contains("not a directory")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_path_cannot_be_inspected() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked_parent = dir.path().join("blocked");
+        fs::write(&blocked_parent, "not a directory").unwrap();
+        let socket_path = blocked_parent.join("forktty.sock");
+        let state = describe_path("forktty.sock", Some(socket_path.clone()));
+        let mut warnings = Vec::new();
+
+        append_path_error_warning(&mut warnings, &state);
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("forktty.sock")
+                && warning.contains(&socket_path.display().to_string())
+                && warning.contains("could not be inspected")
         }));
     }
 
