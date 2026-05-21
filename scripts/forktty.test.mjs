@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   atomicWriteFile,
+  buildClearMetadataParams,
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
@@ -541,6 +542,30 @@ describe("forktty CLI helpers", () => {
       /--message requires a value/,
     );
     assert.throws(() => buildLogParams({ level: "debug" }, ["hello"]), /Invalid --level/);
+  });
+
+  it("builds clear metadata params without treating bad keys as clear-all", () => {
+    assert.deepEqual(
+      buildClearMetadataParams({ key: " build " }, { FORKTTY_WORKSPACE_ID: " ws-1 " }),
+      {
+        workspace_id: "ws-1",
+        key: "build",
+      },
+    );
+    assert.deepEqual(
+      buildClearMetadataParams({}, { FORKTTY_WORKSPACE_ID: " ws-1 " }),
+      {
+        workspace_id: "ws-1",
+      },
+    );
+    assert.throws(
+      () => buildClearMetadataParams({ key: true }, { FORKTTY_WORKSPACE_ID: "ws-1" }),
+      /--key requires a value/,
+    );
+    assert.throws(
+      () => buildClearMetadataParams({ key: "" }, { FORKTTY_WORKSPACE_ID: "ws-1" }),
+      /--key requires a value/,
+    );
   });
 
   it("builds surface action params from env fallback", () => {

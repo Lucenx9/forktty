@@ -564,10 +564,7 @@ pub async fn dispatch(
         }
         "metadata.clear_status" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
-            let key = params
-                .get("key")
-                .and_then(Value::as_str)
-                .filter(|key| !key.trim().is_empty());
+            let key = optional_non_blank_string_param(&params, "key")?;
             let cleared = {
                 let mut model = state
                     .model
@@ -616,10 +613,7 @@ pub async fn dispatch(
         }
         "metadata.clear_progress" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
-            let key = params
-                .get("key")
-                .and_then(Value::as_str)
-                .filter(|key| !key.trim().is_empty());
+            let key = optional_non_blank_string_param(&params, "key")?;
             let cleared = {
                 let mut model = state
                     .model
@@ -977,6 +971,20 @@ fn log_level_from_params(params: &Value) -> Result<LogLevel, DispatchError> {
         Some("error") => Ok(LogLevel::Error),
         Some(_) => Err("Invalid parameter level: expected info, warn, or error".into()),
         None => Err("Invalid parameter level: expected string".into()),
+    }
+}
+
+fn optional_non_blank_string_param<'a>(
+    params: &'a Value,
+    key: &str,
+) -> Result<Option<&'a str>, DispatchError> {
+    let Some(value) = params.get(key) else {
+        return Ok(None);
+    };
+    match value.as_str().map(str::trim) {
+        Some(value) if !value.is_empty() => Ok(Some(value)),
+        Some(_) => Err(format!("Invalid parameter {key}: must not be empty").into()),
+        None => Err(format!("Invalid parameter {key}: expected string").into()),
     }
 }
 
@@ -1835,6 +1843,77 @@ mod tests {
         .await
         .unwrap();
         assert!(logs.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_clear_rejects_invalid_keys_without_clearing_all() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_progress",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "build",
+                "label": "Build",
+                "value": 1
+            }),
+        )
+        .await
+        .unwrap();
+
+        for key in [json!(""), json!(42)] {
+            let status_error = dispatch(
+                &state,
+                "metadata.clear_status",
+                json!({"workspace_id": workspace_id, "key": key.clone()}),
+            )
+            .await
+            .unwrap_err();
+            let progress_error = dispatch(
+                &state,
+                "metadata.clear_progress",
+                json!({"workspace_id": workspace_id, "key": key}),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(status_error.code(), "error");
+            assert_eq!(progress_error.code(), "error");
+            assert!(status_error.to_string().contains("Invalid parameter key"));
+            assert!(progress_error.to_string().contains("Invalid parameter key"));
+        }
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let progress = dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses.as_array().unwrap().len(), 1);
+        assert_eq!(progress.as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]

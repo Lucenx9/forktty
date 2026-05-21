@@ -59,6 +59,8 @@ rebuilding.
 - `printf '{"id":"x","method":"metadata.log","params":{"level":"","message":"blank level"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `level`; no info log is created.
 - `forktty notify --kind=` — exits with `--kind requires a value` instead of silently sending an `info` notification.
 - `forktty log --level=` — exits with `--level requires a value` instead of logging at the default level.
+- `forktty clear-status --key=` — exits with `--key requires a value` instead of clearing every status entry in the targeted workspace.
+- `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.

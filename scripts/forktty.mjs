@@ -418,6 +418,14 @@ function buildLogParams(options, positionals, stdinText = "", env = process.env)
   };
 }
 
+function buildClearMetadataParams(options, env = process.env) {
+  requireNonBlankStringOption(options, "key");
+  return {
+    ...buildTargetParams(options, env),
+    ...(typeof options.key === "string" ? { key: options.key.trim() } : {}),
+  };
+}
+
 function shouldReadCommandStdin(options, positionals, textOption) {
   return typeof options[textOption] !== "string" && positionals.length === 0;
 }
@@ -1034,10 +1042,11 @@ async function handleListStatus(context, args) {
 
 async function handleClearStatus(context, args) {
   const { options } = parseFlags(args);
-  await sendSocketRequest(context.socketPath, "metadata.clear_status", {
-    ...buildTargetParams(options, context.env),
-    ...(typeof options.key === "string" ? { key: options.key } : {}),
-  });
+  await sendSocketRequest(
+    context.socketPath,
+    "metadata.clear_status",
+    buildClearMetadataParams(options, context.env),
+  );
 
   if (context.json) {
     printJson({ result: true });
@@ -1089,10 +1098,11 @@ async function handleListProgress(context, args) {
 
 async function handleClearProgress(context, args) {
   const { options } = parseFlags(args);
-  await sendSocketRequest(context.socketPath, "metadata.clear_progress", {
-    ...buildTargetParams(options, context.env),
-    ...(typeof options.key === "string" ? { key: options.key } : {}),
-  });
+  await sendSocketRequest(
+    context.socketPath,
+    "metadata.clear_progress",
+    buildClearMetadataParams(options, context.env),
+  );
 
   if (context.json) {
     printJson({ result: true });
@@ -1803,6 +1813,7 @@ export {
   AGENT_SPECS,
   HOOK_CONTINUE_RESPONSE,
   atomicWriteFile,
+  buildClearMetadataParams,
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
