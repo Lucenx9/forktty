@@ -121,8 +121,9 @@ async function readOptionalStdinJson() {
 
 async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
+    const requestId = nextRequestId();
     const request = JSON.stringify({
-      id: nextRequestId(),
+      id: requestId,
       method,
       params,
     });
@@ -162,6 +163,18 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
         response = JSON.parse(line);
       } catch (error) {
         finish(new Error(`Invalid socket response from ${socketPath} for ${method}: ${error}`));
+        return;
+      }
+
+      if (response?.id !== requestId) {
+        const actualId = Object.prototype.hasOwnProperty.call(response ?? {}, "id")
+          ? response.id
+          : null;
+        finish(
+          new Error(
+            `Socket response id mismatch for ${method} at ${socketPath}: expected ${requestId}, got ${JSON.stringify(actualId)}`,
+          ),
+        );
         return;
       }
 

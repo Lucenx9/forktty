@@ -91,13 +91,16 @@ describe("forktty CLI helpers", () => {
   it("keeps socket path and error code in failed socket responses", async () => {
     await withSocketServer(
       (socket) => {
-        socket.end(
-          `${JSON.stringify({
-            id: "x",
-            ok: false,
-            error: { code: "not_found", message: "Workspace not found" },
-          })}\n`,
-        );
+        socket.once("data", (chunk) => {
+          const request = JSON.parse(String(chunk).trim());
+          socket.end(
+            `${JSON.stringify({
+              id: request.id,
+              ok: false,
+              error: { code: "not_found", message: "Workspace not found" },
+            })}\n`,
+          );
+        });
       },
       async (socketPath) => {
         await assert.rejects(
@@ -106,6 +109,32 @@ describe("forktty CLI helpers", () => {
             error.message.includes(socketPath) &&
             /workspace\.select/.test(error.message) &&
             /not_found: Workspace not found/.test(error.message),
+        );
+      },
+    );
+  });
+
+  it("rejects socket responses with the wrong request id", async () => {
+    await withSocketServer(
+      (socket) => {
+        socket.once("data", () => {
+          socket.end(
+            `${JSON.stringify({
+              id: "stale-response",
+              ok: true,
+              result: "pong",
+            })}\n`,
+          );
+        });
+      },
+      async (socketPath) => {
+        await assert.rejects(
+          sendSocketRequest(socketPath, "system.ping", {}),
+          (error) =>
+            error.message.includes(socketPath) &&
+            /system\.ping/.test(error.message) &&
+            /response id mismatch/.test(error.message) &&
+            /stale-response/.test(error.message),
         );
       },
     );
