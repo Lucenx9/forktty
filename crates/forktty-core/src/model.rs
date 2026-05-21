@@ -186,13 +186,16 @@ impl WorkspaceModel {
         git_branch: impl Into<String>,
         worktree_name: impl Into<String>,
     ) -> Workspace {
-        let mut workspace = self.create_workspace(name, working_dir);
+        let id = self.create_workspace(name, working_dir).id;
+        // `create_workspace` just inserted this id, so the lookup cannot fail.
+        let workspace = self
+            .workspaces
+            .get_mut(&id)
+            .expect("workspace just created");
         workspace.git_branch = git_branch.into();
         workspace.worktree_dir = Some(workspace.working_dir.clone());
         workspace.worktree_name = Some(worktree_name.into());
-        self.workspaces
-            .insert(workspace.id.clone(), workspace.clone());
-        workspace
+        workspace.clone()
     }
 
     pub fn restore_session(&mut self, data: SessionData) {
@@ -308,7 +311,7 @@ impl WorkspaceModel {
     }
 
     pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
-        let id = self.resolve_workspace_id(selector)?;
+        let id = self.workspace_id_for(selector)?;
         for workspace in self.workspaces.values_mut() {
             workspace.active = workspace.id == id;
         }
@@ -320,14 +323,14 @@ impl WorkspaceModel {
         selector: WorkspaceSelector<'_>,
         name: impl Into<String>,
     ) -> Option<Workspace> {
-        let id = self.resolve_workspace_id(selector)?;
+        let id = self.workspace_id_for(selector)?;
         let workspace = self.workspaces.get_mut(&id)?;
         workspace.name = name.into();
         Some(workspace.clone())
     }
 
     pub fn close_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
-        let id = self.resolve_workspace_id(selector)?;
+        let id = self.workspace_id_for(selector)?;
         let removed = self.workspaces.remove(&id)?;
         self.workspace_order.retain(|candidate| candidate != &id);
         self.surfaces
@@ -760,7 +763,9 @@ impl WorkspaceModel {
         format!("log-{}", self.next_log)
     }
 
-    fn resolve_workspace_id(&self, selector: WorkspaceSelector<'_>) -> Option<WorkspaceId> {
+    /// Resolves a workspace selector to its current id without mutating state.
+    /// Returns `None` if no workspace matches.
+    pub fn workspace_id_for(&self, selector: WorkspaceSelector<'_>) -> Option<WorkspaceId> {
         match selector {
             WorkspaceSelector::Id(id) => self.workspaces.contains_key(id).then(|| id.to_string()),
             WorkspaceSelector::Name(name) => self
@@ -1738,6 +1743,82 @@ mod tests {
         assert!(model.dismiss_notification(&notification.id));
 
         assert!(!model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn workspace_id_for_resolves_each_selector_variant() {
+        let mut model = WorkspaceModel::new();
+        let main = model.create_workspace("main", "/tmp/main");
+        let feature = model.create_worktree_workspace(
+            "feature",
+            "/tmp/feature",
+            "feature",
+            "feature-wt",
+        );
+
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::Id(&main.id)),
+            Some(main.id.clone())
+        );
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::Name("feature")),
+            Some(feature.id.clone())
+        );
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::WorktreeName("feature-wt")),
+            Some(feature.id)
+        );
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::Id("workspace-missing")),
+            None
+        );
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::Name("missing")),
+            None
+        );
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::WorktreeName("missing")),
+            None
+        );
+    }
+
+    #[test]
+    fn repair_session_invariants_drops_orphan_surfaces() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        // Inject an orphan surface that no pane leaf references.
+        let orphan_id = "surface-orphan".to_string();
+        model.surfaces.insert(
+            orphan_id.clone(),
+            Surface {
+                id: orphan_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: PathBuf::from("/tmp"),
+                title: String::from("shell"),
+                unread: false,
+                needs_attention: false,
+            },
+        );
+        // Also inject a surface tied to a no-longer-present workspace.
+        let dangling_id = "surface-dangling".to_string();
+        model.surfaces.insert(
+            dangling_id.clone(),
+            Surface {
+                id: dangling_id.clone(),
+                workspace_id: "workspace-missing".to_string(),
+                cwd: PathBuf::from("/tmp"),
+                title: String::from("shell"),
+                unread: false,
+                needs_attention: false,
+            },
+        );
+
+        assert!(model.repair_session_invariants());
+
+        assert!(model.surface(&orphan_id).is_none());
+        assert!(model.surface(&dangling_id).is_none());
+        // The original workspace surface must remain reachable.
+        assert!(model.surface(&workspace.focused_surface_id).is_some());
     }
 
     #[test]
