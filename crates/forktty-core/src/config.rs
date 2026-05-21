@@ -1,8 +1,9 @@
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -121,11 +122,34 @@ pub fn load_config() -> Result<AppConfig, ConfigError> {
 }
 
 pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
+    save_config_to_path(&config_path()?, config)
+}
+
+pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     validate_config(config)?;
-    let dir = config_dir()?;
-    fs::create_dir_all(&dir)?;
-    fs::write(config_path()?, toml::to_string_pretty(config)?)?;
-    Ok(())
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = toml::to_string_pretty(config)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_path = path.with_extension(format!("toml.tmp-{}-{nonce}", std::process::id()));
+    let result = (|| -> Result<(), ConfigError> {
+        let mut tmp_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        tmp_file.write_all(content.as_bytes())?;
+        tmp_file.sync_all()?;
+        fs::rename(&tmp_path, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
@@ -383,5 +407,30 @@ mod tests {
         std::fs::write(&path, toml_str).unwrap();
         let loaded = load_config_from_path(&path).unwrap();
         assert!(!loaded.appearance.sidebar_visible);
+    }
+
+    #[test]
+    fn save_config_to_path_replaces_existing_file_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "old = true\n").unwrap();
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.appearance.sidebar_visible = false;
+
+        save_config_to_path(&path, &config).unwrap();
+
+        let loaded = load_config_from_path(&path).unwrap();
+        assert!(!loaded.appearance.sidebar_visible);
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .all(|name| !name.to_string_lossy().contains(".tmp-")),
+            "unexpected temp file sibling: {siblings:?}"
+        );
     }
 }
