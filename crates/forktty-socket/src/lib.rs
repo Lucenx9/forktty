@@ -299,11 +299,7 @@ pub async fn dispatch(
             Ok(json!({"status": status}))
         }
         "worktree.create" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("name"))?;
-            let name = validate_worktree_name_param(name)?;
+            let name = worktree_name_from_params(&params, &["name"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
             let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
@@ -317,12 +313,7 @@ pub async fn dispatch(
             }))
         }
         "worktree.attach" => {
-            let name = params
-                .get("name")
-                .or_else(|| params.get("branch"))
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("name"))?;
-            let name = validate_worktree_name_param(name)?;
+            let name = worktree_name_from_params(&params, &["name", "branch"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
             let info = worktree::attach(&cwd, name, &layout).map_err(|err| err.to_string())?;
@@ -336,11 +327,7 @@ pub async fn dispatch(
             }))
         }
         "worktree.remove" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("name"))?;
-            let name = validate_worktree_name_param(name)?;
+            let name = worktree_name_from_params(&params, &["name"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let fallback_path =
                 worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
@@ -391,11 +378,7 @@ pub async fn dispatch(
             Ok(json!({"removed": name}))
         }
         "worktree.merge" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("name"))?;
-            let name = validate_worktree_name_param(name)?;
+            let name = worktree_name_from_params(&params, &["name"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
             Ok(json!(result))
@@ -918,6 +901,23 @@ fn validate_worktree_name_param(name: &str) -> Result<&str, String> {
             "Invalid worktree name: contains an unsafe path segment".to_string()
         }
     })
+}
+
+fn worktree_name_from_params<'a>(
+    params: &'a Value,
+    keys: &[&str],
+    missing_label: &'static str,
+) -> Result<&'a str, DispatchError> {
+    for key in keys {
+        let Some(value) = params.get(*key) else {
+            continue;
+        };
+        let Some(name) = value.as_str() else {
+            return Err(format!("Invalid parameter {key}: expected string").into());
+        };
+        return validate_worktree_name_param(name).map_err(DispatchError::from);
+    }
+    Err(DispatchError::MissingParam(missing_label))
 }
 
 fn worktree_layout() -> String {
@@ -2539,6 +2539,54 @@ mod tests {
         assert!(worktree::list(unopened_repo.path().to_str().unwrap())
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn worktree_socket_rejects_invalid_name_params() {
+        let (state, _backend) = test_state();
+
+        for (method, params, message) in [
+            (
+                "worktree.create",
+                json!({"name": 42}),
+                "Invalid parameter name: expected string",
+            ),
+            (
+                "worktree.create",
+                json!({"name": ""}),
+                "Invalid worktree name: must not be empty",
+            ),
+            (
+                "worktree.attach",
+                json!({"branch": 42}),
+                "Invalid parameter branch: expected string",
+            ),
+            (
+                "worktree.attach",
+                json!({"name": 42, "branch": "topic/socket"}),
+                "Invalid parameter name: expected string",
+            ),
+            (
+                "worktree.remove",
+                json!({"name": 42}),
+                "Invalid parameter name: expected string",
+            ),
+            (
+                "worktree.merge",
+                json!({"name": 42}),
+                "Invalid parameter name: expected string",
+            ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains(message));
+        }
+
+        let error = dispatch(&state, "worktree.attach", json!({"branch": "topic/socket"}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "missing_param");
+        assert!(error.to_string().contains("cwd"));
     }
 
     #[tokio::test]

@@ -112,6 +112,7 @@ rebuilding.
 - From an open repo workspace, run `forktty worktree-list` without `--cwd` — it uses the shell's current `PWD`, not the app launch directory.
 - `env -u PWD forktty worktree-list` from an open repo workspace — it still uses the CLI process current directory, not the app launch directory.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":"feature/no-cwd"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"missing_param"` for `cwd`; no worktree is created from the app launch directory.
+- `printf '{"id":"x","method":"worktree.create","params":{"name":42,"cwd":"'"$PWD"'"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"error"` and says `name` must be a string.
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
 - Run `forktty worktree-attach feature/x --cwd <path-to-clean-repo>` again — it opens/reuses the existing worktree instead of creating a duplicate or failing.
 - If the GTK worktree dialog is opened while no workspace is active, actions report that no active workspace is available instead of using the app launch directory.
