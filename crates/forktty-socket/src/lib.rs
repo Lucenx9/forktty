@@ -421,6 +421,7 @@ pub async fn dispatch(
                     actual: text.len(),
                 });
             }
+            ensure_model_surface_exists(state, surface_id)?;
             state
                 .terminal
                 .send_text(surface_id, text)
@@ -956,6 +957,21 @@ fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or(DispatchError::MissingParam("surface_id"))
+}
+
+fn ensure_model_surface_exists(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if model.surface(surface_id).is_some() {
+        Ok(())
+    } else {
+        Err(DispatchError::NotFound("surface"))
+    }
 }
 
 fn required_f64(params: &Value, key: &str) -> Result<f64, String> {
@@ -1851,6 +1867,36 @@ mod tests {
         .unwrap();
 
         assert_eq!(backend.sent_text(surface_id).unwrap(), vec!["echo camel\n"]);
+    }
+
+    #[tokio::test]
+    async fn send_text_rejects_surface_removed_from_model_even_if_backend_still_has_it() {
+        let (state, backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        let split = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap();
+        let stale_surface_id = split["id"].as_str().unwrap().to_string();
+        {
+            let mut model = state.model.lock().unwrap();
+            model.close_surface(&stale_surface_id).unwrap();
+        }
+
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surface_id": stale_surface_id, "text": "echo stale\n"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "not_found");
+        assert!(backend.sent_text(&stale_surface_id).unwrap().is_empty());
     }
 
     #[tokio::test]
