@@ -334,14 +334,10 @@ fn quarantine_bad_config_with_timestamp(
     path: &Path,
     timestamp: &str,
 ) -> Result<Option<PathBuf>, ConfigError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
-    };
-    let file_type = metadata.file_type();
-    if !file_type.is_file() && !file_type.is_symlink() {
-        return Ok(None);
     }
     let quarantine_path = available_bad_config_path(path, &timestamp);
     fs::rename(path, &quarantine_path)?;
@@ -534,6 +530,31 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[test]
+    fn recovery_quarantines_config_directory_and_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("note.txt"), "not a config").unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        assert_eq!(config, AppConfig::default());
+        assert!(
+            !path.exists(),
+            "bad config directory should be renamed aside"
+        );
+        let quarantined_path = recovery
+            .expect("expected recovery details")
+            .quarantined_path
+            .expect("expected quarantined path");
+        assert!(quarantined_path.is_dir());
+        assert_eq!(
+            fs::read_to_string(quarantined_path.join("note.txt")).unwrap(),
+            "not a config"
+        );
     }
 
     #[test]
