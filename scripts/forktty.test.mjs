@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   atomicWriteFile,
   buildClearMetadataParams,
+  buildCreateWorkspaceParams,
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
@@ -278,6 +279,28 @@ describe("forktty CLI helpers", () => {
       options: { "dry-run": true },
       positionals: ["codex"],
     });
+  });
+
+  it("builds create workspace params without ignoring bad explicit options", () => {
+    assert.deepEqual(
+      buildCreateWorkspaceParams({
+        name: " feature ",
+        "working-dir": " /repo/feature ",
+      }),
+      {
+        name: "feature",
+        workingDir: "/repo/feature",
+      },
+    );
+    assert.deepEqual(buildCreateWorkspaceParams({}), {});
+    assert.throws(
+      () => buildCreateWorkspaceParams({ name: "" }),
+      /--name requires a value/,
+    );
+    assert.throws(
+      () => buildCreateWorkspaceParams({ "working-dir": true }),
+      /--working-dir requires a value/,
+    );
   });
 
   it("honors -- as the end of command options", () => {

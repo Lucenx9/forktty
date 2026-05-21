@@ -570,6 +570,20 @@ function countPaneLeaves(node) {
   return 0;
 }
 
+function buildCreateWorkspaceParams(options) {
+  requireNonBlankStringOption(options, "name");
+  requireNonBlankStringOption(options, "working-dir");
+  const params = {};
+
+  if (typeof options.name === "string") {
+    params.name = options.name.trim();
+  }
+  if (typeof options["working-dir"] === "string") {
+    params.workingDir = options["working-dir"].trim();
+  }
+  return params;
+}
+
 async function handleList(context) {
   const workspaces = await sendSocketRequest(context.socketPath, "workspace.list", {});
   if (context.json) {
@@ -584,14 +598,7 @@ async function handleList(context) {
 
 async function handleCreateWorkspace(context, args) {
   const { options } = parseFlags(args);
-  const params = {};
-
-  if (typeof options.name === "string" && options.name.trim()) {
-    params.name = options.name.trim();
-  }
-  if (typeof options["working-dir"] === "string" && options["working-dir"].trim()) {
-    params.workingDir = options["working-dir"].trim();
-  }
+  const params = buildCreateWorkspaceParams(options);
 
   const result = await sendSocketRequest(context.socketPath, "workspace.create", params);
 
@@ -1827,6 +1834,7 @@ export {
   AGENT_SPECS,
   HOOK_CONTINUE_RESPONSE,
   atomicWriteFile,
+  buildCreateWorkspaceParams,
   buildClearMetadataParams,
   buildHookActions,
   buildHookShellCommand,

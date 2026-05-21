@@ -50,6 +50,7 @@ rebuilding.
 - Start a stub Unix socket at the default path that replies `{"id":"other","ok":true,"result":"pong"}` to `system.ping`, then launch ForkTTY; startup should treat it as a foreign socket, not as another ForkTTY instance.
 - Replace the default socket path with a broken symlink, then launch ForkTTY; startup should refuse to replace the non-socket path and leave it for manual inspection.
 - `forktty list` — returns at least one workspace.
+- `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
