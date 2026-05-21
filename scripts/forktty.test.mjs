@@ -19,6 +19,7 @@ import {
   formatNotificationLine,
   handleHooksSetup,
   mergeHookConfig,
+  parseGlobalArgs,
   readAgentConfig,
   resolveSelectorParams,
   sendSocketRequest,
@@ -192,6 +193,30 @@ describe("forktty CLI helpers", () => {
         body: "GTK",
       }),
       "[unread] global · info · Smoke — GTK",
+    );
+  });
+
+  it("accepts global socket and json flags after the command", () => {
+    assert.deepEqual(
+      parseGlobalArgs(["ping", "--socket", "/tmp/stub.sock", "--json"], {}),
+      {
+        args: ["ping"],
+        json: true,
+        socketPath: "/tmp/stub.sock",
+        help: false,
+      },
+    );
+    assert.deepEqual(
+      parseGlobalArgs(
+        ["worktree-create", "feature/x", "--cwd", "/repo", "--socket=/tmp/forktty.sock"],
+        {},
+      ),
+      {
+        args: ["worktree-create", "feature/x", "--cwd", "/repo"],
+        json: false,
+        socketPath: "/tmp/forktty.sock",
+        help: false,
+      },
     );
   });
 

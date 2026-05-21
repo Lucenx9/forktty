@@ -45,6 +45,7 @@ default socket. Useful for catching protocol regressions without
 rebuilding.
 
 - Before starting the app, run `./scripts/forktty.mjs ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte` or `--socket <path>`.
+- Run both `./scripts/forktty.mjs --socket <path> ping` and `./scripts/forktty.mjs ping --socket <path>` against a stub socket; both forms should use the supplied socket path.
 - Start a stub Unix socket at the default path that replies `{"id":"other","ok":true,"result":"pong"}` to `system.ping`, then launch ForkTTY; startup should treat it as a foreign socket, not as another ForkTTY instance.
 - `forktty list` — returns at least one workspace.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.

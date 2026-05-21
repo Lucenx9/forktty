@@ -421,6 +421,7 @@ Selector flags:
 
 Notes:
   - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
+  - Global --socket and --json flags may appear before or after the command.
   - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
   - Worktree commands default --cwd to PWD so repo operations follow the shell you run them from.
   - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
@@ -1524,44 +1525,56 @@ async function handlePing(context) {
   }
 }
 
-async function main(argv = process.argv.slice(2), env = process.env) {
-  const args = [...argv];
+function parseGlobalArgs(argv, env = process.env) {
+  const args = [];
   let json = false;
   let socketPath = defaultSocketPath(env);
+  let help = false;
 
-  while (args[0]?.startsWith("--")) {
-    const token = args.shift();
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
     if (token === "--json") {
       json = true;
       continue;
     }
-    if (token === "--help") {
-      printHelp();
-      return;
-    }
     if (token === "--socket") {
-      const next = args.shift();
+      const next = argv[index + 1];
       if (!next) throw new Error("--socket requires a value");
       socketPath = next;
+      index += 1;
       continue;
     }
-    if (token.startsWith("--socket=")) {
+    if (typeof token === "string" && token.startsWith("--socket=")) {
       socketPath = token.slice("--socket=".length);
       continue;
     }
-    throw new Error(`Unknown option: ${token}`);
+    if (token === "--help" && args.length === 0) {
+      help = true;
+      continue;
+    }
+    if (args.length === 0 && typeof token === "string" && token.startsWith("--")) {
+      throw new Error(`Unknown option: ${token}`);
+    }
+    args.push(token);
   }
 
+  return { args, json, socketPath, help };
+}
+
+async function main(argv = process.argv.slice(2), env = process.env) {
+  const parsed = parseGlobalArgs(argv, env);
+  const args = [...parsed.args];
+
   const command = args.shift();
-  if (!command) {
+  if (parsed.help || !command) {
     printHelp();
     return;
   }
 
   const context = {
     env,
-    json,
-    socketPath,
+    json: parsed.json,
+    socketPath: parsed.socketPath,
   };
 
   switch (command) {
@@ -1698,6 +1711,7 @@ export {
   formatNotificationLine,
   handleHooksSetup,
   mergeHookConfig,
+  parseGlobalArgs,
   parseFlags,
   readAgentConfig,
   resolveSelectorParams,
