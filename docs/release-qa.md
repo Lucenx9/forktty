@@ -52,6 +52,8 @@ rebuilding.
 
 - Before starting the app, run `./scripts/forktty.mjs ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte` or `--socket <path>`.
 - Launch with `FORKTTY_SOCKET_PATH=" "` and confirm the app still binds the default socket path instead of disabling automation.
+- Launch with `FORKTTY_SOCKET_PATH=relative.sock` and confirm both the app and
+  `./scripts/forktty.mjs ping` ignore the relative env value and use the default socket path.
 - Run both `./scripts/forktty.mjs --socket <path> ping` and `./scripts/forktty.mjs ping --socket <path>` against a stub socket; both forms should use the supplied socket path.
 - `./scripts/forktty.mjs ping --socket=` — exits with `--socket requires a value` instead of trying to connect to an empty path.
 - Start a stub Unix socket at the default path that replies `{"id":"other","ok":true,"result":"pong"}` to `system.ping`, then launch ForkTTY; startup should treat it as a foreign socket, not as another ForkTTY instance.

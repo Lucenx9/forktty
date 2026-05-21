@@ -3362,7 +3362,7 @@ fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
     socket_env
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && Path::new(value).is_absolute())
         .map(PathBuf::from)
         .unwrap_or_else(default_socket_path)
 }
@@ -7790,7 +7790,7 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_env_ignores_blank_values() {
+    fn socket_path_env_ignores_blank_and_relative_values() {
         assert_eq!(socket_path_from_env(None), default_socket_path());
         assert_eq!(
             socket_path_from_env(Some("  /tmp/forktty-custom.sock  ".to_string())),
@@ -7798,6 +7798,10 @@ mod tests {
         );
         assert_eq!(
             socket_path_from_env(Some("  ".to_string())),
+            default_socket_path()
+        );
+        assert_eq!(
+            socket_path_from_env(Some("relative.sock".to_string())),
             default_socket_path()
         );
     }

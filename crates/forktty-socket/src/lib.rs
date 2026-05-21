@@ -1441,7 +1441,11 @@ fn validate_private_socket_parent(path: &Path) -> io::Result<()> {
 }
 
 fn default_socket_dir() -> PathBuf {
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+    default_socket_dir_from_env(std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
+}
+
+fn default_socket_dir_from_env(runtime_dir: Option<&str>) -> PathBuf {
+    if let Some(runtime_dir) = runtime_dir.map(str::trim).filter(|value| !value.is_empty()) {
         let path = PathBuf::from(runtime_dir);
         if path.is_absolute() {
             return path;
@@ -1621,6 +1625,22 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[test]
+    fn default_socket_dir_trims_and_requires_absolute_runtime_dir() {
+        assert_eq!(
+            default_socket_dir_from_env(Some(" /run/user/1000 ")),
+            PathBuf::from("/run/user/1000")
+        );
+        assert_eq!(
+            default_socket_dir_from_env(Some("relative-runtime")),
+            std::env::temp_dir().join(format!("forktty-{}", effective_uid()))
+        );
+        assert_eq!(
+            default_socket_dir_from_env(Some("  ")),
+            std::env::temp_dir().join(format!("forktty-{}", effective_uid()))
+        );
     }
 
     #[tokio::test]

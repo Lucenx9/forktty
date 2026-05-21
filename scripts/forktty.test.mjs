@@ -69,6 +69,19 @@ describe("forktty CLI helpers", () => {
       }),
       "/run/user/1000/forktty.sock",
     );
+    assert.equal(
+      defaultSocketPath({
+        XDG_RUNTIME_DIR: " /run/user/1000 ",
+      }),
+      "/run/user/1000/forktty.sock",
+    );
+    assert.equal(
+      defaultSocketPath({
+        FORKTTY_SOCKET_PATH: "relative.sock",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+      }),
+      "/run/user/1000/forktty.sock",
+    );
   });
 
   it("falls back to a user temp socket path", () => {
@@ -270,6 +283,13 @@ describe("forktty CLI helpers", () => {
         socketExplicit: false,
       }),
       true,
+    );
+    assert.equal(
+      shouldSendHookActions({
+        env: { FORKTTY_SOCKET_PATH: "relative.sock" },
+        socketExplicit: false,
+      }),
+      false,
     );
     assert.equal(shouldSendHookActions({ env: {}, socketExplicit: true }), true);
   });

@@ -83,17 +83,27 @@ function shellQuote(value) {
 }
 
 function defaultSocketPath(env = process.env) {
-  if (typeof env.FORKTTY_SOCKET_PATH === "string" && env.FORKTTY_SOCKET_PATH.trim()) {
-    return env.FORKTTY_SOCKET_PATH.trim();
+  const socketEnvPath = socketPathFromEnv(env);
+  if (socketEnvPath) {
+    return socketEnvPath;
   }
 
-  if (typeof env.XDG_RUNTIME_DIR === "string" && env.XDG_RUNTIME_DIR.startsWith("/")) {
-    return path.join(env.XDG_RUNTIME_DIR, "forktty.sock");
+  if (typeof env.XDG_RUNTIME_DIR === "string") {
+    const runtimeDir = env.XDG_RUNTIME_DIR.trim();
+    if (path.isAbsolute(runtimeDir)) {
+      return path.join(runtimeDir, "forktty.sock");
+    }
   }
 
   const uid =
     typeof process.getuid === "function" ? String(process.getuid()) : env.UID || "unknown";
   return path.join(os.tmpdir(), `forktty-${uid}`, "forktty.sock");
+}
+
+function socketPathFromEnv(env = process.env) {
+  if (typeof env.FORKTTY_SOCKET_PATH !== "string") return null;
+  const socketPath = env.FORKTTY_SOCKET_PATH.trim();
+  return socketPath && path.isAbsolute(socketPath) ? socketPath : null;
 }
 
 function nextRequestId() {
@@ -1681,8 +1691,7 @@ async function handleHookEvent(context, args) {
 function shouldSendHookActions(context) {
   return (
     context.socketExplicit ||
-    (typeof context.env.FORKTTY_SOCKET_PATH === "string" &&
-      Boolean(context.env.FORKTTY_SOCKET_PATH.trim()))
+    Boolean(socketPathFromEnv(context.env))
   );
 }
 
