@@ -99,6 +99,7 @@ rebuilding.
 - Inside the new workspace, commit a change and then `forktty worktree-merge feature/x` from the original workspace's prompt.
 - `forktty worktree-remove feature/x` — the workspace closes, the worktree is removed from the repo, and the local `feature/x` branch still exists.
 - Manually delete a linked worktree directory, then run `forktty worktree-list` and `forktty worktree-remove <branch>` — the list marks it `missing`, remove prunes the stale git worktree metadata, and the branch remains.
+- `forktty worktree-status --path=` — exits with `--path requires a value` instead of checking the caller's current repo.
 
 ## Debian Package Smoke
 

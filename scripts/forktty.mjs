@@ -861,6 +861,9 @@ async function handleCloseSurface(context, args) {
 }
 
 function worktreeParams(options, positionals, requireName = false, env = process.env) {
+  requireNonBlankStringOption(options, "branch");
+  requireNonBlankStringOption(options, "cwd");
+  requireNonBlankStringOption(options, "name");
   const params = {};
   const name = positionals[0] || options.name || options.branch;
   if (requireName && (!name || typeof name !== "string")) {
@@ -878,6 +881,8 @@ function worktreeParams(options, positionals, requireName = false, env = process
 }
 
 function buildWorktreeStatusParams(options, positionals, env = process.env) {
+  requireNonBlankStringOption(options, "cwd");
+  requireNonBlankStringOption(options, "path");
   const pathValue =
     typeof options.path === "string" && options.path.trim()
       ? options.path.trim()
