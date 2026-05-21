@@ -214,11 +214,7 @@ pub async fn dispatch(
             Ok(json!(model.list_workspaces()))
         }
         "workspace.create" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("workspace");
+            let name = workspace_create_name_from_params(&params)?;
             let cwd = resolve_workspace_cwd_param(&params)?;
             let (workspace, previous_active_id) = {
                 let mut model = state
@@ -938,6 +934,17 @@ fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or(DispatchError::MissingParam("surface_id"))
+}
+
+fn workspace_create_name_from_params(params: &Value) -> Result<&str, DispatchError> {
+    let Some(value) = params.get("name") else {
+        return Ok("workspace");
+    };
+    match value.as_str().map(str::trim) {
+        Some(name) if !name.is_empty() => Ok(name),
+        Some(_) => Err("Invalid parameter name: must not be empty".into()),
+        None => Err("Invalid parameter name: expected string".into()),
+    }
 }
 
 fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
@@ -2086,6 +2093,47 @@ mod tests {
             backend.sent_text(feature_surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn workspace_create_rejects_invalid_names() {
+        let (state, _backend) = test_state();
+
+        for name in [json!(""), json!(" \t "), json!(42)] {
+            let error = dispatch(
+                &state,
+                "workspace.create",
+                json!({"name": name, "workingDir": "/tmp"}),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter name"));
+        }
+
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["name"], "main");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_trims_valid_name() {
+        let (state, _backend) = test_state();
+
+        let created = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": " feature\n", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(created["name"], "feature");
+        let selected = dispatch(&state, "workspace.select", json!({"name": "feature"}))
+            .await
+            .unwrap();
+        assert_eq!(selected["id"], created["id"]);
     }
 
     #[tokio::test]
