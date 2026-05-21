@@ -436,6 +436,10 @@ describe("forktty CLI helpers", () => {
 
   it("rejects invalid progress values", () => {
     assert.throws(
+      () => buildProgressParams({ key: "build", value: "1", total: true }),
+      /--total requires a value/,
+    );
+    assert.throws(
       () => buildProgressParams({ key: "build", value: "nan" }),
       /Invalid --value/,
     );
@@ -462,6 +466,14 @@ describe("forktty CLI helpers", () => {
   });
 
   it("rejects invalid log levels", () => {
+    assert.throws(
+      () => buildLogParams({ level: true }, ["hello"]),
+      /--level requires a value/,
+    );
+    assert.throws(
+      () => buildLogParams({ message: true }, []),
+      /--message requires a value/,
+    );
     assert.throws(() => buildLogParams({ level: "debug" }, ["hello"]), /Invalid --level/);
   });
 

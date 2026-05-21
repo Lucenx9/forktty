@@ -340,7 +340,16 @@ function parseFiniteNumber(value, optionName) {
   return parsed;
 }
 
+function requireStringOption(options, key, optionName = `--${key}`) {
+  if (options[key] !== undefined && typeof options[key] !== "string") {
+    throw new Error(`${optionName} requires a value`);
+  }
+}
+
 function buildProgressParams(options, env = process.env) {
+  requireStringOption(options, "label");
+  requireStringOption(options, "value");
+  requireStringOption(options, "total");
   const key = typeof options.key === "string" ? options.key.trim() : "";
   const label =
     typeof options.label === "string" && options.label.trim() ? options.label.trim() : key;
@@ -368,6 +377,8 @@ function buildProgressParams(options, env = process.env) {
 }
 
 function buildLogParams(options, positionals, stdinText = "", env = process.env) {
+  requireStringOption(options, "level");
+  requireStringOption(options, "message");
   const level =
     typeof options.level === "string" && options.level.trim() ? options.level.trim() : "info";
   const message =
