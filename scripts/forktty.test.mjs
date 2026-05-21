@@ -323,11 +323,16 @@ describe("forktty CLI helpers", () => {
 
   it("shell-quotes the generated hook command", () => {
     const scriptPath = "/tmp/ForkTTY Repo/scripts/forktty.mjs";
-    const command = buildHookShellCommand(scriptPath, "codex", "session-start");
+    const command = buildHookShellCommand(
+      scriptPath,
+      "codex",
+      "session-start",
+      "/opt/Node Bin/node",
+    );
     assert.match(command, /FORKTTY_CODEX_HOOKS_DISABLED/);
     assert.ok(
       command.includes(
-        "node '/tmp/ForkTTY Repo/scripts/forktty.mjs' hooks codex session-start",
+        "'/opt/Node Bin/node' '/tmp/ForkTTY Repo/scripts/forktty.mjs' hooks codex session-start",
       ),
     );
   });

@@ -1217,10 +1217,10 @@ async function handleClearNotifications(context) {
   }
 }
 
-function buildHookShellCommand(scriptPath, agent, event) {
+function buildHookShellCommand(scriptPath, agent, event, nodePath = process.execPath) {
   const spec = AGENT_SPECS[agent];
   const disabledGuard = `[ "\${${spec.disabledEnv}:-}" != "1" ]`;
-  const command = `node ${shellQuote(scriptPath)} hooks ${agent} ${event}`;
+  const command = `${shellQuote(nodePath)} ${shellQuote(scriptPath)} hooks ${agent} ${event}`;
   return `${disabledGuard} && ${command} || echo '${HOOK_CONTINUE_JSON.trimEnd()}'`;
 }
 
@@ -1245,7 +1245,7 @@ function deepCloneJson(value) {
   return value === undefined ? {} : JSON.parse(JSON.stringify(value));
 }
 
-function mergeHookConfig(existingConfig, agent, scriptPath) {
+function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.execPath) {
   const spec = AGENT_SPECS[agent];
   if (!spec) {
     throw new Error(`Unsupported agent: ${agent}`);
@@ -1257,7 +1257,7 @@ function mergeHookConfig(existingConfig, agent, scriptPath) {
 
   for (const [eventName, hookEventName, timeout] of spec.hookEntries) {
     const statusMessage = `ForkTTY ${spec.label} hooks`;
-    const command = buildHookShellCommand(scriptPath, agent, hookEventName);
+    const command = buildHookShellCommand(scriptPath, agent, hookEventName, nodePath);
     const nextEntry = buildHookEntry(command, statusMessage, timeout, spec.matcher);
     const existingEntries = Array.isArray(hooks[eventName]) ? [...hooks[eventName]] : [];
     const alreadyPresent = existingEntries.some((entry) =>

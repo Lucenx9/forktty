@@ -100,6 +100,7 @@ rebuilding.
 - `node scripts/forktty.mjs hooks setup --dry-run codex` — also prints `would update` without writing; `--dry-run` must not consume the agent name.
 - `node scripts/forktty.mjs hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= node scripts/forktty.mjs hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
+- Inspect one generated hook command — it starts with the absolute Node executable path that ran setup, not bare `node`, so hooks keep working when an agent runs with a minimal `PATH`.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 - `node scripts/forktty.mjs hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
 - Modify an existing agent hook config and re-run setup twice quickly — each changed run creates a distinct `.bak-*` file and does not overwrite a prior backup.
