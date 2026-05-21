@@ -282,13 +282,21 @@ fn is_executable_file(path: &Path) -> bool {
 
 fn collect_hooks() -> Vec<HookState> {
     let home = dirs::home_dir();
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|h| h.join(".codex")));
-    let claude_home = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|h| h.join(".claude")));
-    let gemini_home = home.as_ref().map(|h| h.join(".gemini"));
+    collect_hooks_from_env(
+        home.as_deref(),
+        std::env::var_os("CODEX_HOME"),
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+    )
+}
+
+fn collect_hooks_from_env(
+    home: Option<&Path>,
+    codex_home_env: Option<OsString>,
+    claude_config_dir_env: Option<OsString>,
+) -> Vec<HookState> {
+    let codex_home = env_path_or_home(codex_home_env, home, ".codex");
+    let claude_home = env_path_or_home(claude_config_dir_env, home, ".claude");
+    let gemini_home = home.map(|h| h.join(".gemini"));
 
     let mut out = Vec::new();
     if let Some(dir) = codex_home {
@@ -316,6 +324,20 @@ fn collect_hooks() -> Vec<HookState> {
         });
     }
     out
+}
+
+fn env_path_or_home(
+    value: Option<OsString>,
+    home: Option<&Path>,
+    fallback_dir: &str,
+) -> Option<PathBuf> {
+    if let Some(value) = value {
+        let trimmed = value.to_string_lossy().trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    home.map(|h| h.join(fallback_dir))
 }
 
 fn format_report(report: &DoctorReport) -> String {
@@ -485,5 +507,23 @@ mod tests {
                 .all(|name| !name.to_string_lossy().contains(".bad-")),
             "doctor unexpectedly created quarantine files: {siblings:?}"
         );
+    }
+
+    #[test]
+    fn doctor_hook_paths_treat_blank_env_overrides_as_unset() {
+        let home = tempfile::tempdir().unwrap();
+        let hooks = collect_hooks_from_env(
+            Some(home.path()),
+            Some(OsString::from("")),
+            Some(OsString::from(" \t ")),
+        );
+
+        let codex = hooks.iter().find(|hook| hook.agent == "codex").unwrap();
+        let claude = hooks.iter().find(|hook| hook.agent == "claude").unwrap();
+        let gemini = hooks.iter().find(|hook| hook.agent == "gemini").unwrap();
+
+        assert_eq!(codex.path, home.path().join(".codex/hooks.json"));
+        assert_eq!(claude.path, home.path().join(".claude/settings.json"));
+        assert_eq!(gemini.path, home.path().join(".gemini/settings.json"));
     }
 }

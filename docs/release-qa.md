@@ -130,6 +130,8 @@ rebuilding.
 - `forktty --help` prints usage and exits 0.
 - `forktty doctor` prints the diagnostics report and exits 0 on a clean
   environment, or 2 with explicit warning lines on a misconfigured one.
+- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
+  hook paths under that temporary home, matching `hooks setup` fallback paths.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published `.deb`.
