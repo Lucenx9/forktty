@@ -401,6 +401,37 @@ describe("forktty CLI helpers", () => {
         total: 100,
       },
     );
+    assert.deepEqual(
+      buildProgressParams(
+        {
+          key: "build",
+          value: "1",
+          "workspace-name": " main ",
+        },
+        { FORKTTY_WORKSPACE_ID: " ws-env " },
+      ),
+      {
+        workspace_name: "main",
+        key: "build",
+        label: "build",
+        value: 1,
+      },
+    );
+    assert.deepEqual(
+      buildProgressParams(
+        {
+          key: "build",
+          value: "1",
+        },
+        { FORKTTY_WORKSPACE_ID: " ws-env \n" },
+      ),
+      {
+        workspace_id: "ws-env",
+        key: "build",
+        label: "build",
+        value: 1,
+      },
+    );
   });
 
   it("rejects invalid progress values", () => {

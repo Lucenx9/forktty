@@ -308,14 +308,23 @@ function parseFlags(args, booleanOptions = new Set()) {
 
 function buildTargetParams(options, env = process.env) {
   const params = {};
-  if (typeof options["workspace-id"] === "string") {
-    params.workspace_id = options["workspace-id"];
-  } else if (typeof options["workspace-name"] === "string") {
-    params.workspace_name = options["workspace-name"];
-  } else if (typeof options["worktree-name"] === "string") {
-    params.worktreeName = options["worktree-name"];
-  } else if (typeof env.FORKTTY_WORKSPACE_ID === "string" && env.FORKTTY_WORKSPACE_ID) {
-    params.workspace_id = env.FORKTTY_WORKSPACE_ID;
+  const workspaceId =
+    typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "";
+  const workspaceName =
+    typeof options["workspace-name"] === "string" ? options["workspace-name"].trim() : "";
+  const worktreeName =
+    typeof options["worktree-name"] === "string" ? options["worktree-name"].trim() : "";
+  const envWorkspaceId =
+    typeof env.FORKTTY_WORKSPACE_ID === "string" ? env.FORKTTY_WORKSPACE_ID.trim() : "";
+
+  if (workspaceId) {
+    params.workspace_id = workspaceId;
+  } else if (workspaceName) {
+    params.workspace_name = workspaceName;
+  } else if (worktreeName) {
+    params.worktreeName = worktreeName;
+  } else if (envWorkspaceId) {
+    params.workspace_id = envWorkspaceId;
   }
   return params;
 }
