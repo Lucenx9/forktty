@@ -75,6 +75,7 @@ rebuilding.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad target","surface_id":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `surface_id`; no global notification is created.
 - `printf '{"id":"x","method":"notification.create","params":{"title":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `title`; no blank notification is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":" qa ","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock`, then clear `qa` — the status key is stored trimmed and can be cleared without spaces.
+- `printf '{"id":"x","method":"metadata.set_progress","params":{"key":" build ","label":" Build ","value":1}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock`, then list progress — the key and label are stored trimmed.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":"qa","label":"QA","value":"ok","color":"purple"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `color`; no status row is created.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `printf '{"id":"x","method":"metadata.log","params":{"level":"","message":"blank level"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `level`; no info log is created.

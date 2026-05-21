@@ -557,7 +557,7 @@ pub async fn dispatch(
         "metadata.set_progress" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_trimmed_string(&params, "key")?;
-            let label = required_string(&params, "label")?;
+            let label = required_trimmed_string(&params, "label")?;
             let value = required_f64(&params, "value")?;
             let total = optional_f64(&params, "total")?;
             if total.is_some_and(|total| total <= 0.0) {
@@ -2125,7 +2125,7 @@ mod tests {
             json!({
                 "workspace_id": workspace_id,
                 "key": " build ",
-                "label": "Build",
+                "label": " Build ",
                 "value": 1
             }),
         )
@@ -2137,6 +2137,7 @@ mod tests {
         assert_eq!(status["value"], "Running");
         assert_eq!(status["color"], "green");
         assert_eq!(progress["key"], "build");
+        assert_eq!(progress["label"], "Build");
 
         dispatch(
             &state,
