@@ -224,6 +224,21 @@ describe("forktty CLI helpers", () => {
     );
   });
 
+  it("does not parse global flags after a command option terminator", () => {
+    assert.deepEqual(
+      parseGlobalArgs(["send-text", "--", "--socket", "literal", "--json"], {
+        XDG_RUNTIME_DIR: "/run/user/1000",
+      }),
+      {
+        args: ["send-text", "--", "--socket", "literal", "--json"],
+        json: false,
+        socketPath: "/run/user/1000/forktty.sock",
+        socketExplicit: false,
+        help: false,
+      },
+    );
+  });
+
   it("only skips hook socket sends when no socket target was supplied", () => {
     assert.equal(shouldSendHookActions({ env: {}, socketExplicit: false }), false);
     assert.equal(
@@ -240,6 +255,17 @@ describe("forktty CLI helpers", () => {
     assert.deepEqual(parseFlags(["--dry-run", "codex"], new Set(["dry-run"])), {
       options: { "dry-run": true },
       positionals: ["codex"],
+    });
+  });
+
+  it("honors -- as the end of command options", () => {
+    assert.deepEqual(parseFlags(["--", "--help", "--literal"]), {
+      options: {},
+      positionals: ["--help", "--literal"],
+    });
+    assert.deepEqual(parseFlags(["--title", "Heads up", "--", "--body"]), {
+      options: { title: "Heads up" },
+      positionals: ["--body"],
     });
   });
 

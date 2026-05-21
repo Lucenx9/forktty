@@ -271,13 +271,16 @@ function parseFlags(args, booleanOptions = new Set()) {
 
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
+    if (token === "--") {
+      positionals.push(...args.slice(index + 1));
+      break;
+    }
     if (!token.startsWith("--")) {
       positionals.push(token);
       continue;
     }
 
     const raw = token.slice(2);
-    if (!raw) continue;
 
     const eqIndex = raw.indexOf("=");
     if (eqIndex >= 0) {
@@ -1541,14 +1544,20 @@ function parseGlobalArgs(argv, env = process.env) {
   let socketPath = defaultSocketPath(env);
   let socketExplicit = false;
   let help = false;
+  let stopGlobalParsing = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === "--json") {
+    if (!stopGlobalParsing && token === "--" && args.length > 0) {
+      stopGlobalParsing = true;
+      args.push(token);
+      continue;
+    }
+    if (!stopGlobalParsing && token === "--json") {
       json = true;
       continue;
     }
-    if (token === "--socket") {
+    if (!stopGlobalParsing && token === "--socket") {
       const next = argv[index + 1];
       if (!next) throw new Error("--socket requires a value");
       socketPath = next;
@@ -1556,16 +1565,21 @@ function parseGlobalArgs(argv, env = process.env) {
       index += 1;
       continue;
     }
-    if (typeof token === "string" && token.startsWith("--socket=")) {
+    if (!stopGlobalParsing && typeof token === "string" && token.startsWith("--socket=")) {
       socketPath = token.slice("--socket=".length);
       socketExplicit = true;
       continue;
     }
-    if (token === "--help" && args.length === 0) {
+    if (!stopGlobalParsing && token === "--help" && args.length === 0) {
       help = true;
       continue;
     }
-    if (args.length === 0 && typeof token === "string" && token.startsWith("--")) {
+    if (
+      !stopGlobalParsing &&
+      args.length === 0 &&
+      typeof token === "string" &&
+      token.startsWith("--")
+    ) {
       throw new Error(`Unknown option: ${token}`);
     }
     args.push(token);
