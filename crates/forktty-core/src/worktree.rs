@@ -108,6 +108,17 @@ pub fn attach(
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
         .map_err(|_| WorktreeError::BranchNotFound(branch_name.to_string()))?;
+    let branch_ref = branch.into_reference();
+    let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
+    if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, &branch)? {
+        if let Err(err) = run_hook(&existing_path.to_string_lossy(), "setup") {
+            eprintln!(
+                "ForkTTY setup hook failed for {}: {err}",
+                existing_path.display()
+            );
+        }
+        return Ok(info(branch, existing_path, existing_name));
+    }
     let workdir = repo
         .workdir()
         .ok_or_else(|| WorktreeError::Other("Bare repository".to_string()))?;
@@ -117,8 +128,6 @@ pub fn attach(
         std::fs::create_dir_all(parent)?;
     }
     ensure_local_exclude_for_worktree_path(&repo, workdir, &wt_path)?;
-    let branch_ref = branch.into_reference();
-    let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
     repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
@@ -373,6 +382,22 @@ fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, Wo
         }
     }
     Err(WorktreeError::NotFound(selector.to_string()))
+}
+
+fn find_worktree_by_branch(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<Option<(String, PathBuf)>, WorktreeError> {
+    for name in repo.worktrees()?.iter().flatten() {
+        let Ok(wt) = repo.find_worktree(name) else {
+            continue;
+        };
+        if get_worktree_branch(wt.path()) == branch_name {
+            let wt_path = verify_linked_worktree_path(repo, name, wt.path())?;
+            return Ok(Some((name.to_string(), wt_path)));
+        }
+    }
+    Ok(None)
 }
 
 fn parse_linked_worktree_gitdir(git_file_contents: &str) -> Option<&str> {
@@ -796,6 +821,18 @@ mod tests {
         let _info = attach(dir.path().to_str().unwrap(), "setup-attach", "nested").unwrap();
 
         assert_eq!(fs::read_to_string(marker).unwrap(), "attach");
+    }
+
+    #[test]
+    fn attach_reuses_existing_worktree_for_branch() {
+        let dir = make_repo();
+        let created = create(dir.path().to_str().unwrap(), "reuse-existing", "nested").unwrap();
+
+        let attached = attach(dir.path().to_str().unwrap(), "reuse-existing", "nested").unwrap();
+
+        assert_eq!(attached.path, created.path);
+        assert_eq!(attached.worktree_name, created.worktree_name);
+        assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
     }
 
     #[cfg(unix)]

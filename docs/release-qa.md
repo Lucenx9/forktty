@@ -70,6 +70,7 @@ rebuilding.
 
 - From an open repo workspace, run `forktty worktree-list` without `--cwd` — it uses the shell's current `PWD`, not the app launch directory.
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
+- Run `forktty worktree-attach feature/x --cwd <path-to-clean-repo>` again — it opens/reuses the existing worktree instead of creating a duplicate or failing.
 - In the original workspace, run `forktty worktree-status` — returns `clean`; ForkTTY's `.worktrees/` directory should not make the target checkout dirty.
 - From a subdirectory inside that worktree, run `forktty worktree-status` — returns `clean` or `dirty`, not a repository error.
 - Create an uncommitted file in the worktree, then run `forktty worktree-merge feature/x` from the original workspace — merge is rejected and the error says to commit, stash, or resolve the source worktree first.
