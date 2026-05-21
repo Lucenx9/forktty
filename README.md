@@ -99,7 +99,7 @@ ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
 ./scripts/forktty.mjs ping
 ./scripts/forktty.mjs list
 ./scripts/forktty.mjs focus "Workspace 2"
-./scripts/forktty.mjs surfaces
+./scripts/forktty.mjs surfaces --workspace-name main
 ./scripts/forktty.mjs split-surface --axis vertical
 ./scripts/forktty.mjs send-text "cargo test\n"
 ./scripts/forktty.mjs worktree-status

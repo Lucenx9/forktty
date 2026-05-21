@@ -37,6 +37,7 @@ default socket. Useful for catching protocol regressions without
 rebuilding.
 
 - `forktty list` — returns at least one workspace.
+- `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.

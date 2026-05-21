@@ -325,7 +325,7 @@ Usage:
   ./scripts/forktty.mjs focus --workspace-id <id>
   ./scripts/forktty.mjs close-workspace <selector>
   ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
-  ./scripts/forktty.mjs surfaces [--workspace-id <id>] [--json]
+  ./scripts/forktty.mjs surfaces [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   ./scripts/forktty.mjs split-surface [--surface-id <id>] [--axis horizontal|vertical]
   ./scripts/forktty.mjs focus-surface <surface-id>
   ./scripts/forktty.mjs close-surface <surface-id>
