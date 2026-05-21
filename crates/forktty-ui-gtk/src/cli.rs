@@ -161,7 +161,7 @@ fn collect_report() -> DoctorReport {
         "Session",
     );
 
-    let socket = forktty_socket::default_socket_path();
+    let socket = socket_path_from_env(std::env::var("FORKTTY_SOCKET_PATH").ok());
     let socket_parent_path = socket.parent().map(PathBuf::from);
     let socket_parent = describe_path("socket dir", socket_parent_path);
     let socket_state = describe_path("forktty.sock", Some(socket));
@@ -412,6 +412,15 @@ fn path_display(state: &PathState) -> String {
 
 fn resolve_shell(config_path: Option<&Path>) -> (Option<String>, bool, Option<String>) {
     resolve_shell_from_path(config_path, std::env::var("SHELL").ok())
+}
+
+fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
+    socket_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && Path::new(value).is_absolute())
+        .map(PathBuf::from)
+        .unwrap_or_else(forktty_socket::default_socket_path)
 }
 
 fn resolve_shell_from_path(
@@ -1015,6 +1024,26 @@ mod tests {
 
         assert!(state.is_socket);
         assert!(format_path(&state).contains("[socket mode"));
+    }
+
+    #[test]
+    fn doctor_socket_path_env_matches_launch_policy() {
+        assert_eq!(
+            socket_path_from_env(Some("  /tmp/forktty-doctor.sock  ".to_string())),
+            PathBuf::from("/tmp/forktty-doctor.sock")
+        );
+        assert_eq!(
+            socket_path_from_env(Some("relative.sock".to_string())),
+            forktty_socket::default_socket_path()
+        );
+        assert_eq!(
+            socket_path_from_env(Some("  ".to_string())),
+            forktty_socket::default_socket_path()
+        );
+        assert_eq!(
+            socket_path_from_env(None),
+            forktty_socket::default_socket_path()
+        );
     }
 
     #[test]

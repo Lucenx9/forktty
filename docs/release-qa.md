@@ -166,6 +166,8 @@ rebuilding.
   `forktty doctor` reports it as a file and does not warn that it will be quarantined.
 - With `$XDG_DATA_HOME/forktty/session-v2.json` as a broken symlink, `forktty doctor`
   warns that it could not be inspected and will be quarantined on launch.
+- With `FORKTTY_SOCKET_PATH=/tmp/forktty-doctor.sock`, `forktty doctor` reports
+  `/tmp/forktty-doctor.sock`; with `FORKTTY_SOCKET_PATH=relative.sock`, it reports the default socket path.
 - With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`
   warns that the socket path is not a Unix socket before launch fails.
 - With `$XDG_RUNTIME_DIR` pointing at a regular file, `forktty doctor` warns
