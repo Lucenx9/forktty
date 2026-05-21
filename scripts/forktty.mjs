@@ -1111,6 +1111,22 @@ async function readJsonFile(filePath) {
   }
 }
 
+async function readAgentConfig(agent, filePath) {
+  try {
+    return await readJsonFile(filePath);
+  } catch (error) {
+    // Re-throw with agent + path context. The bare error from JSON.parse only
+    // says e.g. "Unexpected token } in JSON at position 12" which leaves the
+    // user guessing which agent's file is broken.
+    const detail = error instanceof Error ? error.message : String(error);
+    const wrapped = new Error(
+      `failed to read ${agent} hook config at ${filePath}: ${detail}`,
+    );
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
+
 async function ensureParentDir(filePath) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 }
@@ -1130,6 +1146,32 @@ async function backupFile(filePath) {
   return backupPath;
 }
 
+async function atomicWriteFile(filePath, content) {
+  // Write to a sibling temp file, fsync it, then rename. Protects against
+  // truncation+partial-write windows on SIGKILL or power loss; the user's
+  // existing config either stays intact or is replaced atomically.
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath);
+  const tmpPath = path.join(
+    dir,
+    `.${base}.tmp-${process.pid}-${Date.now()}`,
+  );
+  let handle;
+  try {
+    handle = await fs.open(tmpPath, "wx", 0o600);
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    if (handle) await handle.close();
+  }
+  try {
+    await fs.rename(tmpPath, filePath);
+  } catch (error) {
+    await fs.unlink(tmpPath).catch(() => {});
+    throw error;
+  }
+}
+
 function supportedAgents(positionals) {
   if (positionals.length === 0) {
     return Object.keys(AGENT_SPECS);
@@ -1144,7 +1186,8 @@ function supportedAgents(positionals) {
 }
 
 async function handleHooksSetup(context, args) {
-  const { positionals } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  const dryRun = options["dry-run"] === true || options["dry-run"] === "true";
   const agentNames = supportedAgents(positionals);
   const scriptPath = fileURLToPath(import.meta.url);
 
@@ -1152,14 +1195,14 @@ async function handleHooksSetup(context, args) {
   for (const agent of agentNames) {
     const spec = AGENT_SPECS[agent];
     const configPath = spec.configPath(context.env);
-    const existing = await readJsonFile(configPath);
+    const existing = await readAgentConfig(agent, configPath);
     const { changed, config } = mergeHookConfig(existing, agent, scriptPath);
 
     let backupPath = null;
-    if (changed) {
+    if (changed && !dryRun) {
       await ensureParentDir(configPath);
       backupPath = await backupFile(configPath);
-      await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+      await atomicWriteFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     }
 
     summaries.push({
@@ -1167,6 +1210,7 @@ async function handleHooksSetup(context, args) {
       configPath,
       changed,
       backupPath,
+      dryRun,
     });
   }
 
@@ -1176,9 +1220,12 @@ async function handleHooksSetup(context, args) {
   }
 
   for (const summary of summaries) {
-    process.stdout.write(
-      `${summary.agent}: ${summary.changed ? "updated" : "already configured"} at ${summary.configPath}\n`,
-    );
+    const verb = summary.changed
+      ? summary.dryRun
+        ? "would update"
+        : "updated"
+      : "already configured";
+    process.stdout.write(`${summary.agent}: ${verb} at ${summary.configPath}\n`);
     if (summary.backupPath) {
       process.stdout.write(`  backup: ${summary.backupPath}\n`);
     }
@@ -1557,6 +1604,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 export {
   AGENT_SPECS,
   HOOK_CONTINUE_RESPONSE,
+  atomicWriteFile,
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
@@ -1566,8 +1614,10 @@ export {
   buildWorktreeStatusParams,
   defaultSocketPath,
   formatNotificationLine,
+  handleHooksSetup,
   mergeHookConfig,
   parseFlags,
+  readAgentConfig,
   resolveSelectorParams,
   shellQuote,
   surfaceIdFromWorkspaceList,

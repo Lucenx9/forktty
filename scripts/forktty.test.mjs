@@ -1,9 +1,11 @@
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
+  atomicWriteFile,
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
@@ -13,7 +15,9 @@ import {
   buildWorktreeStatusParams,
   defaultSocketPath,
   formatNotificationLine,
+  handleHooksSetup,
   mergeHookConfig,
+  readAgentConfig,
   resolveSelectorParams,
   surfaceIdFromWorkspaceList,
 } from "./forktty.mjs";
@@ -260,5 +264,147 @@ describe("forktty CLI helpers", () => {
     assert.deepEqual(buildWorktreeStatusParams({}, [], { PWD: "/repo/current" }), {
       path: "/repo/current",
     });
+  });
+});
+
+describe("hook installer", () => {
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "forktty-hooks-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeContext(env = {}) {
+    return {
+      env: {
+        CODEX_HOME: path.join(tmpDir, "codex"),
+        CLAUDE_CONFIG_DIR: path.join(tmpDir, "claude"),
+        HOME: tmpDir,
+        ...env,
+      },
+      json: true,
+      socketPath: "/tmp/forktty.sock",
+    };
+  }
+
+  it("creates a fresh hook config when the file does not exist", async () => {
+    const context = makeContext();
+    const printed = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk) => {
+      printed.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await handleHooksSetup(context, ["codex"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const written = await fs.readFile(
+      path.join(context.env.CODEX_HOME, "hooks.json"),
+      "utf8",
+    );
+    const parsed = JSON.parse(written);
+    assert.ok(parsed.hooks?.SessionStart?.length > 0, "SessionStart hook installed");
+    assert.match(printed.join(""), /"changed":\s*true/);
+  });
+
+  it("is idempotent on a second run", async () => {
+    const context = makeContext();
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex"]);
+      const firstStat = await fs.stat(
+        path.join(context.env.CODEX_HOME, "hooks.json"),
+      );
+      await handleHooksSetup(context, ["codex"]);
+      const secondStat = await fs.stat(
+        path.join(context.env.CODEX_HOME, "hooks.json"),
+      );
+      // Second run should not have rewritten the file, so mtime is unchanged.
+      assert.equal(firstStat.mtimeMs, secondStat.mtimeMs);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+  });
+
+  it("does not write anything in --dry-run mode", async () => {
+    const context = makeContext();
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex", "--dry-run"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    const codexConfig = path.join(context.env.CODEX_HOME, "hooks.json");
+    await assert.rejects(fs.access(codexConfig), /ENOENT/);
+  });
+
+  it("preserves unrelated keys in an existing config", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    await fs.mkdir(codexDir, { recursive: true });
+    const configPath = path.join(codexDir, "hooks.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ customKey: { keepMe: true } }, null, 2),
+    );
+
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const parsed = JSON.parse(await fs.readFile(configPath, "utf8"));
+    assert.deepEqual(parsed.customKey, { keepMe: true });
+    assert.ok(parsed.hooks?.SessionStart?.length > 0);
+  });
+
+  it("surfaces agent + path context when the config is malformed JSON", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    await fs.mkdir(codexDir, { recursive: true });
+    const configPath = path.join(codexDir, "hooks.json");
+    await fs.writeFile(configPath, "{ not json ::: ");
+
+    await assert.rejects(
+      handleHooksSetup(context, ["codex"]),
+      (error) =>
+        /codex/.test(error.message) &&
+        error.message.includes(configPath) &&
+        /JSON/i.test(error.message),
+    );
+  });
+
+  it("readAgentConfig returns {} for whitespace-only files without throwing", async () => {
+    const configPath = path.join(tmpDir, "whitespace.json");
+    await fs.writeFile(configPath, "   \n\t  \n");
+    const value = await readAgentConfig("codex", configPath);
+    assert.deepEqual(value, {});
+  });
+
+  it("atomicWriteFile replaces target and leaves no temp behind on success", async () => {
+    const target = path.join(tmpDir, "atomic.json");
+    await atomicWriteFile(target, "first\n");
+    await atomicWriteFile(target, "second\n");
+    const content = await fs.readFile(target, "utf8");
+    assert.equal(content, "second\n");
+
+    const siblings = await fs.readdir(tmpDir);
+    const leftover = siblings.filter((name) => name.includes(".tmp-"));
+    assert.deepEqual(leftover, [], `unexpected temp files: ${leftover.join(", ")}`);
   });
 });
