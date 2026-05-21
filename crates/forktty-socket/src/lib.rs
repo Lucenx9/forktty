@@ -509,6 +509,8 @@ pub async fn dispatch(
                 .or_else(|| params.get("surfaceId"))
                 .and_then(Value::as_str)
                 .map(String::from);
+            let (workspace_id, surface_id) =
+                validate_notification_target(state, workspace_id, surface_id)?;
             let item = {
                 let mut model = state
                     .model
@@ -972,6 +974,38 @@ fn ensure_model_surface_exists(
     } else {
         Err(DispatchError::NotFound("surface"))
     }
+}
+
+fn validate_notification_target(
+    state: &SocketAppState,
+    workspace_id: Option<String>,
+    surface_id: Option<String>,
+) -> Result<(Option<String>, Option<String>), DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if let Some(workspace_id) = workspace_id.as_deref() {
+        let workspace_exists = model
+            .list_workspaces()
+            .iter()
+            .any(|workspace| workspace.id == workspace_id);
+        if !workspace_exists {
+            return Err(DispatchError::NotFound("workspace"));
+        }
+    }
+    if let Some(surface_id) = surface_id.as_deref() {
+        let surface = model
+            .surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface"))?;
+        if workspace_id
+            .as_deref()
+            .is_some_and(|workspace_id| workspace_id != surface.workspace_id)
+        {
+            return Err(DispatchError::NotFound("surface"));
+        }
+    }
+    Ok((workspace_id, surface_id))
 }
 
 fn required_f64(params: &Value, key: &str) -> Result<f64, String> {
@@ -1550,6 +1584,57 @@ mod tests {
         .await
         .unwrap();
         assert!(logs.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn notification_create_rejects_stale_targets() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        let split = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap();
+        let stale_surface_id = split["id"].as_str().unwrap().to_string();
+        {
+            let mut model = state.model.lock().unwrap();
+            model.close_surface(&stale_surface_id).unwrap();
+        }
+
+        let stale_workspace = dispatch(
+            &state,
+            "notification.create",
+            json!({
+                "workspace_id": "workspace-missing",
+                "title": "Prompt",
+                "body": "stale workspace"
+            }),
+        )
+        .await
+        .unwrap_err();
+        let stale_surface = dispatch(
+            &state,
+            "notification.create",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": stale_surface_id,
+                "title": "Prompt",
+                "body": "stale surface"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(stale_workspace.code(), "not_found");
+        assert_eq!(stale_surface.code(), "not_found");
+        let notifications = dispatch(&state, "notification.list", json!({}))
+            .await
+            .unwrap();
+        assert!(notifications.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
