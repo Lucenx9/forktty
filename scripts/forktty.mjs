@@ -15,6 +15,17 @@ const SOCKET_TIMEOUT_MS = 5_000;
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
 const VALID_STATUS_COLORS = new Set(["green", "yellow", "red", "blue", "muted"]);
 const VALID_LOG_LEVELS = new Set(["info", "warn", "error"]);
+const TARGET_SELECTOR_OPTION_NAMES = new Set([
+  "workspace-id",
+  "workspace-name",
+  "worktree-name",
+]);
+const NOTIFICATION_OPTION_NAMES = new Set([
+  ...TARGET_SELECTOR_OPTION_NAMES,
+  "body",
+  "kind",
+  "title",
+]);
 let fileNonceCounter = 0;
 
 const AGENT_SPECS = {
@@ -490,6 +501,7 @@ function shouldReadCommandStdin(options, positionals, textOption) {
 }
 
 function buildNotificationParams(options, positionals, stdinText = "", env = process.env) {
+  rejectUnknownOptions(options, NOTIFICATION_OPTION_NAMES, "notify");
   requireStringOption(options, "body");
   requireNonBlankStringOption(options, "kind");
   requireNonBlankStringOption(options, "title");

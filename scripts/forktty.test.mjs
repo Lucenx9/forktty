@@ -457,6 +457,10 @@ describe("forktty CLI helpers", () => {
       () => buildNotificationParams({ body: true }, []),
       /--body requires a value/,
     );
+    assert.throws(
+      () => buildNotificationParams({ knd: "prompt" }, ["Review needed"]),
+      /notify: unknown option --knd/,
+    );
   });
 
   it("maps notification events to status and prompt notifications", () => {

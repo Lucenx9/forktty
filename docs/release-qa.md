@@ -82,6 +82,7 @@ rebuilding.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `printf '{"id":"x","method":"metadata.log","params":{"level":"","message":"blank level"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `level`; no info log is created.
 - `forktty notify --kind=` — exits with `--kind requires a value` instead of silently sending an `info` notification.
+- `forktty notify --knd prompt "review"` — exits with `notify: unknown option --knd` instead of silently sending an `info` notification.
 - `forktty notify --title=` — exits with `--title requires a value` instead of creating a notification with an empty title.
 - `forktty log --level=` — exits with `--level requires a value` instead of logging at the default level.
 - `forktty clear-status --key=` — exits with `--key requires a value` instead of clearing every status entry in the targeted workspace.
