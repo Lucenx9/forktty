@@ -532,7 +532,7 @@ pub async fn dispatch(
         }
         "metadata.set_status" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
-            let key = required_string(&params, "key")?;
+            let key = required_trimmed_string(&params, "key")?;
             let label = required_string(&params, "label")?;
             let value = required_string(&params, "value")?;
             let color = params
@@ -580,7 +580,7 @@ pub async fn dispatch(
         }
         "metadata.set_progress" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
-            let key = required_string(&params, "key")?;
+            let key = required_trimmed_string(&params, "key")?;
             let label = required_string(&params, "label")?;
             let value = required_f64(&params, "value")?;
             let total = optional_f64(&params, "total")?;
@@ -922,6 +922,15 @@ fn required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> 
         .get(key)
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("Missing {key}"))
+}
+
+fn required_trimmed_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("Missing {key}"))
 }
 
@@ -1914,6 +1923,73 @@ mod tests {
         .unwrap();
         assert_eq!(statuses.as_array().unwrap().len(), 1);
         assert_eq!(progress.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn metadata_set_trims_keys_before_storage() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        let status = dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": " agent:codex ",
+                "label": "Codex",
+                "value": "Running"
+            }),
+        )
+        .await
+        .unwrap();
+        let progress = dispatch(
+            &state,
+            "metadata.set_progress",
+            json!({
+                "workspace_id": workspace_id,
+                "key": " build ",
+                "label": "Build",
+                "value": 1
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status["key"], "agent:codex");
+        assert_eq!(progress["key"], "build");
+
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({"workspace_id": workspace_id, "key": "agent:codex"}),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.clear_progress",
+            json!({"workspace_id": workspace_id, "key": "build"}),
+        )
+        .await
+        .unwrap();
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let progress = dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
+        assert!(progress.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
