@@ -752,6 +752,13 @@ describe("forktty CLI helpers", () => {
     assert.deepEqual(buildWorktreeStatusParams({}, [], { PWD: "/repo/current" }), {
       path: "/repo/current",
     });
+    assert.deepEqual(buildWorktreeStatusParams({}, [], {}, "/repo/process-cwd"), {
+      path: "/repo/process-cwd",
+    });
+    assert.throws(
+      () => buildWorktreeStatusParams({}, [], {}, ""),
+      /worktree-status requires --path, --cwd, a path, PWD, or the current directory/,
+    );
     assert.throws(
       () => buildWorktreeStatusParams({ path: true }, [], { PWD: "/repo/current" }),
       /--path requires a value/,
@@ -767,6 +774,10 @@ describe("forktty CLI helpers", () => {
       name: "feature/x",
       cwd: "/repo/current",
     });
+    assert.deepEqual(worktreeParams({}, ["feature/x"], true, {}, "/repo/process-cwd"), {
+      name: "feature/x",
+      cwd: "/repo/process-cwd",
+    });
     assert.deepEqual(
       worktreeParams({ cwd: "/repo/explicit" }, ["feature/x"], true, {
         PWD: "/repo/current",
@@ -779,6 +790,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => worktreeParams({ cwd: true }, ["feature/x"], true, { PWD: "/repo/current" }),
       /--cwd requires a value/,
+    );
+    assert.throws(
+      () => worktreeParams({}, ["feature/x"], true, {}, ""),
+      /worktree command requires --cwd, PWD, or the current directory/,
     );
     assert.throws(
       () => worktreeParams({ branch: "" }, [], true, { PWD: "/repo/current" }),

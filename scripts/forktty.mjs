@@ -532,7 +532,7 @@ Notes:
   - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
   - Global --socket and --json flags may appear before or after the command.
   - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
-  - Worktree commands default --cwd to PWD so repo operations follow the shell you run them from.
+  - Worktree commands default --cwd to PWD, then the CLI process cwd, so repo operations follow the shell you run them from.
   - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
 `);
@@ -902,7 +902,13 @@ async function handleCloseSurface(context, args) {
   }
 }
 
-function worktreeParams(options, positionals, requireName = false, env = process.env) {
+function worktreeParams(
+  options,
+  positionals,
+  requireName = false,
+  env = process.env,
+  fallbackCwd = process.cwd(),
+) {
   requireNonBlankStringOption(options, "branch");
   requireNonBlankStringOption(options, "cwd");
   requireNonBlankStringOption(options, "name");
@@ -916,13 +922,23 @@ function worktreeParams(options, positionals, requireName = false, env = process
   }
   if (typeof options.cwd === "string" && options.cwd.trim()) {
     params.cwd = options.cwd.trim();
-  } else if (typeof env.PWD === "string" && env.PWD.trim()) {
-    params.cwd = env.PWD.trim();
+  } else {
+    const cwd = callerCwd(env, fallbackCwd);
+    if (cwd) {
+      params.cwd = cwd;
+    } else {
+      throw new Error("worktree command requires --cwd, PWD, or the current directory");
+    }
   }
   return params;
 }
 
-function buildWorktreeStatusParams(options, positionals, env = process.env) {
+function buildWorktreeStatusParams(
+  options,
+  positionals,
+  env = process.env,
+  fallbackCwd = process.cwd(),
+) {
   requireNonBlankStringOption(options, "cwd");
   requireNonBlankStringOption(options, "path");
   const pathValue =
@@ -930,16 +946,21 @@ function buildWorktreeStatusParams(options, positionals, env = process.env) {
       ? options.path.trim()
       : typeof options.cwd === "string" && options.cwd.trim()
         ? options.cwd.trim()
-        : positionals[0]
-          ? positionals[0].trim()
-          : typeof env.PWD === "string" && env.PWD.trim()
-            ? env.PWD.trim()
-            : "";
+      : positionals[0]
+        ? positionals[0].trim()
+        : callerCwd(env, fallbackCwd);
 
   if (!pathValue) {
-    throw new Error("worktree-status requires --path, --cwd, a path, or PWD");
+    throw new Error("worktree-status requires --path, --cwd, a path, PWD, or the current directory");
   }
   return { path: pathValue };
+}
+
+function callerCwd(env = process.env, fallbackCwd = process.cwd()) {
+  if (typeof env.PWD === "string" && env.PWD.trim()) {
+    return env.PWD.trim();
+  }
+  return typeof fallbackCwd === "string" && fallbackCwd.trim() ? fallbackCwd.trim() : "";
 }
 
 function formatWorktreeLine(worktree) {
