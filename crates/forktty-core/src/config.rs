@@ -321,6 +321,14 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
 }
 
 fn quarantine_bad_config(path: &Path) -> Result<Option<PathBuf>, ConfigError> {
+    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
+    quarantine_bad_config_with_timestamp(path, &timestamp)
+}
+
+fn quarantine_bad_config_with_timestamp(
+    path: &Path,
+    timestamp: &str,
+) -> Result<Option<PathBuf>, ConfigError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -329,10 +337,22 @@ fn quarantine_bad_config(path: &Path) -> Result<Option<PathBuf>, ConfigError> {
     if !metadata.file_type().is_file() {
         return Ok(None);
     }
-    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-    let quarantine_path = path.with_extension(format!("toml.bad-{timestamp}"));
+    let quarantine_path = available_bad_config_path(path, &timestamp);
     fs::rename(path, &quarantine_path)?;
     Ok(Some(quarantine_path))
+}
+
+fn available_bad_config_path(path: &Path, timestamp: &str) -> PathBuf {
+    for suffix in std::iter::once(String::new()).chain((1u32..).map(|index| format!("-{index}"))) {
+        let candidate = path.with_extension(format!("toml.bad-{timestamp}{suffix}"));
+        if matches!(
+            fs::symlink_metadata(&candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound
+        ) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded quarantine path search should always return")
 }
 
 pub fn format_config_recovery_warning(recovery: &ConfigRecovery) -> String {
@@ -447,6 +467,31 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .contains(".bad-"));
+    }
+
+    #[test]
+    fn recovery_does_not_overwrite_existing_quarantine_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let first_candidate = path.with_extension("toml.bad-20260521010203");
+        let second_candidate = path.with_extension("toml.bad-20260521010203-1");
+        fs::write(&path, "new bad config").unwrap();
+        fs::write(&first_candidate, "previous bad config").unwrap();
+
+        let quarantine_path = quarantine_bad_config_with_timestamp(&path, "20260521010203")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(quarantine_path, second_candidate);
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(&first_candidate).unwrap(),
+            "previous bad config"
+        );
+        assert_eq!(
+            fs::read_to_string(&second_candidate).unwrap(),
+            "new bad config"
+        );
     }
 
     #[test]

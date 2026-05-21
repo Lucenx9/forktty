@@ -444,12 +444,33 @@ fn legacy_session_path() -> Result<PathBuf, SessionError> {
 }
 
 fn quarantine_corrupt_session(path: &Path) -> Result<(), SessionError> {
+    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
+    quarantine_corrupt_session_with_timestamp(path, &timestamp).map(|_| ())
+}
+
+fn quarantine_corrupt_session_with_timestamp(
+    path: &Path,
+    timestamp: &str,
+) -> Result<Option<PathBuf>, SessionError> {
     if !path.exists() {
-        return Ok(());
+        return Ok(None);
     }
-    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-    fs::rename(path, path.with_extension(format!("json.bad-{timestamp}")))?;
-    Ok(())
+    let quarantine_path = available_bad_session_path(path, timestamp);
+    fs::rename(path, &quarantine_path)?;
+    Ok(Some(quarantine_path))
+}
+
+fn available_bad_session_path(path: &Path, timestamp: &str) -> PathBuf {
+    for suffix in std::iter::once(String::new()).chain((1u32..).map(|index| format!("-{index}"))) {
+        let candidate = path.with_extension(format!("json.bad-{timestamp}{suffix}"));
+        if matches!(
+            fs::symlink_metadata(&candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound
+        ) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded quarantine path search should always return")
 }
 
 fn default_session_version() -> u32 {
@@ -720,6 +741,31 @@ mod tests {
                 .iter()
                 .any(|name| name.to_string_lossy().contains(".bad-")),
             "expected a .bad-* quarantine sibling, got {siblings:?}"
+        );
+    }
+
+    #[test]
+    fn quarantine_does_not_overwrite_existing_quarantine_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        let first_candidate = path.with_extension("json.bad-20260521010203");
+        let second_candidate = path.with_extension("json.bad-20260521010203-1");
+        fs::write(&path, "new bad session").unwrap();
+        fs::write(&first_candidate, "previous bad session").unwrap();
+
+        let quarantine_path = quarantine_corrupt_session_with_timestamp(&path, "20260521010203")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(quarantine_path, second_candidate);
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(&first_candidate).unwrap(),
+            "previous bad session"
+        );
+        assert_eq!(
+            fs::read_to_string(&second_candidate).unwrap(),
+            "new bad session"
         );
     }
 
