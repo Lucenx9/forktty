@@ -518,6 +518,10 @@ describe("forktty CLI helpers", () => {
         surface_id: "surface-1",
       },
     );
+    assert.throws(
+      () => buildSurfaceActionParams({ "surface-id": true }, [], {}, "focus-surface"),
+      /--surface-id requires a value/,
+    );
   });
 
   it("resolves send-text fallback from the active workspace surface", () => {
@@ -546,6 +550,14 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => buildSurfaceSplitParams({ axis: "diagonal" }, ["surface-2"]),
       /Invalid --axis/,
+    );
+    assert.throws(
+      () => buildSurfaceSplitParams({ axis: true }, ["surface-2"]),
+      /--axis requires a value/,
+    );
+    assert.throws(
+      () => buildSurfaceSplitParams({ "surface-id": true }, [], {}),
+      /--surface-id requires a value/,
     );
   });
 
