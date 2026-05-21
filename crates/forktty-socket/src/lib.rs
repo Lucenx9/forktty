@@ -410,7 +410,8 @@ pub async fn dispatch(
                     resolve_existing_workspace_id(&model, selector)
                         .ok_or(DispatchError::NotFound("workspace"))?,
                 ),
-                Err(_) => None,
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
             };
             Ok(json!(model.list_surfaces(workspace_id.as_deref())))
         }
@@ -1062,16 +1063,20 @@ fn resolve_workspace_id_for_metadata(
         .model
         .lock()
         .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
-    if let Ok(selector) = workspace_selector_from_params(params) {
-        return resolve_existing_workspace_id(&model, selector)
-            .ok_or(DispatchError::NotFound("workspace"));
+    match workspace_selector_from_params(params) {
+        Ok(selector) => {
+            return resolve_existing_workspace_id(&model, selector)
+                .ok_or(DispatchError::NotFound("workspace"));
+        }
+        Err(DispatchError::MissingParam(_)) => {}
+        Err(err) => return Err(err),
     }
     model
         .active_workspace_id()
         .ok_or(DispatchError::NotFound("workspace"))
 }
 
-fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, String> {
+fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, DispatchError> {
     if let Some(id) = params.get("id").and_then(Value::as_str) {
         return Ok(WorkspaceSelector::Id(id));
     }
@@ -1097,7 +1102,7 @@ fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_
     {
         return Ok(WorkspaceSelector::WorktreeName(worktree_name));
     }
-    Err("Missing workspace selector".to_string())
+    Err(DispatchError::MissingParam("workspace selector"))
 }
 
 pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -1724,6 +1729,9 @@ mod tests {
         .await
         .unwrap();
 
+        let all_surfaces = dispatch(&state, "surface.list", json!({})).await.unwrap();
+        assert_eq!(all_surfaces.as_array().unwrap().len(), 2);
+
         let main_surfaces = dispatch(&state, "surface.list", json!({"workspace_name": "main"}))
             .await
             .unwrap();
@@ -1974,6 +1982,17 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code(), "method_not_found");
         assert!(err.to_string().contains("nonsense.bogus"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_returns_missing_param_for_workspace_command_without_selector() {
+        let (state, _backend) = test_state();
+
+        for method in ["workspace.select", "workspace.close"] {
+            let err = dispatch(&state, method, json!({})).await.unwrap_err();
+            assert_eq!(err.code(), "missing_param");
+            assert!(err.to_string().contains("workspace selector"));
+        }
     }
 
     #[tokio::test]
