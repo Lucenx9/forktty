@@ -375,7 +375,8 @@ pub async fn dispatch(
                 .map_err(|_| "Lock poisoned".to_string())?;
             let workspace_id = match workspace_selector_from_params(&params) {
                 Ok(selector) => Some(
-                    model.workspace_id_for(selector)
+                    model
+                        .workspace_id_for(selector)
                         .ok_or(DispatchError::NotFound("workspace"))?,
                 ),
                 Err(DispatchError::MissingParam(_)) => None,
@@ -1084,7 +1085,8 @@ fn resolve_notification_target(
         .map_err(|_| "Lock poisoned".to_string())?;
     let workspace_id = match workspace_selector_from_params(params) {
         Ok(selector) => Some(
-            model.workspace_id_for(selector)
+            model
+                .workspace_id_for(selector)
                 .ok_or(DispatchError::NotFound("workspace"))?,
         ),
         Err(DispatchError::MissingParam(_)) => None,
@@ -1135,7 +1137,8 @@ fn resolve_workspace_id_for_metadata(
         .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
     match workspace_selector_from_params(params) {
         Ok(selector) => {
-            return model.workspace_id_for(selector)
+            return model
+                .workspace_id_for(selector)
                 .ok_or(DispatchError::NotFound("workspace"));
         }
         Err(DispatchError::MissingParam(_)) => {}

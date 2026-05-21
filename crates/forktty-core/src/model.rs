@@ -1749,12 +1749,8 @@ mod tests {
     fn workspace_id_for_resolves_each_selector_variant() {
         let mut model = WorkspaceModel::new();
         let main = model.create_workspace("main", "/tmp/main");
-        let feature = model.create_worktree_workspace(
-            "feature",
-            "/tmp/feature",
-            "feature",
-            "feature-wt",
-        );
+        let feature =
+            model.create_worktree_workspace("feature", "/tmp/feature", "feature", "feature-wt");
 
         assert_eq!(
             model.workspace_id_for(WorkspaceSelector::Id(&main.id)),
