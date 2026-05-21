@@ -2903,9 +2903,7 @@ fn build_ui(app: &adw::Application) {
     } else {
         (1200, 760)
     };
-    let socket_path = std::env::var("FORKTTY_SOCKET_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| default_socket_path());
+    let socket_path = socket_path_from_env(std::env::var("FORKTTY_SOCKET_PATH").ok());
 
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let (terminal_tx, terminal_rx) = mpsc::channel();
@@ -3358,6 +3356,15 @@ fn configured_shell(config: &config::AppConfig) -> String {
     } else {
         "/bin/sh".to_string()
     }
+}
+
+fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
+    socket_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_socket_path)
 }
 
 fn apply_color_scheme(config: &config::AppConfig) {
@@ -7547,6 +7554,19 @@ mod tests {
         let shell = configured_shell(&config);
 
         assert!(is_executable_file(Path::new(&shell)));
+    }
+
+    #[test]
+    fn socket_path_env_ignores_blank_values() {
+        assert_eq!(socket_path_from_env(None), default_socket_path());
+        assert_eq!(
+            socket_path_from_env(Some("  /tmp/forktty-custom.sock  ".to_string())),
+            PathBuf::from("/tmp/forktty-custom.sock")
+        );
+        assert_eq!(
+            socket_path_from_env(Some("  ".to_string())),
+            default_socket_path()
+        );
     }
 
     #[test]
