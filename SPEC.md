@@ -118,7 +118,7 @@ desktop = true
 sound = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, worktree layout, font size, scrollback bounds, sidebar position, window mode, renderer value, and notification command. `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
+Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, window mode, renderer value, and notification command. `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
 
 ## Socket API
 

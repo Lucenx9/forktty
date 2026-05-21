@@ -226,6 +226,14 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
         )));
     }
     if !matches!(
+        config.general.theme_source.as_str(),
+        "auto" | "light" | "dark"
+    ) {
+        return Err(ConfigError::Invalid(
+            "general.theme_source must be one of: auto, light, dark".to_string(),
+        ));
+    }
+    if !matches!(
         config.general.worktree_layout.as_str(),
         "nested" | "sibling" | "outer-nested"
     ) {
@@ -273,31 +281,34 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     if config.general.shell.trim().is_empty() {
         config.general.shell = default_shell();
     }
-    if !matches!(
-        config.general.worktree_layout.as_str(),
-        "nested" | "sibling" | "outer-nested"
-    ) {
-        config.general.worktree_layout = default_worktree_layout();
-    }
-    if !matches!(
-        config.appearance.sidebar_position.as_str(),
-        "left" | "right"
-    ) {
-        config.appearance.sidebar_position = default_sidebar_position();
-    }
-    if !matches!(
-        config.appearance.terminal_renderer.as_str(),
-        "auto" | "dom" | "canvas" | "webgl" | "vte"
-    ) {
-        config.appearance.terminal_renderer = default_terminal_renderer();
-    }
-    if !matches!(config.appearance.window_mode.as_str(), "normal" | "quake") {
-        config.appearance.window_mode = default_window_mode();
-    }
+    config.general.theme_source =
+        normalize_config_choice(&config.general.theme_source, &["auto", "light", "dark"])
+            .unwrap_or_else(default_theme_source);
+    config.general.worktree_layout = normalize_config_choice(
+        &config.general.worktree_layout,
+        &["nested", "sibling", "outer-nested"],
+    )
+    .unwrap_or_else(default_worktree_layout);
+    config.appearance.sidebar_position =
+        normalize_config_choice(&config.appearance.sidebar_position, &["left", "right"])
+            .unwrap_or_else(default_sidebar_position);
+    config.appearance.terminal_renderer = normalize_config_choice(
+        &config.appearance.terminal_renderer,
+        &["auto", "dom", "canvas", "webgl", "vte"],
+    )
+    .unwrap_or_else(default_terminal_renderer);
+    config.appearance.window_mode =
+        normalize_config_choice(&config.appearance.window_mode, &["normal", "quake"])
+            .unwrap_or_else(default_window_mode);
     if config.appearance.font_size == 0 {
         config.appearance.font_size = default_font_size();
     }
     config
+}
+
+fn normalize_config_choice(value: &str, allowed: &[&str]) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    allowed.contains(&normalized.as_str()).then_some(normalized)
 }
 
 fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
@@ -481,6 +492,46 @@ mod tests {
             load_config_from_path(&path),
             Err(ConfigError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn loaded_config_normalizes_choice_values_from_manual_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+            theme_source = " Dark "
+            worktree_layout = " SIBLING "
+
+            [appearance]
+            sidebar_position = " Right "
+            terminal_renderer = " VTE "
+            window_mode = " Quake "
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.general.theme_source, "dark");
+        assert_eq!(config.general.worktree_layout, "sibling");
+        assert_eq!(config.appearance.sidebar_position, "right");
+        assert_eq!(config.appearance.terminal_renderer, "vte");
+        assert_eq!(config.appearance.window_mode, "quake");
+    }
+
+    #[test]
+    fn saved_config_rejects_invalid_theme_source() {
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.general.theme_source = "purple".to_string();
+
+        let error = validate_config(&config).unwrap_err();
+
+        assert!(error.to_string().contains("theme_source"));
     }
 
     #[test]
