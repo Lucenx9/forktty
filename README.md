@@ -137,6 +137,8 @@ The installer merges commands into:
 - Claude Code: `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`
 - Gemini CLI: `~/.gemini/settings.json`
 
+When `HOME` is overridden, the `~` defaults are resolved under that home directory.
+
 Hooks report status, progress, logs, and prompt notifications through the same local socket pipeline.
 
 ## Features

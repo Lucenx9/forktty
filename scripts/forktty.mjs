@@ -25,7 +25,7 @@ const AGENT_SPECS = {
       const codexHome =
         typeof env.CODEX_HOME === "string" && env.CODEX_HOME.trim().length > 0
           ? env.CODEX_HOME.trim()
-          : path.join(os.homedir(), ".codex");
+          : path.join(homeDir(env), ".codex");
       return path.join(codexHome, "hooks.json");
     },
     hookEntries: [
@@ -41,7 +41,7 @@ const AGENT_SPECS = {
       const claudeDir =
         typeof env.CLAUDE_CONFIG_DIR === "string" && env.CLAUDE_CONFIG_DIR.trim().length > 0
           ? env.CLAUDE_CONFIG_DIR.trim()
-          : path.join(os.homedir(), ".claude");
+          : path.join(homeDir(env), ".claude");
       return path.join(claudeDir, "settings.json");
     },
     hookEntries: [
@@ -56,8 +56,8 @@ const AGENT_SPECS = {
   gemini: {
     label: "Gemini",
     disabledEnv: "FORKTTY_GEMINI_HOOKS_DISABLED",
-    configPath() {
-      return path.join(os.homedir(), ".gemini", "settings.json");
+    configPath(env) {
+      return path.join(homeDir(env), ".gemini", "settings.json");
     },
     hookEntries: [
       ["SessionStart", "session-start", 5000],
@@ -67,6 +67,12 @@ const AGENT_SPECS = {
     ],
   },
 };
+
+function homeDir(env = process.env) {
+  return typeof env.HOME === "string" && env.HOME.trim().length > 0
+    ? env.HOME.trim()
+    : os.homedir();
+}
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);

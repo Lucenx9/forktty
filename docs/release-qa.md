@@ -68,6 +68,7 @@ rebuilding.
 
 - `node scripts/forktty.mjs hooks setup codex --dry-run` — prints `would update` but does not create the Codex config.
 - `node scripts/forktty.mjs hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
+- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= node scripts/forktty.mjs hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 - Modify an existing agent hook config and re-run setup twice quickly — each changed run creates a distinct `.bak-*` file and does not overwrite a prior backup.
 - Corrupt `~/.codex/hooks.json` (`echo '{ not json' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message names both the agent and the path; the file is left untouched.

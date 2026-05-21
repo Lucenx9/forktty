@@ -510,6 +510,27 @@ describe("hook installer", () => {
     await assert.rejects(fs.access(codexConfig), /ENOENT/);
   });
 
+  it("uses HOME for default hook config locations", async () => {
+    const context = makeContext({
+      CODEX_HOME: "",
+      CLAUDE_CONFIG_DIR: "",
+      HOME: path.join(tmpDir, "isolated-home"),
+    });
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex", "claude", "gemini"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const home = context.env.HOME;
+    assert.ok(JSON.parse(await fs.readFile(path.join(home, ".codex/hooks.json"), "utf8")));
+    assert.ok(JSON.parse(await fs.readFile(path.join(home, ".claude/settings.json"), "utf8")));
+    assert.ok(JSON.parse(await fs.readFile(path.join(home, ".gemini/settings.json"), "utf8")));
+  });
+
   it("preserves unrelated keys in an existing config", async () => {
     const context = makeContext();
     const codexDir = context.env.CODEX_HOME;
