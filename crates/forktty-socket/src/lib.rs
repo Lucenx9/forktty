@@ -250,21 +250,9 @@ pub async fn dispatch(
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                let workspace_id = match selector {
-                    WorkspaceSelector::Id(id) => id.to_string(),
-                    WorkspaceSelector::Name(name) => model
-                        .list_workspaces()
-                        .into_iter()
-                        .find(|workspace| workspace.name == name)
-                        .map(|workspace| workspace.id)
-                        .ok_or(DispatchError::NotFound("workspace"))?,
-                    WorkspaceSelector::WorktreeName(name) => model
-                        .list_workspaces()
-                        .into_iter()
-                        .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
-                        .map(|workspace| workspace.id)
-                        .ok_or(DispatchError::NotFound("workspace"))?,
-                };
+                let workspace_id = model
+                    .workspace_id_for(selector)
+                    .ok_or(DispatchError::NotFound("workspace"))?;
                 let surface_ids = model
                     .list_surfaces(Some(&workspace_id))
                     .into_iter()
@@ -274,10 +262,7 @@ pub async fn dispatch(
                     .close_workspace(WorkspaceSelector::Id(&workspace_id))
                     .ok_or(DispatchError::NotFound("workspace"))?;
                 if model.list_workspaces().is_empty() {
-                    model.create_workspace(
-                        "main",
-                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-                    );
+                    model.create_workspace("main", workspace.working_dir.clone());
                 }
                 (workspace, surface_ids)
             };
@@ -390,7 +375,7 @@ pub async fn dispatch(
                 .map_err(|_| "Lock poisoned".to_string())?;
             let workspace_id = match workspace_selector_from_params(&params) {
                 Ok(selector) => Some(
-                    resolve_existing_workspace_id(&model, selector)
+                    model.workspace_id_for(selector)
                         .ok_or(DispatchError::NotFound("workspace"))?,
                 ),
                 Err(DispatchError::MissingParam(_)) => None,
@@ -1099,7 +1084,7 @@ fn resolve_notification_target(
         .map_err(|_| "Lock poisoned".to_string())?;
     let workspace_id = match workspace_selector_from_params(params) {
         Ok(selector) => Some(
-            resolve_existing_workspace_id(&model, selector)
+            model.workspace_id_for(selector)
                 .ok_or(DispatchError::NotFound("workspace"))?,
         ),
         Err(DispatchError::MissingParam(_)) => None,
@@ -1121,29 +1106,6 @@ fn resolve_notification_target(
     }
 
     Ok((workspace_id, None))
-}
-
-fn resolve_existing_workspace_id(
-    model: &WorkspaceModel,
-    selector: WorkspaceSelector<'_>,
-) -> Option<String> {
-    match selector {
-        WorkspaceSelector::Id(id) => model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.id == id)
-            .map(|workspace| workspace.id),
-        WorkspaceSelector::Name(name) => model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.name == name)
-            .map(|workspace| workspace.id),
-        WorkspaceSelector::WorktreeName(name) => model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
-            .map(|workspace| workspace.id),
-    }
 }
 
 fn required_f64(params: &Value, key: &'static str) -> Result<f64, DispatchError> {
@@ -1173,7 +1135,7 @@ fn resolve_workspace_id_for_metadata(
         .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
     match workspace_selector_from_params(params) {
         Ok(selector) => {
-            return resolve_existing_workspace_id(&model, selector)
+            return model.workspace_id_for(selector)
                 .ok_or(DispatchError::NotFound("workspace"));
         }
         Err(DispatchError::MissingParam(_)) => {}
@@ -2390,6 +2352,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(selected["id"], created["id"]);
+    }
+
+    #[tokio::test]
+    async fn workspace_close_last_workspace_keeps_replacement_in_closed_cwd() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = fs::canonicalize(project_dir.path()).unwrap();
+        let (state, backend) = test_state();
+
+        let initial = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let initial_id = initial[0]["id"].as_str().unwrap();
+        let created = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "project", "workingDir": project_dir.path()}),
+        )
+        .await
+        .unwrap();
+        let project_id = created["id"].as_str().unwrap();
+        let project_surface_id = created["focused_surface_id"].as_str().unwrap();
+        dispatch(&state, "workspace.close", json!({"id": initial_id}))
+            .await
+            .unwrap();
+
+        let closed = dispatch(&state, "workspace.close", json!({"id": project_id}))
+            .await
+            .unwrap();
+
+        assert_eq!(closed["name"], "project");
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["name"], "main");
+        assert_eq!(
+            workspaces[0]["working_dir"].as_str().unwrap(),
+            project_cwd.to_str().unwrap()
+        );
+        assert!(matches!(
+            backend.sent_text(project_surface_id),
+            Err(forktty_terminal::TerminalError::NotFound(_))
+        ));
+        let replacement_surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        assert_eq!(
+            backend
+                .surfaces()
+                .unwrap()
+                .into_iter()
+                .find(|surface| surface.surface_id == replacement_surface_id)
+                .unwrap()
+                .cwd,
+            project_cwd
+        );
     }
 
     #[tokio::test]
