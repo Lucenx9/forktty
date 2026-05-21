@@ -335,8 +335,8 @@ pub async fn dispatch(
                 }
             }
             worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
-            let surface_ids = {
-                let mut model = state
+            let (workspace_id, surface_ids) = {
+                let model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
@@ -357,16 +357,20 @@ pub async fn dispatch(
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                let _ = model.close_workspace(WorkspaceSelector::WorktreeName(
-                    workspace_worktree_name.as_str(),
-                ));
+                (workspace_id, surface_ids)
+            };
+            close_terminal_surfaces_if_present(state, &surface_ids)?;
+            {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                if let Some(workspace_id) = workspace_id {
+                    let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
+                }
                 if model.list_workspaces().is_empty() {
                     model.create_workspace("main", fallback_path);
                 }
-                surface_ids
-            };
-            for surface_id in surface_ids {
-                let _ = state.terminal.close(&surface_id);
             }
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!({"removed": name}))
@@ -2736,6 +2740,75 @@ mod tests {
             backend.sent_text(&surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn worktree_remove_keeps_workspace_when_backend_close_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/socket-close-{}", std::process::id());
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(FailingCloseBackend::default());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();
+
+        let created = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        let workspace_id = created["id"].as_str().unwrap();
+        let surface_id = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()[0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let error = dispatch(
+            &state,
+            "worktree.remove",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("close failed"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert!(workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|workspace| workspace["id"] == workspace_id));
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+        assert_eq!(surfaces[0]["id"], surface_id);
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id));
+        assert!(worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

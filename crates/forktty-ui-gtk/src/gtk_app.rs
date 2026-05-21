@@ -5916,7 +5916,8 @@ fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), St
         }
     }
     worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
-    close_workspace_by_worktree_name(state, &workspace_worktree_name, fallback_path);
+    close_workspace_by_worktree_name(state, &workspace_worktree_name, fallback_path)
+        .map_err(|err| err.to_string())?;
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
@@ -5980,11 +5981,11 @@ fn close_workspace_by_worktree_name(
     state: &SocketAppState,
     worktree_name: &str,
     fallback_path: PathBuf,
-) {
-    let surface_ids = {
-        let mut model = match state.model.lock() {
+) -> Result<(), TerminalError> {
+    let (workspace_id, surface_ids) = {
+        let model = match state.model.lock() {
             Ok(model) => model,
-            Err(_) => return,
+            Err(_) => return Err(TerminalError::LockPoisoned),
         };
         let workspace_id = model
             .list_workspaces()
@@ -5992,22 +5993,27 @@ fn close_workspace_by_worktree_name(
             .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name))
             .map(|workspace| workspace.id);
         let Some(workspace_id) = workspace_id else {
-            return;
+            return Ok(());
         };
         let surface_ids = model
             .list_surfaces(Some(&workspace_id))
             .into_iter()
             .map(|surface| surface.id)
             .collect::<Vec<_>>();
+        (workspace_id, surface_ids)
+    };
+    close_terminal_surfaces(state, &surface_ids)?;
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return Err(TerminalError::LockPoisoned),
+        };
         let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
         if model.list_workspaces().is_empty() {
             model.create_workspace("main", fallback_path);
         }
-        surface_ids
-    };
-    for surface_id in surface_ids {
-        let _ = state.terminal.close(&surface_id);
     }
+    Ok(())
 }
 
 fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
@@ -7592,6 +7598,53 @@ mod tests {
             .list_notifications()
             .iter()
             .any(|notification| notification.title == "Close Workspace Failed"));
+    }
+
+    #[test]
+    fn close_worktree_workspace_keeps_model_when_backend_close_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let fallback_dir = tempfile::tempdir().unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (tx, rx) = mpsc::channel();
+        let terminal = Arc::new(GtkVteBackend::new(tx));
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_worktree_workspace(
+                "feature/test",
+                &project_cwd,
+                "feature/test",
+                "feature-test",
+            );
+            (workspace.id, workspace.focused_surface_id)
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+        drop(rx);
+
+        let error =
+            close_workspace_by_worktree_name(&state, "feature-test", fallback_dir.path().into())
+                .unwrap_err()
+                .to_string();
+
+        assert!(error.contains("sending on a closed channel"));
+        let model = model.lock().unwrap();
+        assert!(model
+            .list_workspaces()
+            .iter()
+            .any(|workspace| workspace.id == workspace_id));
+        assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+        assert!(terminal
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id));
     }
 
     #[test]
