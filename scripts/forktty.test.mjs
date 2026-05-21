@@ -24,6 +24,7 @@ import {
   resolveSelectorParams,
   sendSocketRequest,
   surfaceIdFromWorkspaceList,
+  shouldSendHookActions,
   worktreeParams,
 } from "./forktty.mjs";
 
@@ -203,6 +204,7 @@ describe("forktty CLI helpers", () => {
         args: ["ping"],
         json: true,
         socketPath: "/tmp/stub.sock",
+        socketExplicit: true,
         help: false,
       },
     );
@@ -215,9 +217,22 @@ describe("forktty CLI helpers", () => {
         args: ["worktree-create", "feature/x", "--cwd", "/repo"],
         json: false,
         socketPath: "/tmp/forktty.sock",
+        socketExplicit: true,
         help: false,
       },
     );
+  });
+
+  it("only skips hook socket sends when no socket target was supplied", () => {
+    assert.equal(shouldSendHookActions({ env: {}, socketExplicit: false }), false);
+    assert.equal(
+      shouldSendHookActions({
+        env: { FORKTTY_SOCKET_PATH: " /tmp/forktty.sock " },
+        socketExplicit: false,
+      }),
+      true,
+    );
+    assert.equal(shouldSendHookActions({ env: {}, socketExplicit: true }), true);
   });
 
   it("shell-quotes the generated hook command", () => {

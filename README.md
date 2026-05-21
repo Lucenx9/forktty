@@ -139,7 +139,9 @@ The installer merges commands into:
 
 When `HOME` is overridden, the `~` defaults are resolved under that home directory.
 
-Hooks report status, progress, logs, and prompt notifications through the same local socket pipeline.
+Hooks report status, progress, logs, and prompt notifications through the same local socket
+pipeline. Manual hook-event commands can pass `--socket <path>` when they run outside a
+ForkTTY-spawned shell.
 
 ## Features
 

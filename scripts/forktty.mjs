@@ -1494,10 +1494,7 @@ async function handleHookEvent(context, args) {
   const payload = await readOptionalStdinJson();
   const actions = buildHookActions(agent, event, payload, context.env);
 
-  const hasSocketPath =
-    typeof context.env.FORKTTY_SOCKET_PATH === "string" && context.env.FORKTTY_SOCKET_PATH.trim();
-
-  if (hasSocketPath) {
+  if (shouldSendHookActions(context)) {
     for (const action of actions) {
       try {
         await sendSocketRequest(
@@ -1516,6 +1513,14 @@ async function handleHookEvent(context, args) {
   process.stdout.write(HOOK_CONTINUE_JSON);
 }
 
+function shouldSendHookActions(context) {
+  return (
+    context.socketExplicit ||
+    (typeof context.env.FORKTTY_SOCKET_PATH === "string" &&
+      Boolean(context.env.FORKTTY_SOCKET_PATH.trim()))
+  );
+}
+
 async function handlePing(context) {
   const result = await sendSocketRequest(context.socketPath, "system.ping", {});
   if (context.json) {
@@ -1529,6 +1534,7 @@ function parseGlobalArgs(argv, env = process.env) {
   const args = [];
   let json = false;
   let socketPath = defaultSocketPath(env);
+  let socketExplicit = false;
   let help = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -1541,11 +1547,13 @@ function parseGlobalArgs(argv, env = process.env) {
       const next = argv[index + 1];
       if (!next) throw new Error("--socket requires a value");
       socketPath = next;
+      socketExplicit = true;
       index += 1;
       continue;
     }
     if (typeof token === "string" && token.startsWith("--socket=")) {
       socketPath = token.slice("--socket=".length);
+      socketExplicit = true;
       continue;
     }
     if (token === "--help" && args.length === 0) {
@@ -1558,7 +1566,7 @@ function parseGlobalArgs(argv, env = process.env) {
     args.push(token);
   }
 
-  return { args, json, socketPath, help };
+  return { args, json, socketPath, socketExplicit, help };
 }
 
 async function main(argv = process.argv.slice(2), env = process.env) {
@@ -1575,6 +1583,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     env,
     json: parsed.json,
     socketPath: parsed.socketPath,
+    socketExplicit: parsed.socketExplicit,
   };
 
   switch (command) {
@@ -1717,6 +1726,7 @@ export {
   resolveSelectorParams,
   sendSocketRequest,
   shellQuote,
+  shouldSendHookActions,
   surfaceIdFromWorkspaceList,
   worktreeParams,
 };
