@@ -17,6 +17,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 const MAX_REQUEST_SIZE: usize = 1_048_576;
+const MAX_SEND_TEXT_BYTES: usize = 262_144;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Error, Debug)]
@@ -27,6 +28,76 @@ pub enum SocketError {
     Json(#[from] serde_json::Error),
     #[error("Lock poisoned")]
     LockPoisoned,
+}
+
+/// Structured error categories surfaced by [`dispatch`].
+///
+/// The variants map to stable string codes that clients can branch on
+/// (`method_not_found`, `missing_param`, `not_found`, `payload_too_large`,
+/// `error`). Existing handlers that return ad-hoc `String` errors keep
+/// working via the [`From<String>`] impl below; new sites should prefer the
+/// structured variants so the response carries a useful `error.code`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchError {
+    MethodNotFound(String),
+    MissingParam(&'static str),
+    NotFound(&'static str),
+    PayloadTooLarge {
+        field: &'static str,
+        limit: usize,
+        actual: usize,
+    },
+    Other(String),
+}
+
+impl DispatchError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            DispatchError::MethodNotFound(_) => "method_not_found",
+            DispatchError::MissingParam(_) => "missing_param",
+            DispatchError::NotFound(_) => "not_found",
+            DispatchError::PayloadTooLarge { .. } => "payload_too_large",
+            DispatchError::Other(_) => "error",
+        }
+    }
+}
+
+impl std::fmt::Display for DispatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DispatchError::MethodNotFound(method) => write!(f, "Unknown method: {method}"),
+            DispatchError::MissingParam(name) => write!(f, "Missing {name}"),
+            DispatchError::NotFound(kind) => {
+                let label = match *kind {
+                    "workspace" => "Workspace not found",
+                    "surface" => "Surface not found",
+                    other => return write!(f, "{other} not found"),
+                };
+                f.write_str(label)
+            }
+            DispatchError::PayloadTooLarge {
+                field,
+                limit,
+                actual,
+            } => write!(
+                f,
+                "{field} payload is {actual} bytes, exceeds limit of {limit} bytes"
+            ),
+            DispatchError::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for DispatchError {
+    fn from(message: String) -> Self {
+        DispatchError::Other(message)
+    }
+}
+
+impl From<&str> for DispatchError {
+    fn from(message: &str) -> Self {
+        DispatchError::Other(message.to_string())
+    }
 }
 
 #[derive(Clone)]
@@ -115,7 +186,12 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
         let (stream, _) = listener.accept().await?;
         let state = state.clone();
         tokio::spawn(async move {
-            let _ = handle_connection(stream, state).await;
+            if let Err(err) = handle_connection(stream, state).await {
+                // We can't return errors to a client whose connection has
+                // already dropped, but the operator should still see the
+                // underlying I/O or JSON failure on stderr.
+                eprintln!("forktty socket connection ended with error: {err}");
+            }
         });
     }
 }
@@ -124,7 +200,7 @@ pub async fn dispatch(
     state: &SocketAppState,
     method: &str,
     params: Value,
-) -> Result<Value, String> {
+) -> Result<Value, DispatchError> {
     match method {
         "system.ping" => Ok(json!("pong")),
         "workspace.list" => {
@@ -151,7 +227,7 @@ pub async fn dispatch(
             };
             if let Err(err) = spawn_workspace_terminal(state, &workspace) {
                 rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
-                return Err(err);
+                return Err(err.into());
             }
             Ok(json!(workspace))
         }
@@ -164,7 +240,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .select_workspace(selector)
-                    .ok_or_else(|| "Workspace not found".to_string())?
+                    .ok_or(DispatchError::NotFound("workspace"))?
             };
             Ok(json!(workspace))
         }
@@ -182,13 +258,13 @@ pub async fn dispatch(
                         .into_iter()
                         .find(|workspace| workspace.name == name)
                         .map(|workspace| workspace.id)
-                        .ok_or_else(|| "Workspace not found".to_string())?,
+                        .ok_or(DispatchError::NotFound("workspace"))?,
                     WorkspaceSelector::WorktreeName(name) => model
                         .list_workspaces()
                         .into_iter()
                         .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
                         .map(|workspace| workspace.id)
-                        .ok_or_else(|| "Workspace not found".to_string())?,
+                        .ok_or(DispatchError::NotFound("workspace"))?,
                 };
                 let surface_ids = model
                     .list_surfaces(Some(&workspace_id))
@@ -197,7 +273,7 @@ pub async fn dispatch(
                     .collect::<Vec<_>>();
                 let workspace = model
                     .close_workspace(WorkspaceSelector::Id(&workspace_id))
-                    .ok_or_else(|| "Workspace not found".to_string())?;
+                    .ok_or(DispatchError::NotFound("workspace"))?;
                 if model.list_workspaces().is_empty() {
                     model.create_workspace(
                         "main",
@@ -226,7 +302,7 @@ pub async fn dispatch(
             let name = params
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing name".to_string())?;
+                .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let layout = worktree_layout();
@@ -245,7 +321,7 @@ pub async fn dispatch(
                 .get("name")
                 .or_else(|| params.get("branch"))
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing name".to_string())?;
+                .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let layout = worktree_layout();
@@ -263,7 +339,7 @@ pub async fn dispatch(
             let name = params
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing name".to_string())?;
+                .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let fallback_path =
@@ -318,7 +394,7 @@ pub async fn dispatch(
             let name = params
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing name".to_string())?;
+                .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
             let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
@@ -337,11 +413,18 @@ pub async fn dispatch(
                 .get("surface_id")
                 .or_else(|| params.get("surfaceId"))
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing surface_id".to_string())?;
+                .ok_or(DispatchError::MissingParam("surface_id"))?;
             let text = params
                 .get("text")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing text".to_string())?;
+                .ok_or(DispatchError::MissingParam("text"))?;
+            if text.len() > MAX_SEND_TEXT_BYTES {
+                return Err(DispatchError::PayloadTooLarge {
+                    field: "text",
+                    limit: MAX_SEND_TEXT_BYTES,
+                    actual: text.len(),
+                });
+            }
             state
                 .terminal
                 .send_text(surface_id, text)
@@ -353,7 +436,7 @@ pub async fn dispatch(
                 .get("surface_id")
                 .or_else(|| params.get("surfaceId"))
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing surface_id".to_string())?;
+                .ok_or(DispatchError::MissingParam("surface_id"))?;
             let axis = match params.get("axis").and_then(Value::as_str) {
                 Some("vertical") => SplitAxis::Vertical,
                 _ => SplitAxis::Horizontal,
@@ -365,11 +448,11 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .split_surface(surface_id, axis)
-                    .ok_or_else(|| "Surface not found".to_string())?
+                    .ok_or(DispatchError::NotFound("surface"))?
             };
             if let Err(err) = spawn_surface_terminal(state, &surface) {
                 rollback_surface_creation(state, &surface.id)?;
-                return Err(err);
+                return Err(err.into());
             }
             Ok(json!(surface))
         }
@@ -378,7 +461,7 @@ pub async fn dispatch(
                 .get("surface_id")
                 .or_else(|| params.get("surfaceId"))
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing surface_id".to_string())?;
+                .ok_or(DispatchError::MissingParam("surface_id"))?;
             let focused = {
                 let mut model = state
                     .model
@@ -389,7 +472,7 @@ pub async fn dispatch(
             if focused {
                 Ok(json!({"focused": true}))
             } else {
-                Err("Surface not found".to_string())
+                Err(DispatchError::NotFound("surface"))
             }
         }
         "surface.close" => {
@@ -397,14 +480,14 @@ pub async fn dispatch(
                 .get("surface_id")
                 .or_else(|| params.get("surfaceId"))
                 .and_then(Value::as_str)
-                .ok_or_else(|| "Missing surface_id".to_string())?;
+                .ok_or(DispatchError::MissingParam("surface_id"))?;
             {
                 let model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 if model.surface(surface_id).is_none() {
-                    return Err("Surface not found".to_string());
+                    return Err(DispatchError::NotFound("surface"));
                 }
             }
             close_terminal_surface_if_present(state, surface_id)?;
@@ -415,7 +498,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .close_surface(surface_id)
-                    .ok_or_else(|| "Surface not found".to_string())?
+                    .ok_or(DispatchError::NotFound("surface"))?
             };
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(surface))
@@ -485,7 +568,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .set_status(&workspace_id, key, label, value, color)
-                    .ok_or_else(|| "Workspace not found".to_string())?
+                    .ok_or(DispatchError::NotFound("workspace"))?
             };
             Ok(json!(status))
         }
@@ -516,7 +599,7 @@ pub async fn dispatch(
             if cleared {
                 Ok(json!({"cleared": true}))
             } else {
-                Err("Workspace not found".to_string())
+                Err(DispatchError::NotFound("workspace"))
             }
         }
         "metadata.set_progress" => {
@@ -526,7 +609,9 @@ pub async fn dispatch(
             let value = required_f64(&params, "value")?;
             let total = optional_f64(&params, "total")?;
             if total.is_some_and(|total| total <= 0.0) {
-                return Err("Invalid parameter total: expected positive number".to_string());
+                return Err("Invalid parameter total: expected positive number"
+                    .to_string()
+                    .into());
             }
             let progress = {
                 let mut model = state
@@ -535,7 +620,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .set_progress(&workspace_id, key, label, value, total)
-                    .ok_or_else(|| "Workspace not found".to_string())?
+                    .ok_or(DispatchError::NotFound("workspace"))?
             };
             Ok(json!(progress))
         }
@@ -566,7 +651,7 @@ pub async fn dispatch(
             if cleared {
                 Ok(json!({"cleared": true}))
             } else {
-                Err("Workspace not found".to_string())
+                Err(DispatchError::NotFound("workspace"))
             }
         }
         "metadata.log" => {
@@ -580,7 +665,9 @@ pub async fn dispatch(
                 "error" => LogLevel::Error,
                 "info" | "" => LogLevel::Info,
                 _ => {
-                    return Err("Invalid parameter level: expected info, warn, or error".to_string())
+                    return Err("Invalid parameter level: expected info, warn, or error"
+                        .to_string()
+                        .into())
                 }
             };
             let message = required_string(&params, "message")?;
@@ -591,7 +678,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .append_log(&workspace_id, level, message)
-                    .ok_or_else(|| "Workspace not found".to_string())?
+                    .ok_or(DispatchError::NotFound("workspace"))?
             };
             Ok(json!(log))
         }
@@ -618,10 +705,10 @@ pub async fn dispatch(
             if cleared {
                 Ok(json!({"cleared": true}))
             } else {
-                Err("Workspace not found".to_string())
+                Err(DispatchError::NotFound("workspace"))
             }
         }
-        _ => Err(format!("Unknown method: {method}")),
+        _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }
 
@@ -1037,7 +1124,7 @@ async fn handle_connection(
         let id = request.id.clone();
         let response = match dispatch(&state, &request.method, request.params).await {
             Ok(result) => JsonRpcResponse::ok(id, result),
-            Err(message) => JsonRpcResponse::error(id, "error", message),
+            Err(err) => JsonRpcResponse::error(id, err.code(), err.to_string()),
         };
         write_response(&mut writer, &response).await?;
     }
@@ -1542,7 +1629,8 @@ mod tests {
             json!({"name": "failed", "workingDir": "/tmp"}),
         )
         .await
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("spawn failed"));
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -1579,7 +1667,8 @@ mod tests {
             json!({"surface_id": surface_id, "axis": "vertical"}),
         )
         .await
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("spawn failed"));
         let surfaces = dispatch(
@@ -1609,7 +1698,8 @@ mod tests {
 
         let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
             .await
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("close failed"));
         let surfaces = dispatch(
@@ -1734,12 +1824,67 @@ mod tests {
             json!({"name": "blocked", "cwd": unopened_repo.path()}),
         )
         .await
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("open workspace"));
         assert!(worktree::list(unopened_repo.path().to_str().unwrap())
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_returns_method_not_found_for_unknown_method() {
+        let (state, _backend) = test_state();
+        let err = dispatch(&state, "nonsense.bogus", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "method_not_found");
+        assert!(err.to_string().contains("nonsense.bogus"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_returns_missing_param_for_send_text_without_text() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surface_id": surface_id}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "missing_param");
+        assert!(err.to_string().contains("text"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_returns_not_found_for_unknown_surface_focus() {
+        let (state, _backend) = test_state();
+        let err = dispatch(&state, "surface.focus", json!({"surface_id": "no-such"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "not_found");
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_oversize_send_text_payload() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let huge = "x".repeat(MAX_SEND_TEXT_BYTES + 1);
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surface_id": surface_id, "text": huge}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "payload_too_large");
     }
 
     #[test]
