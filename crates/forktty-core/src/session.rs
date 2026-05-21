@@ -350,6 +350,16 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
                 "workspace id must not be empty".to_string(),
             ));
         }
+        if workspace.name.trim().is_empty() {
+            return Err(SessionError::InvalidData(
+                "workspace name must not be empty".to_string(),
+            ));
+        }
+        if workspace.working_dir.as_os_str().is_empty() {
+            return Err(SessionError::InvalidData(
+                "workspace working directory must not be empty".to_string(),
+            ));
+        }
         if !workspace_ids.insert(workspace.id.as_str()) {
             return Err(SessionError::InvalidData(format!(
                 "duplicate workspace id: {}",
@@ -383,9 +393,9 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
 
 fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, SessionError> {
     match node {
-        PaneNode::Leaf { surface_id } if surface_id.is_empty() => Err(SessionError::InvalidData(
-            "pane leaf surface id must not be empty".to_string(),
-        )),
+        PaneNode::Leaf { surface_id } if surface_id.trim().is_empty() => Err(
+            SessionError::InvalidData("pane leaf surface id must not be empty".to_string()),
+        ),
         PaneNode::Leaf { .. } => Ok(1),
         PaneNode::Split {
             children, sizes, ..
@@ -658,6 +668,52 @@ mod tests {
     }
 
     #[test]
+    fn rejects_session_with_blank_workspace_fields() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+
+        let mut data = model.to_session_data();
+        data.workspaces[0].name = " \t ".to_string();
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+
+        let mut data = model.to_session_data();
+        data.workspaces[0].working_dir = PathBuf::new();
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn quarantines_session_with_blank_workspace_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.workspaces[0].name.clear();
+        fs::write(&path, serde_json::to_string_pretty(&data).unwrap()).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(!path.exists(), "invalid session should be renamed aside");
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .any(|name| name.to_string_lossy().contains("session-v2.json.bad-")),
+            "expected a quarantined invalid session sibling, got {siblings:?}"
+        );
+    }
+
+    #[test]
     fn rejects_session_with_duplicate_surface_ids() {
         let mut model = WorkspaceModel::new();
         let first = model.create_workspace("main", "/tmp/main");
@@ -668,6 +724,22 @@ mod tests {
         };
         data.workspaces[1].focused_surface_id = first.focused_surface_id;
         data.active_workspace_id = Some(second.id);
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_blank_pane_surface_id() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.workspaces[0].pane_tree = PaneNode::Leaf {
+            surface_id: " \n ".to_string(),
+        };
+        data.workspaces[0].focused_surface_id = " \n ".to_string();
 
         assert!(matches!(
             validate_session_data(&data),
