@@ -90,6 +90,7 @@ rebuilding.
 - `forktty split-surface --axis=` — exits with `--axis requires a value` instead of creating an unintended horizontal split.
 - `printf '{"id":"x","method":"surface.split","params":{"surface_id":"<surface-id>","axis":"diagonal"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `axis`; no horizontal split is created.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":42}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of treating it as missing.
+- `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of reporting a successful no-op send.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.
 - Against a stub socket that returns a different response `id`, `forktty ping --socket <stub>` errors with a response-id mismatch that names the method and socket path.
 - Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"request_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `request_too_large` instead of reporting a response-id mismatch.

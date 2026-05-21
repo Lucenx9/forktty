@@ -407,6 +407,9 @@ pub async fn dispatch(
         "surface.send_text" => {
             let surface_id = required_surface_id(&params)?;
             let text = required_string_param(&params, "text")?;
+            if text.is_empty() {
+                return Err("Invalid parameter text: must not be empty".into());
+            }
             if text.len() > MAX_SEND_TEXT_BYTES {
                 return Err(DispatchError::PayloadTooLarge {
                     field: "text",
@@ -3068,6 +3071,16 @@ mod tests {
             &state,
             "surface.send_text",
             json!({"surface_id": surface_id, "text": 42}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "error");
+        assert!(err.to_string().contains("Invalid parameter text"));
+
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surface_id": surface_id, "text": ""}),
         )
         .await
         .unwrap_err();
