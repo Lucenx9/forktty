@@ -706,6 +706,20 @@ mod tests {
     }
 
     #[test]
+    fn remove_can_preserve_worktree_branch() {
+        let dir = make_repo();
+        create(dir.path().to_str().unwrap(), "preserve-branch", "nested").unwrap();
+
+        remove(dir.path().to_str().unwrap(), "preserve-branch", false).unwrap();
+
+        assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
+        let repo = Repository::open(dir.path()).unwrap();
+        assert!(repo
+            .find_branch("preserve-branch", BranchType::Local)
+            .is_ok());
+    }
+
+    #[test]
     fn nested_worktree_layout_does_not_dirty_target_checkout() {
         let dir = make_repo();
         let _info = create(dir.path().to_str().unwrap(), "nested-clean", "nested").unwrap();

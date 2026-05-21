@@ -81,7 +81,7 @@ rebuilding.
 - From a subdirectory inside that worktree, run `forktty worktree-status` — returns `clean` or `dirty`, not a repository error.
 - Create an uncommitted file in the worktree, then run `forktty worktree-merge feature/x` from the original workspace — merge is rejected and the error says to commit, stash, or resolve the source worktree first.
 - Inside the new workspace, commit a change and then `forktty worktree-merge feature/x` from the original workspace's prompt.
-- `forktty worktree-remove feature/x` — the workspace closes and the worktree is removed from the repo.
+- `forktty worktree-remove feature/x` — the workspace closes, the worktree is removed from the repo, and the local `feature/x` branch still exists.
 
 ## Debian Package Smoke
 

@@ -2055,7 +2055,7 @@ fn build_workspace_context_menu(
                     &parent_,
                     "Remove Worktree?",
                     &format!(
-                        "Remove worktree '{name_confirm}' and close its ForkTTY workspace. This cannot be undone from ForkTTY."
+                        "Remove worktree '{name_confirm}' and close its ForkTTY workspace. The git branch is left intact."
                     ),
                     "Remove Worktree",
                     move || {
@@ -5634,7 +5634,7 @@ fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState)
                     &dialog_for_action,
                     "Remove Worktree?",
                     &format!(
-                        "Remove worktree '{name}' and close its ForkTTY workspace. This cannot be undone from ForkTTY."
+                        "Remove worktree '{name}' and close its ForkTTY workspace. The git branch is left intact."
                     ),
                     "Remove Worktree",
                     move || match remove_worktree_from_gtk(&state_confirm, &name) {
@@ -5910,7 +5910,7 @@ fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), St
             workspace_worktree_name = info.worktree_name.clone();
         }
     }
-    worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
+    worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
     close_workspace_by_worktree_name(state, &workspace_worktree_name, fallback_path);
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");

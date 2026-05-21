@@ -353,7 +353,7 @@ pub async fn dispatch(
                     workspace_worktree_name = info.worktree_name.clone();
                 }
             }
-            worktree::remove(&cwd, name, true).map_err(|err| err.to_string())?;
+            worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
             let surface_ids = {
                 let mut model = state
                     .model
@@ -1968,6 +1968,11 @@ mod tests {
         )
         .await
         .unwrap();
+
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch("topic/socket", git2::BranchType::Local)
+            .is_ok());
 
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         assert!(!workspaces
