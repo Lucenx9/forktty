@@ -1263,7 +1263,8 @@ fn probe_forktty_socket(mut stream: StdUnixStream) -> io::Result<bool> {
     }
     let value: Value = serde_json::from_str(response.trim_end())
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    Ok(value.get("ok").and_then(Value::as_bool) == Some(true)
+    Ok(value.get("id").and_then(Value::as_str) == Some("probe")
+        && value.get("ok").and_then(Value::as_bool) == Some(true)
         && value.get("result").and_then(Value::as_str) == Some("pong"))
 }
 
@@ -1445,6 +1446,40 @@ mod tests {
         drop(tree);
         drop(repo);
         dir
+    }
+
+    fn probe_socket_with_response(response: &'static str) -> bool {
+        use std::io::{BufRead as _, Write as _};
+
+        let (client, server) = StdUnixStream::pair().unwrap();
+        let server_thread = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(server);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            assert!(request.contains(r#""id":"probe""#));
+            let mut server = reader.into_inner();
+            server.write_all(response.as_bytes()).unwrap();
+            server.write_all(b"\n").unwrap();
+            server.flush().unwrap();
+        });
+
+        let result = probe_forktty_socket(client).unwrap();
+        server_thread.join().unwrap();
+        result
+    }
+
+    #[test]
+    fn probe_accepts_matching_forktty_socket_response() {
+        assert!(probe_socket_with_response(
+            r#"{"id":"probe","ok":true,"result":"pong"}"#
+        ));
+    }
+
+    #[test]
+    fn probe_rejects_wrong_response_id_even_when_pong_matches() {
+        assert!(!probe_socket_with_response(
+            r#"{"id":"other","ok":true,"result":"pong"}"#
+        ));
     }
 
     #[tokio::test]
