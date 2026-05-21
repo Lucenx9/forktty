@@ -406,6 +406,32 @@ function shouldReadCommandStdin(options, positionals, textOption) {
   return typeof options[textOption] !== "string" && positionals.length === 0;
 }
 
+function buildNotificationParams(options, positionals, stdinText = "", env = process.env) {
+  requireStringOption(options, "body");
+  requireStringOption(options, "kind");
+  requireStringOption(options, "title");
+  const body =
+    typeof options.body === "string"
+      ? options.body
+      : positionals.length > 0
+        ? positionals.join(" ")
+        : stdinText.trim();
+  const title = typeof options.title === "string" ? options.title : "ForkTTY";
+  const kind =
+    typeof options.kind === "string" && options.kind.trim() ? options.kind.trim() : "info";
+
+  if (!VALID_NOTIFICATION_KINDS.has(kind)) {
+    throw new Error(`Invalid kind: ${kind}`);
+  }
+
+  return {
+    ...buildTargetParams(options, env),
+    title,
+    body,
+    kind,
+  };
+}
+
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -613,30 +639,14 @@ async function handleNotify(context, args) {
   const stdinText = shouldReadCommandStdin(options, positionals, "body")
     ? await readStdinText()
     : "";
-  const body =
-    typeof options.body === "string"
-      ? options.body
-      : positionals.length > 0
-        ? positionals.join(" ")
-        : stdinText.trim();
-  const title = typeof options.title === "string" ? options.title : "ForkTTY";
-  const kind = typeof options.kind === "string" ? options.kind : "info";
+  const params = buildNotificationParams(options, positionals, stdinText, context.env);
 
-  if (!VALID_NOTIFICATION_KINDS.has(kind)) {
-    throw new Error(`Invalid kind: ${kind}`);
-  }
-
-  await sendSocketRequest(context.socketPath, "notification.create", {
-    ...buildTargetParams(options, context.env),
-    title,
-    body,
-    kind,
-  });
+  await sendSocketRequest(context.socketPath, "notification.create", params);
 
   if (context.json) {
     printJson({ result: true });
   } else {
-    process.stdout.write(`Sent ${kind} notification\n`);
+    process.stdout.write(`Sent ${params.kind} notification\n`);
   }
 }
 
@@ -1760,6 +1770,7 @@ export {
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
+  buildNotificationParams,
   buildProgressParams,
   buildSurfaceActionParams,
   buildSurfaceSplitParams,

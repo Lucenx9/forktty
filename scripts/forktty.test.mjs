@@ -10,6 +10,7 @@ import {
   buildHookActions,
   buildHookShellCommand,
   buildLogParams,
+  buildNotificationParams,
   buildProgressParams,
   buildSurfaceActionParams,
   buildSurfaceSplitParams,
@@ -314,6 +315,39 @@ describe("forktty CLI helpers", () => {
     assert.equal(config.hooks.SessionStart.length, 1);
     assert.equal(config.hooks.UserPromptSubmit.length, 1);
     assert.equal(config.hooks.Stop.length, 1);
+  });
+
+  it("builds notification params and rejects missing option values", () => {
+    assert.deepEqual(
+      buildNotificationParams(
+        {
+          kind: " prompt ",
+          title: "Input",
+          "workspace-name": " main ",
+        },
+        ["Review", "needed"],
+        "",
+        {},
+      ),
+      {
+        workspace_name: "main",
+        title: "Input",
+        body: "Review needed",
+        kind: "prompt",
+      },
+    );
+    assert.throws(
+      () => buildNotificationParams({ kind: true }, ["Review needed"]),
+      /--kind requires a value/,
+    );
+    assert.throws(
+      () => buildNotificationParams({ title: true }, ["Review needed"]),
+      /--title requires a value/,
+    );
+    assert.throws(
+      () => buildNotificationParams({ body: true }, []),
+      /--body requires a value/,
+    );
   });
 
   it("maps notification events to status and prompt notifications", () => {
