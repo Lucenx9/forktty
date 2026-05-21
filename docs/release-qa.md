@@ -134,6 +134,8 @@ rebuilding.
   warns that the session will be quarantined on launch.
 - With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`
   warns that the socket path is not a Unix socket before launch fails.
+- With `$XDG_RUNTIME_DIR` pointing at a regular file, `forktty doctor` warns
+  that the socket parent is not a directory before launch fails.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
   hook paths under that temporary home, matching `hooks setup` fallback paths.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.

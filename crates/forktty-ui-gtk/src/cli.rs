@@ -144,6 +144,7 @@ fn collect_report() -> DoctorReport {
     let socket_parent_path = socket.parent().map(PathBuf::from);
     let socket_parent = describe_path("socket dir", socket_parent_path);
     let socket_state = describe_path("forktty.sock", Some(socket));
+    append_socket_parent_warning(&mut warnings, &socket_parent);
     append_socket_path_warning(&mut warnings, &socket_state);
     if let Some(mode) = socket_parent.mode {
         let world_perms = mode & 0o077;
@@ -239,6 +240,15 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             size: None,
             error: Some(err.to_string()),
         },
+    }
+}
+
+fn append_socket_parent_warning(warnings: &mut Vec<String>, state: &PathState) {
+    if state.exists && !state.is_dir && state.error.is_none() {
+        warnings.push(format!(
+            "socket parent {} exists but is not a directory; ForkTTY cannot bind its socket there.",
+            path_display(state)
+        ));
     }
 }
 
@@ -626,6 +636,22 @@ mod tests {
         assert!(warnings.iter().any(|warning| {
             warning.contains(&socket_path.display().to_string())
                 && warning.contains("not a Unix socket")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_socket_parent_is_not_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent_path = dir.path().join("forktty-runtime");
+        fs::write(&parent_path, "not a directory").unwrap();
+        let state = describe_path("socket dir", Some(parent_path.clone()));
+        let mut warnings = Vec::new();
+
+        append_socket_parent_warning(&mut warnings, &state);
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains(&parent_path.display().to_string())
+                && warning.contains("not a directory")
         }));
     }
 
