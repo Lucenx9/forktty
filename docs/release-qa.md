@@ -21,6 +21,7 @@ bash scripts/build-deb.sh
 - Start from a clean config/session directory.
 - Launch with `cargo run -p forktty-ui-gtk --features gtk-vte`.
 - Confirm the app opens a usable terminal in the current directory.
+- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --features gtk-vte`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
 - Split right and split down until at least three panes exist.
 - Move focus between panes with keyboard shortcuts and pointer clicks.
 - Copy and paste with `Ctrl+Shift+C` / `Ctrl+Shift+V`.

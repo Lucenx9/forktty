@@ -373,7 +373,23 @@ fn default_theme_source() -> String {
     "auto".to_string()
 }
 fn default_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    default_shell_from_env(std::env::var("SHELL").ok())
+}
+
+fn default_shell_from_env(shell_env: Option<String>) -> String {
+    if let Some(shell) = shell_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && is_executable_file(Path::new(value)))
+    {
+        return shell.to_string();
+    }
+
+    ["/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash"]
+        .into_iter()
+        .find(|candidate| is_executable_file(Path::new(candidate)))
+        .unwrap_or("/bin/sh")
+        .to_string()
 }
 fn default_worktree_layout() -> String {
     "nested".to_string()
@@ -417,6 +433,25 @@ mod tests {
         assert_eq!(config.appearance.font_size, 14);
         assert_eq!(config.appearance.scrollback_lines, 20_000);
         assert!(config.appearance.terminal_audible_bell);
+    }
+
+    #[test]
+    fn default_shell_uses_executable_shell_env() {
+        assert_eq!(
+            default_shell_from_env(Some("/bin/sh".to_string())),
+            "/bin/sh"
+        );
+    }
+
+    #[test]
+    fn default_shell_ignores_relative_or_missing_shell_env() {
+        let relative = default_shell_from_env(Some("zsh".to_string()));
+        assert!(Path::new(&relative).is_absolute());
+        assert!(is_executable_file(Path::new(&relative)));
+
+        let missing = default_shell_from_env(Some("/definitely/missing/forktty-shell".to_string()));
+        assert!(Path::new(&missing).is_absolute());
+        assert!(is_executable_file(Path::new(&missing)));
     }
 
     #[test]
