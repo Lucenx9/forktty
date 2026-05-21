@@ -140,6 +140,32 @@ describe("forktty CLI helpers", () => {
     );
   });
 
+  it("keeps id-null connection-level socket error codes", async () => {
+    await withSocketServer(
+      (socket) => {
+        socket.once("data", () => {
+          socket.end(
+            `${JSON.stringify({
+              id: null,
+              ok: false,
+              error: { code: "request_too_large", message: "Request exceeds 1 MiB" },
+            })}\n`,
+          );
+        });
+      },
+      async (socketPath) => {
+        await assert.rejects(
+          sendSocketRequest(socketPath, "surface.send_text", { text: "x" }),
+          (error) =>
+            error.message.includes(socketPath) &&
+            /surface\.send_text/.test(error.message) &&
+            /request_too_large: Request exceeds 1 MiB/.test(error.message) &&
+            !/response id mismatch/.test(error.message),
+        );
+      },
+    );
+  });
+
   it("keeps socket path in invalid socket response diagnostics", async () => {
     await withSocketServer(
       (socket) => {

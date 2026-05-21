@@ -166,7 +166,7 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
         return;
       }
 
-      if (response?.id !== requestId) {
+      if (response?.id !== requestId && !isConnectionLevelSocketError(response)) {
         const actualId = Object.prototype.hasOwnProperty.call(response ?? {}, "id")
           ? response.id
           : null;
@@ -195,6 +195,15 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
         new Error(
           `Socket request failed for ${method} at ${socketPath}: ${errorCode}${String(errorMessage)}`,
         ),
+      );
+    }
+
+    function isConnectionLevelSocketError(response) {
+      const code = response?.error?.code;
+      return (
+        response?.id === null &&
+        response?.ok === false &&
+        (code === "parse_error" || code === "request_too_large")
       );
     }
 
