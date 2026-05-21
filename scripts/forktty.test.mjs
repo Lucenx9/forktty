@@ -392,6 +392,10 @@ describe("forktty CLI helpers", () => {
       /--title requires a value/,
     );
     assert.throws(
+      () => buildNotificationParams({ title: "" }, ["Review needed"]),
+      /--title requires a value/,
+    );
+    assert.throws(
       () => buildNotificationParams({ body: true }, []),
       /--body requires a value/,
     );

@@ -460,7 +460,7 @@ function shouldReadCommandStdin(options, positionals, textOption) {
 function buildNotificationParams(options, positionals, stdinText = "", env = process.env) {
   requireStringOption(options, "body");
   requireNonBlankStringOption(options, "kind");
-  requireStringOption(options, "title");
+  requireNonBlankStringOption(options, "title");
   const body =
     typeof options.body === "string"
       ? options.body

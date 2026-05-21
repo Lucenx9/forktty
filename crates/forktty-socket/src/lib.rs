@@ -492,11 +492,8 @@ pub async fn dispatch(
             Ok(json!(surface))
         }
         "notification.create" => {
-            let title = params
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("ForkTTY");
-            let body = params.get("body").and_then(Value::as_str).unwrap_or("");
+            let title = notification_title_from_params(&params)?;
+            let body = notification_body_from_params(&params)?;
             let kind = notification_kind_from_params(&params)?;
             let (workspace_id, surface_id) = resolve_notification_target(state, &params)?;
             let item = {
@@ -971,6 +968,18 @@ fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, Dis
         Some(_) => Err("Invalid parameter kind: expected info, prompt, error, or custom".into()),
         None => Err("Invalid parameter kind: expected string".into()),
     }
+}
+
+fn notification_title_from_params(params: &Value) -> Result<&str, DispatchError> {
+    optional_non_blank_string_param(params, "title").map(|title| title.unwrap_or("ForkTTY"))
+}
+
+fn notification_body_from_params(params: &Value) -> Result<&str, DispatchError> {
+    let Some(body) = params.get("body") else {
+        return Ok("");
+    };
+    body.as_str()
+        .ok_or_else(|| "Invalid parameter body: expected string".into())
 }
 
 fn log_level_from_params(params: &Value) -> Result<LogLevel, DispatchError> {
@@ -1782,6 +1791,31 @@ mod tests {
             assert_eq!(error.code(), "error");
             assert!(error.to_string().contains("Invalid parameter kind"));
         }
+        let notifications = dispatch(&state, "notification.list", json!({}))
+            .await
+            .unwrap();
+        assert!(notifications.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn notification_create_rejects_invalid_text_fields() {
+        let (state, _backend) = test_state();
+
+        for title in [json!(""), json!(" \n "), json!(42)] {
+            let error = dispatch(&state, "notification.create", json!({"title": title}))
+                .await
+                .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter title"));
+        }
+
+        let error = dispatch(&state, "notification.create", json!({"body": 42}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "error");
+        assert!(error.to_string().contains("Invalid parameter body"));
+
         let notifications = dispatch(&state, "notification.list", json!({}))
             .await
             .unwrap();

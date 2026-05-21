@@ -64,11 +64,13 @@ rebuilding.
 - `printf '{"id":"x","method":"workspace.create","params":{"name":"","workingDir":"/tmp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `name`; no default-named workspace is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"","key":"qa","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `workspace_id`; the status is not added to the active workspace.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad target","surface_id":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `surface_id`; no global notification is created.
+- `printf '{"id":"x","method":"notification.create","params":{"title":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `title`; no blank notification is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":" qa ","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock`, then clear `qa` — the status key is stored trimmed and can be cleared without spaces.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":"qa","label":"QA","value":"ok","color":"purple"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `color`; no status row is created.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `printf '{"id":"x","method":"metadata.log","params":{"level":"","message":"blank level"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `level`; no info log is created.
 - `forktty notify --kind=` — exits with `--kind requires a value` instead of silently sending an `info` notification.
+- `forktty notify --title=` — exits with `--title requires a value` instead of creating a notification with an empty title.
 - `forktty log --level=` — exits with `--level requires a value` instead of logging at the default level.
 - `forktty clear-status --key=` — exits with `--key requires a value` instead of clearing every status entry in the targeted workspace.
 - `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
