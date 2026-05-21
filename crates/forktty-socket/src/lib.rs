@@ -1028,11 +1028,11 @@ fn optional_f64(params: &Value, key: &str) -> Result<Option<f64>, String> {
 fn resolve_workspace_id_for_metadata(
     state: &SocketAppState,
     params: &Value,
-) -> Result<String, String> {
+) -> Result<String, DispatchError> {
     let model = state
         .model
         .lock()
-        .map_err(|_| "Lock poisoned".to_string())?;
+        .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
     if let Ok(selector) = workspace_selector_from_params(params) {
         return match selector {
             WorkspaceSelector::Id(id) => model
@@ -1040,24 +1040,24 @@ fn resolve_workspace_id_for_metadata(
                 .into_iter()
                 .find(|workspace| workspace.id == id)
                 .map(|workspace| workspace.id)
-                .ok_or_else(|| "Workspace not found".to_string()),
+                .ok_or(DispatchError::NotFound("workspace")),
             WorkspaceSelector::Name(name) => model
                 .list_workspaces()
                 .into_iter()
                 .find(|workspace| workspace.name == name)
                 .map(|workspace| workspace.id)
-                .ok_or_else(|| "Workspace not found".to_string()),
+                .ok_or(DispatchError::NotFound("workspace")),
             WorkspaceSelector::WorktreeName(name) => model
                 .list_workspaces()
                 .into_iter()
                 .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
                 .map(|workspace| workspace.id)
-                .ok_or_else(|| "Workspace not found".to_string()),
+                .ok_or(DispatchError::NotFound("workspace")),
         };
     }
     model
         .active_workspace_id()
-        .ok_or_else(|| "Workspace not found".to_string())
+        .ok_or(DispatchError::NotFound("workspace"))
 }
 
 fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, String> {
@@ -1635,6 +1635,27 @@ mod tests {
             .await
             .unwrap();
         assert!(notifications.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_reject_stale_workspace_targets() {
+        let (state, _backend) = test_state();
+
+        let error = dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": "workspace-missing",
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.code(), "not_found");
+        assert_eq!(error.to_string(), "Workspace not found");
     }
 
     #[tokio::test]
