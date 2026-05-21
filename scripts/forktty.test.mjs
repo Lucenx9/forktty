@@ -341,6 +341,10 @@ describe("forktty CLI helpers", () => {
       /--kind requires a value/,
     );
     assert.throws(
+      () => buildNotificationParams({ kind: "" }, ["Review needed"]),
+      /--kind requires a value/,
+    );
+    assert.throws(
       () => buildNotificationParams({ title: true }, ["Review needed"]),
       /--title requires a value/,
     );
@@ -526,6 +530,10 @@ describe("forktty CLI helpers", () => {
   it("rejects invalid log levels", () => {
     assert.throws(
       () => buildLogParams({ level: true }, ["hello"]),
+      /--level requires a value/,
+    );
+    assert.throws(
+      () => buildLogParams({ level: "" }, ["hello"]),
       /--level requires a value/,
     );
     assert.throws(

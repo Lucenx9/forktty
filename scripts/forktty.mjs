@@ -393,7 +393,7 @@ function buildProgressParams(options, env = process.env) {
 }
 
 function buildLogParams(options, positionals, stdinText = "", env = process.env) {
-  requireStringOption(options, "level");
+  requireNonBlankStringOption(options, "level");
   requireStringOption(options, "message");
   const level =
     typeof options.level === "string" && options.level.trim() ? options.level.trim() : "info";
@@ -424,7 +424,7 @@ function shouldReadCommandStdin(options, positionals, textOption) {
 
 function buildNotificationParams(options, positionals, stdinText = "", env = process.env) {
   requireStringOption(options, "body");
-  requireStringOption(options, "kind");
+  requireNonBlankStringOption(options, "kind");
   requireStringOption(options, "title");
   const body =
     typeof options.body === "string"

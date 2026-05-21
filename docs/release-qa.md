@@ -56,8 +56,8 @@ rebuilding.
 - `FORKTTY_WORKSPACE_ID=workspace-1 forktty set-status --workspace-id= --key qa --value ok` — exits with `--workspace-id requires a value` instead of falling back to the inherited id.
 - `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
-- `forktty notify --kind "message"` — exits with an invalid kind instead of silently sending an `info` notification.
-- `forktty log --level "message"` — exits with `--level requires a value` instead of logging at the default level.
+- `forktty notify --kind=` — exits with `--kind requires a value` instead of silently sending an `info` notification.
+- `forktty log --level=` — exits with `--level requires a value` instead of logging at the default level.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
