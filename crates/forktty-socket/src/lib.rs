@@ -400,10 +400,7 @@ pub async fn dispatch(
         }
         "surface.send_text" => {
             let surface_id = required_surface_id(&params)?;
-            let text = params
-                .get("text")
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("text"))?;
+            let text = required_string_param(&params, "text")?;
             if text.len() > MAX_SEND_TEXT_BYTES {
                 return Err(DispatchError::PayloadTooLarge {
                     field: "text",
@@ -946,13 +943,27 @@ fn required_trimmed_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, 
 }
 
 fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
-    params
-        .get("surface_id")
-        .or_else(|| params.get("surfaceId"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or(DispatchError::MissingParam("surface_id"))
+    if params.get("surface_id").is_some() {
+        return optional_non_blank_string_param(params, "surface_id")?
+            .ok_or(DispatchError::MissingParam("surface_id"));
+    }
+    if params.get("surfaceId").is_some() {
+        return optional_non_blank_string_param(params, "surfaceId")?
+            .ok_or(DispatchError::MissingParam("surface_id"));
+    }
+    Err(DispatchError::MissingParam("surface_id"))
+}
+
+fn required_string_param<'a>(
+    params: &'a Value,
+    key: &'static str,
+) -> Result<&'a str, DispatchError> {
+    let Some(value) = params.get(key) else {
+        return Err(DispatchError::MissingParam(key));
+    };
+    value
+        .as_str()
+        .ok_or_else(|| format!("Invalid parameter {key}: expected string").into())
 }
 
 fn workspace_create_name_from_params(params: &Value) -> Result<&str, DispatchError> {
@@ -2671,6 +2682,16 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "missing_param");
         assert!(err.to_string().contains("text"));
+
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surface_id": surface_id, "text": 42}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "error");
+        assert!(err.to_string().contains("Invalid parameter text"));
     }
 
     #[tokio::test]
@@ -2688,6 +2709,50 @@ mod tests {
         .unwrap();
 
         assert_eq!(backend.sent_text(surface_id).unwrap(), vec!["echo camel\n"]);
+    }
+
+    #[tokio::test]
+    async fn surface_commands_reject_invalid_surface_id_params() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        for (method, params, message) in [
+            (
+                "surface.send_text",
+                json!({"surface_id": "", "text": "echo bad\n"}),
+                "Invalid parameter surface_id",
+            ),
+            (
+                "surface.send_text",
+                json!({"surface_id": 42, "surfaceId": surface_id, "text": "echo bad\n"}),
+                "Invalid parameter surface_id",
+            ),
+            (
+                "surface.send_text",
+                json!({"surfaceId": 42, "text": "echo bad\n"}),
+                "Invalid parameter surfaceId",
+            ),
+            (
+                "surface.split",
+                json!({"surface_id": "", "axis": "vertical"}),
+                "Invalid parameter surface_id",
+            ),
+            (
+                "surface.focus",
+                json!({"surface_id": 42}),
+                "Invalid parameter surface_id",
+            ),
+            (
+                "surface.close",
+                json!({"surface_id": ""}),
+                "Invalid parameter surface_id",
+            ),
+        ] {
+            let err = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(err.code(), "error");
+            assert!(err.to_string().contains(message));
+        }
     }
 
     #[tokio::test]
