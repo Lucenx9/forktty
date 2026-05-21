@@ -127,7 +127,7 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
       if (settled) return;
       settled = true;
       socket.destroy();
-      reject(new Error(`Timed out waiting for ${method} response`));
+      reject(new Error(`Timed out waiting for ${method} response from ${socketPath}`));
     }, timeoutMs);
 
     function finish(err, value) {
@@ -154,7 +154,7 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
       try {
         response = JSON.parse(line);
       } catch (error) {
-        finish(new Error(`Invalid socket response: ${error}`));
+        finish(new Error(`Invalid socket response from ${socketPath} for ${method}: ${error}`));
         return;
       }
 
@@ -167,7 +167,15 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
         response?.error?.message ||
         response?.error ||
         `Socket request failed for ${method}`;
-      finish(new Error(String(errorMessage)));
+      const errorCode =
+        response?.error && typeof response.error.code === "string"
+          ? `${response.error.code}: `
+          : "";
+      finish(
+        new Error(
+          `Socket request failed for ${method} at ${socketPath}: ${errorCode}${String(errorMessage)}`,
+        ),
+      );
     }
 
     socket.setEncoding("utf8");
@@ -196,7 +204,7 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
       if (buffer.trim()) {
         consumeLine(buffer);
       } else {
-        finish(new Error(`Socket closed without response for ${method}`));
+        finish(new Error(`Socket closed without response for ${method} at ${socketPath}`));
       }
     });
   });
@@ -1644,6 +1652,7 @@ export {
   parseFlags,
   readAgentConfig,
   resolveSelectorParams,
+  sendSocketRequest,
   shellQuote,
   surfaceIdFromWorkspaceList,
 };

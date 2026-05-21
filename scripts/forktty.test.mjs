@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -20,8 +21,36 @@ import {
   mergeHookConfig,
   readAgentConfig,
   resolveSelectorParams,
+  sendSocketRequest,
   surfaceIdFromWorkspaceList,
 } from "./forktty.mjs";
+
+async function withSocketServer(handler, callback) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "forktty-socket-test-"));
+  const socketPath = path.join(dir, "forktty.sock");
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    handler(socket);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  try {
+    return await callback(socketPath);
+  } finally {
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
 
 describe("forktty CLI helpers", () => {
   it("builds the default socket path from XDG runtime dir", () => {
@@ -56,6 +85,46 @@ describe("forktty CLI helpers", () => {
     assert.match(error.message, /Cannot access ForkTTY socket/);
     assert.match(error.message, /\/run\/user\/1000\/forktty\.sock/);
     assert.equal(error.cause, raw);
+  });
+
+  it("keeps socket path and error code in failed socket responses", async () => {
+    await withSocketServer(
+      (socket) => {
+        socket.end(
+          `${JSON.stringify({
+            id: "x",
+            ok: false,
+            error: { code: "not_found", message: "Workspace not found" },
+          })}\n`,
+        );
+      },
+      async (socketPath) => {
+        await assert.rejects(
+          sendSocketRequest(socketPath, "workspace.select", { id: "missing" }),
+          (error) =>
+            error.message.includes(socketPath) &&
+            /workspace\.select/.test(error.message) &&
+            /not_found: Workspace not found/.test(error.message),
+        );
+      },
+    );
+  });
+
+  it("keeps socket path in invalid socket response diagnostics", async () => {
+    await withSocketServer(
+      (socket) => {
+        socket.end("not json\n");
+      },
+      async (socketPath) => {
+        await assert.rejects(
+          sendSocketRequest(socketPath, "system.ping", {}),
+          (error) =>
+            error.message.includes(socketPath) &&
+            /system\.ping/.test(error.message) &&
+            /Invalid socket response/.test(error.message),
+        );
+      },
+    );
   });
 
   it("formats global notifications without leaking undefined workspace text", () => {
