@@ -1655,14 +1655,18 @@ function parseGlobalArgs(argv, env = process.env) {
     }
     if (!stopGlobalParsing && token === "--socket") {
       const next = argv[index + 1];
-      if (!next) throw new Error("--socket requires a value");
-      socketPath = next;
+      if (typeof next !== "string" || !next.trim() || next.startsWith("--")) {
+        throw new Error("--socket requires a value");
+      }
+      socketPath = next.trim();
       socketExplicit = true;
       index += 1;
       continue;
     }
     if (!stopGlobalParsing && typeof token === "string" && token.startsWith("--socket=")) {
-      socketPath = token.slice("--socket=".length);
+      const explicitSocketPath = token.slice("--socket=".length).trim();
+      if (!explicitSocketPath) throw new Error("--socket requires a value");
+      socketPath = explicitSocketPath;
       socketExplicit = true;
       continue;
     }

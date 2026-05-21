@@ -226,6 +226,24 @@ describe("forktty CLI helpers", () => {
         help: false,
       },
     );
+    assert.deepEqual(
+      parseGlobalArgs(["ping", "--socket", " /tmp/trimmed.sock "], {}),
+      {
+        args: ["ping"],
+        json: false,
+        socketPath: "/tmp/trimmed.sock",
+        socketExplicit: true,
+        help: false,
+      },
+    );
+    assert.throws(
+      () => parseGlobalArgs(["ping", "--socket="], {}),
+      /--socket requires a value/,
+    );
+    assert.throws(
+      () => parseGlobalArgs(["ping", "--socket", "--json"], {}),
+      /--socket requires a value/,
+    );
   });
 
   it("does not parse global flags after a command option terminator", () => {
