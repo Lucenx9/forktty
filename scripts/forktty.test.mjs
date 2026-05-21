@@ -1025,6 +1025,25 @@ describe("hook installer", () => {
     assert.deepEqual(await fs.readdir(codexDir), ["hooks.json"]);
   });
 
+  it("rejects broken hook config symlinks without replacing them", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    await fs.mkdir(codexDir, { recursive: true });
+    const configPath = path.join(codexDir, "hooks.json");
+    const missingTarget = path.join(codexDir, "missing-hooks.json");
+    await fs.symlink(missingTarget, configPath);
+
+    await assert.rejects(
+      handleHooksSetup(context, ["codex"]),
+      (error) =>
+        /codex/.test(error.message) &&
+        error.message.includes(configPath) &&
+        /broken symlink/.test(error.message),
+    );
+    assert.equal(await fs.readlink(configPath), missingTarget);
+    assert.deepEqual(await fs.readdir(codexDir), ["hooks.json"]);
+  });
+
   it("readAgentConfig returns {} for whitespace-only files without throwing", async () => {
     const configPath = path.join(tmpDir, "whitespace.json");
     await fs.writeFile(configPath, "   \n\t  \n");

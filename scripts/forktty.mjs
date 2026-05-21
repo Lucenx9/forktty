@@ -1300,7 +1300,19 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
 async function readJsonFile(filePath) {
   let stat;
   try {
-    stat = await fs.stat(filePath);
+    const linkStat = await fs.lstat(filePath);
+    if (linkStat.isSymbolicLink()) {
+      try {
+        stat = await fs.stat(filePath);
+      } catch (error) {
+        if (error && typeof error === "object" && error.code === "ENOENT") {
+          throw new Error("path is a broken symlink");
+        }
+        throw error;
+      }
+    } else {
+      stat = linkStat;
+    }
   } catch (error) {
     if (error && typeof error === "object" && error.code === "ENOENT") {
       return {};

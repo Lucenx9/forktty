@@ -114,6 +114,8 @@ rebuilding.
 - Replace `~/.codex/hooks.json` with a JSON array (`echo '[]' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message says the top-level config must be a JSON object; the file is left untouched.
 - Replace `~/.codex/hooks.json` with a directory, re-run `hooks setup codex` —
   error message says the path is not a regular file; no backup or replacement is created.
+- Replace `~/.codex/hooks.json` with a broken symlink, re-run `hooks setup codex` —
+  error message says the path is a broken symlink; the symlink is left untouched.
 
 ## Worktree Smoke
 
@@ -158,6 +160,8 @@ rebuilding.
   hook paths under that temporary home, matching `hooks setup` fallback paths.
 - With a directory at `$HOME/.codex/hooks.json`, `forktty doctor` reports the
   Codex hook config as `blocked`, warns that it is not a regular file, and exits 2.
+- With a broken symlink at `$HOME/.codex/hooks.json`, `forktty doctor` reports
+  the Codex hook config as `blocked`, warns that it is a broken symlink, and exits 2.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
 - `forktty doctor --wat` prints `unknown argument: --wat` to stderr and exits 2
   instead of silently ignoring the extra argument.
