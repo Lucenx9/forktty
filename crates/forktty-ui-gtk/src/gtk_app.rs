@@ -6405,7 +6405,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .build();
     let font_family = font_family_combo(parent, &loaded.appearance.font_family);
     font_family.set_tooltip_text(Some("Terminal font family"));
-    font_family.set_width_request(360);
+    font_family.set_width_request(300);
     font_family.set_valign(gtk::Align::Center);
     let font_family_row = settings_action_row(
         "Font family",
@@ -6417,7 +6417,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
 
     let (font_size_row, font_size) = settings_number_row(
         "Font size",
-        "Terminal text size in points. Range: 8–64.",
+        "Terminal text size, in points.",
         8,
         64,
         1,
@@ -6433,7 +6433,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .build();
     let (scrollback_lines_row, scrollback_lines) = settings_number_row(
         "Scrollback lines",
-        "Set to 0 to disable saved scrollback for each pane. Range: 0–500000.",
+        "Set to 0 to disable saved scrollback for each pane.",
         0,
         500_000,
         1000,
@@ -6827,7 +6827,7 @@ fn settings_action_row(title: &str, subtitle: &str) -> adw::ActionRow {
     adw::ActionRow::builder()
         .title(title)
         .subtitle(subtitle)
-        .subtitle_lines(2)
+        .subtitle_lines(0)
         .build()
 }
 
