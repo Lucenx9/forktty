@@ -479,6 +479,37 @@ describe("hook installer", () => {
     assert.ok(parsed.hooks?.SessionStart?.length > 0);
   });
 
+  it("creates distinct backups when changed setups share the same clock tick", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    await fs.mkdir(codexDir, { recursive: true });
+    const configPath = path.join(codexDir, "hooks.json");
+    const originalNow = Date.now;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    Date.now = () => 1716246123456;
+    try {
+      await fs.writeFile(configPath, `${JSON.stringify({ customKey: "first" })}\n`);
+      await handleHooksSetup(context, ["codex"]);
+      await fs.writeFile(configPath, `${JSON.stringify({ customKey: "second" })}\n`);
+      await handleHooksSetup(context, ["codex"]);
+    } finally {
+      Date.now = originalNow;
+      process.stdout.write = originalWrite;
+    }
+
+    const backups = (await fs.readdir(codexDir))
+      .filter((name) => name.startsWith("hooks.json.bak-"))
+      .sort();
+    assert.equal(backups.length, 2);
+    assert.notEqual(backups[0], backups[1]);
+    const backupContents = await Promise.all(
+      backups.map((name) => fs.readFile(path.join(codexDir, name), "utf8")),
+    );
+    assert.ok(backupContents.some((content) => content.includes("first")));
+    assert.ok(backupContents.some((content) => content.includes("second")));
+  });
+
   it("surfaces agent + path context when the config is malformed JSON", async () => {
     const context = makeContext();
     const codexDir = context.env.CODEX_HOME;

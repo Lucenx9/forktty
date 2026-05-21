@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,7 @@ const SOCKET_TIMEOUT_MS = 5_000;
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
 const VALID_STATUS_COLORS = new Set(["green", "yellow", "red", "blue", "muted"]);
 const VALID_LOG_LEVELS = new Set(["info", "warn", "error"]);
+let fileNonceCounter = 0;
 
 const AGENT_SPECS = {
   codex: {
@@ -90,6 +92,11 @@ function defaultSocketPath(env = process.env) {
 
 function nextRequestId() {
   return `cli-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function nextFileNonce() {
+  fileNonceCounter = (fileNonceCounter % Number.MAX_SAFE_INTEGER) + 1;
+  return `${Date.now()}-${process.pid}-${fileNonceCounter}`;
 }
 
 async function readStdinText() {
@@ -1176,9 +1183,18 @@ async function backupFile(filePath) {
     throw error;
   }
 
-  const backupPath = `${filePath}.bak-${Date.now()}`;
-  await fs.copyFile(filePath, backupPath);
-  return backupPath;
+  for (;;) {
+    const backupPath = `${filePath}.bak-${nextFileNonce()}`;
+    try {
+      await fs.copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL);
+      return backupPath;
+    } catch (error) {
+      if (error && typeof error === "object" && error.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 async function atomicWriteFile(filePath, content) {
@@ -1187,10 +1203,7 @@ async function atomicWriteFile(filePath, content) {
   // existing config either stays intact or is replaced atomically.
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
-  const tmpPath = path.join(
-    dir,
-    `.${base}.tmp-${process.pid}-${Date.now()}`,
-  );
+  const tmpPath = path.join(dir, `.${base}.tmp-${nextFileNonce()}`);
   let handle;
   let tempCreated = false;
   try {
