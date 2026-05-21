@@ -485,6 +485,7 @@ dependencies = [
 name = "forktty-ui-gtk"
 version = "0.2.0-alpha.3"
 dependencies = [
+ "dirs",
  "forktty-core",
  "forktty-socket",
  "forktty-terminal",

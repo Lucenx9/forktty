@@ -22,6 +22,7 @@ forktty-core = { path = "../forktty-core" }
 forktty-socket = { path = "../forktty-socket" }
 forktty-terminal = { path = "../forktty-terminal" }
 adw = { package = "libadwaita", version = "0.8", features = ["v1_4"], optional = true }
+dirs.workspace = true
 global-hotkey = { version = "0.8", optional = true }
 gtk4 = { version = "0.10", optional = true }
 libloading = { version = "0.9", optional = true }
