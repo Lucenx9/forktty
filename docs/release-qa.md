@@ -57,6 +57,7 @@ rebuilding.
 - `FORKTTY_WORKSPACE_ID=workspace-1 forktty set-status --workspace-id= --key qa --value ok` — exits with `--workspace-id requires a value` instead of falling back to the inherited id.
 - `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":" qa ","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock`, then clear `qa` — the status key is stored trimmed and can be cleared without spaces.
+- `printf '{"id":"x","method":"metadata.set_status","params":{"key":"qa","label":"QA","value":"ok","color":"purple"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `color`; no status row is created.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `printf '{"id":"x","method":"metadata.log","params":{"level":"","message":"blank level"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `level`; no info log is created.
 - `forktty notify --kind=` — exits with `--kind requires a value` instead of silently sending an `info` notification.

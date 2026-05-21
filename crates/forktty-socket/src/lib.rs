@@ -533,13 +533,9 @@ pub async fn dispatch(
         "metadata.set_status" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_trimmed_string(&params, "key")?;
-            let label = required_string(&params, "label")?;
-            let value = required_string(&params, "value")?;
-            let color = params
-                .get("color")
-                .and_then(Value::as_str)
-                .filter(|color| !color.trim().is_empty())
-                .map(String::from);
+            let label = required_trimmed_string(&params, "label")?;
+            let value = required_trimmed_string(&params, "value")?;
+            let color = status_color_from_params(&params)?;
             let status = {
                 let mut model = state
                     .model
@@ -980,6 +976,23 @@ fn log_level_from_params(params: &Value) -> Result<LogLevel, DispatchError> {
         Some("error") => Ok(LogLevel::Error),
         Some(_) => Err("Invalid parameter level: expected info, warn, or error".into()),
         None => Err("Invalid parameter level: expected string".into()),
+    }
+}
+
+fn status_color_from_params(params: &Value) -> Result<Option<String>, DispatchError> {
+    let Some(color) = params.get("color") else {
+        return Ok(None);
+    };
+    let Some(color) = color.as_str().map(str::trim) else {
+        return Err("Invalid parameter color: expected string".into());
+    };
+    if color.is_empty() {
+        return Err("Invalid parameter color: must not be empty".into());
+    }
+    if matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || color.starts_with('#') {
+        Ok(Some(color.to_string()))
+    } else {
+        Err("Invalid parameter color: expected green, yellow, red, blue, muted, or #hex".into())
     }
 }
 
@@ -1937,8 +1950,9 @@ mod tests {
             json!({
                 "workspace_id": workspace_id,
                 "key": " agent:codex ",
-                "label": "Codex",
-                "value": "Running"
+                "label": " Codex ",
+                "value": " Running ",
+                "color": " green "
             }),
         )
         .await
@@ -1957,6 +1971,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(status["key"], "agent:codex");
+        assert_eq!(status["label"], "Codex");
+        assert_eq!(status["value"], "Running");
+        assert_eq!(status["color"], "green");
         assert_eq!(progress["key"], "build");
 
         dispatch(
@@ -1990,6 +2007,41 @@ mod tests {
         .unwrap();
         assert!(statuses.as_array().unwrap().is_empty());
         assert!(progress.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_set_status_rejects_invalid_colors() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        for color in [json!("purple"), json!(""), json!(42)] {
+            let error = dispatch(
+                &state,
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "agent:codex",
+                    "label": "Codex",
+                    "value": "Running",
+                    "color": color
+                }),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter color"));
+        }
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
