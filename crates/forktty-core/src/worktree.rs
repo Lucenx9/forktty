@@ -144,7 +144,7 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
     for name in names.iter().flatten() {
         if let Ok(wt) = repo.find_worktree(name) {
             let wt_path = wt.path().to_path_buf();
-            let branch = get_worktree_branch(&wt_path);
+            let branch = get_registered_worktree_branch(&repo, name, &wt_path);
             result.push(info(branch, wt_path, name.to_string()));
         }
     }
@@ -158,23 +158,34 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
     let wt = repo
         .find_worktree(&worktree_name)
         .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
-    let wt_path = verify_linked_worktree_path(&repo, &worktree_name, wt.path())?;
-    let wt_repo = Repository::open(&wt_path)
-        .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
-    if has_uncommitted_changes(&wt_repo)? {
-        return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
-    }
-    run_hook(&wt_path.to_string_lossy(), "teardown")?;
-    let wt_repo = Repository::open(&wt_path)
-        .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
-    if has_uncommitted_changes(&wt_repo)? {
-        return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
-    }
-    let branch = get_worktree_branch(&wt_path);
+    let reported_path = wt.path().to_path_buf();
+    let branch = get_registered_worktree_branch(&repo, &worktree_name, &reported_path);
+    let worktree_path_exists = match std::fs::symlink_metadata(&reported_path) {
+        Ok(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(err.into()),
+    };
+    let wt_path = if worktree_path_exists {
+        let wt_path = verify_linked_worktree_path(&repo, &worktree_name, &reported_path)?;
+        let wt_repo = Repository::open(&wt_path)
+            .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
+        if has_uncommitted_changes(&wt_repo)? {
+            return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
+        }
+        run_hook(&wt_path.to_string_lossy(), "teardown")?;
+        let wt_repo = Repository::open(&wt_path)
+            .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
+        if has_uncommitted_changes(&wt_repo)? {
+            return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
+        }
+        Some(wt_path)
+    } else {
+        None
+    };
     let mut opts = git2::WorktreePruneOptions::new();
     opts.valid(true).working_tree(true);
     wt.prune(Some(&mut opts))?;
-    if wt_path.exists() {
+    if let Some(wt_path) = wt_path.filter(|path| path.exists()) {
         std::fs::remove_dir_all(&wt_path)?;
     }
     if delete_branch && !branch.is_empty() {
@@ -349,13 +360,21 @@ fn open_repo(path: &str) -> Result<Repository, WorktreeError> {
 }
 
 fn info(branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
-    let status = status(&path.to_string_lossy()).unwrap_or_else(|_| "unknown".to_string());
+    let status = worktree_status_label(&path);
     WorktreeInfo {
         name: branch.clone(),
         path: path.to_string_lossy().to_string(),
         branch,
         worktree_name,
         status,
+    }
+}
+
+fn worktree_status_label(path: &Path) -> String {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => status(&path.to_string_lossy()).unwrap_or_else(|_| "unknown".to_string()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "missing".to_string(),
+        Err(_) => "unknown".to_string(),
     }
 }
 
@@ -370,13 +389,39 @@ fn get_worktree_branch(worktree_path: &Path) -> String {
         .unwrap_or_default()
 }
 
+fn get_registered_worktree_branch(
+    repo: &Repository,
+    worktree_name: &str,
+    worktree_path: &Path,
+) -> String {
+    let branch = get_worktree_branch(worktree_path);
+    if !branch.is_empty() {
+        return branch;
+    }
+    let head_path = repo
+        .path()
+        .join("worktrees")
+        .join(worktree_name)
+        .join("HEAD");
+    std::fs::read_to_string(head_path)
+        .ok()
+        .and_then(|head| {
+            head.lines()
+                .next()
+                .and_then(|line| line.trim().strip_prefix("ref: refs/heads/"))
+                .filter(|branch| !branch.trim().is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_default()
+}
+
 fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
     if repo.find_worktree(selector).is_ok() {
         return Ok(selector.to_string());
     }
     for name in repo.worktrees()?.iter().flatten() {
         if let Ok(wt) = repo.find_worktree(name) {
-            if get_worktree_branch(wt.path()) == selector {
+            if get_registered_worktree_branch(repo, name, wt.path()) == selector {
                 return Ok(name.to_string());
             }
         }
@@ -392,7 +437,7 @@ fn find_worktree_by_branch(
         let Ok(wt) = repo.find_worktree(name) else {
             continue;
         };
-        if get_worktree_branch(wt.path()) == branch_name {
+        if get_registered_worktree_branch(repo, name, wt.path()) == branch_name {
             let wt_path = verify_linked_worktree_path(repo, name, wt.path())?;
             return Ok(Some((name.to_string(), wt_path)));
         }
@@ -717,6 +762,24 @@ mod tests {
         assert!(repo
             .find_branch("preserve-branch", BranchType::Local)
             .is_ok());
+    }
+
+    #[test]
+    fn remove_prunes_missing_worktree_by_branch_name() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "stale-branch", "nested").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+
+        let stale = list(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].branch, "stale-branch");
+        assert_eq!(stale[0].status, "missing");
+
+        remove(dir.path().to_str().unwrap(), "stale-branch", false).unwrap();
+
+        assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
+        let repo = Repository::open(dir.path()).unwrap();
+        assert!(repo.find_branch("stale-branch", BranchType::Local).is_ok());
     }
 
     #[test]
