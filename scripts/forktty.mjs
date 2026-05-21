@@ -307,6 +307,7 @@ function parseFlags(args, booleanOptions = new Set()) {
 }
 
 function buildTargetParams(options, env = process.env) {
+  requireTargetSelectorOptions(options);
   const params = {};
   const workspaceId =
     typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "";
@@ -329,6 +330,12 @@ function buildTargetParams(options, env = process.env) {
   return params;
 }
 
+function requireTargetSelectorOptions(options) {
+  requireNonBlankStringOption(options, "workspace-id");
+  requireNonBlankStringOption(options, "workspace-name");
+  requireNonBlankStringOption(options, "worktree-name");
+}
+
 function parseFiniteNumber(value, optionName) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${optionName} requires a value`);
@@ -342,6 +349,15 @@ function parseFiniteNumber(value, optionName) {
 
 function requireStringOption(options, key, optionName = `--${key}`) {
   if (options[key] !== undefined && typeof options[key] !== "string") {
+    throw new Error(`${optionName} requires a value`);
+  }
+}
+
+function requireNonBlankStringOption(options, key, optionName = `--${key}`) {
+  if (
+    options[key] !== undefined &&
+    (typeof options[key] !== "string" || !options[key].trim())
+  ) {
     throw new Error(`${optionName} requires a value`);
   }
 }
@@ -560,23 +576,25 @@ async function tryWorkspaceSelect(context, params) {
 
 async function handleFocus(context, args) {
   const { options, positionals } = parseFlags(args);
+  const candidates = resolveSelectorParams(options, positionals, context.env);
 
-  if (typeof options["workspace-id"] === "string") {
-    await tryWorkspaceSelect(context, { id: options["workspace-id"] });
-  } else if (typeof options["workspace-name"] === "string") {
-    await tryWorkspaceSelect(context, { name: options["workspace-name"] });
-  } else if (typeof options["worktree-name"] === "string") {
-    await tryWorkspaceSelect(context, { worktreeName: options["worktree-name"] });
-  } else if (positionals[0]) {
-    const selector = positionals[0];
-    try {
-      await tryWorkspaceSelect(context, { id: selector });
-    } catch {
-      await tryWorkspaceSelect(context, { name: selector });
-    }
-  } else {
-    throw new Error("focus requires a selector or --workspace-id/--workspace-name");
+  if (!candidates) {
+    throw new Error(
+      "focus requires a selector, --workspace-id, --workspace-name, or --worktree-name",
+    );
   }
+
+  let lastError;
+  for (const params of candidates) {
+    try {
+      await tryWorkspaceSelect(context, params);
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
 
   if (context.json) {
     printJson({ result: true });
@@ -586,14 +604,22 @@ async function handleFocus(context, args) {
 }
 
 function resolveSelectorParams(options, positionals, env = process.env) {
-  if (typeof options["workspace-id"] === "string") {
-    return [{ id: options["workspace-id"] }];
+  requireTargetSelectorOptions(options);
+  const workspaceId =
+    typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "";
+  const workspaceName =
+    typeof options["workspace-name"] === "string" ? options["workspace-name"].trim() : "";
+  const worktreeName =
+    typeof options["worktree-name"] === "string" ? options["worktree-name"].trim() : "";
+
+  if (workspaceId) {
+    return [{ id: workspaceId }];
   }
-  if (typeof options["workspace-name"] === "string") {
-    return [{ name: options["workspace-name"] }];
+  if (workspaceName) {
+    return [{ name: workspaceName }];
   }
-  if (typeof options["worktree-name"] === "string") {
-    return [{ worktreeName: options["worktree-name"] }];
+  if (worktreeName) {
+    return [{ worktreeName }];
   }
   if (positionals[0]) {
     const selector = positionals[0];
@@ -612,7 +638,9 @@ async function handleCloseWorkspace(context, args) {
   const { options, positionals } = parseFlags(args);
   const candidates = resolveSelectorParams(options, positionals, context.env);
   if (!candidates) {
-    throw new Error("close-workspace requires a selector or --workspace-id");
+    throw new Error(
+      "close-workspace requires a selector, --workspace-id, --workspace-name, or --worktree-name",
+    );
   }
 
   let lastError;

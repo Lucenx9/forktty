@@ -53,6 +53,7 @@ rebuilding.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
 - `FORKTTY_WORKSPACE_ID=" workspace-1 " forktty set-status --key qa --value ok` — trims the inherited workspace id before targeting metadata.
+- `FORKTTY_WORKSPACE_ID=workspace-1 forktty set-status --workspace-id= --key qa --value ok` — exits with `--workspace-id requires a value` instead of falling back to the inherited id.
 - `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `forktty notify --kind "message"` — exits with an invalid kind instead of silently sending an `info` notification.

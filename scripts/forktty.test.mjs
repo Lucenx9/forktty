@@ -466,6 +466,30 @@ describe("forktty CLI helpers", () => {
         value: 1,
       },
     );
+    assert.throws(
+      () =>
+        buildProgressParams(
+          {
+            key: "build",
+            value: "1",
+            "workspace-id": true,
+          },
+          { FORKTTY_WORKSPACE_ID: "ws-env" },
+        ),
+      /--workspace-id requires a value/,
+    );
+    assert.throws(
+      () =>
+        buildProgressParams(
+          {
+            key: "build",
+            value: "1",
+            "workspace-id": "",
+          },
+          { FORKTTY_WORKSPACE_ID: "ws-env" },
+        ),
+      /--workspace-id requires a value/,
+    );
   });
 
   it("rejects invalid progress values", () => {
@@ -567,8 +591,16 @@ describe("forktty CLI helpers", () => {
       [{ id: "my-feature" }, { name: "my-feature" }],
     );
     assert.deepEqual(
-      resolveSelectorParams({ "workspace-name": "release" }, ["ignored"], {}),
+      resolveSelectorParams({ "workspace-name": " release " }, ["ignored"], {}),
       [{ name: "release" }],
+    );
+    assert.throws(
+      () => resolveSelectorParams({ "worktree-name": true }, ["ignored"], {}),
+      /--worktree-name requires a value/,
+    );
+    assert.throws(
+      () => resolveSelectorParams({ "workspace-name": "   " }, ["ignored"], {}),
+      /--workspace-name requires a value/,
     );
     assert.equal(resolveSelectorParams({}, [], {}), null);
   });
