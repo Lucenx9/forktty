@@ -1,11 +1,9 @@
+use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -267,37 +265,6 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
         )));
     }
     Ok(())
-}
-
-fn is_shell_trampoline(program: &str, first_arg: Option<&str>) -> bool {
-    if first_arg != Some("-c") {
-        return false;
-    }
-    let shell = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    matches!(shell, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh") || shell.ends_with("sh")
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_absolute() {
-        return false;
-    }
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
 }
 
 fn default_theme_source() -> String {

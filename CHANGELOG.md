@@ -6,9 +6,12 @@ All notable changes to ForkTTY are documented here.
 
 ### Changed
 - Refreshed the README screenshot and updated terminal environment documentation after the alpha.3 release.
+- Consolidated the shell-trampoline, executable-file, and worktree-name validators into a single `forktty_core::command_safety` module so the socket layer, GTK shell, and notification dispatcher cannot drift apart on the same security rules.
 
 ### Fixed
 - Resolved terminal font discovery through GTK/Pango instead of spawning `fc-list`/`fc-match` by name, removing a PATH-hijack risk when ForkTTY is launched from an untrusted environment.
+- `forktty close-workspace <name-with-dash>` no longer misroutes to a workspace id lookup; the CLI now tries the positional selector as an id first and falls back to the name, matching `focus`.
+- Notification dispatch no longer silently swallows config-load errors; a broken `config.toml` now logs the underlying cause before falling back to defaults.
 
 ## [0.2.0-alpha.3] - 2026-05-15
 

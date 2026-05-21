@@ -14,6 +14,7 @@ import {
   defaultSocketPath,
   formatNotificationLine,
   mergeHookConfig,
+  resolveSelectorParams,
   surfaceIdFromWorkspaceList,
 } from "./forktty.mjs";
 
@@ -238,6 +239,18 @@ describe("forktty CLI helpers", () => {
       () => buildSurfaceSplitParams({ axis: "diagonal" }, ["surface-2"]),
       /Invalid --axis/,
     );
+  });
+
+  it("resolves a positional selector to both id and name candidates", () => {
+    assert.deepEqual(
+      resolveSelectorParams({}, ["my-feature"], {}),
+      [{ id: "my-feature" }, { name: "my-feature" }],
+    );
+    assert.deepEqual(
+      resolveSelectorParams({ "workspace-name": "release" }, ["ignored"], {}),
+      [{ name: "release" }],
+    );
+    assert.equal(resolveSelectorParams({}, [], {}), null);
   });
 
   it("builds worktree status params from path options and env fallback", () => {

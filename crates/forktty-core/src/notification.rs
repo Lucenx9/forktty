@@ -1,8 +1,6 @@
+use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use crate::{AppConfig, NotificationItem};
 use std::path::Path;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationDispatchError {
@@ -113,37 +111,6 @@ fn notification_kind_name(notification: &NotificationItem) -> &'static str {
         crate::NotificationKind::Error => "error",
         crate::NotificationKind::Info => "info",
         crate::NotificationKind::Custom => "custom",
-    }
-}
-
-fn is_shell_trampoline(program: &str, first_arg: Option<&str>) -> bool {
-    if first_arg != Some("-c") {
-        return false;
-    }
-    let shell = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    matches!(shell, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh") || shell.ends_with("sh")
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_absolute() {
-        return false;
-    }
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
     }
 }
 

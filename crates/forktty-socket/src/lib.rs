@@ -1,6 +1,7 @@
 use forktty_core::{
-    config, dispatch_notification, worktree, JsonRpcRequest, JsonRpcResponse, LogLevel,
-    NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
+    config, dispatch_notification, validate_worktree_name, worktree, JsonRpcRequest,
+    JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
+    WorktreeNameError,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
@@ -625,7 +626,16 @@ pub async fn dispatch(
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
-    let config = config::load_config().unwrap_or_default();
+    let config = match config::load_config() {
+        Ok(config) => config,
+        Err(err) => {
+            // Surface the underlying cause so a misconfigured custom command or
+            // a corrupted config.toml is debuggable rather than silently
+            // turning into "default behavior with no custom command".
+            eprintln!("Falling back to default notification settings: {err}");
+            forktty_core::AppConfig::default()
+        }
+    };
     for error in dispatch_notification(&config, notification) {
         eprintln!(
             "Failed to dispatch {} notification: {}",
@@ -851,23 +861,18 @@ fn fallback_cwd() -> PathBuf {
 }
 
 fn validate_worktree_name_param(name: &str) -> Result<&str, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err("Invalid worktree name: must not be empty".to_string());
-    }
-    if trimmed.len() > 255 {
-        return Err("Invalid worktree name: must be 255 bytes or fewer".to_string());
-    }
-    if trimmed.contains('\0') || trimmed.contains('\\') {
-        return Err("Invalid worktree name: contains unsupported characters".to_string());
-    }
-    if trimmed
-        .split('/')
-        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err("Invalid worktree name: contains an unsafe path segment".to_string());
-    }
-    Ok(trimmed)
+    validate_worktree_name(name).map_err(|err| match err {
+        WorktreeNameError::Empty => "Invalid worktree name: must not be empty".to_string(),
+        WorktreeNameError::TooLong => {
+            "Invalid worktree name: must be 255 bytes or fewer".to_string()
+        }
+        WorktreeNameError::UnsupportedCharacters => {
+            "Invalid worktree name: contains unsupported characters".to_string()
+        }
+        WorktreeNameError::UnsafeSegment => {
+            "Invalid worktree name: contains an unsafe path segment".to_string()
+        }
+    })
 }
 
 fn worktree_layout() -> String {

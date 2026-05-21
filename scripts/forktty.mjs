@@ -464,32 +464,45 @@ async function handleFocus(context, args) {
 
 function resolveSelectorParams(options, positionals, env = process.env) {
   if (typeof options["workspace-id"] === "string") {
-    return { id: options["workspace-id"] };
+    return [{ id: options["workspace-id"] }];
   }
   if (typeof options["workspace-name"] === "string") {
-    return { name: options["workspace-name"] };
+    return [{ name: options["workspace-name"] }];
   }
   if (typeof options["worktree-name"] === "string") {
-    return { worktreeName: options["worktree-name"] };
+    return [{ worktreeName: options["worktree-name"] }];
   }
   if (positionals[0]) {
     const selector = positionals[0];
-    return selector.includes("-") ? { id: selector } : { name: selector };
+    // Workspace ids and names both routinely contain dashes (e.g. `workspace-1`
+    // vs. `my-feature`), so we can't tell them apart by string shape. Try the
+    // id first and fall back to the name, matching `handleFocus`.
+    return [{ id: selector }, { name: selector }];
   }
   if (typeof env.FORKTTY_WORKSPACE_ID === "string" && env.FORKTTY_WORKSPACE_ID.trim()) {
-    return { id: env.FORKTTY_WORKSPACE_ID.trim() };
+    return [{ id: env.FORKTTY_WORKSPACE_ID.trim() }];
   }
   return null;
 }
 
 async function handleCloseWorkspace(context, args) {
   const { options, positionals } = parseFlags(args);
-  const selectorParams = resolveSelectorParams(options, positionals, context.env);
-  if (!selectorParams) {
+  const candidates = resolveSelectorParams(options, positionals, context.env);
+  if (!candidates) {
     throw new Error("close-workspace requires a selector or --workspace-id");
   }
 
-  await sendSocketRequest(context.socketPath, "workspace.close", selectorParams);
+  let lastError;
+  for (const params of candidates) {
+    try {
+      await sendSocketRequest(context.socketPath, "workspace.close", params);
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
 
   if (context.json) {
     printJson({ result: true });
@@ -1555,6 +1568,7 @@ export {
   formatNotificationLine,
   mergeHookConfig,
   parseFlags,
+  resolveSelectorParams,
   shellQuote,
   surfaceIdFromWorkspaceList,
 };

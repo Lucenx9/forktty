@@ -1,7 +1,8 @@
 use adw::prelude::*;
 use forktty_core::{
-    config, dispatch_notification, session, worktree, LogLevel, NotificationItem, NotificationKind,
-    PaneNode, ProgressEntry, SplitAxis, StatusEntry, Surface, WorkspaceModel, WorkspaceSelector,
+    config, dispatch_notification, session, validate_worktree_name, worktree, LogLevel,
+    NotificationItem, NotificationKind, PaneNode, ProgressEntry, SplitAxis, StatusEntry, Surface,
+    WorkspaceModel, WorkspaceSelector, WorktreeNameError,
 };
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
@@ -5951,23 +5952,18 @@ fn merge_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<String,
 }
 
 fn validate_worktree_name_for_gtk(name: &str) -> Result<&str, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err("Branch or worktree name is required".to_string());
-    }
-    if trimmed.len() > 255 {
-        return Err("Branch or worktree name must be 255 bytes or fewer".to_string());
-    }
-    if trimmed.contains('\0') || trimmed.contains('\\') {
-        return Err("Branch or worktree name contains unsupported characters".to_string());
-    }
-    if trimmed
-        .split('/')
-        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err("Branch or worktree name contains an unsafe path segment".to_string());
-    }
-    Ok(trimmed)
+    validate_worktree_name(name).map_err(|err| match err {
+        WorktreeNameError::Empty => "Branch or worktree name is required".to_string(),
+        WorktreeNameError::TooLong => {
+            "Branch or worktree name must be 255 bytes or fewer".to_string()
+        }
+        WorktreeNameError::UnsupportedCharacters => {
+            "Branch or worktree name contains unsupported characters".to_string()
+        }
+        WorktreeNameError::UnsafeSegment => {
+            "Branch or worktree name contains an unsafe path segment".to_string()
+        }
+    })
 }
 
 fn rollback_workspace_creation_gtk(
