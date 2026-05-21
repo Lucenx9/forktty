@@ -63,6 +63,7 @@ rebuilding.
 - `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
 - `printf '{"id":"x","method":"workspace.create","params":{"name":"","workingDir":"/tmp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `name`; no default-named workspace is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"","key":"qa","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `workspace_id`; the status is not added to the active workspace.
+- `printf '{"id":"x","method":"metadata.set_status","params":{"key":42,"label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key` instead of treating it as missing.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad target","surface_id":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `surface_id`; no global notification is created.
 - `printf '{"id":"x","method":"notification.create","params":{"title":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `title`; no blank notification is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":" qa ","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock`, then clear `qa` — the status key is stored trimmed and can be cleared without spaces.

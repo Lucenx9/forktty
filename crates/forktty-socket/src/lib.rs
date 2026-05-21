@@ -925,21 +925,29 @@ fn worktree_layout() -> String {
         .unwrap_or_else(|| "nested".to_string())
 }
 
-fn required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("Missing {key}"))
+fn required_string<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, DispatchError> {
+    let Some(value) = params.get(key) else {
+        return Err(DispatchError::MissingParam(key));
+    };
+    match value.as_str() {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(format!("Invalid parameter {key}: must not be empty").into()),
+        None => Err(format!("Invalid parameter {key}: expected string").into()),
+    }
 }
 
-fn required_trimmed_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("Missing {key}"))
+fn required_trimmed_string<'a>(
+    params: &'a Value,
+    key: &'static str,
+) -> Result<&'a str, DispatchError> {
+    let Some(value) = params.get(key) else {
+        return Err(DispatchError::MissingParam(key));
+    };
+    match value.as_str().map(str::trim) {
+        Some(value) if !value.is_empty() => Ok(value),
+        Some(_) => Err(format!("Invalid parameter {key}: must not be empty").into()),
+        None => Err(format!("Invalid parameter {key}: expected string").into()),
+    }
 }
 
 fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
@@ -1138,11 +1146,11 @@ fn resolve_existing_workspace_id(
     }
 }
 
-fn required_f64(params: &Value, key: &str) -> Result<f64, String> {
-    optional_f64(params, key)?.ok_or_else(|| format!("Missing {key}"))
+fn required_f64(params: &Value, key: &'static str) -> Result<f64, DispatchError> {
+    optional_f64(params, key)?.ok_or(DispatchError::MissingParam(key))
 }
 
-fn optional_f64(params: &Value, key: &str) -> Result<Option<f64>, String> {
+fn optional_f64(params: &Value, key: &str) -> Result<Option<f64>, DispatchError> {
     let Some(value) = params.get(key) else {
         return Ok(None);
     };
@@ -1150,7 +1158,7 @@ fn optional_f64(params: &Value, key: &str) -> Result<Option<f64>, String> {
         .as_f64()
         .ok_or_else(|| format!("Invalid parameter {key}: expected finite number"))?;
     if !value.is_finite() {
-        return Err(format!("Invalid parameter {key}: expected finite number"));
+        return Err(format!("Invalid parameter {key}: expected finite number").into());
     }
     Ok(Some(value))
 }
@@ -2127,6 +2135,141 @@ mod tests {
         .unwrap();
         assert!(statuses.as_array().unwrap().is_empty());
         assert!(progress.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_reject_invalid_required_fields() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        for (method, params, message) in [
+            (
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": 42,
+                    "label": "Codex",
+                    "value": "Running"
+                }),
+                "Invalid parameter key",
+            ),
+            (
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "agent:codex",
+                    "label": "",
+                    "value": "Running"
+                }),
+                "Invalid parameter label",
+            ),
+            (
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "agent:codex",
+                    "label": "Codex",
+                    "value": 42
+                }),
+                "Invalid parameter value",
+            ),
+            (
+                "metadata.set_progress",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "",
+                    "label": "Build",
+                    "value": 1
+                }),
+                "Invalid parameter key",
+            ),
+            (
+                "metadata.set_progress",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "build",
+                    "label": 42,
+                    "value": 1
+                }),
+                "Invalid parameter label",
+            ),
+            (
+                "metadata.set_progress",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": "build",
+                    "label": "Build",
+                    "value": "1"
+                }),
+                "Invalid parameter value",
+            ),
+            (
+                "metadata.log",
+                json!({
+                    "workspace_id": workspace_id,
+                    "message": ""
+                }),
+                "Invalid parameter message",
+            ),
+            (
+                "metadata.log",
+                json!({
+                    "workspace_id": workspace_id,
+                    "message": 42
+                }),
+                "Invalid parameter message",
+            ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains(message));
+        }
+
+        let error = dispatch(
+            &state,
+            "metadata.set_progress",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "build",
+                "label": "Build"
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "missing_param");
+        assert!(error.to_string().contains("value"));
+
+        assert!(dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+        assert!(dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+        assert!(dispatch(
+            &state,
+            "metadata.list_logs",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
     }
 
     #[tokio::test]
