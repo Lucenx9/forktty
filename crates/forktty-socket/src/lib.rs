@@ -288,12 +288,13 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "worktree.list" => {
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let worktrees = worktree::list(&cwd).map_err(|err| err.to_string())?;
             Ok(json!(worktrees))
         }
         "worktree.status" => {
-            let path = resolve_open_repo_cwd_param(state, &params, &["path", "cwd"])?;
+            let path =
+                resolve_open_repo_cwd_param(state, &params, &["path", "cwd"], "path or cwd")?;
             let status = worktree::status(&path).map_err(|err| err.to_string())?;
             Ok(json!({"status": status}))
         }
@@ -303,7 +304,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
             let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
             let workspace = open_worktree_workspace(state, &info).await?;
@@ -322,7 +323,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
             let info = worktree::attach(&cwd, name, &layout).map_err(|err| err.to_string())?;
             let workspace = open_worktree_workspace(state, &info).await?;
@@ -340,7 +341,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let fallback_path =
                 worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
             let mut workspace_worktree_name = name.to_string();
@@ -395,7 +396,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or(DispatchError::MissingParam("name"))?;
             let name = validate_worktree_name_param(name)?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"])?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
             Ok(json!(result))
         }
@@ -815,10 +816,31 @@ fn resolve_open_repo_cwd_param(
     state: &SocketAppState,
     params: &Value,
     keys: &[&str],
-) -> Result<String, String> {
-    let cwd = resolve_existing_dir_param(params, keys)?;
-    validate_socket_cwd_against_open_workspaces(state, &cwd)?;
+    missing_param: &'static str,
+) -> Result<String, DispatchError> {
+    let cwd = resolve_required_existing_dir_param(params, keys, missing_param)?;
+    validate_socket_cwd_against_open_workspaces(state, &cwd).map_err(DispatchError::from)?;
     Ok(cwd.to_string_lossy().to_string())
+}
+
+fn resolve_required_existing_dir_param(
+    params: &Value,
+    keys: &[&str],
+    missing_param: &'static str,
+) -> Result<PathBuf, DispatchError> {
+    for key in keys {
+        let Some(value) = params.get(*key) else {
+            continue;
+        };
+        let raw = value
+            .as_str()
+            .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
+        if raw.trim().is_empty() {
+            return Err(format!("Invalid parameter {key}: path must not be empty").into());
+        }
+        return canonical_existing_dir(Path::new(raw), key).map_err(DispatchError::from);
+    }
+    Err(DispatchError::MissingParam(missing_param))
 }
 
 fn resolve_existing_dir_param(params: &Value, keys: &[&str]) -> Result<PathBuf, String> {
@@ -2515,6 +2537,36 @@ mod tests {
 
         assert!(error.contains("open workspace"));
         assert!(worktree::list(unopened_repo.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn worktree_socket_requires_explicit_repo_cwd() {
+        let open_repo = make_temp_repo();
+        let (state, _backend) = test_state();
+        dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "open", "workingDir": open_repo.path()}),
+        )
+        .await
+        .unwrap();
+
+        for (method, params, missing) in [
+            ("worktree.list", json!({}), "cwd"),
+            ("worktree.status", json!({}), "path or cwd"),
+            ("worktree.create", json!({"name": "blocked"}), "cwd"),
+            ("worktree.attach", json!({"name": "blocked"}), "cwd"),
+            ("worktree.remove", json!({"name": "blocked"}), "cwd"),
+            ("worktree.merge", json!({"name": "blocked"}), "cwd"),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "missing_param");
+            assert!(error.to_string().contains(missing));
+        }
+
+        assert!(worktree::list(open_repo.path().to_str().unwrap())
             .unwrap()
             .is_empty());
     }
