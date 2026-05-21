@@ -272,7 +272,14 @@ function formatSocketConnectError(error, socketPath) {
     wrapped.cause = error;
     return wrapped;
   }
-  return error;
+  const detail = error instanceof Error && error.message ? `: ${error.message}` : "";
+  const wrapped = new Error(
+    `ForkTTY socket error at ${socketPath}${code ? ` (${code})` : ""}${detail}`,
+  );
+  if (error instanceof Error) {
+    wrapped.cause = error;
+  }
+  return wrapped;
 }
 
 function parseFlags(args, booleanOptions = new Set()) {

@@ -114,6 +114,16 @@ describe("forktty CLI helpers", () => {
     assert.equal(error.cause, raw);
   });
 
+  it("keeps path and code on unexpected socket errors", () => {
+    const raw = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const error = formatSocketConnectError(raw, "/tmp/forktty.sock");
+
+    assert.match(error.message, /ForkTTY socket error at \/tmp\/forktty\.sock/);
+    assert.match(error.message, /ECONNRESET/);
+    assert.match(error.message, /read ECONNRESET/);
+    assert.equal(error.cause, raw);
+  });
+
   it("keeps socket path and error code in failed socket responses", async () => {
     await withSocketServer(
       (socket) => {

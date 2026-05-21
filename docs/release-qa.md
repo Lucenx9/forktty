@@ -58,6 +58,7 @@ rebuilding.
 - `./scripts/forktty.mjs ping --socket=` — exits with `--socket requires a value` instead of trying to connect to an empty path.
 - Start a stub Unix socket at the default path that replies `{"id":"other","ok":true,"result":"pong"}` to `system.ping`, then launch ForkTTY; startup should treat it as a foreign socket, not as another ForkTTY instance.
 - Replace the default socket path with a broken symlink, then launch ForkTTY; startup should refuse to replace the non-socket path and leave it for manual inspection.
+- Against a stub socket that resets before replying, `./scripts/forktty.mjs ping --socket <stub>` reports the socket path and reset code instead of a raw Node socket error.
 - `forktty list` — returns at least one workspace.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
