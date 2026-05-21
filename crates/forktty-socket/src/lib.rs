@@ -510,17 +510,7 @@ pub async fn dispatch(
                 Some("custom") => NotificationKind::Custom,
                 _ => NotificationKind::Info,
             };
-            let workspace_id = params
-                .get("workspace_id")
-                .and_then(Value::as_str)
-                .map(String::from);
-            let surface_id = params
-                .get("surface_id")
-                .or_else(|| params.get("surfaceId"))
-                .and_then(Value::as_str)
-                .map(String::from);
-            let (workspace_id, surface_id) =
-                validate_notification_target(state, workspace_id, surface_id)?;
+            let (workspace_id, surface_id) = resolve_notification_target(state, &params)?;
             let item = {
                 let mut model = state
                     .model
@@ -986,27 +976,32 @@ fn ensure_model_surface_exists(
     }
 }
 
-fn validate_notification_target(
+fn resolve_notification_target(
     state: &SocketAppState,
-    workspace_id: Option<String>,
-    surface_id: Option<String>,
+    params: &Value,
 ) -> Result<(Option<String>, Option<String>), DispatchError> {
     let model = state
         .model
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?;
-    if let Some(workspace_id) = workspace_id.as_deref() {
-        let workspace_exists = model
-            .list_workspaces()
-            .iter()
-            .any(|workspace| workspace.id == workspace_id);
-        if !workspace_exists {
-            return Err(DispatchError::NotFound("workspace"));
-        }
-    }
-    if let Some(surface_id) = surface_id.as_deref() {
+    let workspace_id = match workspace_selector_from_params(params) {
+        Ok(selector) => Some(
+            resolve_existing_workspace_id(&model, selector)
+                .ok_or(DispatchError::NotFound("workspace"))?,
+        ),
+        Err(DispatchError::MissingParam(_)) => None,
+        Err(err) => return Err(err),
+    };
+    let surface_id = params
+        .get("surface_id")
+        .or_else(|| params.get("surfaceId"))
+        .and_then(Value::as_str)
+        .filter(|surface_id| !surface_id.trim().is_empty())
+        .map(|surface_id| surface_id.trim().to_string());
+
+    if let Some(surface_id) = surface_id {
         let surface = model
-            .surface(surface_id)
+            .surface(&surface_id)
             .ok_or(DispatchError::NotFound("surface"))?;
         if workspace_id
             .as_deref()
@@ -1014,8 +1009,10 @@ fn validate_notification_target(
         {
             return Err(DispatchError::NotFound("surface"));
         }
+        return Ok((Some(surface.workspace_id.clone()), Some(surface_id)));
     }
-    Ok((workspace_id, surface_id))
+
+    Ok((workspace_id, None))
 }
 
 fn resolve_existing_workspace_id(
@@ -1531,6 +1528,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(notification["title"], "Prompt");
+        assert_eq!(notification["workspace_id"], workspaces[0]["id"]);
         dispatch(&state, "notification.clear", json!({}))
             .await
             .unwrap();
@@ -1707,6 +1705,33 @@ mod tests {
             .await
             .unwrap();
         assert!(notifications.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn notification_create_respects_workspace_selectors() {
+        let (state, _backend) = test_state();
+        let created = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "target", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+
+        let notification = dispatch(
+            &state,
+            "notification.create",
+            json!({
+                "workspace_name": "target",
+                "title": "Targeted",
+                "body": "by workspace name"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(notification["workspace_id"], created["id"]);
+        assert!(notification["surface_id"].is_null());
     }
 
     #[tokio::test]

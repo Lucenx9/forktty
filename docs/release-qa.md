@@ -51,6 +51,7 @@ rebuilding.
 - `forktty list` — returns at least one workspace.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
+- `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.
