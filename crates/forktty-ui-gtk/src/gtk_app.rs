@@ -7252,7 +7252,7 @@ fn rename_workspace_gtk(
 }
 
 fn close_active_workspace(state: &SocketAppState) {
-    let (workspace_id, surface_ids) = {
+    let (workspace, surface_ids) = {
         let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
@@ -7265,7 +7265,7 @@ fn close_active_workspace(state: &SocketAppState) {
             .into_iter()
             .map(|surface| surface.id)
             .collect::<Vec<_>>();
-        (workspace.id, surface_ids)
+        (workspace, surface_ids)
     };
 
     {
@@ -7273,7 +7273,10 @@ fn close_active_workspace(state: &SocketAppState) {
             Ok(model) => model,
             Err(_) => return,
         };
-        let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
+        let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+        if model.list_workspaces().is_empty() {
+            model.create_workspace("main", workspace.working_dir.clone());
+        }
     }
     for surface_id in surface_ids {
         let _ = state.terminal.close(&surface_id);
@@ -7494,6 +7497,39 @@ mod tests {
 
         assert!(notification.is_some());
         assert_eq!(model.lock().unwrap().list_notifications().len(), 1);
+    }
+
+    #[test]
+    fn close_active_workspace_keeps_a_terminal_when_closing_last_workspace() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let closed_surface_id = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("project", &project_cwd);
+            workspace.focused_surface_id
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        close_active_workspace(&state);
+
+        let workspaces = model.lock().unwrap().list_workspaces();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].name, "main");
+        assert_eq!(workspaces[0].working_dir, project_cwd);
+        assert!(terminal.sent_text(&closed_surface_id).is_err());
+        let surfaces = terminal.surfaces().unwrap();
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].workspace_id, workspaces[0].id);
+        assert_eq!(surfaces[0].cwd, project_cwd);
     }
 
     #[test]
