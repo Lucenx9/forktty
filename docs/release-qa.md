@@ -53,6 +53,7 @@ rebuilding.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
 - `FORKTTY_WORKSPACE_ID=" workspace-1 " forktty set-status --key qa --value ok` — trims the inherited workspace id before targeting metadata.
+- `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.

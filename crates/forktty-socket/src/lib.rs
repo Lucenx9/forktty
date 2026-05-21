@@ -964,7 +964,8 @@ fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
         .get("surface_id")
         .or_else(|| params.get("surfaceId"))
         .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .ok_or(DispatchError::MissingParam("surface_id"))
 }
 
@@ -1084,32 +1085,38 @@ fn resolve_workspace_id_for_metadata(
 }
 
 fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, DispatchError> {
-    if let Some(id) = params.get("id").and_then(Value::as_str) {
+    if let Some(id) = string_param(params, "id") {
         return Ok(WorkspaceSelector::Id(id));
     }
-    if let Some(id) = params.get("workspace_id").and_then(Value::as_str) {
+    if let Some(id) = string_param(params, "workspace_id") {
         return Ok(WorkspaceSelector::Id(id));
     }
-    if let Some(id) = params.get("workspaceId").and_then(Value::as_str) {
+    if let Some(id) = string_param(params, "workspaceId") {
         return Ok(WorkspaceSelector::Id(id));
     }
-    if let Some(name) = params.get("name").and_then(Value::as_str) {
+    if let Some(name) = string_param(params, "name") {
         return Ok(WorkspaceSelector::Name(name));
     }
-    if let Some(name) = params.get("workspace_name").and_then(Value::as_str) {
+    if let Some(name) = string_param(params, "workspace_name") {
         return Ok(WorkspaceSelector::Name(name));
     }
-    if let Some(name) = params.get("workspaceName").and_then(Value::as_str) {
+    if let Some(name) = string_param(params, "workspaceName") {
         return Ok(WorkspaceSelector::Name(name));
     }
-    if let Some(worktree_name) = params
-        .get("worktreeName")
-        .or_else(|| params.get("worktree_name"))
-        .and_then(Value::as_str)
+    if let Some(worktree_name) =
+        string_param(params, "worktreeName").or_else(|| string_param(params, "worktree_name"))
     {
         return Ok(WorkspaceSelector::WorktreeName(worktree_name));
     }
     Err(DispatchError::MissingParam("workspace selector"))
+}
+
+fn string_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -1749,7 +1756,7 @@ mod tests {
             &state,
             "notification.create",
             json!({
-                "workspace_name": "target",
+                "workspace_name": " target ",
                 "title": "Targeted",
                 "body": "by workspace name"
             }),
@@ -1840,7 +1847,7 @@ mod tests {
         let all_surfaces = dispatch(&state, "surface.list", json!({})).await.unwrap();
         assert_eq!(all_surfaces.as_array().unwrap().len(), 2);
 
-        let main_surfaces = dispatch(&state, "surface.list", json!({"workspace_name": "main"}))
+        let main_surfaces = dispatch(&state, "surface.list", json!({"workspace_name": " main\n"}))
             .await
             .unwrap();
         assert_eq!(main_surfaces.as_array().unwrap().len(), 1);
@@ -2106,6 +2113,11 @@ mod tests {
             assert_eq!(err.code(), "missing_param");
             assert!(err.to_string().contains("workspace selector"));
         }
+
+        let err = dispatch(&state, "workspace.select", json!({"workspace_id": "  "}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "missing_param");
     }
 
     #[tokio::test]
@@ -2133,7 +2145,7 @@ mod tests {
         dispatch(
             &state,
             "surface.send_text",
-            json!({"surfaceId": surface_id, "text": "echo camel\n"}),
+            json!({"surfaceId": format!(" {surface_id}\n"), "text": "echo camel\n"}),
         )
         .await
         .unwrap();
