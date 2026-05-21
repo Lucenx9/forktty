@@ -7268,6 +7268,17 @@ fn close_active_workspace(state: &SocketAppState) {
         (workspace, surface_ids)
     };
 
+    if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
+        eprintln!("Failed to close workspace terminal surfaces: {err}");
+        create_global_notification(
+            state,
+            "Close Workspace Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
+        return;
+    }
+
     {
         let mut model = match state.model.lock() {
             Ok(model) => model,
@@ -7278,13 +7289,23 @@ fn close_active_workspace(state: &SocketAppState) {
             model.create_workspace("main", workspace.working_dir.clone());
         }
     }
-    for surface_id in surface_ids {
-        let _ = state.terminal.close(&surface_id);
-    }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
     save_session_from_state(state);
+}
+
+fn close_terminal_surfaces(
+    state: &SocketAppState,
+    surface_ids: &[String],
+) -> Result<(), TerminalError> {
+    for surface_id in surface_ids {
+        match state.terminal.close(surface_id) {
+            Ok(()) | Err(TerminalError::NotFound(_)) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
 }
 
 fn create_global_notification(
@@ -7530,6 +7551,47 @@ mod tests {
         assert_eq!(surfaces.len(), 1);
         assert_eq!(surfaces[0].workspace_id, workspaces[0].id);
         assert_eq!(surfaces[0].cwd, project_cwd);
+    }
+
+    #[test]
+    fn close_active_workspace_keeps_model_when_backend_close_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (tx, rx) = mpsc::channel();
+        let terminal = Arc::new(GtkVteBackend::new(tx));
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let surface_id = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("project", &project_cwd);
+            workspace.focused_surface_id
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+        drop(rx);
+
+        close_active_workspace(&state);
+
+        let model = model.lock().unwrap();
+        let workspaces = model.list_workspaces();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].name, "project");
+        assert_eq!(model.list_surfaces(Some(&workspaces[0].id)).len(), 1);
+        assert_eq!(terminal.surfaces().unwrap().len(), 1);
+        assert!(terminal
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id));
+        assert!(model
+            .list_notifications()
+            .iter()
+            .any(|notification| notification.title == "Close Workspace Failed"));
     }
 
     #[test]

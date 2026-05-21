@@ -29,6 +29,7 @@ bash scripts/build-deb.sh
 - Close one pane and confirm focus moves to a remaining pane.
 - Close the focused pane while a long-running shell command is exiting; confirm only one "Terminal exited" notification is created and it does not reference the just-closed surface.
 - Close the last workspace from the GTK UI and confirm a replacement `main` workspace opens a live terminal in the same directory.
+- If GTK cannot close a workspace's terminal surface, it shows a Close Workspace Failed notification and leaves the workspace visible instead of dropping it from the sidebar.
 - Toggle the sidebar twice and confirm `~/.config/forktty/config.toml` remains valid TOML with no `config.toml.tmp-*` sibling left behind.
 - Restart the app and confirm workspace/pane layout restores.
 - Set an invalid shell path in Settings and confirm the pane shows a recovery state.
