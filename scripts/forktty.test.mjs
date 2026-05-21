@@ -409,6 +409,23 @@ describe("hook installer", () => {
     );
   });
 
+  it("rejects non-object hook configs without overwriting them", async () => {
+    const context = makeContext();
+    const codexDir = context.env.CODEX_HOME;
+    await fs.mkdir(codexDir, { recursive: true });
+    const configPath = path.join(codexDir, "hooks.json");
+    await fs.writeFile(configPath, "[]\n");
+
+    await assert.rejects(
+      handleHooksSetup(context, ["codex"]),
+      (error) =>
+        /codex/.test(error.message) &&
+        error.message.includes(configPath) &&
+        /JSON object/.test(error.message),
+    );
+    assert.equal(await fs.readFile(configPath, "utf8"), "[]\n");
+  });
+
   it("readAgentConfig returns {} for whitespace-only files without throwing", async () => {
     const configPath = path.join(tmpDir, "whitespace.json");
     await fs.writeFile(configPath, "   \n\t  \n");

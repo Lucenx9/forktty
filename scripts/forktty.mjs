@@ -1133,7 +1133,11 @@ async function readJsonFile(filePath) {
 
 async function readAgentConfig(agent, filePath) {
   try {
-    return await readJsonFile(filePath);
+    const config = await readJsonFile(filePath);
+    if (!isObject(config)) {
+      throw new Error("expected a JSON object at the top level");
+    }
+    return config;
   } catch (error) {
     // Re-throw with agent + path context. The bare error from JSON.parse only
     // says e.g. "Unexpected token } in JSON at position 12" which leaves the
