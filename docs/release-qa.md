@@ -68,6 +68,7 @@ rebuilding.
 ## Hook Installer Smoke
 
 - `node scripts/forktty.mjs hooks setup codex --dry-run` — prints `would update` but does not create the Codex config.
+- `node scripts/forktty.mjs hooks setup --dry-run codex` — also prints `would update` without writing; `--dry-run` must not consume the agent name.
 - `node scripts/forktty.mjs hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= node scripts/forktty.mjs hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.

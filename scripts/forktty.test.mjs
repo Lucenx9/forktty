@@ -20,6 +20,7 @@ import {
   handleHooksSetup,
   mergeHookConfig,
   parseGlobalArgs,
+  parseFlags,
   readAgentConfig,
   resolveSelectorParams,
   sendSocketRequest,
@@ -233,6 +234,13 @@ describe("forktty CLI helpers", () => {
       true,
     );
     assert.equal(shouldSendHookActions({ env: {}, socketExplicit: true }), true);
+  });
+
+  it("does not let boolean flags consume following positionals", () => {
+    assert.deepEqual(parseFlags(["--dry-run", "codex"], new Set(["dry-run"])), {
+      options: { "dry-run": true },
+      positionals: ["codex"],
+    });
   });
 
   it("shell-quotes the generated hook command", () => {
@@ -543,6 +551,20 @@ describe("hook installer", () => {
     process.stdout.write = swallow;
     try {
       await handleHooksSetup(context, ["codex", "--dry-run"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    const codexConfig = path.join(context.env.CODEX_HOME, "hooks.json");
+    await assert.rejects(fs.access(codexConfig), /ENOENT/);
+  });
+
+  it("keeps --dry-run safe before agent names", async () => {
+    const context = makeContext();
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["--dry-run", "codex"]);
     } finally {
       process.stdout.write = originalWrite;
     }

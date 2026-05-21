@@ -265,7 +265,7 @@ function formatSocketConnectError(error, socketPath) {
   return error;
 }
 
-function parseFlags(args) {
+function parseFlags(args, booleanOptions = new Set()) {
   const options = {};
   const positionals = [];
 
@@ -283,6 +283,11 @@ function parseFlags(args) {
     if (eqIndex >= 0) {
       const key = raw.slice(0, eqIndex);
       options[key] = raw.slice(eqIndex + 1);
+      continue;
+    }
+
+    if (booleanOptions.has(raw)) {
+      options[raw] = true;
       continue;
     }
 
@@ -1268,7 +1273,7 @@ function supportedAgents(positionals) {
 }
 
 async function handleHooksSetup(context, args) {
-  const { options, positionals } = parseFlags(args);
+  const { options, positionals } = parseFlags(args, new Set(["dry-run"]));
   const dryRun = options["dry-run"] === true || options["dry-run"] === "true";
   const agentNames = supportedAgents(positionals);
   const scriptPath = fileURLToPath(import.meta.url);
