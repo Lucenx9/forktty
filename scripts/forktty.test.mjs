@@ -14,6 +14,7 @@ import {
   buildSurfaceSplitParams,
   buildWorktreeStatusParams,
   defaultSocketPath,
+  formatSocketConnectError,
   formatNotificationLine,
   handleHooksSetup,
   mergeHookConfig,
@@ -36,6 +37,25 @@ describe("forktty CLI helpers", () => {
     const socketPath = defaultSocketPath({});
     assert.equal(socketPath.startsWith(os.tmpdir()), true);
     assert.equal(socketPath.endsWith("forktty.sock"), true);
+  });
+
+  it("explains how to recover when the app socket is missing", () => {
+    const raw = Object.assign(new Error("connect ENOENT"), { code: "ENOENT" });
+    const error = formatSocketConnectError(raw, "/tmp/forktty.sock");
+
+    assert.match(error.message, /Cannot reach ForkTTY at \/tmp\/forktty\.sock/);
+    assert.match(error.message, /cargo run -p forktty-ui-gtk --features gtk-vte/);
+    assert.match(error.message, /FORKTTY_SOCKET_PATH/);
+    assert.equal(error.cause, raw);
+  });
+
+  it("explains socket permission failures without hiding the path", () => {
+    const raw = Object.assign(new Error("connect EACCES"), { code: "EACCES" });
+    const error = formatSocketConnectError(raw, "/run/user/1000/forktty.sock");
+
+    assert.match(error.message, /Cannot access ForkTTY socket/);
+    assert.match(error.message, /\/run\/user\/1000\/forktty\.sock/);
+    assert.equal(error.cause, raw);
   });
 
   it("formats global notifications without leaking undefined workspace text", () => {

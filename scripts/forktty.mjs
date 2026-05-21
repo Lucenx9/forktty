@@ -188,7 +188,7 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
     });
 
     socket.on("error", (error) => {
-      finish(error);
+      finish(formatSocketConnectError(error, socketPath));
     });
 
     socket.on("end", () => {
@@ -200,6 +200,26 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
       }
     });
   });
+}
+
+function formatSocketConnectError(error, socketPath) {
+  const code =
+    error && typeof error === "object" && typeof error.code === "string" ? error.code : "";
+  if (code === "ENOENT" || code === "ECONNREFUSED") {
+    const wrapped = new Error(
+      `Cannot reach ForkTTY at ${socketPath} (${code}). Start the app with: cargo run -p forktty-ui-gtk --features gtk-vte. If ForkTTY is already running, set FORKTTY_SOCKET_PATH or pass --socket <path>.`,
+    );
+    wrapped.cause = error;
+    return wrapped;
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    const wrapped = new Error(
+      `Cannot access ForkTTY socket at ${socketPath} (${code}). Check the socket owner/permissions, or pass --socket <path>.`,
+    );
+    wrapped.cause = error;
+    return wrapped;
+  }
+  return error;
 }
 
 function parseFlags(args) {
@@ -1613,6 +1633,7 @@ export {
   buildSurfaceSplitParams,
   buildWorktreeStatusParams,
   defaultSocketPath,
+  formatSocketConnectError,
   formatNotificationLine,
   handleHooksSetup,
   mergeHookConfig,

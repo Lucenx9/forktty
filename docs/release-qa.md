@@ -36,6 +36,7 @@ Run these after starting the GTK app so the daemon is listening on the
 default socket. Useful for catching protocol regressions without
 rebuilding.
 
+- Before starting the app, run `./scripts/forktty.mjs ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte` or `--socket <path>`.
 - `forktty list` — returns at least one workspace.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
