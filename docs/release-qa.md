@@ -31,6 +31,8 @@ bash scripts/build-deb.sh
 - Close the last workspace from the GTK UI and confirm a replacement `main` workspace opens a live terminal in the same directory.
 - If GTK cannot close a workspace's terminal surface, it shows a Close Workspace Failed notification and leaves the workspace visible instead of dropping it from the sidebar.
 - Toggle the sidebar twice and confirm `~/.config/forktty/config.toml` remains valid TOML with no `config.toml.tmp-*` sibling left behind.
+- Symlink `~/.config/forktty/config.toml` to a real managed TOML file, toggle
+  the sidebar, and confirm the target updates while the symlink remains a symlink.
 - Restart the app and confirm workspace/pane layout restores.
 - Set an invalid shell path in Settings and confirm the pane shows a recovery state.
 - Open Notifications, dismiss one notification, then Clear All.
@@ -150,6 +152,8 @@ rebuilding.
 - `forktty --help` prints usage and exits 0.
 - `forktty doctor` prints the diagnostics report and exits 0 on a clean
   environment, or 2 with explicit warning lines on a misconfigured one.
+- With `$XDG_CONFIG_HOME/forktty/config.toml` symlinked to a real TOML file,
+  `forktty doctor` reports it as a file and does not warn that it will be quarantined.
 - With an oversized `$XDG_DATA_HOME/forktty/session-v2.json`, `forktty doctor`
   warns that the session will be quarantined on launch.
 - With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`

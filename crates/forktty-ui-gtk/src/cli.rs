@@ -139,7 +139,7 @@ fn collect_report() -> DoctorReport {
     let mut warnings = Vec::new();
 
     let config_path = forktty_core::config::config_path().ok();
-    let config = describe_path("config.toml", config_path.clone());
+    let config = describe_config_path(config_path.clone());
     append_path_error_warning(&mut warnings, &config);
     append_launch_quarantine_warnings(
         &mut warnings,
@@ -217,6 +217,18 @@ fn collect_report() -> DoctorReport {
 }
 
 fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
+    describe_path_with_symlink_policy(label, path, false)
+}
+
+fn describe_config_path(path: Option<PathBuf>) -> PathState {
+    describe_path_with_symlink_policy("config.toml", path, true)
+}
+
+fn describe_path_with_symlink_policy(
+    label: &'static str,
+    path: Option<PathBuf>,
+    follow_valid_symlink: bool,
+) -> PathState {
     let Some(p) = path else {
         return PathState {
             label,
@@ -230,40 +242,65 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             error: Some("could not resolve path (no XDG base dir)".to_string()),
         };
     };
-    match fs::symlink_metadata(&p) {
-        Ok(meta) => PathState {
-            label,
-            path: Some(p),
-            exists: true,
-            is_regular_file: meta.file_type().is_file(),
-            is_dir: meta.file_type().is_dir(),
-            is_socket: meta.file_type().is_socket(),
-            mode: Some(meta.permissions().mode()),
-            size: Some(meta.len()),
-            error: None,
-        },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => PathState {
-            label,
-            path: Some(p),
-            exists: false,
-            is_regular_file: false,
-            is_dir: false,
-            is_socket: false,
-            mode: None,
-            size: None,
-            error: None,
-        },
-        Err(err) => PathState {
-            label,
-            path: Some(p),
-            exists: false,
-            is_regular_file: false,
-            is_dir: false,
-            is_socket: false,
-            mode: None,
-            size: None,
-            error: Some(err.to_string()),
-        },
+    let link_meta = match fs::symlink_metadata(&p) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return PathState {
+                label,
+                path: Some(p),
+                exists: false,
+                is_regular_file: false,
+                is_dir: false,
+                is_socket: false,
+                mode: None,
+                size: None,
+                error: None,
+            };
+        }
+        Err(err) => {
+            return PathState {
+                label,
+                path: Some(p),
+                exists: false,
+                is_regular_file: false,
+                is_dir: false,
+                is_socket: false,
+                mode: None,
+                size: None,
+                error: Some(err.to_string()),
+            };
+        }
+    };
+    let meta = if follow_valid_symlink && link_meta.file_type().is_symlink() {
+        match fs::metadata(&p) {
+            Ok(meta) => meta,
+            Err(err) => {
+                return PathState {
+                    label,
+                    path: Some(p),
+                    exists: true,
+                    is_regular_file: false,
+                    is_dir: false,
+                    is_socket: false,
+                    mode: Some(link_meta.permissions().mode()),
+                    size: Some(link_meta.len()),
+                    error: Some(err.to_string()),
+                };
+            }
+        }
+    } else {
+        link_meta
+    };
+    PathState {
+        label,
+        path: Some(p),
+        exists: true,
+        is_regular_file: meta.file_type().is_file(),
+        is_dir: meta.file_type().is_dir(),
+        is_socket: meta.file_type().is_socket(),
+        mode: Some(meta.permissions().mode()),
+        size: Some(meta.len()),
+        error: None,
     }
 }
 
@@ -679,6 +716,35 @@ mod tests {
                 .all(|name| !name.to_string_lossy().contains(".bad-")),
             "doctor unexpectedly created quarantine files: {siblings:?}"
         );
+    }
+
+    #[test]
+    fn doctor_treats_valid_config_symlink_as_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let target = dir.path().join("managed-config.toml");
+        fs::write(&target, "[general]\nshell = \"/bin/sh\"\n").unwrap();
+        symlink(&target, &path).unwrap();
+        let state = describe_config_path(Some(path.clone()));
+        let mut warnings = Vec::new();
+
+        append_path_error_warning(&mut warnings, &state);
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_CONFIG_SIZE_BYTES,
+            "Config",
+        );
+
+        assert!(state.is_regular_file);
+        assert!(format_path(&state).contains("[file mode"));
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

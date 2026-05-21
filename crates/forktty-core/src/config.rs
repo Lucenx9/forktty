@@ -156,7 +156,8 @@ pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
 
 pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     validate_config(config)?;
-    if let Some(parent) = path.parent() {
+    let write_path = config_write_path(path)?;
+    if let Some(parent) = write_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let content = toml::to_string_pretty(config)?;
@@ -164,7 +165,7 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let tmp_path = path.with_extension(format!("toml.tmp-{}-{nonce}", std::process::id()));
+    let tmp_path = write_path.with_extension(format!("toml.tmp-{}-{nonce}", std::process::id()));
     let result = (|| -> Result<(), ConfigError> {
         let mut tmp_file = fs::OpenOptions::new()
             .write(true)
@@ -172,13 +173,22 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
             .open(&tmp_path)?;
         tmp_file.write_all(content.as_bytes())?;
         tmp_file.sync_all()?;
-        fs::rename(&tmp_path, path)?;
+        fs::rename(&tmp_path, &write_path)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+fn config_write_path(path: &Path) -> Result<PathBuf, ConfigError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
@@ -710,6 +720,50 @@ mod tests {
                 .iter()
                 .all(|name| !name.to_string_lossy().contains(".tmp-")),
             "unexpected temp file sibling: {siblings:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_config_to_path_updates_symlink_target_without_replacing_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let link_dir = dir.path().join("config-dir");
+        let managed_dir = dir.path().join("managed");
+        fs::create_dir_all(&link_dir).unwrap();
+        fs::create_dir_all(&managed_dir).unwrap();
+        let path = link_dir.join("config.toml");
+        let target = managed_dir.join("config.toml");
+        fs::write(&target, "old = true\n").unwrap();
+        symlink(&target, &path).unwrap();
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.appearance.sidebar_visible = false;
+
+        save_config_to_path(&path, &config).unwrap();
+
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        let loaded = load_config_from_path(&path).unwrap();
+        assert!(!loaded.appearance.sidebar_visible);
+        let link_siblings: Vec<_> = fs::read_dir(&link_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(link_siblings, [std::ffi::OsString::from("config.toml")]);
+        let managed_siblings: Vec<_> = fs::read_dir(&managed_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            managed_siblings
+                .iter()
+                .all(|name| !name.to_string_lossy().contains(".tmp-")),
+            "unexpected temp file sibling: {managed_siblings:?}"
         );
     }
 }
