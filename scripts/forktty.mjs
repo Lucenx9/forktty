@@ -323,6 +323,14 @@ function parseFlags(args, booleanOptions = new Set()) {
   return { options, positionals };
 }
 
+function rejectUnknownOptions(options, allowedOptions, commandName) {
+  for (const key of Object.keys(options)) {
+    if (!allowedOptions.has(key)) {
+      throw new Error(`${commandName}: unknown option --${key}`);
+    }
+  }
+}
+
 function buildTargetParams(options, env = process.env) {
   requireTargetSelectorOptions(options);
   const params = {};
@@ -1462,7 +1470,9 @@ function supportedAgents(positionals) {
 }
 
 async function handleHooksSetup(context, args) {
-  const { options, positionals } = parseFlags(args, new Set(["dry-run"]));
+  const allowedOptions = new Set(["dry-run"]);
+  const { options, positionals } = parseFlags(args, allowedOptions);
+  rejectUnknownOptions(options, allowedOptions, "hooks setup");
   const dryRun = options["dry-run"] === true || options["dry-run"] === "true";
   const agentNames = supportedAgents(positionals);
   const scriptPath = fileURLToPath(import.meta.url);
