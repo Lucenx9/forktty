@@ -5857,9 +5857,7 @@ fn open_worktree_from_gtk(
     action: WorktreeAction,
 ) -> Result<(), String> {
     let name = validate_worktree_name_for_gtk(name)?;
-    let cwd = active_workspace_cwd(state)
-        .or_else(|| std::env::current_dir().ok())
-        .ok_or_else(|| "Cannot resolve current workspace directory".to_string())?;
+    let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
     let cwd = cwd.to_string_lossy().to_string();
     let layout = config::load_config()
         .ok()
@@ -5970,9 +5968,12 @@ fn rollback_workspace_creation_gtk(
 
 fn active_workspace_cwd_string(state: &SocketAppState) -> Result<String, String> {
     active_workspace_cwd(state)
-        .or_else(|| std::env::current_dir().ok())
         .map(|path| path.to_string_lossy().to_string())
-        .ok_or_else(|| "Cannot resolve current workspace directory".to_string())
+        .ok_or_else(no_active_workspace_message)
+}
+
+fn no_active_workspace_message() -> String {
+    "No active workspace is available for worktree operations.".to_string()
 }
 
 fn close_workspace_by_worktree_name(
@@ -7619,5 +7620,30 @@ mod tests {
         assert!(validate_worktree_name_for_gtk("feature//empty").is_err());
         assert!(validate_worktree_name_for_gtk("feature\\windows").is_err());
         assert!(validate_worktree_name_for_gtk("").is_err());
+    }
+
+    #[test]
+    fn gtk_worktree_actions_require_active_workspace() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        for result in [
+            active_workspace_cwd_string(&state),
+            open_worktree_from_gtk(&state, "feature/test", WorktreeAction::Create)
+                .map(|_| String::new()),
+            merge_worktree_from_gtk(&state, "feature/test"),
+            remove_worktree_from_gtk(&state, "feature/test").map(|_| String::new()),
+        ] {
+            assert!(result
+                .unwrap_err()
+                .contains("No active workspace is available"));
+        }
     }
 }
