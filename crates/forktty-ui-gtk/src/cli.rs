@@ -35,16 +35,23 @@ where
 {
     let mut iter = args.into_iter().map(|s| s.into());
     iter.next();
-    match iter.next() {
-        None => CliAction::LaunchApp,
-        Some(arg) => match arg.to_str() {
-            Some("--version") | Some("-V") => CliAction::PrintVersion,
-            Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
-            Some("doctor") => CliAction::Doctor,
-            Some(other) => CliAction::Unknown(other.to_string()),
+    let Some(arg) = iter.next() else {
+        return CliAction::LaunchApp;
+    };
+    let action = match arg.to_str() {
+        Some("--version") | Some("-V") => CliAction::PrintVersion,
+        Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
+        Some("doctor") => CliAction::Doctor,
+        Some(other) => return CliAction::Unknown(other.to_string()),
+        None => return CliAction::Unknown("<non-utf8>".to_string()),
+    };
+    if let Some(extra) = iter.next() {
+        return match extra.to_str() {
+            Some(value) => CliAction::Unknown(value.to_string()),
             None => CliAction::Unknown("<non-utf8>".to_string()),
-        },
+        };
     }
+    action
 }
 
 pub fn print_version() {
@@ -467,6 +474,22 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "explode"]),
             CliAction::Unknown("explode".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_extra_args_for_builtin_commands() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--json"]),
+            CliAction::Unknown("--json".to_string())
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "--help", "doctor"]),
+            CliAction::Unknown("doctor".to_string())
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "--version", "--help"]),
+            CliAction::Unknown("--help".to_string())
         );
     }
 

@@ -133,6 +133,8 @@ rebuilding.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
   hook paths under that temporary home, matching `hooks setup` fallback paths.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
+- `forktty doctor --wat` prints `unknown argument: --wat` to stderr and exits 2
+  instead of silently ignoring the extra argument.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published `.deb`.
 - Remove the package and confirm `/usr/bin/forktty` and the desktop entry are removed.
