@@ -350,7 +350,7 @@ fn quarantine_bad_config_with_timestamp(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     }
-    let quarantine_path = available_bad_config_path(path, &timestamp);
+    let quarantine_path = available_bad_config_path(path, timestamp);
     fs::rename(path, &quarantine_path)?;
     Ok(Some(quarantine_path))
 }
