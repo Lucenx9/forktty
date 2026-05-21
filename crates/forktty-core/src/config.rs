@@ -20,6 +20,12 @@ pub enum ConfigError {
     Invalid(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigRecovery {
+    pub reason: String,
+    pub quarantined_path: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     #[serde(default)]
@@ -119,6 +125,29 @@ pub fn config_path() -> Result<PathBuf, ConfigError> {
 
 pub fn load_config() -> Result<AppConfig, ConfigError> {
     load_config_from_path(&config_path()?)
+}
+
+pub fn load_config_with_recovery() -> Result<(AppConfig, Option<ConfigRecovery>), ConfigError> {
+    load_config_from_path_with_recovery(&config_path()?)
+}
+
+pub fn load_config_from_path_with_recovery(
+    path: &Path,
+) -> Result<(AppConfig, Option<ConfigRecovery>), ConfigError> {
+    match load_config_from_path(path) {
+        Ok(config) => Ok((config, None)),
+        Err(err) => {
+            let reason = err.to_string();
+            let quarantined_path = quarantine_bad_config(path)?;
+            Ok((
+                AppConfig::default(),
+                Some(ConfigRecovery {
+                    reason,
+                    quarantined_path,
+                }),
+            ))
+        }
+    }
 }
 
 pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
@@ -291,6 +320,35 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn quarantine_bad_config(path: &Path) -> Result<Option<PathBuf>, ConfigError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Ok(None);
+    }
+    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
+    let quarantine_path = path.with_extension(format!("toml.bad-{timestamp}"));
+    fs::rename(path, &quarantine_path)?;
+    Ok(Some(quarantine_path))
+}
+
+pub fn format_config_recovery_warning(recovery: &ConfigRecovery) -> String {
+    match &recovery.quarantined_path {
+        Some(path) => format!(
+            "Could not load config; defaults are in use. The bad config was moved to {}. {}",
+            path.display(),
+            recovery.reason
+        ),
+        None => format!(
+            "Could not load config; defaults are in use. {}",
+            recovery.reason
+        ),
+    }
+}
+
 fn default_theme_source() -> String {
     "auto".to_string()
 }
@@ -366,6 +424,43 @@ mod tests {
             load_config_from_path(&path),
             Err(ConfigError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn recovery_quarantines_corrupt_config_and_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "{ not toml").unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        assert_eq!(config, AppConfig::default());
+        assert!(!path.exists(), "bad config should be renamed aside");
+        let recovery = recovery.expect("expected recovery details");
+        assert!(recovery.reason.contains("TOML"));
+        let quarantined_path = recovery
+            .quarantined_path
+            .expect("expected quarantined path");
+        assert!(quarantined_path.exists());
+        assert!(quarantined_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains(".bad-"));
+    }
+
+    #[test]
+    fn recovery_warning_names_quarantined_config() {
+        let recovery = ConfigRecovery {
+            reason: "TOML parse error".to_string(),
+            quarantined_path: Some(PathBuf::from("/tmp/config.toml.bad-1")),
+        };
+
+        let warning = format_config_recovery_warning(&recovery);
+
+        assert!(warning.contains("/tmp/config.toml.bad-1"));
+        assert!(warning.contains("defaults are in use"));
+        assert!(warning.contains("TOML parse error"));
     }
 
     #[test]

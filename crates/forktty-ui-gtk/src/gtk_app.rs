@@ -2885,8 +2885,11 @@ fn install_gtk_runtime_defaults() {
 fn build_ui(app: &adw::Application) {
     register_app_icon();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let (app_config, config_load_warning) = match config::load_config() {
-        Ok(config) => (config, None),
+    let (app_config, config_load_warning) = match config::load_config_with_recovery() {
+        Ok((config, recovery)) => (
+            config,
+            recovery.map(|recovery| config::format_config_recovery_warning(&recovery)),
+        ),
         Err(err) => (
             config::AppConfig::default(),
             Some(format!("Could not load config; defaults are in use. {err}")),

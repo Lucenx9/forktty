@@ -31,6 +31,10 @@ bash scripts/build-deb.sh
 - Set an invalid shell path in Settings and confirm the pane shows a recovery state.
 - Open Notifications, dismiss one notification, then Clear All.
 
+## Config Recovery Smoke
+
+- Stop the app, then corrupt `$XDG_CONFIG_HOME/forktty/config.toml` (`echo "{ broken" >$XDG_CONFIG_HOME/forktty/config.toml`). Relaunch; ForkTTY should start with defaults, show a Config Issue notification that names the quarantined file, and rename the corrupt config to `*.bad-<timestamp>`.
+
 ## Socket API Smoke
 
 Run these after starting the GTK app so the daemon is listening on the
