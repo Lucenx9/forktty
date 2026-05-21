@@ -95,6 +95,7 @@ impl GtkVteBackend {
 
 impl TerminalBackend for GtkVteBackend {
     fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        let surface_id = request.surface_id.clone();
         let mut surfaces = self
             .surfaces
             .lock()
@@ -111,7 +112,13 @@ impl TerminalBackend for GtkVteBackend {
             },
         );
         drop(surfaces);
-        self.send_command(GtkTerminalCommand::Spawn(request))
+        if let Err(err) = self.send_command(GtkTerminalCommand::Spawn(request)) {
+            if let Ok(mut surfaces) = self.surfaces.lock() {
+                surfaces.remove(&surface_id);
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
@@ -137,14 +144,24 @@ impl TerminalBackend for GtkVteBackend {
         let surface = surfaces
             .get_mut(surface_id)
             .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        let previous_size = (surface.cols, surface.rows);
         surface.cols = cols;
         surface.rows = rows;
         drop(surfaces);
-        self.send_command(GtkTerminalCommand::Resize {
+        if let Err(err) = self.send_command(GtkTerminalCommand::Resize {
             surface_id: surface_id.to_string(),
             cols,
             rows,
-        })
+        }) {
+            if let Ok(mut surfaces) = self.surfaces.lock() {
+                if let Some(surface) = surfaces.get_mut(surface_id) {
+                    surface.cols = previous_size.0;
+                    surface.rows = previous_size.1;
+                }
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 
     fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
@@ -152,13 +169,19 @@ impl TerminalBackend for GtkVteBackend {
             .surfaces
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
-        surfaces
+        let removed = surfaces
             .remove(surface_id)
             .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
         drop(surfaces);
-        self.send_command(GtkTerminalCommand::Close {
+        if let Err(err) = self.send_command(GtkTerminalCommand::Close {
             surface_id: surface_id.to_string(),
-        })
+        }) {
+            if let Ok(mut surfaces) = self.surfaces.lock() {
+                surfaces.insert(surface_id.to_string(), removed);
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
@@ -7337,6 +7360,57 @@ fn start_socket_server(state: SocketAppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_spawn_request() -> SpawnRequest {
+        SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        let backend = GtkVteBackend::new(tx);
+
+        let err = backend.spawn(test_spawn_request()).unwrap_err();
+
+        assert!(matches!(err, TerminalError::Backend(_)));
+        assert!(backend.surfaces().unwrap().is_empty());
+    }
+
+    #[test]
+    fn gtk_backend_rolls_back_resize_when_ui_channel_is_closed() {
+        let (tx, rx) = mpsc::channel();
+        let backend = GtkVteBackend::new(tx);
+        backend.spawn(test_spawn_request()).unwrap();
+        drop(rx);
+
+        let err = backend.resize("surface-1", 120, 40).unwrap_err();
+
+        assert!(matches!(err, TerminalError::Backend(_)));
+        let mut surfaces = backend.surfaces().unwrap();
+        let surface = surfaces.remove(0);
+        assert_eq!((surface.cols, surface.rows), (80, 24));
+    }
+
+    #[test]
+    fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
+        let (tx, rx) = mpsc::channel();
+        let backend = GtkVteBackend::new(tx);
+        backend.spawn(test_spawn_request()).unwrap();
+        drop(rx);
+
+        let err = backend.close("surface-1").unwrap_err();
+
+        assert!(matches!(err, TerminalError::Backend(_)));
+        assert_eq!(backend.surfaces().unwrap().len(), 1);
+    }
 
     #[test]
     fn detects_visible_prompt_text() {
