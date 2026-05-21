@@ -122,6 +122,8 @@ rebuilding.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":"feature/no-cwd"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"missing_param"` for `cwd`; no worktree is created from the app launch directory.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":42,"cwd":"'"$PWD"'"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"error"` and says `name` must be a string.
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
+- If terminal spawn fails during `forktty worktree-create feature/x`, the action
+  reports the spawn failure and removes the newly created git worktree and branch.
 - Run `forktty worktree-attach feature/x --cwd <path-to-clean-repo>` again — it opens/reuses the existing worktree instead of creating a duplicate or failing.
 - If the GTK worktree dialog is opened while no workspace is active, actions report that no active workspace is available instead of using the app launch directory.
 - In the original workspace, run `forktty worktree-status` — returns `clean`; ForkTTY's `.worktrees/` directory should not make the target checkout dirty.

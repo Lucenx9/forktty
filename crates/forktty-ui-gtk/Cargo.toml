@@ -29,4 +29,5 @@ libloading = { version = "0.9", optional = true }
 tokio.workspace = true
 
 [dev-dependencies]
+git2.workspace = true
 tempfile.workspace = true

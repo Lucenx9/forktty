@@ -489,6 +489,7 @@ dependencies = [
  "forktty-core",
  "forktty-socket",
  "forktty-terminal",
+ "git2",
  "global-hotkey",
  "gtk4",
  "libadwaita",

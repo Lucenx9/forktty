@@ -5895,11 +5895,35 @@ fn open_worktree_from_gtk(
         ))
         .map_err(|err| err.to_string())
     {
-        rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)?;
+        let mut err = err;
+        if let Err(rollback_err) =
+            rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)
+        {
+            err = format!("{err}; workspace rollback failed: {rollback_err}");
+        }
+        if matches!(action, WorktreeAction::Create) {
+            return Err(rollback_created_worktree_after_spawn_failure(
+                &cwd, &info, err,
+            ));
+        }
         return Err(err);
     }
     save_session_from_state(state);
     Ok(())
+}
+
+fn rollback_created_worktree_after_spawn_failure(
+    cwd: &str,
+    info: &worktree::WorktreeInfo,
+    spawn_error: String,
+) -> String {
+    match worktree::remove(cwd, &info.worktree_name, true) {
+        Ok(()) => spawn_error,
+        Err(rollback_error) => format!(
+            "{spawn_error}; created worktree '{}' remains because rollback failed: {rollback_error}",
+            info.worktree_name
+        ),
+    }
 }
 
 fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), String> {
@@ -7401,6 +7425,24 @@ fn start_socket_server(state: SocketAppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::Repository;
+
+    fn make_temp_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("note.txt"), "base\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("note.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+        drop(tree);
+        drop(repo);
+        dir
+    }
 
     fn test_spawn_request() -> SpawnRequest {
         SpawnRequest {
@@ -7645,6 +7687,45 @@ mod tests {
             .unwrap()
             .iter()
             .any(|surface| surface.surface_id == surface_id));
+    }
+
+    #[test]
+    fn worktree_create_removes_created_worktree_when_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("feature/spawn-rollback-{}", std::process::id());
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("repo", repo_dir.path());
+        }
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        let terminal = Arc::new(GtkVteBackend::new(tx));
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error =
+            open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err();
+
+        assert!(error.contains("sending on a closed channel"));
+        assert!(worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_err());
+        let model = model.lock().unwrap();
+        assert_eq!(model.list_workspaces().len(), 1);
+        assert!(model
+            .list_workspaces()
+            .iter()
+            .all(|workspace| workspace.git_branch != branch_name));
     }
 
     #[test]

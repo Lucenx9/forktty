@@ -297,7 +297,14 @@ pub async fn dispatch(
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
             let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
-            let workspace = open_worktree_workspace(state, &info).await?;
+            let workspace = match open_worktree_workspace(state, &info).await {
+                Ok(workspace) => workspace,
+                Err(err) => {
+                    return Err(
+                        rollback_created_worktree_after_spawn_failure(&cwd, &info, err).into(),
+                    );
+                }
+            };
             Ok(json!({
                 "id": workspace.id,
                 "name": info.name,
@@ -681,10 +688,29 @@ async fn open_worktree_workspace(
         )
     };
     if let Err(err) = spawn_workspace_terminal(state, &workspace) {
-        rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
+        let mut err = err;
+        if let Err(rollback_err) =
+            rollback_workspace_creation(state, &workspace.id, previous_active_id)
+        {
+            err = format!("{err}; workspace rollback failed: {rollback_err}");
+        }
         return Err(err);
     }
     Ok(workspace)
+}
+
+fn rollback_created_worktree_after_spawn_failure(
+    cwd: &str,
+    info: &worktree::WorktreeInfo,
+    spawn_error: String,
+) -> String {
+    match worktree::remove(cwd, &info.worktree_name, true) {
+        Ok(()) => spawn_error,
+        Err(rollback_error) => format!(
+            "{spawn_error}; created worktree '{}' remains because rollback failed: {rollback_error}",
+            info.worktree_name
+        ),
+    }
 }
 
 fn spawn_workspace_terminal(
@@ -2643,6 +2669,53 @@ mod tests {
         assert_eq!(surfaces.as_array().unwrap().len(), 1);
         assert_eq!(surfaces[0]["id"], surface_id);
         assert_eq!(backend.surfaces().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn worktree_create_removes_created_worktree_when_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/spawn-rollback-{}", std::process::id());
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+        let state = SocketAppState::new(
+            model.clone(),
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        assert!(worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_err());
+        let model = model.lock().unwrap();
+        assert_eq!(model.list_workspaces().len(), 1);
+        assert!(model
+            .list_workspaces()
+            .iter()
+            .all(|workspace| workspace.git_branch != branch_name));
     }
 
     #[tokio::test]
