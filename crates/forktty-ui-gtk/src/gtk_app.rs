@@ -3867,7 +3867,7 @@ fn refresh_sidebar(
 
         let text = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
-            .spacing(1)
+            .spacing(2)
             .hexpand(true)
             .build();
         let name = gtk::Label::builder()
@@ -3924,7 +3924,7 @@ fn refresh_sidebar(
         if surface_count > 1 {
             let count_badge = gtk::Box::new(gtk::Orientation::Horizontal, 3);
             count_badge.add_css_class("workspace-count-badge");
-            count_badge.set_valign(gtk::Align::Start);
+            count_badge.set_valign(gtk::Align::Center);
             let count_icon = gtk::Image::from_icon_name("view-grid-symbolic");
             count_icon.add_css_class("workspace-count-icon");
             count_icon.set_tooltip_text(Some(&format!("{surface_count} panes")));

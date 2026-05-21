@@ -168,12 +168,16 @@ window {
 
 .app-header .header-action.needs-attention {
   color: var(--ft-warning);
-  background: var(--ft-warning-soft);
+  background: alpha(var(--ft-warning), 0.10);
 }
 
 .app-header .header-action.needs-attention:hover {
   color: var(--ft-warning);
-  background: alpha(var(--ft-warning), 0.20);
+  background: alpha(var(--ft-warning), 0.22);
+}
+
+.app-header .header-action.needs-attention:focus-visible {
+  background: alpha(var(--ft-warning), 0.18);
 }
 
 .app-header .header-action-separator {
@@ -393,8 +397,8 @@ popover.ft-context-menu contents {
 /* Workspace cards */
 
 .workspace-card {
-  min-height: 44px;
-  padding: 6px 9px 6px 12px;
+  min-height: 46px;
+  padding: 8px 10px 8px 13px;
   margin: 1px 2px;
   border-radius: 7px;
   background: transparent;
@@ -420,10 +424,17 @@ popover.ft-context-menu contents {
   box-shadow: inset 3px 0 0 var(--ft-warning);
 }
 
+/* Active + needs-attention: keep the active accent fill, swap the rail to
+ * warning. Avoid stacking a yellow background on top of the accent — the
+ * badge and rail already carry the urgency. */
 .workspace-row.active.needs-attention .workspace-card {
   box-shadow: inset 3px 0 0 var(--ft-warning);
-  background: var(--ft-warning-soft);
+  background: alpha(var(--ft-accent), 0.16);
   border-color: transparent;
+}
+
+.workspace-row.active.needs-attention:hover .workspace-card {
+  background: alpha(var(--ft-accent), 0.20);
 }
 
 .workspace-name {
@@ -433,7 +444,7 @@ popover.ft-context-menu contents {
 }
 
 .workspace-name-line {
-  min-height: 18px;
+  min-height: 20px;
 }
 
 .workspace-row.active .workspace-name {
@@ -441,11 +452,11 @@ popover.ft-context-menu contents {
 }
 
 .workspace-status-badge {
-  margin-top: 1px;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   font-size: 0.68em;
   font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
@@ -455,9 +466,12 @@ popover.ft-context-menu contents {
   background: var(--ft-info-soft);
 }
 
+/* Needs-input is the loudest badge; a thin inset ring helps it read as a
+ * deliberate token rather than a wash of warning colour. */
 .workspace-status-badge.needs-input {
   color: var(--ft-warning);
   background: var(--ft-warning-soft);
+  box-shadow: inset 0 0 0 1px alpha(var(--ft-warning), 0.32);
 }
 
 .workspace-status-badge.attention {
@@ -492,11 +506,10 @@ popover.ft-context-menu contents {
 }
 
 .workspace-count-badge {
-  margin-top: 1px;
-  padding: 1px 6px;
+  padding: 2px 7px;
   min-width: 22px;
   border-radius: 999px;
-  background: alpha(var(--window-fg-color), 0.10);
+  background: alpha(var(--window-fg-color), 0.08);
   color: var(--ft-text);
 }
 
@@ -542,21 +555,22 @@ popover.ft-context-menu contents {
 }
 
 .app-status-bar {
-  min-height: 22px;
-  padding: 0 12px;
+  min-height: 26px;
+  padding: 0 14px;
   background: var(--ft-bg-2);
   border-top: 1px solid var(--ft-border-subtle);
   color: var(--ft-text);
-  font-size: 0.80em;
+  font-size: 0.82em;
 }
 
 .status-location {
-  padding: 0 5px;
+  padding: 1px 7px;
   background: transparent;
   border: 0;
-  color: var(--ft-text);
-  font-size: 0.82em;
-  border-radius: 4px;
+  color: var(--ft-text-strong);
+  font-size: 0.83em;
+  font-weight: 600;
+  border-radius: 5px;
 }
 
 .app-status-bar .keycap {
@@ -568,17 +582,25 @@ popover.ft-context-menu contents {
 .status-shortcut {
   border-color: var(--ft-border-subtle);
   background: var(--ft-bg-3);
+  color: var(--ft-text-muted);
+  transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
+}
+
+.status-shortcut:hover {
+  background: var(--ft-bg-4);
+  color: var(--ft-text-strong);
+  border-color: var(--ft-border);
 }
 
 .pane-status {
   color: var(--ft-text-muted);
   font-size: 0.82em;
-  margin-left: 8px;
+  margin-left: 12px;
 }
 
 .status-location:hover {
   background: var(--ft-bg-3);
-  color: var(--ft-text);
+  color: var(--ft-text-strong);
 }
 
 .status-location:disabled {
@@ -708,7 +730,11 @@ popover.ft-workspace-popover contents {
 .terminal-pane.active .terminal-pane-header {
   background: var(--ft-pane-header-active);
   color: var(--ft-text-strong);
-  border-bottom-color: alpha(var(--ft-accent), 0.32);
+  border-bottom-color: alpha(var(--ft-accent), 0.42);
+}
+
+.terminal-pane.needs-attention .terminal-pane-header {
+  border-bottom-color: alpha(var(--ft-warning), 0.36);
 }
 
 .terminal-pane-title {
@@ -1315,12 +1341,12 @@ window.ft-dialog,
   background: var(--ft-warning);
   color: var(--ft-bg-0);
   border-radius: 999px;
-  font-size: 0.65em;
+  font-size: 0.72em;
   font-weight: 800;
-  padding: 0 5px;
-  min-width: 14px;
-  min-height: 14px;
-  margin: 4px 2px 4px 0;
+  padding: 0 6px;
+  min-width: 16px;
+  min-height: 16px;
+  margin: 2px 0;
 }
 
 .notification-open {
