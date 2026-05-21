@@ -63,6 +63,7 @@ rebuilding.
 ## Worktree Smoke
 
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
+- From a subdirectory inside that worktree, run `forktty worktree-status` — returns `clean` or `dirty`, not a repository error.
 - Inside the new workspace, commit a change and then `forktty worktree-merge feature/x` from the original workspace's prompt.
 - `forktty worktree-remove feature/x` — the workspace closes and the worktree is removed from the repo.
 

@@ -242,8 +242,7 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
 }
 
 pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
-    let repo = Repository::open(worktree_path)
-        .map_err(|_| WorktreeError::NotARepo(worktree_path.to_string()))?;
+    let repo = open_repo(worktree_path)?;
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(false);
     let statuses = repo.statuses(Some(&mut opts))?;
@@ -647,6 +646,19 @@ mod tests {
         let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
 
         assert!(matches!(result, Err(WorktreeError::TargetDirty)));
+    }
+
+    #[test]
+    fn status_discovers_repo_from_nested_worktree_directory() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "nested-status", "nested").unwrap();
+        let nested = Path::new(&info.path).join("src/deep");
+        fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(status(nested.to_str().unwrap()).unwrap(), "clean");
+
+        fs::write(nested.join("new.txt"), "dirty\n").unwrap();
+        assert_eq!(status(nested.to_str().unwrap()).unwrap(), "dirty");
     }
 
     #[cfg(unix)]
