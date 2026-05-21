@@ -331,6 +331,13 @@ function rejectUnknownOptions(options, allowedOptions, commandName) {
   }
 }
 
+function requireNoCommandArgs(args, commandName) {
+  if (args.length > 0) {
+    const arg = args[0] ? ` ${args[0]}` : "";
+    throw new Error(`${commandName}: unexpected argument${arg}`);
+  }
+}
+
 function buildTargetParams(options, env = process.env) {
   requireTargetSelectorOptions(options);
   const params = {};
@@ -611,7 +618,8 @@ function buildCreateWorkspaceParams(options) {
   return params;
 }
 
-async function handleList(context) {
+async function handleList(context, args = []) {
+  requireNoCommandArgs(args, "list");
   const workspaces = await sendSocketRequest(context.socketPath, "workspace.list", {});
   if (context.json) {
     printJson(workspaces);
@@ -1248,7 +1256,8 @@ function formatNotificationLine(notification) {
   return `[${state}] ${workspace} · ${notification.kind} · ${title}${body}`;
 }
 
-async function handleNotifications(context) {
+async function handleNotifications(context, args = []) {
+  requireNoCommandArgs(args, "notifications");
   const result = await sendSocketRequest(context.socketPath, "notification.list", {});
 
   if (context.json) {
@@ -1266,7 +1275,8 @@ async function handleNotifications(context) {
   }
 }
 
-async function handleClearNotifications(context) {
+async function handleClearNotifications(context, args = []) {
+  requireNoCommandArgs(args, "clear-notifications");
   await sendSocketRequest(context.socketPath, "notification.clear", {});
 
   if (context.json) {
@@ -1725,7 +1735,8 @@ function shouldSendHookActions(context) {
   );
 }
 
-async function handlePing(context) {
+async function handlePing(context, args = []) {
+  requireNoCommandArgs(args, "ping");
   const result = await sendSocketRequest(context.socketPath, "system.ping", {});
   if (context.json) {
     printJson({ result });
@@ -1807,7 +1818,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
   switch (command) {
     case "list":
-      await handleList(context);
+      await handleList(context, args);
       return;
     case "create-workspace":
       await handleCreateWorkspace(context, args);
@@ -1898,12 +1909,12 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       await handleClearLogs(context, args);
       return;
     case "notifications":
-      await handleNotifications(context);
+      await handleNotifications(context, args);
       return;
     case "clear-notifications":
     case "notifications-clear":
     case "notification:clear":
-      await handleClearNotifications(context);
+      await handleClearNotifications(context, args);
       return;
     case "hooks":
       if (args[0] === "setup") {
@@ -1913,7 +1924,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       }
       return;
     case "ping":
-      await handlePing(context);
+      await handlePing(context, args);
       return;
     case "help":
       printHelp();
@@ -1944,6 +1955,7 @@ export {
   formatNotificationLine,
   handleHooksSetup,
   mergeHookConfig,
+  main,
   parseGlobalArgs,
   parseFlags,
   readAgentConfig,

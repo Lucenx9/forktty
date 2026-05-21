@@ -60,6 +60,8 @@ rebuilding.
 - Replace the default socket path with a broken symlink, then launch ForkTTY; startup should refuse to replace the non-socket path and leave it for manual inspection.
 - Against a stub socket that resets before replying, `./scripts/forktty.mjs ping --socket <stub>` reports the socket path and reset code instead of a raw Node socket error.
 - `forktty list` — returns at least one workspace.
+- `./scripts/forktty.mjs ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
+- `./scripts/forktty.mjs clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.

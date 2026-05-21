@@ -23,6 +23,7 @@ import {
   formatNotificationLine,
   HELP_TEXT,
   handleHooksSetup,
+  main,
   mergeHookConfig,
   parseGlobalArgs,
   parseFlags,
@@ -288,6 +289,23 @@ describe("forktty CLI helpers", () => {
         help: false,
       },
     );
+  });
+
+  it("rejects unexpected args for commands that take none", async () => {
+    for (const [argv, message] of [
+      [["ping", "--wat"], /ping: unexpected argument --wat/],
+      [["list", "workspace-1"], /list: unexpected argument workspace-1/],
+      [
+        ["notifications", "--workspace-id", "main"],
+        /notifications: unexpected argument --workspace-id/,
+      ],
+      [
+        ["clear-notifications", "--workspace-id", "main"],
+        /clear-notifications: unexpected argument --workspace-id/,
+      ],
+    ]) {
+      await assert.rejects(main(argv, { XDG_RUNTIME_DIR: "/tmp" }), message);
+    }
   });
 
   it("only skips hook socket sends when no socket target was supplied", () => {
