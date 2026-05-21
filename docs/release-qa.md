@@ -130,6 +130,8 @@ rebuilding.
 - `forktty --help` prints usage and exits 0.
 - `forktty doctor` prints the diagnostics report and exits 0 on a clean
   environment, or 2 with explicit warning lines on a misconfigured one.
+- With an oversized `$XDG_DATA_HOME/forktty/session-v2.json`, `forktty doctor`
+  warns that the session will be quarantined on launch.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
   hook paths under that temporary home, matching `hooks setup` fallback paths.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.

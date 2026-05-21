@@ -4,6 +4,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DOCTOR_MAX_CONFIG_SIZE_BYTES: u64 = 1_048_576;
+const DOCTOR_MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
 
 const HELP_TEXT: &str = "\
 forktty — Linux-native multi-agent terminal
@@ -119,33 +121,23 @@ fn collect_report() -> DoctorReport {
 
     let config_path = forktty_core::config::config_path().ok();
     let config = describe_path("config.toml", config_path.clone());
-    if let Some(state_size) = config.size {
-        if state_size > 1024 * 1024 {
-            warnings.push(format!(
-                "{} is larger than the 1 MiB cap and will be quarantined on launch.",
-                config
-                    .path
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default()
-            ));
-        }
-    }
-    if config.exists && !config.is_regular_file && config.error.is_none() {
-        warnings.push(format!(
-            "{} exists but is not a regular file; ForkTTY will quarantine it.",
-            config
-                .path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-        ));
-    }
+    append_launch_quarantine_warnings(
+        &mut warnings,
+        &config,
+        DOCTOR_MAX_CONFIG_SIZE_BYTES,
+        "Config",
+    );
 
     let data_root = dirs::data_dir().map(|d| d.join("forktty"));
     let data_dir = describe_path("data dir", data_root.clone());
     let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
     let session = describe_path("session-v2.json", session_path);
+    append_launch_quarantine_warnings(
+        &mut warnings,
+        &session,
+        DOCTOR_MAX_SESSION_SIZE_BYTES,
+        "Session",
+    );
 
     let socket = forktty_socket::default_socket_path();
     let socket_parent_path = socket.parent().map(PathBuf::from);
@@ -242,6 +234,36 @@ fn describe_path(label: &'static str, path: Option<PathBuf>) -> PathState {
             error: Some(err.to_string()),
         },
     }
+}
+
+fn append_launch_quarantine_warnings(
+    warnings: &mut Vec<String>,
+    state: &PathState,
+    max_size_bytes: u64,
+    subject: &str,
+) {
+    if let Some(size) = state.size {
+        if size > max_size_bytes {
+            warnings.push(format!(
+                "{} is larger than the 1 MiB cap and will be quarantined on launch.",
+                path_display(state)
+            ));
+        }
+    }
+    if state.exists && !state.is_regular_file && state.error.is_none() {
+        warnings.push(format!(
+            "{subject} path {} exists but is not a regular file; ForkTTY will quarantine it.",
+            path_display(state)
+        ));
+    }
+}
+
+fn path_display(state: &PathState) -> String {
+    state
+        .path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<unresolved>".to_string())
 }
 
 fn resolve_shell(config_path: Option<&Path>) -> (Option<String>, bool, Option<String>) {
@@ -530,6 +552,48 @@ mod tests {
                 .all(|name| !name.to_string_lossy().contains(".bad-")),
             "doctor unexpectedly created quarantine files: {siblings:?}"
         );
+    }
+
+    #[test]
+    fn doctor_warns_when_session_will_be_quarantined_on_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let oversized = dir.path().join("session-v2.json");
+        fs::write(
+            &oversized,
+            "x".repeat((DOCTOR_MAX_SESSION_SIZE_BYTES + 1) as usize),
+        )
+        .unwrap();
+        let mut warnings = Vec::new();
+        let state = describe_path("session-v2.json", Some(oversized.clone()));
+
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_SESSION_SIZE_BYTES,
+            "Session",
+        );
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains(&oversized.display().to_string())
+                && warning.contains("larger than the 1 MiB cap")
+        }));
+
+        let directory = dir.path().join("session-as-dir.json");
+        fs::create_dir(&directory).unwrap();
+        warnings.clear();
+        let state = describe_path("session-v2.json", Some(directory.clone()));
+
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_SESSION_SIZE_BYTES,
+            "Session",
+        );
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains(&directory.display().to_string())
+                && warning.contains("not a regular file")
+        }));
     }
 
     #[test]
