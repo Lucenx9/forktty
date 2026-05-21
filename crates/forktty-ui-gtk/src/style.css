@@ -14,7 +14,7 @@
 
   --ft-pane-bg: shade(var(--ft-bg-1), 0.94);
   --ft-pane-header: shade(var(--ft-bg-1), 1.06);
-  --ft-pane-header-active: shade(var(--ft-bg-1), 1.12);
+  --ft-pane-header-active: shade(var(--ft-bg-1), 1.22);
 
   --ft-border-subtle: var(--border-color);
   --ft-border: var(--border-color);
@@ -113,7 +113,7 @@ window {
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: var(--ft-text-muted);
+  color: var(--ft-text);
   font-size: 0.92em;
   font-weight: 600;
   transition: background-color 90ms ease-out, color 90ms ease-out;
@@ -178,10 +178,10 @@ window {
 
 .app-header .header-action-separator {
   min-width: 1px;
-  min-height: 18px;
+  min-height: 16px;
   margin: 0 8px 0 6px;
   background: var(--ft-border-subtle);
-  opacity: 0.7;
+  opacity: 0.9;
 }
 
 .app-header button.titlebutton {
@@ -190,7 +190,7 @@ window {
   margin: 0 1px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ft-text-muted);
   box-shadow: none;
@@ -303,7 +303,7 @@ popover.ft-context-menu contents {
  * -------------------------------------------------------------------------- */
 
 .workspace-paned > separator {
-  background: var(--ft-bg-0);
+  background: var(--ft-border-subtle);
   min-width: 1px;
   min-height: 1px;
 }
@@ -314,11 +314,11 @@ popover.ft-context-menu contents {
 }
 
 .sidebar-shell.left {
-  border-right: 1px solid var(--ft-bg-0);
+  border-right: 1px solid var(--ft-border-subtle);
 }
 
 .sidebar-shell.right {
-  border-left: 1px solid var(--ft-bg-0);
+  border-left: 1px solid var(--ft-border-subtle);
 }
 
 .sidebar-header {
@@ -340,14 +340,19 @@ popover.ft-context-menu contents {
   min-height: 26px;
   padding: 0;
   border-radius: 6px;
-  color: var(--ft-text-muted);
-  background: transparent;
+  color: var(--ft-text);
+  background: alpha(var(--window-fg-color), 0.05);
   border: 0;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .sidebar-add:hover {
   background: var(--ft-bg-3);
+  color: var(--ft-text-strong);
+}
+
+.sidebar-add:active {
+  background: var(--ft-accent-soft);
   color: var(--ft-text-strong);
 }
 
@@ -402,13 +407,13 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-card {
-  background: alpha(var(--ft-accent), 0.12);
+  background: alpha(var(--ft-accent), 0.16);
   border-color: transparent;
   box-shadow: inset 3px 0 0 var(--ft-accent);
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: alpha(var(--ft-accent), 0.16);
+  background: alpha(var(--ft-accent), 0.20);
 }
 
 .workspace-row.needs-attention .workspace-card {
@@ -451,8 +456,8 @@ popover.ft-context-menu contents {
 }
 
 .workspace-status-badge.needs-input {
-  color: var(--ft-accent);
-  background: var(--ft-accent-soft);
+  color: var(--ft-warning);
+  background: var(--ft-warning-soft);
 }
 
 .workspace-status-badge.attention {
@@ -461,8 +466,8 @@ popover.ft-context-menu contents {
 }
 
 .workspace-status-badge.exited {
-  color: var(--ft-warning);
-  background: var(--ft-warning-soft);
+  color: var(--ft-text-muted);
+  background: var(--ft-bg-3);
 }
 
 .workspace-status-badge.error {
@@ -488,10 +493,11 @@ popover.ft-context-menu contents {
 
 .workspace-count-badge {
   margin-top: 1px;
-  padding: 1px 5px;
+  padding: 1px 6px;
+  min-width: 22px;
   border-radius: 999px;
-  background: alpha(var(--window-fg-color), 0.06);
-  color: var(--ft-text-muted);
+  background: alpha(var(--window-fg-color), 0.10);
+  color: var(--ft-text);
 }
 
 .workspace-count-icon {
@@ -540,7 +546,7 @@ popover.ft-context-menu contents {
   padding: 0 12px;
   background: var(--ft-bg-2);
   border-top: 1px solid var(--ft-border-subtle);
-  color: var(--ft-text-muted);
+  color: var(--ft-text);
   font-size: 0.80em;
 }
 
@@ -548,15 +554,15 @@ popover.ft-context-menu contents {
   padding: 0 5px;
   background: transparent;
   border: 0;
-  color: var(--ft-text-muted);
+  color: var(--ft-text);
   font-size: 0.82em;
   border-radius: 4px;
 }
 
 .app-status-bar .keycap {
-  min-height: 18px;
-  padding: 1px 6px;
-  font-size: 0.72em;
+  min-height: 20px;
+  padding: 1px 8px;
+  font-size: 0.76em;
 }
 
 .status-shortcut {
@@ -565,7 +571,7 @@ popover.ft-context-menu contents {
 }
 
 .pane-status {
-  color: var(--ft-text-faint);
+  color: var(--ft-text-muted);
   font-size: 0.82em;
   margin-left: 8px;
 }
@@ -661,6 +667,17 @@ popover.ft-workspace-popover contents {
   background: var(--ft-bg-1);
 }
 
+.terminal-stage paned > separator {
+  background: var(--ft-border-subtle);
+  min-width: 1px;
+  min-height: 1px;
+  transition: background-color 90ms ease-out;
+}
+
+.terminal-stage paned > separator:hover {
+  background: alpha(var(--ft-accent), 0.45);
+}
+
 .terminal-pane {
   background: var(--ft-pane-bg);
   border: 1px solid var(--ft-border-subtle);
@@ -670,10 +687,6 @@ popover.ft-workspace-popover contents {
 
 .terminal-pane.active {
   border-top-color: var(--ft-accent);
-  border-right-color: alpha(var(--ft-accent), 0.24);
-  border-bottom-color: alpha(var(--ft-accent), 0.22);
-  border-left-color: alpha(var(--ft-accent), 0.24);
-  box-shadow: inset 0 1px 0 alpha(var(--ft-accent), 0.18);
 }
 
 .terminal-pane:focus-visible {
@@ -694,8 +707,8 @@ popover.ft-workspace-popover contents {
 
 .terminal-pane.active .terminal-pane-header {
   background: var(--ft-pane-header-active);
-  color: var(--ft-text);
-  border-bottom-color: alpha(var(--ft-accent), 0.24);
+  color: var(--ft-text-strong);
+  border-bottom-color: alpha(var(--ft-accent), 0.32);
 }
 
 .terminal-pane-title {
@@ -704,7 +717,7 @@ popover.ft-workspace-popover contents {
 }
 
 .terminal-pane.active .terminal-pane-title {
-  color: var(--ft-text);
+  color: var(--ft-text-strong);
   font-weight: 600;
 }
 
@@ -724,10 +737,8 @@ popover.ft-workspace-popover contents {
 .pane-focus-marker {
   min-width: 0;
   min-height: 0;
-  border-left: 5px solid var(--ft-accent);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  margin-right: 6px;
+  border: 0;
+  margin: 0;
 }
 
 .terminal-pane-actions {
@@ -794,17 +805,18 @@ popover.ft-workspace-popover contents {
   padding: 4px;
   border: 1px solid var(--ft-border-subtle);
   border-radius: 6px;
-  background: alpha(var(--ft-bg-2), 0.88);
-  box-shadow: 0 2px 8px alpha(black, 0.18);
-  opacity: 0.68;
-  transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out;
+  background: alpha(var(--ft-bg-2), 0.82);
+  box-shadow: 0 1px 4px alpha(black, 0.10);
+  opacity: 0.5;
+  transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .single-pane-actions:hover,
 .single-pane-actions:focus-within {
   opacity: 1;
-  background: alpha(var(--ft-bg-2), 0.96);
+  background: alpha(var(--ft-bg-2), 0.98);
   border-color: alpha(var(--ft-accent), 0.55);
+  box-shadow: 0 2px 8px alpha(black, 0.16);
 }
 
 .single-pane-actions .terminal-pane-action {
@@ -1273,8 +1285,9 @@ window.ft-dialog,
 }
 
 .notification-row.unread {
-  border-color: alpha(var(--ft-accent), 0.42);
-  background: var(--ft-accent-soft);
+  border-color: var(--ft-border-subtle);
+  background: var(--ft-bg-2);
+  box-shadow: inset 3px 0 0 var(--ft-accent);
 }
 
 .notification-title {
@@ -1428,10 +1441,9 @@ scrollbar {
 scrollbar slider {
   min-width: 6px;
   min-height: 6px;
+  margin: 2px;
   border-radius: 999px;
   background-color: alpha(var(--window-fg-color), 0.15);
-  border: 2px solid transparent;
-  background-clip: padding-box;
   transition: background-color 90ms ease-out, min-width 90ms ease-out;
 }
 
