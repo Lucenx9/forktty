@@ -440,10 +440,7 @@ pub async fn dispatch(
         }
         "surface.split" => {
             let surface_id = required_surface_id(&params)?;
-            let axis = match params.get("axis").and_then(Value::as_str) {
-                Some("vertical") => SplitAxis::Vertical,
-                _ => SplitAxis::Horizontal,
-            };
+            let axis = split_axis_from_params(&params)?;
             let surface = {
                 let mut model = state
                     .model
@@ -967,6 +964,18 @@ fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or(DispatchError::MissingParam("surface_id"))
+}
+
+fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
+    let Some(axis) = params.get("axis") else {
+        return Ok(SplitAxis::Horizontal);
+    };
+    match axis.as_str() {
+        Some("horizontal") => Ok(SplitAxis::Horizontal),
+        Some("vertical") => Ok(SplitAxis::Vertical),
+        Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
+        None => Err("Invalid parameter axis: expected string".into()),
+    }
 }
 
 fn ensure_model_surface_exists(
@@ -1507,7 +1516,9 @@ mod tests {
         let error = bind_socket_listener(&socket_path, false).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
-        assert!(error.to_string().contains("refusing to replace non-socket path"));
+        assert!(error
+            .to_string()
+            .contains("refusing to replace non-socket path"));
         assert!(fs::symlink_metadata(&socket_path)
             .unwrap()
             .file_type()
@@ -1831,6 +1842,48 @@ mod tests {
             backend.sent_text(feature_surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn surface_split_rejects_invalid_axis() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        for axis in [json!("diagonal"), json!("")] {
+            let error = dispatch(
+                &state,
+                "surface.split",
+                json!({"surface_id": surface_id, "axis": axis}),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter axis"));
+        }
+
+        let non_string_error = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": 42}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(non_string_error.code(), "error");
+        assert!(non_string_error
+            .to_string()
+            .contains("Invalid parameter axis"));
+
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
