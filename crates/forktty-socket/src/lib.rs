@@ -501,19 +501,7 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .unwrap_or("ForkTTY");
             let body = params.get("body").and_then(Value::as_str).unwrap_or("");
-            let kind = match params.get("kind").and_then(Value::as_str) {
-                None | Some("") | Some("info") => NotificationKind::Info,
-                Some("prompt") => NotificationKind::Prompt,
-                Some("error") => NotificationKind::Error,
-                Some("custom") => NotificationKind::Custom,
-                Some(_) => {
-                    return Err(
-                        "Invalid parameter kind: expected info, prompt, error, or custom"
-                            .to_string()
-                            .into(),
-                    )
-                }
-            };
+            let kind = notification_kind_from_params(&params)?;
             let (workspace_id, surface_id) = resolve_notification_target(state, &params)?;
             let item = {
                 let mut model = state
@@ -647,20 +635,7 @@ pub async fn dispatch(
         }
         "metadata.log" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
-            let level = match params
-                .get("level")
-                .and_then(Value::as_str)
-                .unwrap_or("info")
-            {
-                "warn" => LogLevel::Warn,
-                "error" => LogLevel::Error,
-                "info" | "" => LogLevel::Info,
-                _ => {
-                    return Err("Invalid parameter level: expected info, warn, or error"
-                        .to_string()
-                        .into())
-                }
-            };
+            let level = log_level_from_params(&params)?;
             let message = required_string(&params, "message")?;
             let log = {
                 let mut model = state
@@ -975,6 +950,33 @@ fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
         Some("vertical") => Ok(SplitAxis::Vertical),
         Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
         None => Err("Invalid parameter axis: expected string".into()),
+    }
+}
+
+fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
+    let Some(kind) = params.get("kind") else {
+        return Ok(NotificationKind::Info);
+    };
+    match kind.as_str() {
+        Some("info") => Ok(NotificationKind::Info),
+        Some("prompt") => Ok(NotificationKind::Prompt),
+        Some("error") => Ok(NotificationKind::Error),
+        Some("custom") => Ok(NotificationKind::Custom),
+        Some(_) => Err("Invalid parameter kind: expected info, prompt, error, or custom".into()),
+        None => Err("Invalid parameter kind: expected string".into()),
+    }
+}
+
+fn log_level_from_params(params: &Value) -> Result<LogLevel, DispatchError> {
+    let Some(level) = params.get("level") else {
+        return Ok(LogLevel::Info);
+    };
+    match level.as_str() {
+        Some("info") => Ok(LogLevel::Info),
+        Some("warn") => Ok(LogLevel::Warn),
+        Some("error") => Ok(LogLevel::Error),
+        Some(_) => Err("Invalid parameter level: expected info, warn, or error".into()),
+        None => Err("Invalid parameter level: expected string".into()),
     }
 }
 
@@ -1736,16 +1738,18 @@ mod tests {
     async fn notification_create_rejects_invalid_kind() {
         let (state, _backend) = test_state();
 
-        let error = dispatch(
-            &state,
-            "notification.create",
-            json!({"title": "Prompt", "kind": "promtp"}),
-        )
-        .await
-        .unwrap_err();
+        for kind in [json!("promtp"), json!(""), json!(42)] {
+            let error = dispatch(
+                &state,
+                "notification.create",
+                json!({"title": "Prompt", "kind": kind}),
+            )
+            .await
+            .unwrap_err();
 
-        assert_eq!(error.code(), "error");
-        assert!(error.to_string().contains("Invalid parameter kind"));
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter kind"));
+        }
         let notifications = dispatch(&state, "notification.list", json!({}))
             .await
             .unwrap();
@@ -1798,6 +1802,39 @@ mod tests {
 
         assert_eq!(error.code(), "not_found");
         assert_eq!(error.to_string(), "Workspace not found");
+    }
+
+    #[tokio::test]
+    async fn metadata_log_rejects_invalid_level() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        for level in [json!("verbose"), json!(""), json!(42)] {
+            let error = dispatch(
+                &state,
+                "metadata.log",
+                json!({
+                    "workspace_id": workspace_id,
+                    "level": level,
+                    "message": "waiting"
+                }),
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains("Invalid parameter level"));
+        }
+
+        let logs = dispatch(
+            &state,
+            "metadata.list_logs",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(logs.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
