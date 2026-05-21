@@ -382,6 +382,10 @@ function buildLogParams(options, positionals, stdinText = "", env = process.env)
   };
 }
 
+function shouldReadCommandStdin(options, positionals, textOption) {
+  return typeof options[textOption] !== "string" && positionals.length === 0;
+}
+
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -586,7 +590,9 @@ async function handleCloseWorkspace(context, args) {
 
 async function handleNotify(context, args) {
   const { options, positionals } = parseFlags(args);
-  const stdinText = await readStdinText();
+  const stdinText = shouldReadCommandStdin(options, positionals, "body")
+    ? await readStdinText()
+    : "";
   const body =
     typeof options.body === "string"
       ? options.body
@@ -616,7 +622,9 @@ async function handleNotify(context, args) {
 
 async function handleSendText(context, args) {
   const { options, positionals } = parseFlags(args);
-  const stdinText = await readStdinText();
+  const stdinText = shouldReadCommandStdin(options, positionals, "text")
+    ? await readStdinText()
+    : "";
   const text =
     typeof options.text === "string"
       ? options.text
@@ -1033,7 +1041,9 @@ function formatLogLine(log) {
 
 async function handleLog(context, args) {
   const { options, positionals } = parseFlags(args);
-  const stdinText = await readStdinText();
+  const stdinText = shouldReadCommandStdin(options, positionals, "message")
+    ? await readStdinText()
+    : "";
   const params = buildLogParams(options, positionals, stdinText, context.env);
   await sendSocketRequest(context.socketPath, "metadata.log", params);
 
@@ -1746,6 +1756,7 @@ export {
   sendSocketRequest,
   shellQuote,
   shouldSendHookActions,
+  shouldReadCommandStdin,
   surfaceIdFromWorkspaceList,
   worktreeParams,
 };

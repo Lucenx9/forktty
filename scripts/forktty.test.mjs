@@ -26,6 +26,7 @@ import {
   sendSocketRequest,
   surfaceIdFromWorkspaceList,
   shouldSendHookActions,
+  shouldReadCommandStdin,
   worktreeParams,
 } from "./forktty.mjs";
 
@@ -267,6 +268,13 @@ describe("forktty CLI helpers", () => {
       options: { title: "Heads up" },
       positionals: ["--body"],
     });
+  });
+
+  it("only reads command stdin when no explicit text was provided", () => {
+    assert.equal(shouldReadCommandStdin({}, [], "text"), true);
+    assert.equal(shouldReadCommandStdin({ text: "echo ok" }, [], "text"), false);
+    assert.equal(shouldReadCommandStdin({}, ["echo", "ok"], "text"), false);
+    assert.equal(shouldReadCommandStdin({ body: "" }, [], "body"), false);
   });
 
   it("shell-quotes the generated hook command", () => {

@@ -54,6 +54,7 @@ rebuilding.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad kind","kind":"promtp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `kind`; no notification is created.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
+- `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.
 - Against a stub socket that returns a different response `id`, `forktty ping --socket <stub>` errors with a response-id mismatch that names the method and socket path.
