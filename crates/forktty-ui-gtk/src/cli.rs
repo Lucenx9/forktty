@@ -278,6 +278,19 @@ fn describe_path_with_symlink_policy(
     let meta = if follow_valid_symlink && link_meta.file_type().is_symlink() {
         match fs::metadata(&p) {
             Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return PathState {
+                    label,
+                    path: Some(p),
+                    exists: true,
+                    is_regular_file: false,
+                    is_dir: false,
+                    is_socket: false,
+                    mode: Some(link_meta.permissions().mode()),
+                    size: Some(link_meta.len()),
+                    error: Some("path is a broken symlink".to_string()),
+                };
+            }
             Err(err) => {
                 return PathState {
                     label,
@@ -353,6 +366,11 @@ fn append_launch_quarantine_warnings(
     if state.exists && !state.is_regular_file && state.error.is_none() {
         warnings.push(format!(
             "{subject} path {} exists but is not a regular file; ForkTTY will quarantine it.",
+            path_display(state)
+        ));
+    } else if state.exists && state.error.is_some() {
+        warnings.push(format!(
+            "{subject} path {} could not be inspected and will be quarantined on launch.",
             path_display(state)
         ));
     }
@@ -752,6 +770,41 @@ mod tests {
     }
 
     #[test]
+    fn doctor_warns_that_broken_config_symlink_will_be_quarantined() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        symlink(dir.path().join("missing-config.toml"), &path).unwrap();
+        let state = describe_config_path(Some(path.clone()));
+        let mut warnings = Vec::new();
+
+        append_path_error_warning(&mut warnings, &state);
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_CONFIG_SIZE_BYTES,
+            "Config",
+        );
+
+        assert!(state.exists);
+        assert!(state
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("broken symlink")));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("config.toml")
+                && warning.contains(&path.display().to_string())
+                && warning.contains("could not be inspected")
+        }));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("Config path")
+                && warning.contains(&path.display().to_string())
+                && warning.contains("will be quarantined")
+        }));
+    }
+
+    #[test]
     fn doctor_warns_when_session_will_be_quarantined_on_launch() {
         let dir = tempfile::tempdir().unwrap();
         let oversized = dir.path().join("session-v2.json");
@@ -820,6 +873,41 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[test]
+    fn doctor_warns_that_broken_session_symlink_will_be_quarantined() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        symlink(dir.path().join("missing-session-v2.json"), &path).unwrap();
+        let state = describe_session_path(Some(path.clone()));
+        let mut warnings = Vec::new();
+
+        append_path_error_warning(&mut warnings, &state);
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_SESSION_SIZE_BYTES,
+            "Session",
+        );
+
+        assert!(state.exists);
+        assert!(state
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("broken symlink")));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("session-v2.json")
+                && warning.contains(&path.display().to_string())
+                && warning.contains("could not be inspected")
+        }));
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("Session path")
+                && warning.contains(&path.display().to_string())
+                && warning.contains("will be quarantined")
+        }));
     }
 
     #[test]

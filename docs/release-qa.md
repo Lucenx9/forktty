@@ -158,10 +158,14 @@ rebuilding.
   environment, or 2 with explicit warning lines on a misconfigured one.
 - With `$XDG_CONFIG_HOME/forktty/config.toml` symlinked to a real TOML file,
   `forktty doctor` reports it as a file and does not warn that it will be quarantined.
+- With `$XDG_CONFIG_HOME/forktty/config.toml` as a broken symlink, `forktty doctor`
+  warns that it could not be inspected and will be quarantined on launch.
 - With an oversized `$XDG_DATA_HOME/forktty/session-v2.json`, `forktty doctor`
   warns that the session will be quarantined on launch.
 - With `$XDG_DATA_HOME/forktty/session-v2.json` symlinked to a real JSON file,
   `forktty doctor` reports it as a file and does not warn that it will be quarantined.
+- With `$XDG_DATA_HOME/forktty/session-v2.json` as a broken symlink, `forktty doctor`
+  warns that it could not be inspected and will be quarantined on launch.
 - With a regular file at `$XDG_RUNTIME_DIR/forktty.sock`, `forktty doctor`
   warns that the socket path is not a Unix socket before launch fails.
 - With `$XDG_RUNTIME_DIR` pointing at a regular file, `forktty doctor` warns
