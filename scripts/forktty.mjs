@@ -713,7 +713,7 @@ async function handleSendText(context, args) {
 }
 
 async function resolveSendTextSurfaceId(context, options) {
-  requireStringOption(options, "surface-id");
+  requireNonBlankStringOption(options, "surface-id");
   if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
     return options["surface-id"].trim();
   }
@@ -742,7 +742,7 @@ function surfaceIdFromWorkspaceList(workspaces) {
 }
 
 function surfaceIdFromArgs(options, positionals, env = process.env) {
-  requireStringOption(options, "surface-id");
+  requireNonBlankStringOption(options, "surface-id");
   if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
     return options["surface-id"].trim();
   }
@@ -764,7 +764,7 @@ function buildSurfaceActionParams(options, positionals, env = process.env, comma
 }
 
 function buildSurfaceSplitParams(options, positionals, env = process.env) {
-  requireStringOption(options, "axis");
+  requireNonBlankStringOption(options, "axis");
   const axis =
     typeof options.axis === "string" && options.axis.trim() ? options.axis.trim() : "horizontal";
   if (axis !== "horizontal" && axis !== "vertical") {

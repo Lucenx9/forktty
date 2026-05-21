@@ -546,6 +546,16 @@ describe("forktty CLI helpers", () => {
       () => buildSurfaceActionParams({ "surface-id": true }, [], {}, "focus-surface"),
       /--surface-id requires a value/,
     );
+    assert.throws(
+      () =>
+        buildSurfaceActionParams(
+          { "surface-id": "" },
+          [],
+          { FORKTTY_SURFACE_ID: "surface-env" },
+          "focus-surface",
+        ),
+      /--surface-id requires a value/,
+    );
   });
 
   it("resolves send-text fallback from the active workspace surface", () => {
@@ -577,6 +587,10 @@ describe("forktty CLI helpers", () => {
     );
     assert.throws(
       () => buildSurfaceSplitParams({ axis: true }, ["surface-2"]),
+      /--axis requires a value/,
+    );
+    assert.throws(
+      () => buildSurfaceSplitParams({ axis: "" }, ["surface-2"]),
       /--axis requires a value/,
     );
     assert.throws(
