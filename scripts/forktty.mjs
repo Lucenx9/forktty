@@ -260,7 +260,7 @@ function formatSocketConnectError(error, socketPath) {
     error && typeof error === "object" && typeof error.code === "string" ? error.code : "";
   if (code === "ENOENT" || code === "ECONNREFUSED") {
     const wrapped = new Error(
-      `Cannot reach ForkTTY at ${socketPath} (${code}). Start the app with: cargo run -p forktty-ui-gtk --features gtk-vte. If ForkTTY is already running, set FORKTTY_SOCKET_PATH or pass --socket <path>.`,
+      `Cannot reach ForkTTY at ${socketPath} (${code}). Start the app with: cargo run -p forktty-ui-gtk --features gtk-vte. If ForkTTY is already running, set FORKTTY_SOCKET_PATH to an absolute path or pass --socket <path>.`,
     );
     wrapped.cause = error;
     return wrapped;
@@ -497,8 +497,7 @@ function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function printHelp() {
-  process.stdout.write(`ForkTTY CLI
+const HELP_TEXT = `ForkTTY CLI
 
 Usage:
   ./scripts/forktty.mjs list [--json]
@@ -539,13 +538,16 @@ Selector flags:
   --worktree-name <name>
 
 Notes:
-  - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
+  - The CLI defaults to an absolute FORKTTY_SOCKET_PATH, then the app default socket path.
   - Global --socket and --json flags may appear before or after the command.
   - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
   - Worktree commands default --cwd to PWD, then the CLI process cwd, so repo operations follow the shell you run them from.
   - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
-`);
+`;
+
+function printHelp() {
+  process.stdout.write(HELP_TEXT);
 }
 
 function formatWorkspaceLine(workspace) {
@@ -1895,6 +1897,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
 export {
   AGENT_SPECS,
+  HELP_TEXT,
   HOOK_CONTINUE_RESPONSE,
   atomicWriteFile,
   buildCreateWorkspaceParams,

@@ -21,6 +21,7 @@ import {
   defaultSocketPath,
   formatSocketConnectError,
   formatNotificationLine,
+  HELP_TEXT,
   handleHooksSetup,
   mergeHookConfig,
   parseGlobalArgs,
@@ -96,8 +97,12 @@ describe("forktty CLI helpers", () => {
 
     assert.match(error.message, /Cannot reach ForkTTY at \/tmp\/forktty\.sock/);
     assert.match(error.message, /cargo run -p forktty-ui-gtk --features gtk-vte/);
-    assert.match(error.message, /FORKTTY_SOCKET_PATH/);
+    assert.match(error.message, /FORKTTY_SOCKET_PATH to an absolute path/);
     assert.equal(error.cause, raw);
+  });
+
+  it("documents that env socket overrides must be absolute", () => {
+    assert.match(HELP_TEXT, /absolute FORKTTY_SOCKET_PATH/);
   });
 
   it("explains socket permission failures without hiding the path", () => {

@@ -121,6 +121,9 @@ Spawned shells receive:
 - `FORKTTY_SOCKET_PATH`
 
 That lets hooks and scripts target the current workspace without extra flags.
+Manual socket overrides must be absolute paths; blank or relative
+`FORKTTY_SOCKET_PATH` values are ignored so the app and CLI fall back to the
+default socket location.
 
 ## Agent Hooks
 

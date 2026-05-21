@@ -50,7 +50,7 @@ Run these after starting the GTK app so the daemon is listening on the
 default socket. Useful for catching protocol regressions without
 rebuilding.
 
-- Before starting the app, run `./scripts/forktty.mjs ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte` or `--socket <path>`.
+- Before starting the app, run `./scripts/forktty.mjs ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte`, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
 - Launch with `FORKTTY_SOCKET_PATH=" "` and confirm the app still binds the default socket path instead of disabling automation.
 - Launch with `FORKTTY_SOCKET_PATH=relative.sock` and confirm both the app and
   `./scripts/forktty.mjs ping` ignore the relative env value and use the default socket path.

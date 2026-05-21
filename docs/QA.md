@@ -74,6 +74,8 @@ security regression.
 - Hand-edited session with multiple `active: true` workspaces → file is
   quarantined, app starts fresh.
 - `FORKTTY_SOCKET_PATH=" "` → app still binds the default socket.
+- `FORKTTY_SOCKET_PATH=relative.sock` → app and CLI ignore the env value and
+  use the default socket.
 - Stub socket at the default path returning a foreign id on
   `system.ping` → ForkTTY refuses to replace it.
 - `cargo audit` and (optionally) `cargo deny check` clean.
