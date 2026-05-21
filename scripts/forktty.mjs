@@ -1192,17 +1192,22 @@ async function atomicWriteFile(filePath, content) {
     `.${base}.tmp-${process.pid}-${Date.now()}`,
   );
   let handle;
+  let tempCreated = false;
   try {
     handle = await fs.open(tmpPath, "wx", 0o600);
+    tempCreated = true;
     await handle.writeFile(content, "utf8");
     await handle.sync();
-  } finally {
-    if (handle) await handle.close();
-  }
-  try {
+    await handle.close();
+    handle = null;
     await fs.rename(tmpPath, filePath);
   } catch (error) {
-    await fs.unlink(tmpPath).catch(() => {});
+    if (handle) {
+      await handle.close().catch(() => {});
+    }
+    if (tempCreated) {
+      await fs.unlink(tmpPath).catch(() => {});
+    }
     throw error;
   }
 }

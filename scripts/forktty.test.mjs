@@ -530,4 +530,15 @@ describe("hook installer", () => {
     const leftover = siblings.filter((name) => name.includes(".tmp-"));
     assert.deepEqual(leftover, [], `unexpected temp files: ${leftover.join(", ")}`);
   });
+
+  it("atomicWriteFile removes temp file when temp write fails", async () => {
+    const target = path.join(tmpDir, "atomic-write-fail.json");
+
+    await assert.rejects(atomicWriteFile(target, { not: "text" }), TypeError);
+
+    await assert.rejects(fs.access(target), /ENOENT/);
+    const siblings = await fs.readdir(tmpDir);
+    const leftover = siblings.filter((name) => name.includes(".tmp-"));
+    assert.deepEqual(leftover, [], `unexpected temp files: ${leftover.join(", ")}`);
+  });
 });
