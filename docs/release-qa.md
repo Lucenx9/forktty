@@ -67,6 +67,7 @@ rebuilding.
 
 ## Worktree Smoke
 
+- From an open repo workspace, run `forktty worktree-list` without `--cwd` — it uses the shell's current `PWD`, not the app launch directory.
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
 - In the original workspace, run `forktty worktree-status` — returns `clean`; ForkTTY's `.worktrees/` directory should not make the target checkout dirty.
 - From a subdirectory inside that worktree, run `forktty worktree-status` — returns `clean` or `dirty`, not a repository error.

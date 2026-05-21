@@ -23,6 +23,7 @@ import {
   resolveSelectorParams,
   sendSocketRequest,
   surfaceIdFromWorkspaceList,
+  worktreeParams,
 } from "./forktty.mjs";
 
 async function withSocketServer(handler, callback) {
@@ -353,6 +354,22 @@ describe("forktty CLI helpers", () => {
     assert.deepEqual(buildWorktreeStatusParams({}, [], { PWD: "/repo/current" }), {
       path: "/repo/current",
     });
+  });
+
+  it("defaults worktree command cwd to the caller PWD", () => {
+    assert.deepEqual(worktreeParams({}, ["feature/x"], true, { PWD: "/repo/current" }), {
+      name: "feature/x",
+      cwd: "/repo/current",
+    });
+    assert.deepEqual(
+      worktreeParams({ cwd: "/repo/explicit" }, ["feature/x"], true, {
+        PWD: "/repo/current",
+      }),
+      {
+        name: "feature/x",
+        cwd: "/repo/explicit",
+      },
+    );
   });
 });
 

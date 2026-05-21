@@ -387,6 +387,7 @@ Selector flags:
 Notes:
   - The CLI defaults to FORKTTY_SOCKET_PATH when present, then the app default socket path.
   - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
+  - Worktree commands default --cwd to PWD so repo operations follow the shell you run them from.
   - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
 `);
@@ -746,7 +747,7 @@ async function handleCloseSurface(context, args) {
   }
 }
 
-function worktreeParams(options, positionals, requireName = false) {
+function worktreeParams(options, positionals, requireName = false, env = process.env) {
   const params = {};
   const name = positionals[0] || options.name || options.branch;
   if (requireName && (!name || typeof name !== "string")) {
@@ -757,6 +758,8 @@ function worktreeParams(options, positionals, requireName = false) {
   }
   if (typeof options.cwd === "string" && options.cwd.trim()) {
     params.cwd = options.cwd.trim();
+  } else if (typeof env.PWD === "string" && env.PWD.trim()) {
+    params.cwd = env.PWD.trim();
   }
   return params;
 }
@@ -789,7 +792,7 @@ async function handleWorktreeList(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.list",
-    worktreeParams(options, []),
+    worktreeParams(options, [], false, context.env),
   );
   if (context.json) {
     printJson(result);
@@ -819,7 +822,7 @@ async function handleWorktreeCreate(context, args, method) {
   const result = await sendSocketRequest(
     context.socketPath,
     method,
-    worktreeParams(options, positionals, true),
+    worktreeParams(options, positionals, true, context.env),
   );
   if (context.json) {
     printJson(result);
@@ -833,7 +836,7 @@ async function handleWorktreeRemove(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.remove",
-    worktreeParams(options, positionals, true),
+    worktreeParams(options, positionals, true, context.env),
   );
   if (context.json) {
     printJson(result);
@@ -847,7 +850,7 @@ async function handleWorktreeMerge(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.merge",
-    worktreeParams(options, positionals, true),
+    worktreeParams(options, positionals, true, context.env),
   );
   if (context.json) {
     printJson(result);
@@ -1655,6 +1658,7 @@ export {
   sendSocketRequest,
   shellQuote,
   surfaceIdFromWorkspaceList,
+  worktreeParams,
 };
 
 const isMainModule =
