@@ -64,12 +64,4 @@ ForkTTY currently requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubunt
 
 ## Verification
 
-```bash
-cargo fmt --all --check
-cargo test --workspace
-cargo clippy --workspace --features gtk-vte -- -D warnings
-cargo build -p forktty-ui-gtk --features gtk-vte
-node --test scripts/forktty.test.mjs
-desktop-file-validate packaging/linux/forktty.desktop
-bash scripts/build-deb.sh
-```
+The full automated check list (Rust fmt/test/clippy/build, CLI tests, desktop entry validation, Debian packaging) lives in [release-qa.md](release-qa.md#automated-checks). Run that checklist before tagging an alpha.

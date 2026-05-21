@@ -38,6 +38,12 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] VTE bell and child-exit notifications.
 - [x] Explicit notification `kind` support.
 
+### Appearance
+
+- [x] Auto/Light/Dark theme-source selection in Settings.
+- [x] Per-pane VTE scrollback and audible-bell controls.
+- [x] Sidebar position (`left`/`right`) and visibility persistence.
+
 ### Session, Config, and Security
 
 - [x] Native `session-v2.json` restore/save.
@@ -64,7 +70,6 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] More complete command palette search/filter parity.
 - [ ] Rich branch picker UI with query highlighting.
 - [ ] Better notification inbox grouping and actions.
-- [x] Basic Auto/Light/Dark theme selection in Settings.
 - [ ] Full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.

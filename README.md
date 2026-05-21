@@ -75,8 +75,6 @@ bash scripts/build-deb.sh
 sudo dpkg -i target/packaging/deb/forktty_*.deb
 ```
 
-The old Tauri/React/WebKit implementation has been removed from the primary tree. The supported desktop app is the native GTK4/libadwaita/VTE binary installed as `forktty`.
-
 ### First Run Basics
 
 ForkTTY opens the current directory as the `main` workspace. Use the command palette for most navigation and pane actions:
@@ -181,6 +179,8 @@ sound = true
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
 `scrollback_lines` controls VTE scrollback per pane; set it to `0` to disable scrollback. `terminal_renderer` is kept for config compatibility; the native GTK app uses VTE.
+
+See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 
 ## Session Restore
 

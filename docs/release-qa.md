@@ -40,7 +40,7 @@ rebuilding.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.
-- `printf '%s\n' "$(printf '%s' '{"id":"x","method":"surface.send_text","params":{"surface_id":"main:1","text":"'; python3 -c 'print("x"*300000, end="")'; printf '%s' '"}}')" | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"payload_too_large"`.
+- `python3 -c 'import json,sys; sys.stdout.write(json.dumps({"id":"x","method":"surface.send_text","params":{"surface_id":"main:1","text":"x"*300000}})+"\n")' | nc -U "$XDG_RUNTIME_DIR/forktty.sock"` — response includes `"code":"payload_too_large"` (the 256 KiB `surface.send_text` cap).
 
 ## Session Restore Smoke
 

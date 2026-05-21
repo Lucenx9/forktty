@@ -161,7 +161,17 @@ Implemented categories:
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
 
-Request lines are capped at 1 MiB. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged VTE pipe cannot block the dispatch task. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+
+Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
+
+| Code | Cause |
+| ---- | ----- |
+| `method_not_found` | Unknown method name. |
+| `missing_param` | A required parameter is absent or has the wrong type. |
+| `not_found` | The referenced workspace, surface, worktree, or metadata entry does not exist. |
+| `payload_too_large` | The request line exceeds 1 MiB, or `surface.send_text` text exceeds 256 KiB. |
+| `error` | Catch-all for other failures (carries a `message`). |
 
 ## Worktree Behavior
 
