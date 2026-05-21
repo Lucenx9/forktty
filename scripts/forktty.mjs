@@ -426,6 +426,33 @@ function buildClearMetadataParams(options, env = process.env) {
   };
 }
 
+function buildStatusParams(options, env = process.env) {
+  requireNonBlankStringOption(options, "key");
+  requireNonBlankStringOption(options, "value");
+  requireNonBlankStringOption(options, "label");
+  requireNonBlankStringOption(options, "color");
+  const key = typeof options.key === "string" ? options.key.trim() : "";
+  const value = typeof options.value === "string" ? options.value.trim() : "";
+  const label =
+    typeof options.label === "string" && options.label.trim() ? options.label.trim() : key;
+  const color =
+    typeof options.color === "string" && options.color.trim() ? options.color.trim() : undefined;
+
+  if (!key) throw new Error("set-status requires --key");
+  if (!value) throw new Error("set-status requires --value");
+  if (color && !VALID_STATUS_COLORS.has(color) && !color.startsWith("#")) {
+    throw new Error(`Unsupported status color: ${color}`);
+  }
+
+  return {
+    ...buildTargetParams(options, env),
+    key,
+    label,
+    value,
+    ...(color ? { color } : {}),
+  };
+}
+
 function shouldReadCommandStdin(options, positionals, textOption) {
   return typeof options[textOption] !== "string" && positionals.length === 0;
 }
@@ -987,30 +1014,13 @@ async function handleWorktreeMerge(context, args) {
 
 async function handleSetStatus(context, args) {
   const { options } = parseFlags(args);
-  const key = typeof options.key === "string" ? options.key : "";
-  const value = typeof options.value === "string" ? options.value : "";
-  const label =
-    typeof options.label === "string" && options.label.trim() ? options.label : key;
-  const color = typeof options.color === "string" ? options.color : undefined;
-
-  if (!key) throw new Error("set-status requires --key");
-  if (!value) throw new Error("set-status requires --value");
-  if (color && !VALID_STATUS_COLORS.has(color) && !color.startsWith("#")) {
-    throw new Error(`Unsupported status color: ${color}`);
-  }
-
-  await sendSocketRequest(context.socketPath, "metadata.set_status", {
-    ...buildTargetParams(options, context.env),
-    key,
-    label,
-    value,
-    color,
-  });
+  const params = buildStatusParams(options, context.env);
+  await sendSocketRequest(context.socketPath, "metadata.set_status", params);
 
   if (context.json) {
     printJson({ result: true });
   } else {
-    process.stdout.write(`Updated status ${key}\n`);
+    process.stdout.write(`Updated status ${params.key}\n`);
   }
 }
 
@@ -1819,6 +1829,7 @@ export {
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
+  buildStatusParams,
   buildSurfaceActionParams,
   buildSurfaceSplitParams,
   buildWorktreeStatusParams,

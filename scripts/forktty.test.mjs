@@ -13,6 +13,7 @@ import {
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
+  buildStatusParams,
   buildSurfaceActionParams,
   buildSurfaceSplitParams,
   buildWorktreeStatusParams,
@@ -565,6 +566,48 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => buildClearMetadataParams({ key: "" }, { FORKTTY_WORKSPACE_ID: "ws-1" }),
       /--key requires a value/,
+    );
+  });
+
+  it("builds status metadata params with explicit option validation", () => {
+    assert.deepEqual(
+      buildStatusParams(
+        {
+          key: " qa ",
+          value: " ok ",
+          label: " QA ",
+          color: " green ",
+        },
+        { FORKTTY_WORKSPACE_ID: " ws-1 " },
+      ),
+      {
+        workspace_id: "ws-1",
+        key: "qa",
+        label: "QA",
+        value: "ok",
+        color: "green",
+      },
+    );
+    assert.deepEqual(buildStatusParams({ key: "qa", value: "ok" }, {}), {
+      key: "qa",
+      label: "qa",
+      value: "ok",
+    });
+    assert.throws(
+      () => buildStatusParams({ key: true, value: "ok" }, {}),
+      /--key requires a value/,
+    );
+    assert.throws(
+      () => buildStatusParams({ key: "qa", value: "" }, {}),
+      /--value requires a value/,
+    );
+    assert.throws(
+      () => buildStatusParams({ key: "qa", value: "ok", label: "" }, {}),
+      /--label requires a value/,
+    );
+    assert.throws(
+      () => buildStatusParams({ key: "qa", value: "ok", color: true }, {}),
+      /--color requires a value/,
     );
   });
 
