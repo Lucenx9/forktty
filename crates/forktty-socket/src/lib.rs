@@ -141,35 +141,38 @@ pub fn bind_socket_listener(
 ) -> io::Result<StdUnixListener> {
     let socket_path = socket_path.as_ref();
     prepare_socket_parent(socket_path, enforce_private_parent)?;
-    if socket_path.exists() {
-        let metadata = fs::symlink_metadata(socket_path)?;
-        if !metadata.file_type().is_socket() {
-            return Err(io::Error::new(
-                io::ErrorKind::AddrInUse,
-                format!(
-                    "refusing to replace non-socket path at {}",
-                    socket_path.display()
-                ),
-            ));
-        }
-        match inspect_existing_socket(socket_path) {
-            ExistingSocketOccupant::ForkTTY => {
+    match fs::symlink_metadata(socket_path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_socket() {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
                     format!(
-                        "another ForkTTY instance is already using {}",
+                        "refusing to replace non-socket path at {}",
                         socket_path.display()
                     ),
                 ));
             }
-            ExistingSocketOccupant::Other => {
-                return Err(io::Error::new(
-                    io::ErrorKind::AddrInUse,
-                    format!("socket path {} is already in use", socket_path.display()),
-                ));
+            match inspect_existing_socket(socket_path) {
+                ExistingSocketOccupant::ForkTTY => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!(
+                            "another ForkTTY instance is already using {}",
+                            socket_path.display()
+                        ),
+                    ));
+                }
+                ExistingSocketOccupant::Other => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!("socket path {} is already in use", socket_path.display()),
+                    ));
+                }
+                ExistingSocketOccupant::Stale => fs::remove_file(socket_path)?,
             }
-            ExistingSocketOccupant::Stale => fs::remove_file(socket_path)?,
         }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
     }
     let listener = StdUnixListener::bind(socket_path)?;
     listener.set_nonblocking(true)?;
@@ -1480,6 +1483,24 @@ mod tests {
         assert!(!probe_socket_with_response(
             r#"{"id":"other","ok":true,"result":"pong"}"#
         ));
+    }
+
+    #[test]
+    fn bind_socket_listener_rejects_broken_socket_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        symlink(dir.path().join("missing.sock"), &socket_path).unwrap();
+
+        let error = bind_socket_listener(&socket_path, false).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert!(error.to_string().contains("refusing to replace non-socket path"));
+        assert!(fs::symlink_metadata(&socket_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[tokio::test]
