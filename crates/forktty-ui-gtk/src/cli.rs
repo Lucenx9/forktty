@@ -109,6 +109,22 @@ struct HookState {
     agent: &'static str,
     path: PathBuf,
     exists: bool,
+    is_regular_file: bool,
+    error: Option<String>,
+}
+
+impl HookState {
+    fn status_label(&self) -> &'static str {
+        if self.error.is_some() {
+            "error"
+        } else if self.is_regular_file {
+            "present"
+        } else if self.exists {
+            "blocked"
+        } else {
+            "missing"
+        }
+    }
 }
 
 impl DoctorReport {
@@ -181,6 +197,7 @@ fn collect_report() -> DoctorReport {
     }
 
     let hooks = collect_hooks();
+    append_hook_warnings(&mut warnings, &hooks);
 
     DoctorReport {
         version: VERSION,
@@ -298,6 +315,24 @@ fn append_launch_quarantine_warnings(
     }
 }
 
+fn append_hook_warnings(warnings: &mut Vec<String>, hooks: &[HookState]) {
+    for hook in hooks {
+        if let Some(error) = &hook.error {
+            warnings.push(format!(
+                "{} hook config {} could not be inspected: {error}",
+                hook.agent,
+                hook.path.display()
+            ));
+        } else if hook.exists && !hook.is_regular_file {
+            warnings.push(format!(
+                "{} hook config {} exists but is not a regular file; hooks setup cannot update it.",
+                hook.agent,
+                hook.path.display()
+            ));
+        }
+    }
+}
+
 fn path_display(state: &PathState) -> String {
     state
         .path
@@ -369,30 +404,41 @@ fn collect_hooks_from_env(
 
     let mut out = Vec::new();
     if let Some(dir) = codex_home {
-        let path = dir.join("hooks.json");
-        out.push(HookState {
-            agent: "codex",
-            exists: path.is_file(),
-            path,
-        });
+        out.push(inspect_hook_config("codex", dir.join("hooks.json")));
     }
     if let Some(dir) = claude_home {
-        let path = dir.join("settings.json");
-        out.push(HookState {
-            agent: "claude",
-            exists: path.is_file(),
-            path,
-        });
+        out.push(inspect_hook_config("claude", dir.join("settings.json")));
     }
     if let Some(dir) = gemini_home {
-        let path = dir.join("settings.json");
-        out.push(HookState {
-            agent: "gemini",
-            exists: path.is_file(),
-            path,
-        });
+        out.push(inspect_hook_config("gemini", dir.join("settings.json")));
     }
     out
+}
+
+fn inspect_hook_config(agent: &'static str, path: PathBuf) -> HookState {
+    match fs::metadata(&path) {
+        Ok(meta) => HookState {
+            agent,
+            path,
+            exists: true,
+            is_regular_file: meta.is_file(),
+            error: None,
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => HookState {
+            agent,
+            path,
+            exists: false,
+            is_regular_file: false,
+            error: None,
+        },
+        Err(err) => HookState {
+            agent,
+            path,
+            exists: false,
+            is_regular_file: false,
+            error: Some(err.to_string()),
+        },
+    }
 }
 
 fn env_path_or_home(
@@ -443,12 +489,11 @@ fn format_report(report: &DoctorReport) -> String {
 
     out.push_str("Agent hook configs:\n");
     for hook in &report.hooks {
-        let status = if hook.exists { "present" } else { "missing" };
         out.push_str(&format!(
             "  {:<7} {}  [{}]\n",
             hook.agent,
             hook.path.display(),
-            status
+            hook.status_label()
         ));
     }
     out.push('\n');
@@ -685,6 +730,28 @@ mod tests {
             warning.contains("forktty.sock")
                 && warning.contains(&socket_path.display().to_string())
                 && warning.contains("could not be inspected")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_hook_config_path_is_not_a_file() {
+        let home = tempfile::tempdir().unwrap();
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        let hook_path = codex_dir.join("hooks.json");
+        fs::create_dir(&hook_path).unwrap();
+
+        let hooks = collect_hooks_from_env(Some(home.path()), None, None);
+        let codex = hooks.iter().find(|hook| hook.agent == "codex").unwrap();
+        let mut warnings = Vec::new();
+
+        append_hook_warnings(&mut warnings, &hooks);
+
+        assert_eq!(codex.status_label(), "blocked");
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("codex hook config")
+                && warning.contains(&hook_path.display().to_string())
+                && warning.contains("not a regular file")
         }));
     }
 

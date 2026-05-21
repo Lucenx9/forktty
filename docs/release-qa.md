@@ -150,6 +150,8 @@ rebuilding.
   warns that the socket path could not be inspected and exits 2.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty doctor` reports
   hook paths under that temporary home, matching `hooks setup` fallback paths.
+- With a directory at `$HOME/.codex/hooks.json`, `forktty doctor` reports the
+  Codex hook config as `blocked`, warns that it is not a regular file, and exits 2.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
 - `forktty doctor --wat` prints `unknown argument: --wat` to stderr and exits 2
   instead of silently ignoring the extra argument.
