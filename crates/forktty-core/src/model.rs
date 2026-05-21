@@ -269,9 +269,11 @@ impl WorkspaceModel {
             let Some(workspace) = self.workspaces.get_mut(&workspace_id) else {
                 continue;
             };
+            self.next_workspace = self.next_workspace.max(numeric_suffix(&workspace.id));
             let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
             for surface_id in &leaf_ids {
                 valid_surface_ids.insert(surface_id.clone());
+                self.next_surface = self.next_surface.max(numeric_suffix(surface_id));
             }
             if !leaf_ids.contains(&workspace.focused_surface_id) {
                 if let Some(first_leaf) = leaf_ids.first() {
@@ -1077,6 +1079,35 @@ mod tests {
         let repaired = model.list_workspaces().remove(0);
         assert_eq!(repaired.focused_surface_id, first);
         assert!(model.surface(&second.id).is_none());
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn repair_session_invariants_advances_id_counters_for_repaired_leaves() {
+        let mut model = WorkspaceModel::new();
+        let workspace = Workspace {
+            id: "workspace-1".to_string(),
+            name: "main".to_string(),
+            active: true,
+            working_dir: PathBuf::from("/tmp"),
+            git_branch: String::new(),
+            worktree_dir: None,
+            worktree_name: None,
+            pane_tree: PaneNode::Leaf {
+                surface_id: "surface-1".to_string(),
+            },
+            focused_surface_id: "surface-1".to_string(),
+            needs_attention: false,
+        };
+        model.workspace_order.push(workspace.id.clone());
+        model.workspaces.insert(workspace.id.clone(), workspace);
+
+        assert!(model.repair_session_invariants());
+        let split = model
+            .split_surface("surface-1", SplitAxis::Horizontal)
+            .unwrap();
+
+        assert_eq!(split.id, "surface-2");
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
