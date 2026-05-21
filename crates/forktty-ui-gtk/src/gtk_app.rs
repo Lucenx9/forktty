@@ -1267,6 +1267,13 @@ fn attach_vte_signal_handlers(
     let bell_model = model.clone();
     widget.connect_bell(move |_| {
         if let Ok(mut model) = bell_model.lock() {
+            // The user may have closed this pane before the bell signal
+            // drained from VTE. Don't materialize a notification that points
+            // at a surface the model no longer knows about — the row would
+            // render as a dead-end click target.
+            if model.surface(&surface_id).is_none() {
+                return;
+            }
             let notification = model.create_notification(
                 "Terminal bell",
                 "A terminal requested attention",
@@ -1281,8 +1288,18 @@ fn attach_vte_signal_handlers(
     let surface_id = request.surface_id.clone();
     let workspace_id = request.workspace_id.clone();
     let exit_model = model.clone();
+    // VTE emits child-exited exactly once in normal teardown but can in rare
+    // cases (force-kill, fast respawn) fire twice. A single-shot latch keeps
+    // the status + notification idempotent per surface.
+    let exit_fired = Rc::new(Cell::new(false));
     widget.connect_child_exited(move |_, status| {
+        if exit_fired.replace(true) {
+            return;
+        }
         if let Ok(mut model) = exit_model.lock() {
+            if model.surface(&surface_id).is_none() {
+                return;
+            }
             if status == 0 {
                 let _ = model.set_status(
                     &workspace_id,
@@ -3377,6 +3394,12 @@ fn restore_or_bootstrap_workspaces(state: &SocketAppState, cwd: PathBuf) -> Resu
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
             model.restore_session(data);
+            // session::load_session already runs validate_session_data, but
+            // running the invariant repair here is cheap and turns any
+            // belt-and-suspenders mismatch (e.g. an empty pane tree slipping
+            // past validation in a future migration) into a no-op rather than
+            // an inconsistent UI.
+            let _ = model.repair_session_invariants();
             Ok(())
         }
         Ok(_) => {
