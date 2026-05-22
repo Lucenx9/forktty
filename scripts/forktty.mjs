@@ -683,7 +683,8 @@ async function handleList(context, args = []) {
 }
 
 async function handleCreateWorkspace(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "create-workspace");
   const params = buildCreateWorkspaceParams(options);
 
   const result = await sendSocketRequest(context.socketPath, "workspace.create", params);
@@ -930,7 +931,8 @@ function formatSurfaceLine(surface) {
 }
 
 async function handleSurfaces(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "surfaces");
   rejectUnknownOptions(options, SURFACE_LIST_OPTION_NAMES, "surfaces");
   const result = await sendSocketRequest(context.socketPath, "surface.list", {
     ...buildTargetParams(options, context.env),
@@ -1168,7 +1170,8 @@ async function handleWorktreeMerge(context, args) {
 }
 
 async function handleSetStatus(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "set-status");
   const params = buildStatusParams(options, context.env);
   await sendSocketRequest(context.socketPath, "metadata.set_status", params);
 
@@ -1185,7 +1188,8 @@ function formatStatusLine(status) {
 }
 
 async function handleListStatus(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "list-status");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "list-status");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_status", {
     ...buildTargetParams(options, context.env),
@@ -1207,7 +1211,8 @@ async function handleListStatus(context, args) {
 }
 
 async function handleClearStatus(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "clear-status");
   await sendSocketRequest(
     context.socketPath,
     "metadata.clear_status",
@@ -1222,7 +1227,8 @@ async function handleClearStatus(context, args) {
 }
 
 async function handleSetProgress(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "set-progress");
   const params = buildProgressParams(options, context.env);
   await sendSocketRequest(context.socketPath, "metadata.set_progress", params);
 
@@ -1242,7 +1248,8 @@ function formatProgressLine(progress) {
 }
 
 async function handleListProgress(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "list-progress");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "list-progress");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_progress", {
     ...buildTargetParams(options, context.env),
@@ -1264,7 +1271,8 @@ async function handleListProgress(context, args) {
 }
 
 async function handleClearProgress(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "clear-progress");
   await sendSocketRequest(
     context.socketPath,
     "metadata.clear_progress",
@@ -1298,7 +1306,8 @@ async function handleLog(context, args) {
 }
 
 async function handleLogs(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "logs");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "logs");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_logs", {
     ...buildTargetParams(options, context.env),
@@ -1320,7 +1329,8 @@ async function handleLogs(context, args) {
 }
 
 async function handleClearLogs(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "clear-logs");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "clear-logs");
   await sendSocketRequest(context.socketPath, "metadata.clear_logs", {
     ...buildTargetParams(options, context.env),

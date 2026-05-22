@@ -295,6 +295,7 @@ describe("forktty CLI helpers", () => {
     for (const [argv, message] of [
       [["ping", "--wat"], /ping: unexpected argument --wat/],
       [["list", "workspace-1"], /list: unexpected argument workspace-1/],
+      [["create-workspace", "project"], /create-workspace: unexpected argument project/],
       [
         ["notifications", "--workspace-id", "main"],
         /notifications: unexpected argument --workspace-id/,
@@ -303,12 +304,27 @@ describe("forktty CLI helpers", () => {
         ["clear-notifications", "--workspace-id", "main"],
         /clear-notifications: unexpected argument --workspace-id/,
       ],
+      [["surfaces", "surface-1"], /surfaces: unexpected argument surface-1/],
       [["surfaces", "--workspace", "main"], /surfaces: unknown option --workspace/],
       [["send-text", "--txt", "hello"], /send-text: unknown option --txt/],
+      [
+        ["set-status", "qa", "--key", "qa", "--value", "ok"],
+        /set-status: unexpected argument qa/,
+      ],
       [["list-status", "--workspace", "main"], /list-status: unknown option --workspace/],
+      [["list-status", "qa"], /list-status: unexpected argument qa/],
+      [["clear-status", "qa"], /clear-status: unexpected argument qa/],
+      [
+        ["set-progress", "build", "--key", "build", "--value", "1"],
+        /set-progress: unexpected argument build/,
+      ],
       [["list-progress", "--workspace", "main"], /list-progress: unknown option --workspace/],
+      [["list-progress", "build"], /list-progress: unexpected argument build/],
+      [["clear-progress", "build"], /clear-progress: unexpected argument build/],
       [["logs", "--workspace", "main"], /logs: unknown option --workspace/],
+      [["logs", "build"], /logs: unexpected argument build/],
       [["clear-logs", "--workspace", "main"], /clear-logs: unknown option --workspace/],
+      [["clear-logs", "build"], /clear-logs: unexpected argument build/],
       [["worktree-list", "feature/x"], /worktree-list: unexpected argument feature\/x/],
     ]) {
       await assert.rejects(main(argv, { XDG_RUNTIME_DIR: "/tmp" }), message);

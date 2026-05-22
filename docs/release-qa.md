@@ -64,6 +64,7 @@ rebuilding.
 - `./scripts/forktty.mjs ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
 - `./scripts/forktty.mjs clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
+- `forktty create-workspace project` — exits with `create-workspace: unexpected argument project` instead of creating a default-named workspace.
 - `forktty create-workspace --workingdir /tmp` — exits with `create-workspace: unknown option --workingdir` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty surfaces --workspace main` — exits with `surfaces: unknown option --workspace` instead of listing every surface.
@@ -93,6 +94,7 @@ rebuilding.
 - `forktty set-status --key qa --value ok --colour red` — exits with `set-status: unknown option --colour` instead of creating an uncolored status.
 - `forktty set-progress --key build --value 1 --totl 100` — exits with `set-progress: unknown option --totl` instead of creating progress without a total.
 - `forktty list-status --workspace main`, `forktty list-progress --workspace main`, `forktty logs --workspace main`, and `forktty clear-logs --workspace main` — each exits with an unknown option error instead of querying or clearing the active workspace.
+- `forktty set-status qa --key qa --value ok`, `forktty list-status qa`, `forktty set-progress build --key build --value 1`, and `forktty clear-logs build` — each exits with an unexpected argument error instead of ignoring the stray selector.
 - `forktty clear-status --key=` — exits with `--key requires a value` instead of clearing every status entry in the targeted workspace.
 - `forktty clear-progress --kee build` — exits with `clear metadata: unknown option --kee` instead of clearing every progress entry in the targeted workspace.
 - `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
