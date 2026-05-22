@@ -474,6 +474,35 @@ describe("forktty CLI helpers", () => {
     assert.equal(config.hooks.Stop.length, 1);
   });
 
+
+  it("replaces legacy bare-node hook commands instead of appending pinned duplicates", () => {
+    const scriptPath = "/tmp/forktty/scripts/forktty.mjs";
+    const legacyCommand =
+      `[ "\${FORKTTY_CODEX_HOOKS_DISABLED:-}" != "1" ] && node '${scriptPath}' hooks codex session-start || echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","permissionDecision":"allow","permissionDecisionReason":"ForkTTY hook disabled"}}'`;
+    const existing = {
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: legacyCommand,
+                timeout: 5000,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const { changed, config } = mergeHookConfig(existing, "codex", scriptPath, "/usr/bin/node");
+
+    assert.equal(changed, true);
+    assert.equal(config.hooks.SessionStart.length, 1);
+    assert.ok(config.hooks.SessionStart[0].hooks[0].command.includes("'/usr/bin/node'"));
+    assert.ok(!config.hooks.SessionStart[0].hooks[0].command.includes(" && node "));
+  });
+
   it("strips prior forktty-tagged hook entries when reinstalling from a new script path", () => {
     const oldScriptPath = "/old/forktty/scripts/forktty.mjs";
     const newScriptPath = "/new/forktty/scripts/forktty.mjs";
