@@ -381,38 +381,82 @@ pub async fn dispatch(
                 }
             }
             worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
-            let (workspace_id, surface_ids) = {
+            let (workspace, surface_ids, is_last_workspace) = {
                 let model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                let workspace_id = model
-                    .list_workspaces()
-                    .into_iter()
-                    .find(|workspace| {
-                        workspace.worktree_name.as_deref() == Some(workspace_worktree_name.as_str())
-                    })
-                    .map(|workspace| workspace.id);
-                let surface_ids = workspace_id
-                    .as_deref()
-                    .map(|workspace_id| {
+                let workspace = model.list_workspaces().into_iter().find(|workspace| {
+                    workspace.worktree_name.as_deref() == Some(workspace_worktree_name.as_str())
+                });
+                let surface_ids = workspace
+                    .as_ref()
+                    .map(|workspace| {
                         model
-                            .list_surfaces(Some(workspace_id))
+                            .list_surfaces(Some(&workspace.id))
                             .into_iter()
                             .map(|surface| surface.id)
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                (workspace_id, surface_ids)
+                let is_last_workspace = workspace.is_some() && model.list_workspaces().len() == 1;
+                (workspace, surface_ids, is_last_workspace)
             };
+            if is_last_workspace {
+                let workspace = workspace
+                    .as_ref()
+                    .ok_or(DispatchError::NotFound("workspace"))?;
+                let (replacement, previous_active_id) = {
+                    let mut model = state
+                        .model
+                        .lock()
+                        .map_err(|_| "Lock poisoned".to_string())?;
+                    let previous_active_id = model.active_workspace_id();
+                    (
+                        model.create_workspace("main", fallback_path.clone()),
+                        previous_active_id,
+                    )
+                };
+                if let Err(err) = spawn_workspace_terminal(state, &replacement) {
+                    let mut err = err;
+                    if let Err(rollback_err) =
+                        rollback_workspace_creation(state, &replacement.id, previous_active_id)
+                    {
+                        err = format!("{err}; workspace rollback failed: {rollback_err}");
+                    }
+                    return Err(err.into());
+                }
+                if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
+                    let mut err = err;
+                    if let Err(cleanup_err) =
+                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
+                    {
+                        err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+                    }
+                    if let Err(rollback_err) =
+                        rollback_workspace_creation(state, &replacement.id, previous_active_id)
+                    {
+                        err = format!("{err}; workspace rollback failed: {rollback_err}");
+                    }
+                    return Err(err.into());
+                }
+                {
+                    let mut model = state
+                        .model
+                        .lock()
+                        .map_err(|_| "Lock poisoned".to_string())?;
+                    let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+                }
+                return Ok(json!({"removed": name}));
+            }
             close_terminal_surfaces_if_present(state, &surface_ids)?;
             {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                if let Some(workspace_id) = workspace_id {
-                    let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
+                if let Some(workspace) = workspace {
+                    let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
                 }
                 if model.list_workspaces().is_empty() {
                     model.create_workspace("main", fallback_path);
@@ -3059,6 +3103,74 @@ mod tests {
             .unwrap()
             .iter()
             .any(|surface| surface.surface_id == surface_id));
+        assert!(worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn worktree_remove_last_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/socket-remove-spawn-{}", std::process::id());
+        let info = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            &worktree_layout(),
+        )
+        .unwrap();
+        let worktree_cwd = PathBuf::from(&info.path);
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_worktree_workspace(
+                &info.branch,
+                &worktree_cwd,
+                &info.branch,
+                &info.worktree_name,
+            )
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
+            surface_id: surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            cwd: worktree_cwd,
+            shell: "/bin/sh".to_string(),
+            cols: 80,
+            rows: 24,
+        }));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.remove",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["id"], workspace.id);
+        assert_eq!(workspaces[0]["active"], true);
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace.id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+        assert_eq!(surfaces[0]["id"], surface_id);
+        assert_eq!(backend.surfaces().unwrap().len(), 1);
+        assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
         assert!(worktree::list(repo_dir.path().to_str().unwrap())
             .unwrap()
             .is_empty());

@@ -163,6 +163,7 @@ rebuilding.
 - Create an uncommitted file in the worktree, then run `forktty worktree-merge feature/x` from the original workspace — merge is rejected and the error says to commit, stash, or resolve the source worktree first.
 - Inside the new workspace, commit a change and then `forktty worktree-merge feature/x` from the original workspace's prompt.
 - `forktty worktree-remove feature/x` — the workspace closes, the worktree is removed from the repo, and the local `feature/x` branch still exists.
+- If replacement terminal spawn fails while removing the last visible worktree workspace, the remove action reports the spawn failure and keeps the old workspace and terminal visible.
 - If terminal close fails during worktree removal, the remove action reports the
   close failure and leaves the ForkTTY workspace visible instead of orphaning backend state.
 - Manually delete a linked worktree directory, then run `forktty worktree-list` and `forktty worktree-remove <branch>` — the list marks it `missing`, remove prunes the stale git worktree metadata, and the branch remains.
