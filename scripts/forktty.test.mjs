@@ -993,6 +993,28 @@ describe("hook installer", () => {
     assert.match(printed.join(""), /"changed":\s*true/);
   });
 
+  it("deduplicates repeated hook setup agent names", async () => {
+    const context = makeContext();
+    const printed = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk) => {
+      printed.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await handleHooksSetup(context, ["codex", "codex"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const summaries = JSON.parse(printed.join(""));
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].agent, "codex");
+    assert.ok(
+      JSON.parse(await fs.readFile(path.join(context.env.CODEX_HOME, "hooks.json"), "utf8")),
+    );
+  });
+
   it("is idempotent on a second run", async () => {
     const context = makeContext();
     const swallow = () => true;

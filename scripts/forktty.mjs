@@ -1565,13 +1565,19 @@ function supportedAgents(positionals) {
   if (positionals.length === 0) {
     return Object.keys(AGENT_SPECS);
   }
-  return positionals.map((name) => {
+  const seen = new Set();
+  const agents = [];
+  for (const name of positionals) {
     const normalized = name.toLowerCase();
     if (!AGENT_SPECS[normalized]) {
       throw new Error(`Unsupported agent: ${name}`);
     }
-    return normalized;
-  });
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      agents.push(normalized);
+    }
+  }
+  return agents;
 }
 
 async function handleHooksSetup(context, args) {

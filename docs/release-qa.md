@@ -137,6 +137,7 @@ rebuilding.
 - `node scripts/forktty.mjs hooks setup --dry-run codex` — also prints `would update` without writing; `--dry-run` must not consume the agent name.
 - `node scripts/forktty.mjs hooks setup --dry-run=yes codex` — exits with `--dry-run must be true or false` and does not create or update hook configs.
 - `node scripts/forktty.mjs hooks setup --dryrun codex` — exits with `unknown option --dryrun` and does not create or update hook configs.
+- `node scripts/forktty.mjs hooks setup codex codex` — updates Codex once and prints one Codex summary, without creating redundant backups.
 - `node scripts/forktty.mjs hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= node scripts/forktty.mjs hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
 - Inspect one generated hook command — it starts with the absolute Node executable path that ran setup, not bare `node`, so hooks keep working when an agent runs with a minimal `PATH`.
