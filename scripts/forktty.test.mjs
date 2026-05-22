@@ -3,6 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
@@ -21,7 +22,9 @@ import {
   filterPendingNotificationsForTarget,
   formatPendingNotificationsBlock,
   formatTokenUsageBlock,
+  isAgentSelfFeedbackNotification,
   readTokenUsageFromTranscript,
+  resolveTokenCeiling,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
@@ -1030,10 +1033,81 @@ describe("forktty CLI helpers", () => {
       cacheCreation: 500,
       output: 250,
     });
-    assert.match(block, /5,500 input tokens/);
+    assert.match(block, /5,500 \/ 200,000 input tokens/);
+    assert.match(block, /\(3% — input=1000/);
     assert.match(block, /cache_read=4000/);
     assert.match(block, /output=250/);
     assert.equal(formatTokenUsageBlock(null), "");
+  });
+
+  it("honors FORKTTY_HOOK_TOKEN_CEILING in the usage block", () => {
+    const block = formatTokenUsageBlock(
+      { input: 1000, cacheRead: 9000, cacheCreation: 0, output: 0 },
+      { FORKTTY_HOOK_TOKEN_CEILING: "50000" },
+    );
+    assert.match(block, /10,000 \/ 50,000 input tokens/);
+    assert.match(block, /\(20% —/);
+  });
+
+  it("resolves the token ceiling with a sane fallback", () => {
+    assert.equal(resolveTokenCeiling({}), 200_000);
+    assert.equal(
+      resolveTokenCeiling({ FORKTTY_HOOK_TOKEN_CEILING: "1000000" }),
+      1_000_000,
+    );
+    assert.equal(
+      resolveTokenCeiling({ FORKTTY_HOOK_TOKEN_CEILING: "0" }),
+      200_000,
+    );
+    assert.equal(
+      resolveTokenCeiling({ FORKTTY_HOOK_TOKEN_CEILING: "junk" }),
+      200_000,
+    );
+  });
+
+  it("flags agent self-feedback notifications by exact title match", () => {
+    assert.equal(
+      isAgentSelfFeedbackNotification({ kind: "prompt", title: "Claude needs input" }),
+      true,
+    );
+    assert.equal(
+      isAgentSelfFeedbackNotification({ kind: "prompt", title: "Codex needs input" }),
+      true,
+    );
+    assert.equal(
+      isAgentSelfFeedbackNotification({ kind: "info", title: "Claude needs input" }),
+      false,
+    );
+    assert.equal(
+      isAgentSelfFeedbackNotification({ kind: "prompt", title: "Custom prompt" }),
+      false,
+    );
+    assert.equal(isAgentSelfFeedbackNotification(null), false);
+  });
+
+  it("filters self-feedback prompts out of pending notifications", () => {
+    const list = [
+      { id: "self", kind: "prompt", title: "Claude needs input", read: false, workspace_id: "ws-A" },
+      { id: "user", kind: "info", title: "Build broke", read: false, workspace_id: "ws-A" },
+    ];
+    const filtered = filterPendingNotificationsForTarget(list, {
+      FORKTTY_WORKSPACE_ID: "ws-A",
+    });
+    assert.deepEqual(
+      filtered.map((entry) => entry.id),
+      ["user"],
+    );
+  });
+
+  it("buildTokenProgressAction picks up FORKTTY_HOOK_TOKEN_CEILING for the total", () => {
+    const action = buildTokenProgressAction(
+      "claude",
+      { input: 100, cacheRead: 200, cacheCreation: 50, output: 10 },
+      { FORKTTY_HOOK_TOKEN_CEILING: "12345" },
+      1,
+      "prompt-submit",
+    );
+    assert.equal(action.params.total, 12345);
   });
 
   it("builds a token progress action only when usage totals are positive", () => {
@@ -1127,7 +1201,7 @@ describe("forktty CLI helpers", () => {
     assert.equal(response.hookSpecificOutput.hookEventName, "UserPromptSubmit");
     const ctx = response.hookSpecificOutput.additionalContext;
     assert.match(ctx, /Build broke/);
-    assert.match(ctx, /1,500 input tokens/);
+    assert.match(ctx, /1,500 \/ 200,000 input tokens/);
   });
 
   it("returns plain continue for prompt-submit when no extras present", () => {
@@ -1229,6 +1303,110 @@ describe("forktty CLI helpers", () => {
 
     assert.deepEqual(JSON.parse(stdout.join("")), HOOK_CONTINUE_RESPONSE);
     assert.match(stderr.join(""), /Unexpected hook argument for codex session-start: extra/);
+  });
+
+  it("emits token progress and additionalContext on claude prompt-submit", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "forktty-prompt-submit-"));
+    const transcript = path.join(tmp, "tx.jsonl");
+    await fs.writeFile(
+      transcript,
+      `${JSON.stringify({
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 200,
+            output_tokens: 50,
+            cache_read_input_tokens: 800,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      })}\n`,
+    );
+
+    const requests = [];
+    const pendingList = [
+      { id: "u1", kind: "info", title: "Build broke", body: "exit 1", read: false, workspace_id: "ws-1" },
+      { id: "self", kind: "prompt", title: "Claude needs input", body: "x", read: false, workspace_id: "ws-1" },
+    ];
+
+    try {
+      await withSocketServer(
+        (socket) => {
+          socket.once("data", (chunk) => {
+            const request = JSON.parse(String(chunk).trim());
+            requests.push(request);
+            let result;
+            switch (request.method) {
+              case "metadata.log":
+                result = { id: "log-1", level: request.params.level, message: request.params.message };
+                break;
+              case "metadata.set_status":
+                result = { key: request.params.key, value: request.params.value };
+                break;
+              case "notification.list":
+                result = pendingList;
+                break;
+              case "metadata.set_progress":
+                result = { key: request.params.key, value: request.params.value, total: request.params.total };
+                break;
+              default:
+                result = null;
+            }
+            socket.end(`${JSON.stringify({ id: request.id, ok: true, result })}\n`);
+          });
+        },
+        async (socketPath) => {
+          const stdout = [];
+          const originalStdout = process.stdout.write.bind(process.stdout);
+          process.stdout.write = (chunk) => {
+            stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+            return true;
+          };
+          const payload = `${JSON.stringify({
+            hook_event_name: "UserPromptSubmit",
+            transcript_path: transcript,
+            prompt: "hello",
+          })}\n`;
+          const stdinStream = Readable.from([Buffer.from(payload)]);
+          stdinStream.isTTY = false;
+          const originalStdin = process.stdin;
+          Object.defineProperty(process, "stdin", {
+            value: stdinStream,
+            configurable: true,
+          });
+          try {
+            await main(["hooks", "claude", "prompt-submit", "--socket", socketPath], {
+              FORKTTY_WORKSPACE_ID: "ws-1",
+            });
+          } finally {
+            process.stdout.write = originalStdout;
+            Object.defineProperty(process, "stdin", {
+              value: originalStdin,
+              configurable: true,
+            });
+          }
+
+          const response = JSON.parse(stdout.join(""));
+          assert.equal(response.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+          const ctx = response.hookSpecificOutput.additionalContext;
+          assert.match(ctx, /Build broke/);
+          assert.doesNotMatch(ctx, /Claude needs input/);
+          assert.match(ctx, /1,000 \/ 200,000 input tokens/);
+        },
+      );
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+
+    const methods = requests.map((r) => r.method);
+    assert.ok(methods.includes("metadata.log"));
+    assert.ok(methods.includes("metadata.set_status"));
+    assert.ok(methods.includes("notification.list"));
+    const progress = requests.find((r) => r.method === "metadata.set_progress");
+    assert.ok(progress, "progress request emitted");
+    assert.equal(progress.params.key, "agent:claude:tokens");
+    assert.equal(progress.params.value, 1000);
+    assert.equal(progress.params.total, 200_000);
   });
 
   it("keeps hook stdout as JSON while verbose details go to stderr", async () => {

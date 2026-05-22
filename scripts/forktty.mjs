@@ -2637,16 +2637,26 @@ function formatThousands(n) {
   return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-function formatTokenUsageBlock(usage) {
+function resolveTokenCeiling(env = process.env) {
+  const raw = trimEnv(env, "FORKTTY_HOOK_TOKEN_CEILING");
+  if (!raw) return HOOK_TOKEN_CEILING_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return HOOK_TOKEN_CEILING_DEFAULT;
+  return Math.floor(parsed);
+}
+
+function formatTokenUsageBlock(usage, env = process.env) {
   if (!usage || typeof usage !== "object") return "";
   const input = Number(usage.input) || 0;
   const cacheRead = Number(usage.cacheRead) || 0;
   const cacheCreation = Number(usage.cacheCreation) || 0;
   const output = Number(usage.output) || 0;
   const total = input + cacheRead + cacheCreation;
+  const ceiling = resolveTokenCeiling(env);
+  const pct = ceiling > 0 ? Math.min(100, Math.round((total / ceiling) * 100)) : 0;
   return (
-    `ForkTTY token estimate (latest assistant turn): ~${formatThousands(total)} input tokens ` +
-    `(input=${input}, cache_read=${cacheRead}, cache_creation=${cacheCreation}, output=${output}).`
+    `ForkTTY token estimate (latest assistant turn): ~${formatThousands(total)} / ${formatThousands(ceiling)} input tokens ` +
+    `(${pct}% — input=${input}, cache_read=${cacheRead}, cache_creation=${cacheCreation}, output=${output}).`
   );
 }
 
@@ -2683,7 +2693,7 @@ function buildHookResponse(agent, eventName, env = process.env, extras = {}) {
     const sections = [];
     const pendingBlock = formatPendingNotificationsBlock(pending);
     if (pendingBlock) sections.push(pendingBlock);
-    const usageBlock = formatTokenUsageBlock(usage);
+    const usageBlock = formatTokenUsageBlock(usage, env);
     if (usageBlock) sections.push(usageBlock);
     if (sections.length === 0) return HOOK_CONTINUE_RESPONSE;
     return {
@@ -2699,12 +2709,24 @@ function buildHookResponse(agent, eventName, env = process.env, extras = {}) {
   return HOOK_CONTINUE_RESPONSE;
 }
 
+const AGENT_SELF_NOTIFICATION_TITLES = new Set(
+  Object.values(AGENT_SPECS).map((spec) => `${spec.label} needs input`),
+);
+
+function isAgentSelfFeedbackNotification(notification) {
+  if (!notification || typeof notification !== "object") return false;
+  if (notification.kind !== "prompt") return false;
+  if (typeof notification.title !== "string") return false;
+  return AGENT_SELF_NOTIFICATION_TITLES.has(notification.title.trim());
+}
+
 function filterPendingNotificationsForTarget(list, env = process.env) {
   if (!Array.isArray(list)) return [];
   const workspaceId = trimEnv(env, "FORKTTY_WORKSPACE_ID");
   return list.filter((notification) => {
     if (!notification || typeof notification !== "object") return false;
     if (notification.read === true) return false;
+    if (isAgentSelfFeedbackNotification(notification)) return false;
     if (workspaceId && typeof notification.workspace_id === "string" && notification.workspace_id) {
       if (notification.workspace_id !== workspaceId) return false;
     }
@@ -2776,7 +2798,7 @@ function buildTokenProgressAction(agent, usage, env, hookEventOrder, eventName) 
         key: `agent:${agent}:tokens`,
         label: `${spec.label} input tokens`,
         value: total,
-        total: HOOK_TOKEN_CEILING_DEFAULT,
+        total: resolveTokenCeiling(env),
       },
       eventName,
       null,
@@ -3179,7 +3201,9 @@ export {
   filterPendingNotificationsForTarget,
   formatPendingNotificationsBlock,
   formatTokenUsageBlock,
+  isAgentSelfFeedbackNotification,
   readTokenUsageFromTranscript,
+  resolveTokenCeiling,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
