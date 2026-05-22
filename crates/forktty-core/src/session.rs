@@ -127,7 +127,14 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
 
 fn session_write_path(path: &Path) -> Result<PathBuf, SessionError> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
+        Ok(meta) if meta.file_type().is_symlink() => match fs::canonicalize(path) {
+            Ok(resolved) => Ok(resolved),
+            // Broken symlink: rename will replace the dangling link with the
+            // freshly written file. The previous code surfaced this as a
+            // confusing `canonicalize` IO error on every save.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+            Err(err) => Err(err.into()),
+        },
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
@@ -630,6 +637,32 @@ mod tests {
                 .all(|name| !name.to_string_lossy().contains(".tmp-")),
             "unexpected temp session file sibling: {managed_siblings:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_session_to_path_replaces_broken_symlink_with_regular_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        symlink(dir.path().join("missing-target.json"), &path).unwrap();
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let data = SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: model.list_workspaces(),
+            active_workspace_id: Some(workspace.id),
+        };
+
+        save_session_to_path(&path, &data).expect("save through broken symlink should succeed");
+
+        let stat = fs::symlink_metadata(&path).unwrap();
+        assert!(
+            stat.is_file(),
+            "broken symlink should be replaced by a regular file"
+        );
+        assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
     }
 
     #[test]

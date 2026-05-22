@@ -2170,13 +2170,21 @@ fn read_agent_config(spec: &AgentSpec, path: &Path) -> CliResult<Value> {
 
 fn read_json_file(path: &Path) -> CliResult<Value> {
     let stat = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => fs::metadata(path).map_err(|err| {
-            if err.kind() == io::ErrorKind::NotFound {
-                CliError::new("path is a broken symlink")
-            } else {
-                err.into()
+        Ok(meta) if meta.file_type().is_symlink() => match fs::metadata(path) {
+            Ok(meta) => meta,
+            // Treat a broken symlink the same as a missing file: the
+            // subsequent write replaces the dangling link with a real file.
+            // Previously this aborted `hooks setup` with a confusing
+            // "path is a broken symlink" error.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "warning: {} is a broken symlink; replacing with a fresh file",
+                    path.display()
+                );
+                return Ok(json!({}));
             }
-        })?,
+            Err(err) => return Err(err.into()),
+        },
         Ok(meta) => meta,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
         Err(err) => return Err(err.into()),
@@ -2194,7 +2202,13 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
 
 fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
+        Ok(meta) if meta.file_type().is_symlink() => match fs::canonicalize(path) {
+            Ok(resolved) => Ok(resolved),
+            // Broken symlink: rename will replace the dangling link with the
+            // newly written hook config.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+            Err(err) => Err(err.into()),
+        },
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
@@ -4594,6 +4608,36 @@ mod tests {
     }
 
     #[test]
+    fn hook_setup_replaces_broken_symlink_with_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("hooks.json");
+        std::os::unix::fs::symlink(codex_home.join("missing-target.json"), &config_path).unwrap();
+
+        let codex_home_s = codex_home.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", None),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                handle_hooks_setup(&test_context(), strings(&["codex"]))
+                    .expect("setup through broken symlink should succeed");
+                let stat = fs::symlink_metadata(&config_path).unwrap();
+                assert!(
+                    stat.is_file(),
+                    "broken symlink should be replaced by a regular file"
+                );
+                let parsed = read_json(&config_path);
+                assert!(parsed["hooks"]["SessionStart"].is_array());
+            },
+        );
+    }
+
+    #[test]
     fn hook_config_reader_rejects_unsafe_or_invalid_paths() {
         let dir = tempfile::tempdir().unwrap();
         let spec = agent_spec("codex").unwrap();
@@ -4620,7 +4664,7 @@ mod tests {
 
         let broken = dir.path().join("broken.json");
         std::os::unix::fs::symlink(dir.path().join("missing.json"), &broken).unwrap();
-        assert_err_contains(read_agent_config(spec, &broken), "path is a broken symlink");
+        assert_eq!(read_agent_config(spec, &broken).unwrap(), json!({}));
         assert!(fs::symlink_metadata(&broken)
             .unwrap()
             .file_type()
