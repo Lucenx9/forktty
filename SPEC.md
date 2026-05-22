@@ -15,10 +15,8 @@ forktty-socket
   Tokio Unix socket server, newline-delimited JSON-RPC, direct dispatch
 
 forktty-ui-gtk
-  GTK4/libadwaita app shell, VTE panes, sidebar, dialogs, quake mode
-
-scripts/forktty.mjs
-  Node CLI and agent hook installer over the socket API
+  GTK4/libadwaita app shell, VTE panes, sidebar, dialogs, quake mode,
+  socket CLI, and agent hook installer over the socket API
 ```
 
 There is no Tauri/WebKit/React runtime in the primary tree.
@@ -34,7 +32,7 @@ There is no Tauri/WebKit/React runtime in the primary tree.
 | Notifications | `notify-rust` | Desktop notifications and custom notification command dispatch |
 | Socket API | tokio + serde_json | Local Unix JSON-RPC automation |
 | Config | TOML | `~/.config/forktty/config.toml` |
-| CLI hooks | Node.js built-ins | Repo-local socket client and hook config merger |
+| CLI hooks | Rust (`forktty` binary) | Native socket client and hook config merger |
 
 ## Workspace and Pane Model
 
@@ -224,8 +222,8 @@ Residual risks:
 Current automated coverage:
 
 - Rust unit tests for config validation, session validation/quarantine, workspace/pane model, socket protocol, terminal backend, notification metadata, and worktree hardening.
-- Node built-in tests for CLI parameter building, hook config merging, notification formatting, and socket-target fallbacks.
-- CI for Rust fmt/test/clippy/build, CLI tests, desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
+- Rust tests in `crates/forktty-ui-gtk/src/socket_cli.rs` for CLI parameter building, hook config merging, notification formatting, and socket-target fallbacks.
+- CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
 
 Backlog validation:
 

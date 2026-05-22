@@ -10,7 +10,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] GTK4/libadwaita application shell.
 - [x] VTE terminal panes with configured shell, font, colors, send-text, resize, close, bell, and child-exit handling.
 - [x] Direct Unix socket JSON-RPC dispatch without a frontend bridge.
-- [x] Repo-local Node CLI and agent hook installer over the socket API.
+- [x] Native socket CLI and agent hook installer in the `forktty` binary over the socket API.
 
 ### Workspaces and Panes
 
@@ -58,7 +58,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 
 - [x] Native `.deb` package installing `forktty`.
 - [x] Desktop entry and icon under `packaging/linux`.
-- [x] CI for Rust fmt/test/clippy/build, CLI tests, desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
+- [x] CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
 - [x] GitHub prerelease workflow that uploads the Debian package artifact.
 
 ## Backlog

@@ -45,8 +45,7 @@ reviews:
         PRIVACY, or other documentation.
     - label: dependencies
       instructions: >-
-        Apply when the PR changes Cargo.lock, package.json, or Cargo.toml
-        dependencies.
+        Apply when the PR changes Cargo.lock or Cargo.toml dependencies.
     - label: security
       instructions: >-
         Apply when the PR changes socket APIs, PTY/process handling,
@@ -66,11 +65,6 @@ reviews:
     - "!.omc/**"
     - "!.claude/**"
   path_instructions:
-    - path: "scripts/**/*.mjs"
-      instructions: >-
-        This is Node CLI and hook-install logic over the local ForkTTY socket.
-        Review for parameter validation, shell quoting, config merge safety,
-        timeout handling, and compatibility with Node built-ins only.
     - path: "crates/forktty-ui-gtk/**/*.rs"
       instructions: >-
         This GTK4/libadwaita/VTE UI manages terminal widgets, shortcuts,
@@ -224,17 +218,8 @@ code_generation:
           Prefer doc comments for public socket API contracts,
           process lifecycle behavior, and security-sensitive path/command
           handling. Avoid restating obvious implementation details.
-      - path: "scripts/**/*.mjs"
-        instructions: >-
-          Prefer comments only for exported helpers, hook merge contracts, and
-          socket lifecycle edge cases.
   unit_tests:
     path_instructions:
-      - path: "scripts/**/*.mjs"
-        instructions: >-
-          Generate focused Node built-in tests under scripts/*.test.mjs. Avoid
-          tests that depend on the developer's shell, home directory, or display
-          server.
       - path: "crates/**/*.rs"
         instructions: >-
           Generate Rust tests that can run with cargo test --workspace. Prefer
