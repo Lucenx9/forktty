@@ -28,6 +28,7 @@ bash scripts/build-deb.sh
 - Open the terminal context menu in a small split pane and use Paste.
 - Close one pane and confirm focus moves to a remaining pane.
 - Close the focused pane while a long-running shell command is exiting; confirm only one "Terminal exited" notification is created and it does not reference the just-closed surface.
+- If GTK cannot spawn the replacement terminal while closing the only pane in a workspace, it shows a Close Pane Failed notification and keeps the old pane and terminal visible.
 - Close the last workspace from the GTK UI and confirm a replacement `main` workspace opens a live terminal in the same directory.
 - If GTK cannot spawn the replacement terminal while closing the last workspace, it shows a Close Workspace Failed notification and keeps the old workspace and terminal visible.
 - If GTK cannot close a workspace's terminal surface, it shows a Close Workspace Failed notification and leaves the workspace visible instead of dropping it from the sidebar.

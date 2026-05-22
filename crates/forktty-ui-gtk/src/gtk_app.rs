@@ -4616,28 +4616,67 @@ fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool {
 }
 
 fn close_active_surface(state: &SocketAppState) {
-    let focused = {
-        let model = match state.model.lock() {
+    let (focused, root_replacement) = {
+        let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
         };
-        model
+        let focused = model
             .active_workspace()
-            .map(|workspace| workspace.focused_surface_id)
-    };
-    let Some(focused) = focused else {
-        return;
-    };
-
-    {
-        let model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => return,
+            .map(|workspace| workspace.focused_surface_id);
+        let Some(focused) = focused else {
+            return;
         };
         if model.surface(&focused).is_none() {
             return;
         }
+        let root_replacement = model.prepare_root_surface_replacement(&focused);
+        (focused, root_replacement)
+    };
+
+    if let Some(replacement) = root_replacement {
+        if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
+            &replacement,
+            state.shell.clone(),
+            state.socket_path.clone(),
+        )) {
+            eprintln!("Failed to spawn replacement terminal surface: {err}");
+            create_global_notification(
+                state,
+                "Close Pane Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
+            return;
+        }
+        match state.terminal.close(&focused) {
+            Ok(()) | Err(TerminalError::NotFound(_)) => {}
+            Err(err) => {
+                let mut message = err.to_string();
+                if let Err(cleanup_err) = forget_terminal_surface_gtk(state, &replacement.id) {
+                    message = format!("{message}; replacement cleanup failed: {cleanup_err}");
+                }
+                eprintln!("Failed to close terminal surface: {message}");
+                create_global_notification(
+                    state,
+                    "Close Pane Failed",
+                    &message,
+                    NotificationKind::Error,
+                );
+                return;
+            }
+        }
+        {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return,
+            };
+            let _ = model.close_surface_with_replacement(&focused, Some(replacement));
+        }
+        save_session_from_state(state);
+        return;
     }
+
     match state.terminal.close(&focused) {
         Ok(()) | Err(TerminalError::NotFound(_)) => {}
         Err(err) => {
@@ -7847,6 +7886,44 @@ mod tests {
         assert_eq!(surfaces.len(), 1);
         assert_eq!(surfaces[0].workspace_id, workspaces[0].id);
         assert_eq!(surfaces[0].cwd, project_cwd);
+    }
+
+    #[test]
+    fn close_active_surface_keeps_old_surface_when_replacement_spawn_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(SecondSpawnFailsBackend::default());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("project", &project_cwd);
+            (workspace.id, workspace.focused_surface_id)
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        close_active_surface(&state);
+
+        let model = model.lock().unwrap();
+        let workspaces = model.list_workspaces();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].id, workspace_id);
+        assert_eq!(workspaces[0].focused_surface_id, surface_id);
+        let model_surfaces = model.list_surfaces(Some(&workspace_id));
+        assert_eq!(model_surfaces.len(), 1);
+        assert_eq!(model_surfaces[0].id, surface_id);
+        let backend_surfaces = terminal.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, surface_id);
+        assert!(model.list_notifications().iter().any(|notification| {
+            notification.title == "Close Pane Failed" && notification.body.contains("spawn failed")
+        }));
     }
 
     #[test]
