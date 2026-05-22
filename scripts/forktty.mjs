@@ -1081,7 +1081,7 @@ function worktreeParams(
   positionals,
   requireName = false,
   env = process.env,
-  fallbackCwd = process.cwd(),
+  fallbackCwd,
   commandName = "worktree command",
   allowedOptions = WORKTREE_COMMAND_OPTION_NAMES,
 ) {
@@ -1133,7 +1133,7 @@ function buildWorktreeStatusParams(
   options,
   positionals,
   env = process.env,
-  fallbackCwd = process.cwd(),
+  fallbackCwd,
 ) {
   rejectUnknownOptions(options, WORKTREE_STATUS_OPTION_NAMES, "worktree-status");
   if (positionals.length > 1) {
@@ -1156,11 +1156,21 @@ function buildWorktreeStatusParams(
   return { path: pathValue };
 }
 
-function callerCwd(env = process.env, fallbackCwd = process.cwd()) {
+function safeProcessCwd() {
+  try {
+    return process.cwd();
+  } catch {
+    return "";
+  }
+}
+
+function callerCwd(env = process.env, fallbackCwd) {
   if (typeof env.PWD === "string" && env.PWD.trim()) {
     return env.PWD.trim();
   }
-  return typeof fallbackCwd === "string" && fallbackCwd.trim() ? fallbackCwd.trim() : "";
+  const resolvedFallback =
+    typeof fallbackCwd === "string" && fallbackCwd.trim() ? fallbackCwd.trim() : safeProcessCwd();
+  return typeof resolvedFallback === "string" && resolvedFallback.trim() ? resolvedFallback.trim() : "";
 }
 
 function formatWorktreeLine(worktree) {
@@ -1179,7 +1189,7 @@ async function handleWorktreeList(context, args) {
       [],
       false,
       context.env,
-      process.cwd(),
+      undefined,
       "worktree-list",
       WORKTREE_LIST_OPTION_NAMES,
     ),
@@ -1213,7 +1223,7 @@ async function handleWorktreeCreate(context, args, method) {
   const result = await sendSocketRequest(
     context.socketPath,
     method,
-    worktreeParams(options, positionals, true, context.env, process.cwd(), commandName),
+    worktreeParams(options, positionals, true, context.env, undefined, commandName),
   );
   if (context.json) {
     printJson(result);
@@ -1227,7 +1237,7 @@ async function handleWorktreeRemove(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.remove",
-    worktreeParams(options, positionals, true, context.env, process.cwd(), "worktree-remove"),
+    worktreeParams(options, positionals, true, context.env, undefined, "worktree-remove"),
   );
   if (context.json) {
     printJson(result);
@@ -1241,7 +1251,7 @@ async function handleWorktreeMerge(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.merge",
-    worktreeParams(options, positionals, true, context.env, process.cwd(), "worktree-merge"),
+    worktreeParams(options, positionals, true, context.env, undefined, "worktree-merge"),
   );
   if (context.json) {
     printJson(result);

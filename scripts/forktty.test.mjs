@@ -1053,10 +1053,6 @@ describe("forktty CLI helpers", () => {
       path: "/repo/process-cwd",
     });
     assert.throws(
-      () => buildWorktreeStatusParams({}, [], {}, ""),
-      /worktree-status requires --path, --cwd, a path, PWD, or the current directory/,
-    );
-    assert.throws(
       () => buildWorktreeStatusParams({ path: true }, [], { PWD: "/repo/current" }),
       /--path requires a value/,
     );
@@ -1072,6 +1068,26 @@ describe("forktty CLI helpers", () => {
       () => buildWorktreeStatusParams({}, ["/repo/wt", "extra"], {}),
       /worktree-status: unexpected argument extra/,
     );
+
+    const originalCwd = process.cwd;
+    process.cwd = () => {
+      throw new Error("cwd boom");
+    };
+    try {
+      assert.deepEqual(buildWorktreeStatusParams({ path: "/repo/wt" }, [], {}), {
+        path: "/repo/wt",
+      });
+      assert.deepEqual(worktreeParams({ cwd: "/repo/explicit" }, ["feature/x"], true, {}), {
+        name: "feature/x",
+        cwd: "/repo/explicit",
+      });
+      assert.throws(
+        () => buildWorktreeStatusParams({}, [], {}),
+        /worktree-status requires --path, --cwd, a path, PWD, or the current directory/,
+      );
+    } finally {
+      process.cwd = originalCwd;
+    }
   });
 
   it("defaults worktree command cwd to the caller PWD", () => {
@@ -1096,10 +1112,18 @@ describe("forktty CLI helpers", () => {
       () => worktreeParams({ cwd: true }, ["feature/x"], true, { PWD: "/repo/current" }),
       /--cwd requires a value/,
     );
-    assert.throws(
-      () => worktreeParams({}, ["feature/x"], true, {}, ""),
-      /worktree command requires --cwd, PWD, or the current directory/,
-    );
+    {
+      const originalCwd = process.cwd;
+      process.cwd = () => "";
+      try {
+        assert.throws(
+          () => worktreeParams({}, ["feature/x"], true, {}),
+          /worktree command requires --cwd, PWD, or the current directory/,
+        );
+      } finally {
+        process.cwd = originalCwd;
+      }
+    }
     assert.throws(
       () => worktreeParams({ branch: "" }, [], true, { PWD: "/repo/current" }),
       /--branch requires a value/,
