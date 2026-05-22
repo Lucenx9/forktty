@@ -17,24 +17,28 @@ struct HookTemplate {
     entries: &'static [(&'static str, &'static str, u64)],
 }
 
+// Codex and Claude Code both treat `timeout` as seconds (Codex docs:
+// "Timeout: Integer in seconds; defaults to 600"; Claude Code hooks reference:
+// "timeout" is in seconds). Keep the installed templates aligned with the
+// native installer's HOOK_ENTRY_TIMEOUT_SECS.
 const CODEX_ENTRIES: &[(&str, &str, u64)] = &[
-    ("SessionStart", "session-start", 5000),
-    ("UserPromptSubmit", "prompt-submit", 5000),
-    ("PreToolUse", "pre-tool", 5000),
-    ("PostToolUse", "post-tool", 5000),
-    ("Stop", "stop", 5000),
+    ("SessionStart", "session-start", 30),
+    ("UserPromptSubmit", "prompt-submit", 30),
+    ("PreToolUse", "pre-tool", 30),
+    ("PostToolUse", "post-tool", 30),
+    ("Stop", "stop", 30),
 ];
 
 const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
-    ("SessionStart", "session-start", 5),
-    ("UserPromptSubmit", "prompt-submit", 5),
-    ("PreToolUse", "pre-tool", 5),
-    ("PostToolUse", "post-tool", 5),
-    ("SubagentStop", "subagent-stop", 5),
-    ("PreCompact", "pre-compact", 5),
-    ("Stop", "stop", 5),
-    ("Notification", "notification", 5),
-    ("SessionEnd", "session-end", 5),
+    ("SessionStart", "session-start", 30),
+    ("UserPromptSubmit", "prompt-submit", 30),
+    ("PreToolUse", "pre-tool", 30),
+    ("PostToolUse", "post-tool", 30),
+    ("SubagentStop", "subagent-stop", 30),
+    ("PreCompact", "pre-compact", 30),
+    ("Stop", "stop", 30),
+    ("Notification", "notification", 30),
+    ("SessionEnd", "session-end", 30),
 ];
 
 const GEMINI_ENTRIES: &[(&str, &str, u64)] = &[

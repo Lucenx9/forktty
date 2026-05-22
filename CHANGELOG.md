@@ -4,13 +4,27 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.5] - 2026-05-23
+
+### Added
+- Added native Rust socket CLI and hook installer/test/doctor support inside the `forktty` binary, replacing the legacy Node.js CLI and making AppImage hook flows independent of a source checkout.
+- Hook handling now surfaces Codex/Claude `permission_mode`, Claude risk colors, session ids, and supported events for richer local automation.
+
 ### Changed
 - The socket CLI and agent hook bridge now run natively inside the `forktty` binary. `forktty hooks setup` installs hook commands that call the stable `forktty` launcher directly, so AppImage users no longer need a source checkout or Node.js for hook installation/execution.
+- Packaging and release checks now align `.deb`, AppImage, and `SHA256SUMS` asset names, pin AppImage smoke-test tooling/packages, and ship consistent desktop/AppStream runtime metadata.
+- README, hooks, native GTK/VTE, release QA, and contributor documentation now describe the prebuilt artifact flow, `forktty doctor`, and the native hook diagnostics.
 
 ### Documentation
 - Restructured README install instructions around prebuilt AppImage and `.deb` artifacts, with a dedicated "Build from source" section and a first-run / troubleshooting flow that points at `forktty doctor`.
 - Documented `forktty hooks doctor <agent>` and `forktty hooks test <agent>` in the README and `hooks/README.md`.
 - Clarified that the experimental AppImage bundles GTK4/libadwaita/VTE via the `ldd` graph but still depends on the host's glibc, GSettings/GIO data, fontconfig, and desktop session services.
+
+### Fixed
+- `surface.send_text` now waits for terminal readiness before writing text, preventing early sends from racing pane startup.
+- Session persistence now keeps saves working when the state path is a broken symlink and repairs duplicate or leafless pane trees before they can poison restore state.
+- Codex and Claude hook timeout values are interpreted as seconds, and `forktty hooks doctor` reports stale launcher paths.
+- GTK polish/stability fixes tightened the alpha pill, status/sidebar labels, command-palette and popover accent treatment, pane titles, settings layout, and destructive confirmation target names.
 
 ## [0.2.0-alpha.4] - 2026-05-22
 

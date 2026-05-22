@@ -216,7 +216,13 @@ fn apply_config_permissions(write_path: &Path, tmp_path: &Path) -> Result<(), Co
 
 fn config_write_path(path: &Path) -> Result<PathBuf, ConfigError> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
+        Ok(meta) if meta.file_type().is_symlink() => match fs::canonicalize(path) {
+            Ok(resolved) => Ok(resolved),
+            // Broken symlink: fall through to overwriting the dangling link
+            // with the new file via the atomic tmp+rename below.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+            Err(err) => Err(err.into()),
+        },
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
@@ -841,5 +847,27 @@ mod tests {
                 .all(|name| !name.to_string_lossy().contains(".tmp-")),
             "unexpected temp file sibling: {managed_siblings:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_config_to_path_replaces_broken_symlink_with_regular_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        symlink(dir.path().join("missing-target.toml"), &path).unwrap();
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+
+        save_config_to_path(&path, &config)
+            .expect("save through broken config symlink should succeed");
+
+        assert!(
+            fs::symlink_metadata(&path).unwrap().is_file(),
+            "broken symlink should be replaced by a regular file"
+        );
+        let loaded = load_config_from_path(&path).unwrap();
+        assert_eq!(loaded.general.shell, "/bin/sh");
     }
 }

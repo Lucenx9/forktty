@@ -147,31 +147,38 @@ struct AgentSpec {
     matcher: Option<&'static str>,
 }
 
+// Codex and Claude Code both treat the `timeout` field as seconds (Codex default 600s;
+// Claude default 600s, 30s for UserPromptSubmit). The previous Codex value of 5000
+// was a millisecond assumption that meant ~83 minutes; cap at 30s for both providers
+// so a forktty hook never holds the agent loop for longer than a generous local
+// round-trip while still leaving headroom over the socket request budget.
+const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
+
 const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionStart",
         hook_event_name: "session-start",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "UserPromptSubmit",
         hook_event_name: "prompt-submit",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PreToolUse",
         hook_event_name: "pre-tool",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PostToolUse",
         hook_event_name: "post-tool",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "Stop",
         hook_event_name: "stop",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];
 
@@ -179,47 +186,47 @@ const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionStart",
         hook_event_name: "session-start",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "UserPromptSubmit",
         hook_event_name: "prompt-submit",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PreToolUse",
         hook_event_name: "pre-tool",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PostToolUse",
         hook_event_name: "post-tool",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "SubagentStop",
         hook_event_name: "subagent-stop",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PreCompact",
         hook_event_name: "pre-compact",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "Stop",
         hook_event_name: "stop",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "Notification",
         hook_event_name: "notification",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "SessionEnd",
         hook_event_name: "session-end",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];
 
@@ -650,10 +657,12 @@ fn send_socket_request_with_timeout(
 fn is_connection_level_socket_error(response: &JsonRpcResponse) -> bool {
     response.id == Value::Null
         && !response.ok
-        && response
-            .error
-            .as_ref()
-            .is_some_and(|err| matches!(err.code.as_str(), "parse_error" | "request_too_large"))
+        && response.error.as_ref().is_some_and(|err| {
+            matches!(
+                err.code.as_str(),
+                "parse_error" | "request_too_large" | "server_busy"
+            )
+        })
 }
 
 fn format_socket_connect_error(error: io::Error, socket_path: &Path) -> CliError {
@@ -1247,12 +1256,10 @@ fn handle_worktree_status(context: &CliContext, args: Vec<String>) -> CliResult<
             parsed.positionals[1]
         )));
     }
-    let path_value = non_blank_string_option(&parsed.options, "path", "--path")?
-        .or_else(|| {
-            non_blank_string_option(&parsed.options, "cwd", "--cwd")
-                .ok()
-                .flatten()
-        })
+    let path_option = non_blank_string_option(&parsed.options, "path", "--path")?;
+    let cwd_option = non_blank_string_option(&parsed.options, "cwd", "--cwd")?;
+    let path_value = path_option
+        .or(cwd_option)
         .map(|value| value.trim().to_string())
         .or_else(|| {
             parsed
@@ -1453,11 +1460,7 @@ fn handle_set_status(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let color = non_blank_string_option(&parsed.options, "color", "--color")?
         .map(|value| value.trim().to_string());
     if let Some(color) = &color {
-        if !matches!(
-            color.as_str(),
-            "green" | "yellow" | "red" | "blue" | "muted"
-        ) && !color.starts_with('#')
-        {
+        if !is_supported_status_color(color) {
             return Err(CliError::new(format!("Unsupported status color: {color}")));
         }
     }
@@ -1849,6 +1852,17 @@ fn parse_finite_number(raw: &str, option: &str) -> CliResult<f64> {
         .ok_or_else(|| CliError::new(format!("Invalid {option}: expected finite number")))
 }
 
+fn is_supported_status_color(color: &str) -> bool {
+    matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || is_hex_status_color(color)
+}
+
+fn is_hex_status_color(color: &str) -> bool {
+    let Some(hex) = color.strip_prefix('#') else {
+        return false;
+    };
+    matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
@@ -2163,13 +2177,21 @@ fn read_agent_config(spec: &AgentSpec, path: &Path) -> CliResult<Value> {
 
 fn read_json_file(path: &Path) -> CliResult<Value> {
     let stat = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => fs::metadata(path).map_err(|err| {
-            if err.kind() == io::ErrorKind::NotFound {
-                CliError::new("path is a broken symlink")
-            } else {
-                err.into()
+        Ok(meta) if meta.file_type().is_symlink() => match fs::metadata(path) {
+            Ok(meta) => meta,
+            // Treat a broken symlink the same as a missing file: the
+            // subsequent write replaces the dangling link with a real file.
+            // Previously this aborted `hooks setup` with a confusing
+            // "path is a broken symlink" error.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "warning: {} is a broken symlink; replacing with a fresh file",
+                    path.display()
+                );
+                return Ok(json!({}));
             }
-        })?,
+            Err(err) => return Err(err.into()),
+        },
         Ok(meta) => meta,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
         Err(err) => return Err(err.into()),
@@ -2187,7 +2209,13 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
 
 fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
+        Ok(meta) if meta.file_type().is_symlink() => match fs::canonicalize(path) {
+            Ok(resolved) => Ok(resolved),
+            // Broken symlink: rename will replace the dangling link with the
+            // newly written hook config.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+            Err(err) => Err(err.into()),
+        },
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
@@ -2259,8 +2287,16 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
     let (spec, rest) = single_agent_command(args, "hooks doctor")?;
     require_no_args(&rest, &format!("hooks doctor {}", spec.key))?;
     let socket_info = inspect_path(&context.socket_path);
-    let launcher_info = stable_hook_launcher_path().map(|path| inspect_path(&path));
-    let config_info = inspect_path(&(spec.config_path)());
+    let current_launcher = stable_hook_launcher_path();
+    let launcher_info = current_launcher.as_ref().map(|path| inspect_path(path));
+    let config_path = (spec.config_path)();
+    let config_info = inspect_path(&config_path);
+    let launcher_check = describe_launcher_check(spec, &config_path, current_launcher.as_deref());
+    let supported_events: Vec<&str> = spec
+        .hook_entries
+        .iter()
+        .map(|entry| entry.event_name)
+        .collect();
     let report = json!({
         "agent": spec.key,
         "socket": {
@@ -2273,12 +2309,15 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
             "FORKTTY_WORKSPACE_ID": trimmed_env("FORKTTY_WORKSPACE_ID"),
             "FORKTTY_SURFACE_ID": trimmed_env("FORKTTY_SURFACE_ID"),
             "CODEX_HOME": trimmed_env("CODEX_HOME"),
+            "CLAUDE_CONFIG_DIR": trimmed_env("CLAUDE_CONFIG_DIR"),
             "HOME": trimmed_env("HOME"),
         },
         "executable": {
             "forktty": launcher_info,
         },
         "hookConfig": config_info,
+        "launcherCheck": launcher_check,
+        "supportedEvents": supported_events,
     });
     if context.json {
         return print_json(&report);
@@ -2308,7 +2347,111 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         "{}",
         format_doctor_path(&format!("{} hook config", spec.key), &report["hookConfig"])
     );
+    eprintln!("supported events: {}", supported_events.join(", "));
+    if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
+        eprintln!("{line}");
+    }
     Ok(())
+}
+
+fn describe_launcher_check(
+    spec: &AgentSpec,
+    config_path: &Path,
+    current_launcher: Option<&Path>,
+) -> Value {
+    let installed = match read_json_file(config_path) {
+        Ok(value) => extract_managed_launcher_from_config(spec, &value),
+        Err(_) => None,
+    };
+    let current = current_launcher.map(|path| path.display().to_string());
+    let status = match (&installed, &current) {
+        (Some(installed_path), Some(current_path)) if installed_path == current_path => "ok",
+        (Some(_), Some(_)) => "stale",
+        (Some(_), None) => "current_launcher_unknown",
+        (None, _) => "not_installed",
+    };
+    json!({
+        "status": status,
+        "installedLauncher": installed,
+        "currentLauncher": current,
+    })
+}
+
+fn format_launcher_check(check: &Value) -> Option<String> {
+    let status = check.get("status").and_then(Value::as_str)?;
+    match status {
+        "stale" => {
+            let installed = check
+                .get("installedLauncher")
+                .and_then(Value::as_str)
+                .unwrap_or("(unknown)");
+            let current = check
+                .get("currentLauncher")
+                .and_then(Value::as_str)
+                .unwrap_or("(unknown)");
+            Some(format!(
+                "launcher mismatch: hook config points at {installed} but the current forktty launcher is {current}. Re-run `forktty hooks setup` to refresh the hook commands."
+            ))
+        }
+        "current_launcher_unknown" => Some(
+            "launcher mismatch: could not resolve the current forktty executable; hook commands may be stale."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn extract_managed_launcher_from_config(spec: &AgentSpec, config: &Value) -> Option<String> {
+    let hooks = config.get("hooks")?.as_object()?;
+    for events in hooks.values() {
+        let Some(entries) = events.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            if !is_forktty_managed_entry(entry) {
+                continue;
+            }
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for hook in commands {
+                let Some(command) = hook.get("command").and_then(Value::as_str) else {
+                    continue;
+                };
+                if let Some(launcher) = parse_launcher_from_managed_command(command, spec) {
+                    return Some(launcher);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_launcher_from_managed_command(command: &str, spec: &AgentSpec) -> Option<String> {
+    let marker = "&& '";
+    let start = command.find(marker)? + marker.len();
+    let rest = &command[start..];
+    let mut launcher = String::new();
+    let mut chars = rest.char_indices();
+    while let Some((idx, ch)) = chars.next() {
+        if ch != '\'' {
+            launcher.push(ch);
+            continue;
+        }
+        if rest[idx..].starts_with("'\"'\"'") {
+            launcher.push('\'');
+            for _ in 0..4 {
+                chars.next();
+            }
+            continue;
+        }
+        let suffix = format!("' hooks {} ", spec.key);
+        if rest[idx..].starts_with(suffix.as_str()) {
+            return Some(launcher);
+        }
+        return None;
+    }
+    None
 }
 
 fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -2595,7 +2738,25 @@ fn add_hook_metadata(
     if let Some(turn_id) = extract_hook_turn_id(event, payload) {
         params.insert("hook_turn_id".to_string(), Value::String(turn_id));
     }
+    if let Some(session_id) = extract_hook_session_id(payload) {
+        params.insert("hook_session_id".to_string(), Value::String(session_id));
+    }
     Value::Object(params)
+}
+
+/// Map Claude Code's documented `permission_mode` enum to a status color so
+/// risky modes are visible at a glance. Codex documents `permission_mode`
+/// only as "string", so its values stay neutral (`muted`) to avoid inventing
+/// a risk model the provider doesn't publish.
+fn permission_mode_color(spec: &AgentSpec, mode: &str) -> &'static str {
+    if spec.key != "claude" {
+        return "muted";
+    }
+    match mode {
+        "bypassPermissions" => "red",
+        "acceptEdits" | "auto" | "dontAsk" => "yellow",
+        _ => "muted",
+    }
 }
 
 fn build_hook_actions(
@@ -2624,20 +2785,51 @@ fn build_hook_actions(
             add_hook_metadata(params, event_name, payload, order),
         )
     };
+    let permission_key = format!("agent:{}:permission", spec.key);
+    let permission_status = |mode: &str, event_name: &str| {
+        let mut params = target.clone();
+        params.insert("key".to_string(), Value::String(permission_key.clone()));
+        params.insert(
+            "label".to_string(),
+            Value::String(format!("{} mode", spec.label)),
+        );
+        params.insert("value".to_string(), Value::String(mode.to_string()));
+        params.insert(
+            "color".to_string(),
+            Value::String(permission_mode_color(spec, mode).to_string()),
+        );
+        (
+            "metadata.set_status".to_string(),
+            add_hook_metadata(params, event_name, payload, order),
+        )
+    };
+    let permission_mode = extract_hook_permission_mode(payload);
+    let with_permission = |mut actions: Vec<(String, Value)>, event_name: &str| {
+        if let Some(mode) = permission_mode.as_deref() {
+            actions.push(permission_status(mode, event_name));
+        }
+        actions
+    };
     match event {
         "session-start" => {
             let source = extract_hook_source(payload)
                 .map(|source| format!(" ({source})"))
                 .unwrap_or_default();
-            vec![
-                log("info", format!("{} session started{source}", spec.label)),
-                status("Ready", "green", event),
-            ]
+            with_permission(
+                vec![
+                    log("info", format!("{} session started{source}", spec.label)),
+                    status("Ready", "green", event),
+                ],
+                event,
+            )
         }
-        "prompt-submit" => vec![
-            log("info", format!("{} prompt submitted", spec.label)),
-            status("Running", "blue", event),
-        ],
+        "prompt-submit" => with_permission(
+            vec![
+                log("info", format!("{} prompt submitted", spec.label)),
+                status("Running", "blue", event),
+            ],
+            event,
+        ),
         "notification" => {
             let mut note = target.clone();
             note.insert(
@@ -2787,11 +2979,17 @@ fn build_hook_actions(
         "session-end" => {
             let mut clear = target.clone();
             clear.insert("key".to_string(), Value::String(key));
+            let mut clear_permission = target.clone();
+            clear_permission.insert("key".to_string(), Value::String(permission_key));
             vec![
                 log("info", format!("{} session ended", spec.label)),
                 (
                     "metadata.clear_status".to_string(),
                     add_hook_metadata(clear, event, payload, order),
+                ),
+                (
+                    "metadata.clear_status".to_string(),
+                    add_hook_metadata(clear_permission, event, payload, order),
                 ),
             ]
         }
@@ -2995,6 +3193,28 @@ fn extract_hook_tool_error(payload: &Value) -> bool {
         }
     }
     false
+}
+
+fn extract_hook_permission_mode(payload: &Value) -> Option<String> {
+    extract_first_string_like(payload, &["permission_mode", "permissionMode"])
+        .map(|value| {
+            sanitize_for_terminal(&value)
+                .chars()
+                .take(64)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_hook_session_id(payload: &Value) -> Option<String> {
+    extract_first_string_like(payload, &["session_id", "sessionId"])
+        .map(|value| {
+            sanitize_for_terminal(&value)
+                .chars()
+                .take(96)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
 }
 
 fn extract_hook_turn_id(event: &str, payload: &Value) -> Option<String> {
@@ -3634,6 +3854,28 @@ mod tests {
         );
 
         with_socket_response(
+            |_| {
+                format!(
+                    "{}\n",
+                    json!({
+                        "id": null,
+                        "ok": false,
+                        "error": { "code": "server_busy", "message": "Too many active socket connections" }
+                    })
+                )
+            },
+            |socket_path| {
+                let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
+                assert_eq!(err.code.as_deref(), Some("server_busy"));
+                assert!(err.message.contains("system.ping"));
+                assert!(err
+                    .message
+                    .contains("server_busy: Too many active socket connections"));
+                assert!(!err.message.contains("response id mismatch"));
+            },
+        );
+
+        with_socket_response(
             |_| "not json\n".to_string(),
             |socket_path| {
                 let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
@@ -3641,6 +3883,40 @@ mod tests {
                 assert!(err.message.contains("system.ping"));
                 assert!(err.message.contains("Invalid socket response"));
             },
+        );
+    }
+
+    #[test]
+    fn worktree_status_rejects_cwd_without_value() {
+        assert_err_contains(
+            handle_worktree_status(&test_context(), strings(&["--cwd"])),
+            "--cwd requires a value",
+        );
+    }
+
+    #[test]
+    fn status_color_validation_requires_hex_digits() {
+        assert!(is_supported_status_color("green"));
+        assert!(is_supported_status_color("#abc"));
+        assert!(is_supported_status_color("#a1B2c3"));
+        assert!(is_supported_status_color("#a1B2c3D4"));
+        assert!(!is_supported_status_color("#"));
+        assert!(!is_supported_status_color("#12"));
+        assert!(!is_supported_status_color("#nothex"));
+
+        assert_err_contains(
+            handle_set_status(
+                &test_context(),
+                strings(&[
+                    "--key",
+                    "agent:codex",
+                    "--value",
+                    "Running",
+                    "--color",
+                    "#12",
+                ]),
+            ),
+            "Unsupported status color: #12",
         );
     }
 
@@ -3748,10 +4024,12 @@ mod tests {
 
                 let gemini = agent_spec("gemini").unwrap();
                 let actions = build_hook_actions(gemini, "session-end", &Value::Null, "99");
-                assert_eq!(actions.len(), 2);
+                assert_eq!(actions.len(), 3);
                 assert_eq!(actions[0].1["message"], "Gemini session ended");
                 assert_eq!(actions[1].0, "metadata.clear_status");
                 assert_eq!(actions[1].1["key"], "agent:gemini");
+                assert_eq!(actions[2].0, "metadata.clear_status");
+                assert_eq!(actions[2].1["key"], "agent:gemini:permission");
             },
         );
     }
@@ -3965,6 +4243,233 @@ mod tests {
     }
 
     #[test]
+    fn permission_mode_publishes_separate_status_for_codex_and_claude() {
+        // Codex docs: `permission_mode` is "string, for most events"; Claude
+        // Code docs document the enum (default|plan|acceptEdits|auto|
+        // dontAsk|bypassPermissions). Both providers ship the field in
+        // SessionStart and UserPromptSubmit stdin payloads, so we publish a
+        // sibling status entry that never collides with the existing
+        // `agent:<key>` activity status.
+        let claude_payload = json!({
+            "session_id": "sess-claude-1",
+            "permission_mode": "acceptEdits",
+            "transcript_path": "/tmp/transcript.jsonl"
+        });
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "session-start",
+            &claude_payload,
+            "1",
+        );
+        assert_eq!(actions.len(), 3);
+        let permission = &actions[2];
+        assert_eq!(permission.0, "metadata.set_status");
+        assert_eq!(permission.1["key"], "agent:claude:permission");
+        assert_eq!(permission.1["label"], "Claude mode");
+        assert_eq!(permission.1["value"], "acceptEdits");
+        // Claude's acceptEdits auto-accepts file writes -> documented risk.
+        assert_eq!(permission.1["color"], "yellow");
+        assert_eq!(permission.1["hook_session_id"], "sess-claude-1");
+
+        let codex_payload = json!({
+            "session_id": "sess-codex-9",
+            "permission_mode": "on-request",
+            "model": "gpt-5",
+        });
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "prompt-submit",
+            &codex_payload,
+            "2",
+        );
+        assert_eq!(actions.len(), 3);
+        let permission = &actions[2];
+        assert_eq!(permission.1["key"], "agent:codex:permission");
+        assert_eq!(permission.1["label"], "Codex mode");
+        assert_eq!(permission.1["value"], "on-request");
+        assert_eq!(permission.1["hook_session_id"], "sess-codex-9");
+    }
+
+    #[test]
+    fn claude_permission_mode_colors_track_documented_risk() {
+        // Claude Code docs enumerate permission_mode as
+        // default|plan|acceptEdits|auto|dontAsk|bypassPermissions.
+        // bypassPermissions is the most dangerous and should surface in
+        // red; modes that suppress per-action consent surface in yellow;
+        // default/plan remain muted.
+        let claude = agent_spec("claude").unwrap();
+        assert_eq!(permission_mode_color(claude, "bypassPermissions"), "red");
+        for warn in ["acceptEdits", "auto", "dontAsk"] {
+            assert_eq!(permission_mode_color(claude, warn), "yellow");
+        }
+        for safe in ["default", "plan"] {
+            assert_eq!(permission_mode_color(claude, safe), "muted");
+        }
+        // Unknown enum value stays muted instead of guessing risk.
+        assert_eq!(permission_mode_color(claude, "futureMode"), "muted");
+    }
+
+    #[test]
+    fn codex_permission_mode_stays_muted() {
+        // Codex docs only describe permission_mode as "string" without an
+        // enum, so ForkTTY must not infer a risk level for Codex modes.
+        let codex = agent_spec("codex").unwrap();
+        for mode in [
+            "default",
+            "on-request",
+            "never",
+            "agent-full-access",
+            "bypassPermissions",
+        ] {
+            assert_eq!(permission_mode_color(codex, mode), "muted");
+        }
+    }
+
+    #[test]
+    fn build_hook_actions_paints_bypass_permissions_red_for_claude_only() {
+        let claude_actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "session-start",
+            &json!({ "permission_mode": "bypassPermissions" }),
+            "1",
+        );
+        let claude_permission = claude_actions.last().expect("permission action");
+        assert_eq!(claude_permission.1["key"], "agent:claude:permission");
+        assert_eq!(claude_permission.1["color"], "red");
+
+        let codex_actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "session-start",
+            &json!({ "permission_mode": "bypassPermissions" }),
+            "1",
+        );
+        let codex_permission = codex_actions.last().expect("permission action");
+        assert_eq!(codex_permission.1["key"], "agent:codex:permission");
+        assert_eq!(codex_permission.1["color"], "muted");
+    }
+
+    #[test]
+    fn permission_status_omitted_when_payload_has_no_permission_mode() {
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "session-start",
+            &json!({ "session_id": "sess-codex-no-mode" }),
+            "1",
+        );
+        assert_eq!(actions.len(), 2);
+        for (_, params) in &actions {
+            assert_ne!(params["key"], "agent:codex:permission");
+        }
+    }
+
+    #[test]
+    fn session_end_clears_activity_and_permission_status() {
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "session-end",
+            &json!({ "session_id": "sess-claude-end" }),
+            "9",
+        );
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[1].0, "metadata.clear_status");
+        assert_eq!(actions[1].1["key"], "agent:claude");
+        assert_eq!(actions[2].0, "metadata.clear_status");
+        assert_eq!(actions[2].1["key"], "agent:claude:permission");
+        // hook_session_id rides on every metadata action so the daemon can
+        // correlate the clear with its originating session.
+        assert_eq!(actions[1].1["hook_session_id"], "sess-claude-end");
+        assert_eq!(actions[2].1["hook_session_id"], "sess-claude-end");
+    }
+
+    #[test]
+    fn hook_metadata_includes_codex_turn_id_extension() {
+        // Codex CLI hook payloads add `turn_id` to turn-scoped events.
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "pre-tool",
+            &json!({
+                "session_id": "sess-codex-turn",
+                "turn_id": "turn-42",
+                "tool_name": "shell",
+            }),
+            "5",
+        );
+        assert_eq!(actions[1].0, "metadata.set_status");
+        let turn = actions[1].1["hook_turn_id"]
+            .as_str()
+            .expect("hook_turn_id encoded");
+        assert!(turn.starts_with("id:"));
+        // Claude's PreToolUse payload uses `tool_use_id` and `tool_input`.
+        // Claude documents `tool_use_id` as per-tool-call (not per-turn), so
+        // we deliberately don't promote it to hook_turn_id; instead
+        // session_id rides on every metadata action so the daemon can
+        // correlate logs and statuses across the tool invocation.
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "pre-tool",
+            &json!({
+                "session_id": "sess-claude-tool",
+                "tool_use_id": "toolu_abc",
+                "tool_name": "Bash",
+                "tool_input": { "command": "ls" },
+            }),
+            "6",
+        );
+        assert_eq!(actions[1].0, "metadata.set_status");
+        assert_eq!(actions[1].1["hook_session_id"], "sess-claude-tool");
+        assert_eq!(actions[1].1["value"], "Running Bash");
+        assert!(actions[1].1.get("hook_turn_id").is_none());
+    }
+
+    #[test]
+    fn doctor_supported_events_track_installed_entries_per_provider() {
+        // Codex officially supports 10 events; ForkTTY installs the subset
+        // relevant to terminal state. Claude installs the full documented
+        // lifecycle. The doctor report mirrors the installer so users can
+        // confirm parity without hand-diffing JSON files.
+        let codex_events: Vec<&str> = agent_spec("codex")
+            .unwrap()
+            .hook_entries
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect();
+        assert_eq!(
+            codex_events,
+            vec![
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUse",
+                "Stop",
+            ]
+        );
+        let claude_events: Vec<&str> = agent_spec("claude")
+            .unwrap()
+            .hook_entries
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect();
+        assert_eq!(
+            claude_events,
+            vec![
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUse",
+                "SubagentStop",
+                "PreCompact",
+                "Stop",
+                "Notification",
+                "SessionEnd",
+            ]
+        );
+        // Codex docs do not list Notification or SessionEnd, so the Codex
+        // installer must never target them.
+        assert!(!codex_events.contains(&"Notification"));
+        assert!(!codex_events.contains(&"SessionEnd"));
+    }
+
+    #[test]
     fn transcript_usage_reader_returns_latest_usage() {
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("transcript.jsonl");
@@ -4166,6 +4671,36 @@ mod tests {
     }
 
     #[test]
+    fn hook_setup_replaces_broken_symlink_with_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("hooks.json");
+        std::os::unix::fs::symlink(codex_home.join("missing-target.json"), &config_path).unwrap();
+
+        let codex_home_s = codex_home.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", None),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                handle_hooks_setup(&test_context(), strings(&["codex"]))
+                    .expect("setup through broken symlink should succeed");
+                let stat = fs::symlink_metadata(&config_path).unwrap();
+                assert!(
+                    stat.is_file(),
+                    "broken symlink should be replaced by a regular file"
+                );
+                let parsed = read_json(&config_path);
+                assert!(parsed["hooks"]["SessionStart"].is_array());
+            },
+        );
+    }
+
+    #[test]
     fn hook_config_reader_rejects_unsafe_or_invalid_paths() {
         let dir = tempfile::tempdir().unwrap();
         let spec = agent_spec("codex").unwrap();
@@ -4192,7 +4727,7 @@ mod tests {
 
         let broken = dir.path().join("broken.json");
         std::os::unix::fs::symlink(dir.path().join("missing.json"), &broken).unwrap();
-        assert_err_contains(read_agent_config(spec, &broken), "path is a broken symlink");
+        assert_eq!(read_agent_config(spec, &broken).unwrap(), json!({}));
         assert!(fs::symlink_metadata(&broken)
             .unwrap()
             .file_type()
@@ -4235,6 +4770,114 @@ mod tests {
             ),
             Some(PathBuf::from("/usr/bin/forktty"))
         );
+    }
+
+    #[test]
+    fn parse_launcher_extracts_path_from_managed_command() {
+        let spec = agent_spec("claude").unwrap();
+        let command = build_hook_shell_command(
+            Path::new("/home/me/ForkTTY/forktty.AppImage"),
+            spec,
+            "session-start",
+        );
+        assert_eq!(
+            parse_launcher_from_managed_command(&command, spec).as_deref(),
+            Some("/home/me/ForkTTY/forktty.AppImage")
+        );
+    }
+
+    #[test]
+    fn parse_launcher_handles_apostrophe_in_path() {
+        let spec = agent_spec("codex").unwrap();
+        let command =
+            build_hook_shell_command(Path::new("/home/o'connor/forktty"), spec, "session-start");
+        assert_eq!(
+            parse_launcher_from_managed_command(&command, spec).as_deref(),
+            Some("/home/o'connor/forktty")
+        );
+    }
+
+    #[test]
+    fn parse_launcher_rejects_unrelated_commands() {
+        let spec = agent_spec("codex").unwrap();
+        assert_eq!(parse_launcher_from_managed_command("echo hi", spec), None);
+        assert_eq!(
+            parse_launcher_from_managed_command(
+                "[ x ] && '/usr/bin/forktty' hooks claude session-start || true",
+                spec,
+            ),
+            None,
+            "wrong agent key must not match"
+        );
+    }
+
+    #[test]
+    fn extract_managed_launcher_returns_first_forktty_entry() {
+        let spec = agent_spec("claude").unwrap();
+        let (_, config) =
+            merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
+        assert_eq!(
+            extract_managed_launcher_from_config(spec, &config).as_deref(),
+            Some("/usr/bin/forktty")
+        );
+    }
+
+    #[test]
+    fn extract_managed_launcher_skips_unmanaged_entries() {
+        let spec = agent_spec("codex").unwrap();
+        let config = json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo unrelated",
+                    }]
+                }]
+            }
+        });
+        assert_eq!(extract_managed_launcher_from_config(spec, &config), None);
+    }
+
+    #[test]
+    fn describe_launcher_check_flags_stale_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("claude").unwrap();
+        let config_path = dir.path().join("settings.json");
+        let (_, config) = merge_hook_config(&json!({}), spec, Path::new("/old/forktty")).unwrap();
+        fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
+        let check = describe_launcher_check(spec, &config_path, Some(Path::new("/new/forktty")));
+        assert_eq!(check["status"], Value::String("stale".to_string()));
+        assert_eq!(
+            check["installedLauncher"],
+            Value::String("/old/forktty".to_string())
+        );
+        assert_eq!(
+            check["currentLauncher"],
+            Value::String("/new/forktty".to_string())
+        );
+    }
+
+    #[test]
+    fn describe_launcher_check_marks_matching_path_as_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("codex").unwrap();
+        let config_path = dir.path().join("hooks.json");
+        let (_, config) =
+            merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
+        fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
+        let check =
+            describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
+        assert_eq!(check["status"], Value::String("ok".to_string()));
+    }
+
+    #[test]
+    fn describe_launcher_check_marks_missing_config_as_not_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("gemini").unwrap();
+        let config_path = dir.path().join("settings.json");
+        let check =
+            describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
+        assert_eq!(check["status"], Value::String("not_installed".to_string()));
     }
 
     #[test]
@@ -4382,6 +5025,42 @@ mod tests {
             entries[0]["hooks"][0]["command"],
             Value::String("custom-wrapper hooks codex session-start".to_string())
         );
+    }
+
+    #[test]
+    fn codex_and_claude_hook_timeouts_are_seconds_within_provider_budget() {
+        // Codex docs treat `timeout` as seconds (default 600). Claude Code
+        // hooks reference also documents seconds (default 600, 30 for
+        // UserPromptSubmit). The installer must emit a value that is
+        // measured in seconds and stays under the smaller of the two
+        // provider defaults so we never block the agent loop longer than a
+        // local round-trip needs.
+        assert_eq!(HOOK_ENTRY_TIMEOUT_SECS, 30);
+        for spec in [agent_spec("codex").unwrap(), agent_spec("claude").unwrap()] {
+            let (_, config) =
+                merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
+            let hooks = config["hooks"].as_object().expect("hooks object");
+            for entries in hooks.values() {
+                for entry in entries.as_array().expect("entry array") {
+                    if !is_forktty_managed_entry(entry) {
+                        continue;
+                    }
+                    for hook in entry["hooks"].as_array().expect("hooks array") {
+                        let timeout = hook["timeout"].as_u64().expect("integer timeout");
+                        assert_eq!(
+                            timeout, HOOK_ENTRY_TIMEOUT_SECS,
+                            "{} entry must encode timeout in seconds",
+                            spec.key
+                        );
+                        assert!(
+                            timeout < 600,
+                            "{} timeout must stay under provider default",
+                            spec.key
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

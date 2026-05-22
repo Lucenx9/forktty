@@ -38,6 +38,29 @@ forktty hooks test codex       # round-trip a status update and a log over the s
 single transient `agent:<name>:hook-test` status entry through the socket so
 you can confirm the daemon is reachable.
 
+`hooks doctor` also compares the launcher path baked into the agent config
+against the current `forktty` executable and reports `launcherCheck.status`
+(`ok`, `stale`, `not_installed`, or `current_launcher_unknown`). A `stale`
+status means the AppImage or installed binary has moved since the last
+`hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
+The doctor JSON also exposes `supportedEvents`, the list of provider-side
+event names ForkTTY installs hooks for (Codex: 5; Claude Code: 9).
+
+## Status entries published by hooks
+
+ForkTTY hooks publish the following status keys via `metadata.set_status`.
+They render in the ForkTTY UI status row and can be inspected from the CLI:
+
+| Key | Set on | Cleared on | Color semantics |
+|---|---|---|---|
+| `agent:<key>` | SessionStart, prompt-submit, pre/post-tool, stop, notification, pre-compact | session-end | `green` ready, `blue` running, `yellow` needs input / compacting, `red` error |
+| `agent:<key>:permission` | SessionStart, prompt-submit | session-end | `muted` for documented-safe modes (or unknown / non-Claude providers), `yellow` for Claude `acceptEdits`/`auto`/`dontAsk`, `red` for Claude `bypassPermissions` |
+| `agent:claude:tokens` | prompt-submit (Claude only, when a transcript is available) | not cleared automatically | progress against `FORKTTY_HOOK_TOKEN_CEILING` (default 200,000) |
+
+Codex modes stay `muted` because Codex docs describe `permission_mode` only
+as "string" without a published enum — ForkTTY does not invent risk levels
+the provider hasn't published.
+
 ## Manual editing
 
 Files in this directory are canonical examples for review or manual repair:
@@ -48,7 +71,14 @@ Files in this directory are canonical examples for review or manual repair:
 
 Replace `{{FORKTTY_LAUNCHER}}` with the absolute path to the `forktty` launcher
 if you install these by hand; keep it shell-quoted. The installer handles this
-quoting automatically. Each command is guarded by a per-agent disable variable:
+quoting automatically.
+
+The `timeout` field is provider-defined and measured in **seconds** for both
+Claude Code and Codex (Codex default 600 s; Claude default 600 s, 30 s for
+`UserPromptSubmit`). ForkTTY pins every entry at 30 s so a hook never blocks
+the agent loop longer than a local socket round-trip needs.
+
+Each command is guarded by a per-agent disable variable:
 
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
