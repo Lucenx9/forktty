@@ -1320,18 +1320,28 @@ preferenceswindow preferencesgroup > box > .header > label.description {
   transition: background-color 90ms ease-out;
 }
 
-.command-list row:hover,
+/* Suppress the global 2px accent outline on command-list rows; the
+ * `:selected` inset rail below already marks the active item without
+ * the noisier ring. */
 .command-list row:focus-visible {
+  outline: none;
+}
+
+.command-list row:hover {
   background: var(--ft-bg-2);
 }
 
 .command-list row:selected {
-  background: var(--ft-bg-3);
+  background: alpha(var(--ft-accent), 0.16);
   box-shadow: inset 3px 0 0 var(--ft-accent);
 }
 
+.command-list row:selected:hover {
+  background: alpha(var(--ft-accent), 0.22);
+}
+
 .command-list row:selected button.flat {
-  background: var(--ft-bg-3);
+  background: transparent;
 }
 
 .command-item {
