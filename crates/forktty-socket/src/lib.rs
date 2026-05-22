@@ -15,10 +15,12 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::sync::Semaphore;
 
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
+const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Error, Debug)]
@@ -230,10 +232,18 @@ pub fn bind_socket_listener(
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {
     let listener = UnixListener::from_std(listener)?;
+    let connection_limit = Arc::new(Semaphore::new(MAX_SOCKET_CONNECTIONS));
     loop {
         let (stream, _) = listener.accept().await?;
         let state = state.clone();
+        let Ok(permit) = connection_limit.clone().try_acquire_owned() else {
+            tokio::spawn(async move {
+                reject_over_capacity_connection(stream).await;
+            });
+            continue;
+        };
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(err) = handle_connection(stream, state).await {
                 // We can't return errors to a client whose connection has
                 // already dropped, but the operator should still see the
@@ -241,6 +251,18 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
                 eprintln!("forktty socket connection ended with error: {err}");
             }
         });
+    }
+}
+
+async fn reject_over_capacity_connection(stream: tokio::net::UnixStream) {
+    let (_, mut writer) = stream.into_split();
+    let response = JsonRpcResponse::error(
+        Value::Null,
+        "server_busy",
+        format!("Too many active socket connections (limit {MAX_SOCKET_CONNECTIONS})"),
+    );
+    if let Err(err) = write_response(&mut writer, &response).await {
+        eprintln!("forktty socket busy response failed: {err}");
     }
 }
 

@@ -320,6 +320,7 @@ impl VteController {
         let spawn_model = self.model.clone();
         let spawn_workspace_id = request.workspace_id.clone();
         let spawn_surface_id = request.surface_id.clone();
+        let spawn_state_for_error = self.state.clone();
         let spawn_model_for_error = spawn_model.clone();
         match spawn_vte_terminal_with_callback(&request, move |result| {
             if let Err(err) = result {
@@ -329,6 +330,9 @@ impl VteController {
                     &spawn_surface_id,
                     &err.to_string(),
                 );
+                if let Some(state) = &spawn_state_for_error {
+                    let _ = state.terminal.close(&spawn_surface_id);
+                }
             }
         }) {
             Ok(widget) => {

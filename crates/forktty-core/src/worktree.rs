@@ -566,26 +566,19 @@ fn verify_linked_worktree_path(
     }
     // Both directions of the link metadata can be edited independently
     // (`.git/worktrees/<name>/gitdir` and `<worktree>/.git`). Restrict the
-    // resolved worktree path to one of the three supported layouts so a
-    // tampered gitdir cannot redirect destructive operations (e.g.
-    // `remove_dir_all`) at an arbitrary filesystem path.
+    // resolved worktree path to the exact paths ForkTTY creates for its three
+    // supported layouts so a tampered gitdir cannot redirect destructive
+    // operations (e.g. `remove_dir_all`) at a neighboring path.
     let workdir = repo.workdir().ok_or(WorktreeError::BareRepo)?;
-    let canonical_workdir =
-        std::fs::canonicalize(workdir).map_err(|err| WorktreeError::WorktreePathUnresolved {
-            name: worktree_name.to_string(),
-            source: err,
-        })?;
-    let allowed_root = canonical_workdir
-        .parent()
-        .ok_or(WorktreeError::RepositoryAtFilesystemRoot)?;
-    let nested_root = canonical_workdir.join(".worktrees");
-    let outer_root = allowed_root.join(".worktrees");
-    let sibling_parent_ok = canonical_worktree.parent() == Some(allowed_root)
-        && canonical_worktree != canonical_workdir;
-    let inside_allowed_layout = canonical_worktree.starts_with(&nested_root)
-        || canonical_worktree.starts_with(&outer_root)
-        || sibling_parent_ok;
-    if !inside_allowed_layout {
+    let matches_supported_layout = ["nested", "outer-nested", "sibling"]
+        .into_iter()
+        .filter_map(|layout| worktree_path(workdir, worktree_name, layout).ok())
+        .any(|expected_path| {
+            std::fs::canonicalize(expected_path)
+                .map(|canonical_expected| canonical_expected == canonical_worktree)
+                .unwrap_or(false)
+        });
+    if !matches_supported_layout {
         return Err(WorktreeError::WorktreeMetadataMismatch {
             name: worktree_name.to_string(),
         });
@@ -778,10 +771,9 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::{symlink, PermissionsExt};
 
-    fn make_repo() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path()).unwrap();
-        fs::write(dir.path().join("note.txt"), "base\n").unwrap();
+    fn init_repo_dir(repo_dir: &Path) {
+        let repo = Repository::init(repo_dir).unwrap();
+        fs::write(repo_dir.join("note.txt"), "base\n").unwrap();
         let mut index = repo.index().unwrap();
         index.add_path(Path::new("note.txt")).unwrap();
         index.write().unwrap();
@@ -790,8 +782,11 @@ mod tests {
         let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
         repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
             .unwrap();
-        drop(tree);
-        drop(repo);
+    }
+
+    fn make_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo_dir(dir.path());
         dir
     }
 
@@ -824,6 +819,28 @@ mod tests {
         let repo = Repository::open(repo_dir).unwrap();
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         repo.branch(branch_name, &head, false).unwrap();
+    }
+
+    fn redirect_registered_worktree(
+        repo_workdir: &Path,
+        info: &WorktreeInfo,
+        target_dir: &Path,
+    ) -> PathBuf {
+        fs::create_dir_all(target_dir).unwrap();
+        let admin_dir = repo_workdir
+            .join(".git/worktrees")
+            .join(&info.worktree_name);
+        fs::write(
+            admin_dir.join("gitdir"),
+            format!("{}/.git\n", target_dir.display()),
+        )
+        .unwrap();
+        fs::write(
+            target_dir.join(".git"),
+            format!("gitdir: {}\n", admin_dir.display()),
+        )
+        .unwrap();
+        target_dir.to_path_buf()
     }
 
     #[cfg(unix)]
@@ -868,6 +885,21 @@ mod tests {
 
         remove(dir.path().to_str().unwrap(), "feature/one", true).unwrap();
         assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn create_lists_and_removes_sibling_worktree() {
+        let parent = tempfile::tempdir().unwrap();
+        let repo_dir = parent.path().join("repo");
+        fs::create_dir(&repo_dir).unwrap();
+        init_repo_dir(&repo_dir);
+
+        let info = create(repo_dir.to_str().unwrap(), "feature-sibling", "sibling").unwrap();
+
+        assert_eq!(Path::new(&info.path).parent(), Some(parent.path()));
+        remove(repo_dir.to_str().unwrap(), "feature-sibling", true).unwrap();
+        assert!(list(repo_dir.to_str().unwrap()).unwrap().is_empty());
+        assert!(!Path::new(&info.path).exists());
     }
 
     #[test]
@@ -1047,6 +1079,57 @@ mod tests {
             attacker_dir.exists(),
             "the attacker-controlled directory must not be deleted"
         );
+    }
+
+    #[test]
+    fn remove_rejects_worktree_redirected_to_unexpected_nested_path() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "redirect-nested", "nested").unwrap();
+        let repo_workdir = std::fs::canonicalize(dir.path()).unwrap();
+        let attacker_dir = redirect_registered_worktree(
+            &repo_workdir,
+            &info,
+            &repo_workdir.join(".worktrees/unexpected-target"),
+        );
+
+        let result = remove(dir.path().to_str().unwrap(), "redirect-nested", true);
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::WorktreeMetadataMismatch { .. })
+        ));
+        assert!(
+            attacker_dir.exists(),
+            "unexpected nested target must not be deleted"
+        );
+        assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn remove_rejects_worktree_redirected_to_unexpected_sibling_path() {
+        let parent = tempfile::tempdir().unwrap();
+        let repo_dir = parent.path().join("repo");
+        fs::create_dir(&repo_dir).unwrap();
+        init_repo_dir(&repo_dir);
+        let info = create(repo_dir.to_str().unwrap(), "redirect-sibling", "sibling").unwrap();
+        let repo_workdir = std::fs::canonicalize(&repo_dir).unwrap();
+        let attacker_dir = redirect_registered_worktree(
+            &repo_workdir,
+            &info,
+            &parent.path().join("repo-unexpected-target"),
+        );
+
+        let result = remove(repo_dir.to_str().unwrap(), "redirect-sibling", true);
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::WorktreeMetadataMismatch { .. })
+        ));
+        assert!(
+            attacker_dir.exists(),
+            "unexpected sibling target must not be deleted"
+        );
+        assert!(Path::new(&info.path).exists());
     }
 
     #[test]

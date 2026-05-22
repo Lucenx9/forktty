@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[derive(Error, Debug)]
 pub enum SessionError {
     #[error("IO error: {0}")]
@@ -110,6 +113,7 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
             .write(true)
             .create_new(true)
             .open(&tmp_path)?;
+        apply_session_permissions(&tmp_path)?;
         tmp_file.write_all(json.as_bytes())?;
         tmp_file.sync_all()?;
         fs::rename(&tmp_path, &write_path)?;
@@ -123,10 +127,19 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
 
 fn session_write_path(path: &Path) -> Result<PathBuf, SessionError> {
     match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
     }
+}
+
+fn apply_session_permissions(tmp_path: &Path) -> Result<(), SessionError> {
+    #[cfg(unix)]
+    {
+        fs::set_permissions(tmp_path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, SessionError> {
@@ -552,13 +565,22 @@ mod tests {
         };
 
         save_session_to_path(&path, &data).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
     }
 
     #[cfg(unix)]
     #[test]
-    fn save_and_load_session_through_symlink_replaces_link_with_file() {
-        use std::os::unix::fs::symlink;
+    fn save_and_load_session_through_symlink_updates_target_without_replacing_link() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
 
         let dir = tempfile::tempdir().unwrap();
         let link_dir = dir.path().join("data");
@@ -580,10 +602,17 @@ mod tests {
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data.clone()));
         save_session_to_path(&path, &data).unwrap();
 
-        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert!(
             fs::symlink_metadata(&target).is_ok(),
             "target file should remain present"
+        );
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
         );
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
         let link_siblings: Vec<_> = fs::read_dir(&link_dir)
