@@ -47,6 +47,9 @@ pub enum DispatchError {
         limit: usize,
         actual: usize,
     },
+    Conflict(String),
+    AlreadyExists(String),
+    InvalidParam(String),
     Other(String),
 }
 
@@ -57,6 +60,9 @@ impl DispatchError {
             DispatchError::MissingParam(_) => "missing_param",
             DispatchError::NotFound(_) => "not_found",
             DispatchError::PayloadTooLarge { .. } => "payload_too_large",
+            DispatchError::Conflict(_) => "conflict",
+            DispatchError::AlreadyExists(_) => "already_exists",
+            DispatchError::InvalidParam(_) => "invalid_param",
             DispatchError::Other(_) => "error",
         }
     }
@@ -83,7 +89,36 @@ impl std::fmt::Display for DispatchError {
                 f,
                 "{field} payload is {actual} bytes, exceeds limit of {limit} bytes"
             ),
+            DispatchError::Conflict(message) => f.write_str(message),
+            DispatchError::AlreadyExists(message) => f.write_str(message),
+            DispatchError::InvalidParam(message) => f.write_str(message),
             DispatchError::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<forktty_core::worktree::WorktreeError> for DispatchError {
+    fn from(err: forktty_core::worktree::WorktreeError) -> Self {
+        use forktty_core::worktree::WorktreeError as W;
+        match err {
+            W::NotFound(_) => DispatchError::NotFound("worktree"),
+            W::BranchNotFound(_) => DispatchError::NotFound("branch"),
+            W::NotARepo(_) => DispatchError::NotFound("repository"),
+            W::AlreadyExists(name) => {
+                DispatchError::AlreadyExists(format!("Worktree '{name}' already exists"))
+            }
+            W::InvalidName(inner) => DispatchError::InvalidParam(inner.to_string()),
+            W::InvalidHookName(name) => {
+                DispatchError::InvalidParam(format!("Invalid hook name: {name}"))
+            }
+            W::TargetDirty
+            | W::WorktreeDirty(_)
+            | W::SourceDirty(_)
+            | W::MergeConflicts
+            | W::UpToDate
+            | W::HookOutsideWorktree
+            | W::WorktreeMetadataMismatch { .. } => DispatchError::Conflict(err.to_string()),
+            other => DispatchError::Other(other.to_string()),
         }
     }
 }
@@ -346,20 +381,20 @@ pub async fn dispatch(
         }
         "worktree.list" => {
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let worktrees = worktree::list(&cwd).map_err(|err| err.to_string())?;
+            let worktrees = worktree::list(&cwd).map_err(DispatchError::from)?;
             Ok(json!(worktrees))
         }
         "worktree.status" => {
             let path =
                 resolve_open_repo_cwd_param(state, &params, &["path", "cwd"], "path or cwd")?;
-            let status = worktree::status(&path).map_err(|err| err.to_string())?;
+            let status = worktree::status(&path).map_err(DispatchError::from)?;
             Ok(json!({"status": status}))
         }
         "worktree.create" => {
             let name = worktree_name_from_params(&params, &["name"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
-            let info = worktree::create(&cwd, name, &layout).map_err(|err| err.to_string())?;
+            let info = worktree::create(&cwd, name, &layout).map_err(DispatchError::from)?;
             let workspace = match open_worktree_workspace(state, &info).await {
                 Ok(workspace) => workspace,
                 Err(err) => {
@@ -380,7 +415,7 @@ pub async fn dispatch(
             let name = worktree_name_from_params(&params, &["name", "branch"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let layout = worktree_layout();
-            let info = worktree::attach(&cwd, name, &layout).map_err(|err| err.to_string())?;
+            let info = worktree::attach(&cwd, name, &layout).map_err(DispatchError::from)?;
             let workspace = open_worktree_workspace(state, &info).await?;
             Ok(json!({
                 "id": workspace.id,
@@ -404,7 +439,7 @@ pub async fn dispatch(
                     workspace_worktree_name = info.worktree_name.clone();
                 }
             }
-            worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
+            worktree::remove(&cwd, name, false).map_err(DispatchError::from)?;
             let (workspace, surface_ids, is_last_workspace) = {
                 let model = state
                     .model
@@ -492,7 +527,7 @@ pub async fn dispatch(
         "worktree.merge" => {
             let name = worktree_name_from_params(&params, &["name"], "name")?;
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
+            let result = worktree::merge(&cwd, name).map_err(DispatchError::from)?;
             Ok(json!(result))
         }
         "surface.list" => {
@@ -1868,6 +1903,39 @@ mod tests {
         let result = probe_forktty_socket(client).unwrap();
         server_thread.join().unwrap();
         result
+    }
+
+    #[test]
+    fn dispatch_error_from_worktree_error_assigns_stable_codes() {
+        use forktty_core::worktree::WorktreeError as W;
+
+        assert_eq!(
+            DispatchError::from(W::NotFound("foo".into())).code(),
+            "not_found"
+        );
+        assert_eq!(
+            DispatchError::from(W::BranchNotFound("bar".into())).code(),
+            "not_found"
+        );
+        assert_eq!(
+            DispatchError::from(W::AlreadyExists("foo".into())).code(),
+            "already_exists"
+        );
+        assert_eq!(DispatchError::from(W::TargetDirty).code(), "conflict");
+        assert_eq!(
+            DispatchError::from(W::WorktreeDirty("foo".into())).code(),
+            "conflict"
+        );
+        assert_eq!(DispatchError::from(W::MergeConflicts).code(), "conflict");
+        assert_eq!(
+            DispatchError::from(W::HookOutsideWorktree).code(),
+            "conflict"
+        );
+        assert_eq!(
+            DispatchError::from(W::InvalidName(forktty_core::WorktreeNameError::Empty)).code(),
+            "invalid_param"
+        );
+        assert_eq!(DispatchError::from(W::BareRepo).code(), "error");
     }
 
     #[test]
