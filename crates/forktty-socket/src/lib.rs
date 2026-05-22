@@ -232,16 +232,39 @@ pub async fn dispatch(
         }
         "workspace.select" => {
             let selector = workspace_selector_from_params(&params)?;
-            let workspace = {
+            let (workspace, previous_active_id) = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .select_workspace(selector)
-                    .ok_or(DispatchError::NotFound("workspace"))?
+                let previous_active_id = model.active_workspace_id();
+                (
+                    model
+                        .select_workspace(selector)
+                        .ok_or(DispatchError::NotFound("workspace"))?,
+                    previous_active_id,
+                )
             };
-            ensure_terminal_for_active_workspace(state).await?;
+            if let Err(err) = ensure_terminal_for_active_workspace(state).await {
+                let mut err = err;
+                if previous_active_id.as_deref() != Some(workspace.id.as_str()) {
+                    if let Some(previous_active_id) = previous_active_id.as_deref() {
+                        let restored = {
+                            let mut model = state
+                                .model
+                                .lock()
+                                .map_err(|_| "Lock poisoned".to_string())?;
+                            model.select_workspace(WorkspaceSelector::Id(previous_active_id))
+                        };
+                        if restored.is_none() {
+                            err = format!(
+                                "{err}; failed to restore previous workspace {previous_active_id}"
+                            );
+                        }
+                    }
+                }
+                return Err(err.into());
+            }
             Ok(json!(workspace))
         }
         "workspace.close" => {
@@ -2589,6 +2612,47 @@ mod tests {
             .unwrap()
             .iter()
             .any(|surface| surface.surface_id == main_surface_id));
+    }
+
+    #[tokio::test]
+    async fn workspace_select_keeps_previous_workspace_when_spawn_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (first, second) = {
+            let mut model = model.lock().unwrap();
+            let first = model.create_workspace("first", "/tmp");
+            let second = model.create_workspace("second", "/tmp");
+            (first, second)
+        };
+        let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
+            surface_id: second.focused_surface_id.clone(),
+            workspace_id: second.id.clone(),
+            cwd: PathBuf::from("/tmp"),
+            shell: "/bin/sh".to_string(),
+            cols: 80,
+            rows: 24,
+        }));
+        let state = SocketAppState::new(
+            model.clone(),
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(&state, "workspace.select", json!({"id": first.id}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("spawn failed"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 2);
+        assert_eq!(workspaces[0]["active"], false);
+        assert_eq!(workspaces[1]["id"], second.id);
+        assert_eq!(workspaces[1]["active"], true);
+        let backend_surfaces = backend.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, second.focused_surface_id);
     }
 
     #[tokio::test]
