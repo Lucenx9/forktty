@@ -219,7 +219,7 @@ window {
 .app-header button.titlebutton {
   min-width: 28px;
   min-height: 28px;
-  margin: 0 1px;
+  margin: 0 2px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -233,18 +233,26 @@ window {
   -gtk-icon-size: 14px;
 }
 
+/* Min/max share the brand accent tint on hover so the header reads as
+ * one coherent surface (alpha pill, active pane border, hover here). */
 .app-header button.titlebutton:hover {
-  background: var(--ft-bg-3);
+  background: alpha(var(--ft-accent), 0.14);
   color: var(--ft-text-strong);
 }
 
 .app-header button.titlebutton:active {
-  background: var(--ft-accent-soft);
+  background: alpha(var(--ft-accent), 0.22);
   color: var(--ft-text-strong);
 }
 
+/* Close keeps the destructive red tint — convention beats coherence. */
 .app-header button.titlebutton.close:hover {
   background: var(--ft-error-soft);
+  color: var(--ft-error);
+}
+
+.app-header button.titlebutton.close:active {
+  background: alpha(var(--ft-error), 0.32);
   color: var(--ft-error);
 }
 
