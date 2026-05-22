@@ -43,6 +43,23 @@ against the current `forktty` executable and reports `launcherCheck.status`
 (`ok`, `stale`, `not_installed`, or `current_launcher_unknown`). A `stale`
 status means the AppImage or installed binary has moved since the last
 `hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
+The doctor JSON also exposes `supportedEvents`, the list of provider-side
+event names ForkTTY installs hooks for (Codex: 5; Claude Code: 9).
+
+## Status entries published by hooks
+
+ForkTTY hooks publish the following status keys via `metadata.set_status`.
+They render in the ForkTTY UI status row and can be inspected from the CLI:
+
+| Key | Set on | Cleared on | Color semantics |
+|---|---|---|---|
+| `agent:<key>` | SessionStart, prompt-submit, pre/post-tool, stop, notification, pre-compact | session-end | `green` ready, `blue` running, `yellow` needs input / compacting, `red` error |
+| `agent:<key>:permission` | SessionStart, prompt-submit | session-end | `muted` for documented-safe modes (or unknown / non-Claude providers), `yellow` for Claude `acceptEdits`/`auto`/`dontAsk`, `red` for Claude `bypassPermissions` |
+| `agent:claude:tokens` | prompt-submit (Claude only, when a transcript is available) | not cleared automatically | progress against `FORKTTY_HOOK_TOKEN_CEILING` (default 200,000) |
+
+Codex modes stay `muted` because Codex docs describe `permission_mode` only
+as "string" without a published enum — ForkTTY does not invent risk levels
+the provider hasn't published.
 
 ## Manual editing
 

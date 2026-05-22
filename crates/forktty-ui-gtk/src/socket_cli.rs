@@ -2326,6 +2326,7 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         "{}",
         format_doctor_path(&format!("{} hook config", spec.key), &report["hookConfig"])
     );
+    eprintln!("supported events: {}", supported_events.join(", "));
     if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
         eprintln!("{line}");
     }
@@ -2722,6 +2723,21 @@ fn add_hook_metadata(
     Value::Object(params)
 }
 
+/// Map Claude Code's documented `permission_mode` enum to a status color so
+/// risky modes are visible at a glance. Codex documents `permission_mode`
+/// only as "string", so its values stay neutral (`muted`) to avoid inventing
+/// a risk model the provider doesn't publish.
+fn permission_mode_color(spec: &AgentSpec, mode: &str) -> &'static str {
+    if spec.key != "claude" {
+        return "muted";
+    }
+    match mode {
+        "bypassPermissions" => "red",
+        "acceptEdits" | "auto" | "dontAsk" => "yellow",
+        _ => "muted",
+    }
+}
+
 fn build_hook_actions(
     spec: &AgentSpec,
     event: &str,
@@ -2757,7 +2773,10 @@ fn build_hook_actions(
             Value::String(format!("{} mode", spec.label)),
         );
         params.insert("value".to_string(), Value::String(mode.to_string()));
-        params.insert("color".to_string(), Value::String("muted".to_string()));
+        params.insert(
+            "color".to_string(),
+            Value::String(permission_mode_color(spec, mode).to_string()),
+        );
         (
             "metadata.set_status".to_string(),
             add_hook_metadata(params, event_name, payload, order),
@@ -4171,7 +4190,8 @@ mod tests {
         assert_eq!(permission.1["key"], "agent:claude:permission");
         assert_eq!(permission.1["label"], "Claude mode");
         assert_eq!(permission.1["value"], "acceptEdits");
-        assert_eq!(permission.1["color"], "muted");
+        // Claude's acceptEdits auto-accepts file writes -> documented risk.
+        assert_eq!(permission.1["color"], "yellow");
         assert_eq!(permission.1["hook_session_id"], "sess-claude-1");
 
         let codex_payload = json!({
@@ -4191,6 +4211,64 @@ mod tests {
         assert_eq!(permission.1["label"], "Codex mode");
         assert_eq!(permission.1["value"], "on-request");
         assert_eq!(permission.1["hook_session_id"], "sess-codex-9");
+    }
+
+    #[test]
+    fn claude_permission_mode_colors_track_documented_risk() {
+        // Claude Code docs enumerate permission_mode as
+        // default|plan|acceptEdits|auto|dontAsk|bypassPermissions.
+        // bypassPermissions is the most dangerous and should surface in
+        // red; modes that suppress per-action consent surface in yellow;
+        // default/plan remain muted.
+        let claude = agent_spec("claude").unwrap();
+        assert_eq!(permission_mode_color(claude, "bypassPermissions"), "red");
+        for warn in ["acceptEdits", "auto", "dontAsk"] {
+            assert_eq!(permission_mode_color(claude, warn), "yellow");
+        }
+        for safe in ["default", "plan"] {
+            assert_eq!(permission_mode_color(claude, safe), "muted");
+        }
+        // Unknown enum value stays muted instead of guessing risk.
+        assert_eq!(permission_mode_color(claude, "futureMode"), "muted");
+    }
+
+    #[test]
+    fn codex_permission_mode_stays_muted() {
+        // Codex docs only describe permission_mode as "string" without an
+        // enum, so ForkTTY must not infer a risk level for Codex modes.
+        let codex = agent_spec("codex").unwrap();
+        for mode in [
+            "default",
+            "on-request",
+            "never",
+            "agent-full-access",
+            "bypassPermissions",
+        ] {
+            assert_eq!(permission_mode_color(codex, mode), "muted");
+        }
+    }
+
+    #[test]
+    fn build_hook_actions_paints_bypass_permissions_red_for_claude_only() {
+        let claude_actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "session-start",
+            &json!({ "permission_mode": "bypassPermissions" }),
+            "1",
+        );
+        let claude_permission = claude_actions.last().expect("permission action");
+        assert_eq!(claude_permission.1["key"], "agent:claude:permission");
+        assert_eq!(claude_permission.1["color"], "red");
+
+        let codex_actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "session-start",
+            &json!({ "permission_mode": "bypassPermissions" }),
+            "1",
+        );
+        let codex_permission = codex_actions.last().expect("permission action");
+        assert_eq!(codex_permission.1["key"], "agent:codex:permission");
+        assert_eq!(codex_permission.1["color"], "muted");
     }
 
     #[test]
