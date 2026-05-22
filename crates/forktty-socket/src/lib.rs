@@ -1335,11 +1335,22 @@ fn status_color_from_params(params: &Value) -> Result<Option<String>, DispatchEr
     if color.is_empty() {
         return Err("Invalid parameter color: must not be empty".into());
     }
-    if matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || color.starts_with('#') {
+    if is_supported_status_color(color) {
         Ok(Some(color.to_string()))
     } else {
         Err("Invalid parameter color: expected green, yellow, red, blue, muted, or #hex".into())
     }
+}
+
+fn is_supported_status_color(color: &str) -> bool {
+    matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || is_hex_status_color(color)
+}
+
+fn is_hex_status_color(color: &str) -> bool {
+    let Some(hex) = color.strip_prefix('#') else {
+        return false;
+    };
+    matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn optional_order_param(params: &Value) -> Result<Option<u128>, DispatchError> {
@@ -3257,7 +3268,14 @@ mod tests {
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspaces[0]["id"].as_str().unwrap();
 
-        for color in [json!("purple"), json!(""), json!(42)] {
+        for color in [
+            json!("purple"),
+            json!(""),
+            json!(42),
+            json!("#"),
+            json!("#12"),
+            json!("#nothex"),
+        ] {
             let error = dispatch(
                 &state,
                 "metadata.set_status",
@@ -3284,6 +3302,31 @@ mod tests {
         .await
         .unwrap();
         assert!(statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_set_status_accepts_hex_colors() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        for color in ["#abc", "#abcd", "#a1B2c3", "#a1B2c3D4"] {
+            let status = dispatch(
+                &state,
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "key": format!("agent:codex:{color}"),
+                    "label": "Codex",
+                    "value": "Running",
+                    "color": color
+                }),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(status["color"], color);
+        }
     }
 
     #[tokio::test]

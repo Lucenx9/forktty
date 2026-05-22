@@ -657,10 +657,12 @@ fn send_socket_request_with_timeout(
 fn is_connection_level_socket_error(response: &JsonRpcResponse) -> bool {
     response.id == Value::Null
         && !response.ok
-        && response
-            .error
-            .as_ref()
-            .is_some_and(|err| matches!(err.code.as_str(), "parse_error" | "request_too_large"))
+        && response.error.as_ref().is_some_and(|err| {
+            matches!(
+                err.code.as_str(),
+                "parse_error" | "request_too_large" | "server_busy"
+            )
+        })
 }
 
 fn format_socket_connect_error(error: io::Error, socket_path: &Path) -> CliError {
@@ -1254,12 +1256,10 @@ fn handle_worktree_status(context: &CliContext, args: Vec<String>) -> CliResult<
             parsed.positionals[1]
         )));
     }
-    let path_value = non_blank_string_option(&parsed.options, "path", "--path")?
-        .or_else(|| {
-            non_blank_string_option(&parsed.options, "cwd", "--cwd")
-                .ok()
-                .flatten()
-        })
+    let path_option = non_blank_string_option(&parsed.options, "path", "--path")?;
+    let cwd_option = non_blank_string_option(&parsed.options, "cwd", "--cwd")?;
+    let path_value = path_option
+        .or(cwd_option)
         .map(|value| value.trim().to_string())
         .or_else(|| {
             parsed
@@ -1460,11 +1460,7 @@ fn handle_set_status(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let color = non_blank_string_option(&parsed.options, "color", "--color")?
         .map(|value| value.trim().to_string());
     if let Some(color) = &color {
-        if !matches!(
-            color.as_str(),
-            "green" | "yellow" | "red" | "blue" | "muted"
-        ) && !color.starts_with('#')
-        {
+        if !is_supported_status_color(color) {
             return Err(CliError::new(format!("Unsupported status color: {color}")));
         }
     }
@@ -1854,6 +1850,17 @@ fn parse_finite_number(raw: &str, option: &str) -> CliResult<f64> {
         .ok()
         .filter(|value| value.is_finite())
         .ok_or_else(|| CliError::new(format!("Invalid {option}: expected finite number")))
+}
+
+fn is_supported_status_color(color: &str) -> bool {
+    matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || is_hex_status_color(color)
+}
+
+fn is_hex_status_color(color: &str) -> bool {
+    let Some(hex) = color.strip_prefix('#') else {
+        return false;
+    };
+    matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -3847,6 +3854,28 @@ mod tests {
         );
 
         with_socket_response(
+            |_| {
+                format!(
+                    "{}\n",
+                    json!({
+                        "id": null,
+                        "ok": false,
+                        "error": { "code": "server_busy", "message": "Too many active socket connections" }
+                    })
+                )
+            },
+            |socket_path| {
+                let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
+                assert_eq!(err.code.as_deref(), Some("server_busy"));
+                assert!(err.message.contains("system.ping"));
+                assert!(err
+                    .message
+                    .contains("server_busy: Too many active socket connections"));
+                assert!(!err.message.contains("response id mismatch"));
+            },
+        );
+
+        with_socket_response(
             |_| "not json\n".to_string(),
             |socket_path| {
                 let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
@@ -3854,6 +3883,40 @@ mod tests {
                 assert!(err.message.contains("system.ping"));
                 assert!(err.message.contains("Invalid socket response"));
             },
+        );
+    }
+
+    #[test]
+    fn worktree_status_rejects_cwd_without_value() {
+        assert_err_contains(
+            handle_worktree_status(&test_context(), strings(&["--cwd"])),
+            "--cwd requires a value",
+        );
+    }
+
+    #[test]
+    fn status_color_validation_requires_hex_digits() {
+        assert!(is_supported_status_color("green"));
+        assert!(is_supported_status_color("#abc"));
+        assert!(is_supported_status_color("#a1B2c3"));
+        assert!(is_supported_status_color("#a1B2c3D4"));
+        assert!(!is_supported_status_color("#"));
+        assert!(!is_supported_status_color("#12"));
+        assert!(!is_supported_status_color("#nothex"));
+
+        assert_err_contains(
+            handle_set_status(
+                &test_context(),
+                strings(&[
+                    "--key",
+                    "agent:codex",
+                    "--value",
+                    "Running",
+                    "--color",
+                    "#12",
+                ]),
+            ),
+            "Unsupported status color: #12",
         );
     }
 
