@@ -13,12 +13,13 @@ forktty — Linux-native multi-agent terminal
 USAGE:
     forktty                 Launch the GTK app (default).
     forktty doctor          Print a local diagnostics report and exit.
+    forktty hooks setup     Install Codex, Claude Code, and Gemini hooks.
+    forktty ping            Check the ForkTTY socket daemon.
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
 
-Most automation flows through the user-local Unix socket; see
-scripts/forktty.mjs for the CLI wrapper and SECURITY.md for the
-threat model.
+Socket automation and agent hooks are built into this binary.
+Run `forktty hooks setup --dry-run` to inspect hook changes before writing.
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub enum CliAction {
     PrintVersion,
     PrintHelp,
     Doctor,
+    SocketCli(Vec<OsString>),
     Unknown(String),
 }
 
@@ -35,25 +37,89 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    let mut iter = args.into_iter().map(|s| s.into());
-    iter.next();
-    let Some(arg) = iter.next() else {
+    let mut args: Vec<OsString> = args.into_iter().map(|s| s.into()).collect();
+    if args.is_empty() {
+        return CliAction::LaunchApp;
+    }
+    let rest = args.split_off(1);
+    let Some(arg) = rest.first() else {
         return CliAction::LaunchApp;
     };
     let action = match arg.to_str() {
         Some("--version") | Some("-V") => CliAction::PrintVersion,
         Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
         Some("doctor") => CliAction::Doctor,
+        Some(command) if is_socket_cli_command(command) => return CliAction::SocketCli(rest),
+        Some(option) if is_socket_cli_global_option(option) => return CliAction::SocketCli(rest),
         Some(other) => return CliAction::Unknown(other.to_string()),
         None => return CliAction::Unknown("<non-utf8>".to_string()),
     };
-    if let Some(extra) = iter.next() {
+    if rest.len() > 1 && !matches!(action, CliAction::SocketCli(_)) {
+        let extra = &rest[1];
         return match extra.to_str() {
             Some(value) => CliAction::Unknown(value.to_string()),
             None => CliAction::Unknown("<non-utf8>".to_string()),
         };
     }
     action
+}
+
+fn is_socket_cli_global_option(option: &str) -> bool {
+    matches!(option, "--json" | "--verbose" | "--debug" | "--socket")
+        || option.starts_with("--socket=")
+}
+
+fn is_socket_cli_command(command: &str) -> bool {
+    matches!(
+        command,
+        "list"
+            | "create-workspace"
+            | "focus"
+            | "close-workspace"
+            | "notify"
+            | "surfaces"
+            | "surface-list"
+            | "surface:list"
+            | "split-surface"
+            | "surface-split"
+            | "surface:split"
+            | "focus-surface"
+            | "surface-focus"
+            | "surface:focus"
+            | "close-surface"
+            | "surface-close"
+            | "surface:close"
+            | "send-text"
+            | "send_text"
+            | "worktree-list"
+            | "worktree:list"
+            | "worktree-status"
+            | "worktree:status"
+            | "worktree-create"
+            | "worktree:create"
+            | "worktree-attach"
+            | "worktree:attach"
+            | "worktree-remove"
+            | "worktree:remove"
+            | "worktree-merge"
+            | "worktree:merge"
+            | "set-status"
+            | "list-status"
+            | "clear-status"
+            | "set-progress"
+            | "list-progress"
+            | "clear-progress"
+            | "log"
+            | "logs"
+            | "list-logs"
+            | "clear-logs"
+            | "notifications"
+            | "clear-notifications"
+            | "notifications-clear"
+            | "notification:clear"
+            | "hooks"
+            | "ping"
+    )
 }
 
 pub fn print_version() {
@@ -688,6 +754,26 @@ mod tests {
     #[test]
     fn parse_doctor_subcommand() {
         assert_eq!(parse::<_, &str>(["forktty", "doctor"]), CliAction::Doctor);
+    }
+
+    #[test]
+    fn parse_routes_socket_cli_commands_to_native_cli() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "hooks", "setup", "codex"]),
+            CliAction::SocketCli(vec![
+                OsString::from("hooks"),
+                OsString::from("setup"),
+                OsString::from("codex")
+            ])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "--socket", "/tmp/forktty.sock", "ping"]),
+            CliAction::SocketCli(vec![
+                OsString::from("--socket"),
+                OsString::from("/tmp/forktty.sock"),
+                OsString::from("ping")
+            ])
+        );
     }
 
     #[test]

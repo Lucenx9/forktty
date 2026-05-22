@@ -45,6 +45,8 @@ import {
   parseGlobalArgs,
   parseFlags,
   readAgentConfig,
+  resolveHookLauncherPath,
+  resolveHookNodePath,
   resolveSelectorParams,
   sendSocketRequest,
   sanitizeForTerminal,
@@ -524,6 +526,45 @@ describe("forktty CLI helpers", () => {
     );
   });
 
+  it("can generate hook commands through the forktty launcher", () => {
+    const command = buildHookShellCommand(
+      "/tmp/ForkTTY Repo/scripts/forktty.mjs",
+      "codex",
+      "session-start",
+      "/opt/Node Bin/node",
+      "/home/me/ForkTTY/forktty.AppImage",
+    );
+
+    assert.match(command, /FORKTTY_CODEX_HOOKS_DISABLED/);
+    assert.ok(
+      command.includes(
+        "FORKTTY_NODE='/opt/Node Bin/node' '/home/me/ForkTTY/forktty.AppImage' hooks codex session-start",
+      ),
+    );
+    assert.ok(!command.includes("scripts/forktty.mjs' hooks codex session-start"));
+  });
+
+  it("validates hook launcher bridge paths before writing configs", () => {
+    assert.equal(
+      resolveHookLauncherPath({
+        FORKTTY_HOOK_LAUNCHER: " /opt/forktty/forktty ",
+      }),
+      "/opt/forktty/forktty",
+    );
+    assert.throws(
+      () => resolveHookLauncherPath({ FORKTTY_HOOK_LAUNCHER: "forktty" }),
+      /FORKTTY_HOOK_LAUNCHER must be an absolute path/,
+    );
+    assert.equal(
+      resolveHookNodePath({ FORKTTY_HOOK_NODE: " /usr/bin/node " }),
+      "/usr/bin/node",
+    );
+    assert.throws(
+      () => resolveHookNodePath({ FORKTTY_HOOK_NODE: "node" }),
+      /FORKTTY_HOOK_NODE must be an absolute path/,
+    );
+  });
+
   it("merges hook config without duplicating existing commands", () => {
     const scriptPath = "/tmp/forktty/scripts/forktty.mjs";
     const existing = {
@@ -550,6 +591,22 @@ describe("forktty CLI helpers", () => {
     assert.equal(config.hooks.SessionStart.length, 1);
     assert.equal(config.hooks.UserPromptSubmit.length, 1);
     assert.equal(config.hooks.Stop.length, 1);
+  });
+
+  it("merges hook config using the forktty launcher when available", () => {
+    const { changed, config } = mergeHookConfig(
+      {},
+      "codex",
+      "/tmp/forktty/scripts/forktty.mjs",
+      "/usr/bin/node",
+      "/opt/forktty/forktty.AppImage",
+    );
+
+    assert.equal(changed, true);
+    const command = config.hooks.SessionStart[0].hooks[0].command;
+    assert.ok(command.includes("FORKTTY_NODE='/usr/bin/node'"));
+    assert.ok(command.includes("'/opt/forktty/forktty.AppImage' hooks codex session-start"));
+    assert.ok(!command.includes("scripts/forktty.mjs"));
   });
 
 
@@ -579,6 +636,34 @@ describe("forktty CLI helpers", () => {
     assert.equal(config.hooks.SessionStart.length, 1);
     assert.ok(config.hooks.SessionStart[0].hooks[0].command.includes("'/usr/bin/node'"));
     assert.ok(!config.hooks.SessionStart[0].hooks[0].command.includes(" && node "));
+  });
+
+  it("replaces legacy untagged hook commands from an old repo path", () => {
+    const oldScriptPath = "/old/forktty/scripts/forktty.mjs";
+    const newScriptPath = "/usr/lib/forktty/forktty.mjs";
+    const legacyCommand =
+      `[ "\${FORKTTY_CODEX_HOOKS_DISABLED:-}" != "1" ] && node '${oldScriptPath}' hooks codex session-start || echo '{"continue":true,"suppressOutput":false}'`;
+    const existing = {
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: legacyCommand,
+                timeout: 5000,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const { config } = mergeHookConfig(existing, "codex", newScriptPath, "/usr/bin/node");
+
+    assert.equal(config.hooks.SessionStart.length, 1);
+    assert.ok(config.hooks.SessionStart[0].hooks[0].command.includes(newScriptPath));
+    assert.ok(!config.hooks.SessionStart[0].hooks[0].command.includes(oldScriptPath));
   });
 
   it("strips prior forktty-tagged hook entries when reinstalling from a new script path", () => {
@@ -2121,6 +2206,28 @@ describe("hook installer", () => {
     assert.match(printed.join(""), /"changed":\s*true/);
   });
 
+  it("writes launcher-based hook commands when run through forktty", async () => {
+    const context = makeContext({
+      FORKTTY_HOOK_LAUNCHER: "/opt/forktty/forktty.AppImage",
+      FORKTTY_HOOK_NODE: "/usr/bin/node",
+    });
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    try {
+      await handleHooksSetup(context, ["codex"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const written = JSON.parse(
+      await fs.readFile(path.join(context.env.CODEX_HOME, "hooks.json"), "utf8"),
+    );
+    const command = written.hooks.SessionStart[0].hooks[0].command;
+    assert.ok(command.includes("FORKTTY_NODE='/usr/bin/node'"));
+    assert.ok(command.includes("'/opt/forktty/forktty.AppImage' hooks codex session-start"));
+    assert.ok(!command.includes("scripts/forktty.mjs"));
+  });
+
   it("installs PreToolUse and PostToolUse entries for claude", async () => {
     const context = makeContext();
     const swallow = () => true;
@@ -2150,6 +2257,52 @@ describe("hook installer", () => {
     assert.match(subagentCommand, /hooks claude subagent-stop/);
     const compactCommand = written.hooks.PreCompact[0].hooks[0].command;
     assert.match(compactCommand, /hooks claude pre-compact/);
+  });
+
+  it("installs current codex tool hook entries", async () => {
+    const context = makeContext();
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    try {
+      await handleHooksSetup(context, ["codex"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const written = JSON.parse(
+      await fs.readFile(path.join(context.env.CODEX_HOME, "hooks.json"), "utf8"),
+    );
+    assert.ok(written.hooks?.PreToolUse?.length, "PreToolUse hook installed");
+    assert.ok(written.hooks?.PostToolUse?.length, "PostToolUse hook installed");
+    assert.match(written.hooks.PreToolUse[0].hooks[0].command, /hooks codex pre-tool/);
+    assert.match(written.hooks.PostToolUse[0].hooks[0].command, /hooks codex post-tool/);
+  });
+
+  it("installs current gemini observability hook entries", async () => {
+    const context = makeContext();
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = () => true;
+    try {
+      await handleHooksSetup(context, ["gemini"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const written = JSON.parse(
+      await fs.readFile(path.join(context.env.HOME, ".gemini/settings.json"), "utf8"),
+    );
+    for (const event of [
+      "BeforeTool",
+      "AfterTool",
+      "Notification",
+      "PreCompress",
+    ]) {
+      assert.ok(written.hooks?.[event]?.length, `${event} hook installed`);
+    }
+    assert.match(written.hooks.BeforeTool[0].hooks[0].command, /hooks gemini pre-tool/);
+    assert.match(written.hooks.AfterTool[0].hooks[0].command, /hooks gemini post-tool/);
+    assert.match(written.hooks.Notification[0].hooks[0].command, /hooks gemini notification/);
+    assert.match(written.hooks.PreCompress[0].hooks[0].command, /hooks gemini pre-compact/);
   });
 
   it("deduplicates repeated hook setup agent names", async () => {

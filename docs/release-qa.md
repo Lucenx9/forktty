@@ -54,24 +54,24 @@ Run these after starting the GTK app so the daemon is listening on the
 default socket. Useful for catching protocol regressions without
 rebuilding.
 
-- Before starting the app, run `./scripts/forktty.mjs ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte`, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
+- Before starting the app, run `forktty ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte`, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
 - Launch with `FORKTTY_SOCKET_PATH=" "` and confirm the app still binds the default socket path instead of disabling automation.
 - Launch with `FORKTTY_SOCKET_PATH=relative.sock` and confirm both the app and
-  `./scripts/forktty.mjs ping` ignore the relative env value and use the default socket path.
-- Run both `./scripts/forktty.mjs --socket <path> ping` and `./scripts/forktty.mjs ping --socket <path>` against a stub socket; both forms should use the supplied socket path.
-- `./scripts/forktty.mjs ping --socket=` — exits with `--socket requires a value` instead of trying to connect to an empty path.
+  `forktty ping` ignore the relative env value and use the default socket path.
+- Run both `forktty --socket <path> ping` and `forktty ping --socket <path>` against a stub socket; both forms should use the supplied socket path.
+- `forktty ping --socket=` — exits with `--socket requires a value` instead of trying to connect to an empty path.
 - Start a stub Unix socket at the default path that replies `{"id":"other","ok":true,"result":"pong"}` to `system.ping`, then launch ForkTTY; startup should treat it as a foreign socket, not as another ForkTTY instance.
 - Replace the default socket path with a broken symlink, then launch ForkTTY; startup should refuse to replace the non-socket path and leave it for manual inspection.
-- Against a stub socket that resets before replying, `./scripts/forktty.mjs ping --socket <stub>` reports the socket path and reset code instead of a raw Node socket error.
+- Against a stub socket that resets before replying, `forktty ping --socket <stub>` reports the socket path and reset code instead of a raw Node socket error.
 - `forktty list` — returns at least one workspace.
-- `./scripts/forktty.mjs ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
-- `./scripts/forktty.mjs clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.
+- `forktty ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
+- `forktty clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty create-workspace project` — exits with `create-workspace: unexpected argument project` instead of creating a default-named workspace.
 - `forktty create-workspace --workingdir /tmp` — exits with `create-workspace: unknown option --workingdir` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty surfaces --workspace main` — exits with `surfaces: unknown option --workspace` instead of listing every surface.
-- `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.
+- `forktty focus " "` — exits with `workspace selector requires a value` before contacting the socket.
 - `forktty focus <selector-a> --workspace-name <selector-b>` — exits with `focus: cannot combine a positional selector with --workspace-name` instead of silently focusing one selector.
 - If positional `forktty focus <selector>` hits an existing workspace id but the socket returns a spawn error, the CLI reports that spawn error instead of retrying the selector as a workspace name and masking it as not found.
 - If selecting a workspace over the socket needs to respawn its terminal and that spawn fails, the focus request reports the spawn error and keeps the previous workspace active.
@@ -110,8 +110,8 @@ rebuilding.
 - `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `forktty send-text --txt "echo hello"` — exits with `send-text: unknown option --txt` instead of sending the wrong text or target.
-- `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
-- `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
+- `forktty --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
+- `forktty --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
 - `forktty close-surface <surface-id> extra` — exits with `close-surface: unexpected argument extra` instead of ignoring the extra value.
 - `forktty focus-surface <surface-id-a> --surface-id <surface-id-b>` — exits with `focus-surface: cannot combine --surface-id with a positional surface id` instead of silently focusing one of them.
 - `forktty split-surface --axis=` — exits with `--axis requires a value` instead of creating an unintended horizontal split.
@@ -143,18 +143,18 @@ rebuilding.
 
 ## Hook Installer Smoke
 
-- `node scripts/forktty.mjs hooks setup codex --dry-run` — prints `would update` but does not create the Codex config.
-- `node scripts/forktty.mjs hooks setup --dry-run codex` — also prints `would update` without writing; `--dry-run` must not consume the agent name.
-- `node scripts/forktty.mjs hooks setup --dry-run=yes codex` — exits with `--dry-run must be true or false` and does not create or update hook configs.
-- `node scripts/forktty.mjs hooks setup --dryrun codex` — exits with `unknown option --dryrun` and does not create or update hook configs.
-- `node scripts/forktty.mjs hooks setup codex codex` — updates Codex once and prints one Codex summary, without creating redundant backups.
-- `node scripts/forktty.mjs hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
-- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= node scripts/forktty.mjs hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
-- Inspect one generated hook command — it starts with the absolute Node executable path that ran setup, not bare `node`, so hooks keep working when an agent runs with a minimal `PATH`.
+- `forktty hooks setup codex --dry-run` — prints `would update` but does not create the Codex config.
+- `forktty hooks setup --dry-run codex` — also prints `would update` without writing; `--dry-run` must not consume the agent name.
+- `forktty hooks setup --dry-run=yes codex` — exits with `--dry-run must be true or false` and does not create or update hook configs.
+- `forktty hooks setup --dryrun codex` — exits with `unknown option --dryrun` and does not create or update hook configs.
+- `forktty hooks setup codex codex` — updates Codex once and prints one Codex summary, without creating redundant backups.
+- `forktty hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
+- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
+- Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
-- `node scripts/forktty.mjs hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
-- `node scripts/forktty.mjs hooks codex sesion-start` — prints an unsupported hook event warning to stderr and still prints the hook continue JSON.
-- `node scripts/forktty.mjs hooks codex session-start extra` — prints an unexpected hook argument warning to stderr and still prints the hook continue JSON.
+- `forktty hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
+- `forktty hooks codex sesion-start` — prints an unsupported hook event warning to stderr and still prints the hook continue JSON.
+- `forktty hooks codex session-start extra` — prints an unexpected hook argument warning to stderr and still prints the hook continue JSON.
 - Symlink `~/.codex/hooks.json` to a real managed JSON file, then run `hooks setup codex` —
   the target file is updated and backed up, and the symlink remains a symlink.
 - Modify an existing agent hook config and re-run setup twice quickly — each changed run creates a distinct `.bak-*` file and does not overwrite a prior backup.
@@ -242,7 +242,7 @@ rebuilding.
 
 - Build or download the generated AppImage from `target/packaging/appimage/`.
 - Mark it executable and launch it directly.
-- Confirm `forktty --version`, `forktty --help`, and `forktty doctor` work from the AppImage.
+- Confirm `forktty --version`, `forktty --help`, `forktty doctor`, and `forktty hooks setup --dry-run codex` work from the AppImage.
 - Launch the GTK app and walk the basic terminal, split-pane, desktop icon, and notification checks above.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published AppImage.

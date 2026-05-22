@@ -55,7 +55,7 @@ should be one of:
 | Command palette (`Ctrl+Shift+P`)      |                           |                       |                  |                          |
 | Notifications appear (desktop + panel)|                           |                       |                  |                          |
 | Quake mode toggle                     |                           |                       |                  |                          |
-| Socket: `./scripts/forktty.mjs ping`  |                           |                       |                  |                          |
+| Socket: `forktty ping`                |                           |                       |                  |                          |
 | Socket: hooks setup (codex/claude/gemini) |                       |                       |                  |                          |
 | Worktree: create / attach / status    |                           |                       |                  |                          |
 | Worktree: merge / remove              |                           |                       |                  |                          |

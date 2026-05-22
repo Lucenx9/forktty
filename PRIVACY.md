@@ -46,7 +46,7 @@ Use a custom notification command only if you trust that executable with local t
 
 ForkTTY uses GTK4/libadwaita and VTE from the local Linux system to render the window and terminal widgets. It does not load remote UI content.
 
-The repo-local CLI uses Node.js built-ins only and talks to the local Unix socket.
+The ForkTTY socket CLI talks only to the local Unix socket.
 
 ## How to Delete Local Data
 

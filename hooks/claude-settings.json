@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks claude session-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude session-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Claude hooks",
             "timeout": 5
           }
@@ -18,7 +18,59 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks claude prompt-submit || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude prompt-submit || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 5
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude pre-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 5
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude post-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 5
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude subagent-stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 5
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude pre-compact || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Claude hooks",
             "timeout": 5
           }
@@ -31,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks claude stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Claude hooks",
             "timeout": 5
           }
@@ -44,7 +96,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks claude notification || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude notification || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Claude hooks",
             "timeout": 5
           }
@@ -57,7 +109,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && node \"{{FORKTTY_SCRIPT}}\" hooks claude session-end || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude session-end || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Claude hooks",
             "timeout": 5
           }

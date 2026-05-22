@@ -104,6 +104,8 @@ const AGENT_SPECS = {
     hookEntries: [
       ["SessionStart", "session-start", 5000],
       ["UserPromptSubmit", "prompt-submit", 5000],
+      ["PreToolUse", "pre-tool", 5000],
+      ["PostToolUse", "post-tool", 5000],
       ["Stop", "stop", 5000],
     ],
   },
@@ -139,7 +141,11 @@ const AGENT_SPECS = {
     hookEntries: [
       ["SessionStart", "session-start", 5000],
       ["BeforeAgent", "prompt-submit", 5000],
+      ["BeforeTool", "pre-tool", 5000],
+      ["AfterTool", "post-tool", 5000],
       ["AfterAgent", "stop", 5000],
+      ["Notification", "notification", 5000],
+      ["PreCompress", "pre-compact", 5000],
       ["SessionEnd", "session-end", 5000],
     ],
   },
@@ -681,40 +687,40 @@ function printJson(value) {
 const HELP_TEXT = `ForkTTY CLI
 
 Usage:
-  ./scripts/forktty.mjs list [--json]
-  ./scripts/forktty.mjs create-workspace [--name <name>] [--working-dir <path>] [--json]
-  ./scripts/forktty.mjs focus <selector>
-  ./scripts/forktty.mjs focus --workspace-id <id>
-  ./scripts/forktty.mjs close-workspace <selector>
-  ./scripts/forktty.mjs notify [message] [--title <title>] [--kind <kind>]
-  ./scripts/forktty.mjs surfaces [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
-  ./scripts/forktty.mjs split-surface [--surface-id <id>] [--axis horizontal|vertical]
-  ./scripts/forktty.mjs focus-surface <surface-id>
-  ./scripts/forktty.mjs close-surface <surface-id>
-  ./scripts/forktty.mjs send-text <text> [--surface-id <id>]
-  ./scripts/forktty.mjs worktree-list [--cwd <repo>]
-  ./scripts/forktty.mjs worktree-status [--path <worktree>] [--cwd <worktree>]
-  ./scripts/forktty.mjs worktree-create <branch> [--cwd <repo>]
-  ./scripts/forktty.mjs worktree-attach <branch> [--cwd <repo>]
-  ./scripts/forktty.mjs worktree-remove <branch-or-worktree> [--cwd <repo>]
-  ./scripts/forktty.mjs worktree-merge <branch-or-worktree> [--cwd <repo>]
-  ./scripts/forktty.mjs set-status --key <key> --value <value> [--label <label>] [--color <color>]
-  ./scripts/forktty.mjs list-status [--workspace-id <id>]
-  ./scripts/forktty.mjs clear-status [--key <key>]
-  ./scripts/forktty.mjs set-progress --key <key> --value <number> [--label <label>] [--total <number>]
-  ./scripts/forktty.mjs list-progress [--workspace-id <id>]
-  ./scripts/forktty.mjs clear-progress [--key <key>]
-  ./scripts/forktty.mjs log [message] [--message <message>] [--level info|warn|error]
-  ./scripts/forktty.mjs logs [--workspace-id <id>]
-  ./scripts/forktty.mjs clear-logs [--workspace-id <id>]
-  ./scripts/forktty.mjs notifications [--json]
-  ./scripts/forktty.mjs clear-notifications
-  ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
-  ./scripts/forktty.mjs hooks doctor codex
-  ./scripts/forktty.mjs hooks test codex
-  ./scripts/forktty.mjs hooks <agent> <event>
-  ./scripts/forktty.mjs doctor
-  ./scripts/forktty.mjs ping
+  forktty list [--json]
+  forktty create-workspace [--name <name>] [--working-dir <path>] [--json]
+  forktty focus <selector>
+  forktty focus --workspace-id <id>
+  forktty close-workspace <selector>
+  forktty notify [message] [--title <title>] [--kind <kind>]
+  forktty surfaces [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
+  forktty focus-surface <surface-id>
+  forktty close-surface <surface-id>
+  forktty send-text <text> [--surface-id <id>]
+  forktty worktree-list [--cwd <repo>]
+  forktty worktree-status [--path <worktree>] [--cwd <worktree>]
+  forktty worktree-create <branch> [--cwd <repo>]
+  forktty worktree-attach <branch> [--cwd <repo>]
+  forktty worktree-remove <branch-or-worktree> [--cwd <repo>]
+  forktty worktree-merge <branch-or-worktree> [--cwd <repo>]
+  forktty set-status --key <key> --value <value> [--label <label>] [--color <color>]
+  forktty list-status [--workspace-id <id>]
+  forktty clear-status [--key <key>]
+  forktty set-progress --key <key> --value <number> [--label <label>] [--total <number>]
+  forktty list-progress [--workspace-id <id>]
+  forktty clear-progress [--key <key>]
+  forktty log [message] [--message <message>] [--level info|warn|error]
+  forktty logs [--workspace-id <id>]
+  forktty clear-logs [--workspace-id <id>]
+  forktty notifications [--json]
+  forktty clear-notifications
+  forktty hooks setup [codex] [claude] [gemini]
+  forktty hooks doctor codex
+  forktty hooks test codex
+  forktty hooks <agent> <event>
+  forktty doctor
+  forktty ping
 
 Selector flags:
   --workspace-id <id>
@@ -1546,10 +1552,18 @@ async function handleClearNotifications(context, args = []) {
   }
 }
 
-function buildHookShellCommand(scriptPath, agent, event, nodePath = process.execPath) {
+function buildHookShellCommand(
+  scriptPath,
+  agent,
+  event,
+  nodePath = process.execPath,
+  launcherPath = "",
+) {
   const spec = AGENT_SPECS[agent];
   const disabledGuard = `[ "\${${spec.disabledEnv}:-}" != "1" ]`;
-  const command = `${shellQuote(nodePath)} ${shellQuote(scriptPath)} hooks ${agent} ${event}`;
+  const command = launcherPath
+    ? `FORKTTY_NODE=${shellQuote(nodePath)} ${shellQuote(launcherPath)} hooks ${agent} ${event}`
+    : `${shellQuote(nodePath)} ${shellQuote(scriptPath)} hooks ${agent} ${event}`;
   return `${disabledGuard} && ${command} || echo '${HOOK_CONTINUE_JSON.trimEnd()}'`;
 }
 
@@ -1577,17 +1591,31 @@ function isForkttyManagedEntry(entry) {
   return isObject(entry) && entry.forkttySource === FORKTTY_HOOK_TAG;
 }
 
-function isLegacyForkttyHookCommand(command, scriptPath, agent, event) {
+function isLegacyForkttyHookCommand(command, scriptPath, agent, event, launcherPath = "") {
   if (typeof command !== "string") return false;
+  const eventSuffix = ` hooks ${agent} ${event}`;
+  if (!command.includes(eventSuffix)) return false;
   const scriptRef = shellQuote(scriptPath);
-  return command.includes(` ${scriptRef} hooks ${agent} ${event}`);
+  if (command.includes(` ${scriptRef}${eventSuffix}`)) return true;
+  if (launcherPath) {
+    const launcherRef = shellQuote(launcherPath);
+    if (command.includes(` ${launcherRef}${eventSuffix}`)) return true;
+  }
+  const spec = AGENT_SPECS[agent];
+  return command.includes("forktty.mjs") && command.includes(spec.disabledEnv);
 }
 
 function deepCloneJson(value) {
   return value === undefined ? {} : JSON.parse(JSON.stringify(value));
 }
 
-function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.execPath) {
+function mergeHookConfig(
+  existingConfig,
+  agent,
+  scriptPath,
+  nodePath = process.execPath,
+  launcherPath = "",
+) {
   const spec = AGENT_SPECS[agent];
   if (!spec) {
     throw new Error(`Unsupported agent: ${agent}`);
@@ -1599,7 +1627,13 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
 
   for (const [eventName, hookEventName, timeout] of spec.hookEntries) {
     const statusMessage = `ForkTTY ${spec.label} hooks`;
-    const command = buildHookShellCommand(scriptPath, agent, hookEventName, nodePath);
+    const command = buildHookShellCommand(
+      scriptPath,
+      agent,
+      hookEventName,
+      nodePath,
+      launcherPath,
+    );
     const nextEntry = buildHookEntry(command, statusMessage, timeout, spec.matcher);
     const existingEntries = Array.isArray(hooks[eventName]) ? [...hooks[eventName]] : [];
     // Strip any previously-installed ForkTTY entries before appending so a
@@ -1614,7 +1648,13 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
           if (hook?.type !== "command") return false;
           return (
             hook.command === command ||
-            isLegacyForkttyHookCommand(hook.command, scriptPath, agent, hookEventName)
+            isLegacyForkttyHookCommand(
+              hook.command,
+              scriptPath,
+              agent,
+              hookEventName,
+              launcherPath,
+            )
           );
         });
         if (hasMatchingCommand) {
@@ -1632,6 +1672,23 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
 
   nextConfig.hooks = hooks;
   return { changed, config: nextConfig };
+}
+
+function resolveHookLauncherPath(env = process.env) {
+  const launcherPath = trimEnv(env, "FORKTTY_HOOK_LAUNCHER");
+  if (!launcherPath) return "";
+  if (!path.isAbsolute(launcherPath)) {
+    throw new Error("FORKTTY_HOOK_LAUNCHER must be an absolute path");
+  }
+  return launcherPath;
+}
+
+function resolveHookNodePath(env = process.env) {
+  const nodePath = trimEnv(env, "FORKTTY_HOOK_NODE") || process.execPath;
+  if (!path.isAbsolute(nodePath)) {
+    throw new Error("FORKTTY_HOOK_NODE must be an absolute path");
+  }
+  return nodePath;
 }
 
 async function readJsonFile(filePath) {
@@ -1790,13 +1847,21 @@ async function handleHooksSetup(context, args) {
   const dryRun = dryRunOption === true || dryRunOption === "true";
   const agentNames = supportedAgents(positionals);
   const scriptPath = fileURLToPath(import.meta.url);
+  const launcherPath = resolveHookLauncherPath(context.env);
+  const nodePath = resolveHookNodePath(context.env);
 
   const plans = [];
   for (const agent of agentNames) {
     const spec = AGENT_SPECS[agent];
     const configPath = spec.configPath(context.env);
     const existing = await readAgentConfig(agent, configPath);
-    const { changed, config } = mergeHookConfig(existing, agent, scriptPath);
+    const { changed, config } = mergeHookConfig(
+      existing,
+      agent,
+      scriptPath,
+      nodePath,
+      launcherPath,
+    );
     plans.push({
       agent,
       configPath,
@@ -3222,6 +3287,8 @@ export {
   parseGlobalArgs,
   parseFlags,
   readAgentConfig,
+  resolveHookLauncherPath,
+  resolveHookNodePath,
   resolveSelectorParams,
   sendSocketRequest,
   shellQuote,

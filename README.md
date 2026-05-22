@@ -37,7 +37,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 - Linux
 - [Rust 1.88+](https://rustup.rs/)
-- Node.js 20+ only for the repo-local CLI helper/tests
+- Node.js 20+ only for the legacy development CLI helper/tests
 - GTK4, libadwaita, VTE GTK4 development libraries
 
 Debian / Ubuntu:
@@ -104,22 +104,26 @@ ForkTTY opens the current directory as the `main` workspace. Use the command pal
 
 ## Socket CLI
 
-ForkTTY ships a repo-local CLI wrapper over the Unix socket API:
+ForkTTY ships a CLI over the Unix socket API:
 
 ```bash
-./scripts/forktty.mjs ping
-./scripts/forktty.mjs list
-./scripts/forktty.mjs focus "Workspace 2"
-./scripts/forktty.mjs surfaces --workspace-name main
-./scripts/forktty.mjs split-surface --axis vertical
-./scripts/forktty.mjs send-text "cargo test\n"
-./scripts/forktty.mjs worktree-status
-./scripts/forktty.mjs notify --title "Input needed" --kind prompt "Blocked on test fixture"
-./scripts/forktty.mjs set-status --key agent:codex --label Codex --value Running --color blue
-./scripts/forktty.mjs set-progress --key build --label Build --value 42 --total 100
-./scripts/forktty.mjs log --level warn "Waiting for reviewer input"
-./scripts/forktty.mjs notifications
+forktty ping
+forktty list
+forktty focus "Workspace 2"
+forktty surfaces --workspace-name main
+forktty split-surface --axis vertical
+forktty send-text "cargo test\n"
+forktty worktree-status
+forktty notify --title "Input needed" --kind prompt "Blocked on test fixture"
+forktty set-status --key agent:codex --label Codex --value Running --color blue
+forktty set-progress --key build --label Build --value 42 --total 100
+forktty log --level warn "Waiting for reviewer input"
+forktty notifications
 ```
+
+Source checkouts can still run the legacy development wrapper directly with
+`node scripts/forktty.mjs ...`, but packaged builds and normal usage do not
+require Node.js.
 
 Spawned shells receive:
 
@@ -141,8 +145,8 @@ default socket location.
 Install hook templates for Codex, Claude Code, and Gemini CLI:
 
 ```bash
-./scripts/forktty.mjs hooks setup
-./scripts/forktty.mjs hooks setup codex claude gemini
+forktty hooks setup
+forktty hooks setup codex claude gemini
 ```
 
 The installer merges commands into:

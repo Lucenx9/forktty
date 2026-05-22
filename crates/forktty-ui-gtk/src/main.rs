@@ -1,4 +1,5 @@
 mod cli;
+mod socket_cli;
 
 #[cfg(feature = "gtk-vte")]
 mod gtk_app;
@@ -16,6 +17,9 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         cli::CliAction::Doctor => ExitCode::from(cli::run_doctor() as u8),
+        cli::CliAction::SocketCli(args) => {
+            ExitCode::from(socket_cli::run(args).clamp(0, 255) as u8)
+        }
         cli::CliAction::Unknown(arg) => {
             eprintln!("forktty: unknown argument: {arg}");
             eprintln!("Run `forktty --help` for usage.");

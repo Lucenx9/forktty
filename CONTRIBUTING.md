@@ -23,7 +23,7 @@ You will need:
 
 - Linux
 - Rust 1.88+ (install via [rustup](https://rustup.rs/))
-- Node.js 20+ (only for the repo-local CLI helper and its tests)
+- Node.js 20+ (only for the legacy development CLI helper and its tests)
 - GTK4, libadwaita, and VTE GTK4 development libraries
 
 Distro-specific install commands are in the [README](README.md#quick-start).
@@ -78,8 +78,9 @@ cargo deny check    # optional, requires cargo-deny
 
 - Rust unit and integration tests live next to the code under
   `crates/*/src/` and `crates/*/tests/`.
-- Socket-API and CLI behavior is tested via the Node.js test runner in
-  `scripts/forktty.test.mjs`.
+- Native socket CLI and hook behavior is covered by Rust tests in
+  `crates/forktty-ui-gtk/src/socket_cli.rs`; the legacy Node helper still has
+  compatibility tests in `scripts/forktty.test.mjs`.
 - GTK runtime smoke is manual; see [`docs/release-qa.md`](docs/release-qa.md).
 
 Prefer tests that pin observable behavior (socket responses, config
