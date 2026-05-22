@@ -914,6 +914,50 @@ mod tests {
     }
 
     #[test]
+    fn local_exclude_rejects_oversized_file() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        fs::write(&exclude_path, "x".repeat(MAX_EXCLUDE_BYTES as usize + 1)).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_exclude_rejects_symlink() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        let outside = dir.path().join("outside-exclude");
+        fs::write(&outside, "# outside\n").unwrap();
+        fs::remove_file(&exclude_path).unwrap();
+        symlink(&outside, &exclude_path).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
+    }
+
+    #[test]
     fn remove_rejects_dirty_worktree() {
         let dir = make_repo();
         let info = create(dir.path().to_str().unwrap(), "remove-dirty", "nested").unwrap();
