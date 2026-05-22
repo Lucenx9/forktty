@@ -4,6 +4,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -171,6 +173,7 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
             .write(true)
             .create_new(true)
             .open(&tmp_path)?;
+        apply_config_permissions(&write_path, &tmp_path)?;
         tmp_file.write_all(content.as_bytes())?;
         tmp_file.sync_all()?;
         fs::rename(&tmp_path, &write_path)?;
@@ -180,6 +183,18 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+
+fn apply_config_permissions(write_path: &Path, tmp_path: &Path) -> Result<(), ConfigError> {
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(write_path)
+            .map(|meta| meta.permissions().mode())
+            .unwrap_or(0o600);
+        fs::set_permissions(tmp_path, fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
 }
 
 fn config_write_path(path: &Path) -> Result<PathBuf, ConfigError> {
@@ -721,6 +736,24 @@ mod tests {
                 .all(|name| !name.to_string_lossy().contains(".tmp-")),
             "unexpected temp file sibling: {siblings:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_config_to_path_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "old = true\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+
+        save_config_to_path(&path, &config).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[cfg(unix)]
