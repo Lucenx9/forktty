@@ -1905,10 +1905,7 @@ fn copy_to_clipboard(text: &str) {
 }
 
 fn focus_workspace(state: &SocketAppState, workspace_id: &str) {
-    if let Ok(mut model) = state.model.lock() {
-        let _ = model.select_workspace(WorkspaceSelector::Id(workspace_id));
-    }
-    if let Err(err) = spawn_focused_surface_if_needed(state) {
+    if let Err(err) = select_workspace_with_terminal(state, workspace_id) {
         eprintln!("Failed to spawn workspace terminal: {err}");
         create_global_notification(
             state,
@@ -1917,6 +1914,36 @@ fn focus_workspace(state: &SocketAppState, workspace_id: &str) {
             NotificationKind::Error,
         );
     }
+}
+
+fn select_workspace_with_terminal(
+    state: &SocketAppState,
+    workspace_id: &str,
+) -> Result<bool, TerminalError> {
+    let (selected_id, previous_active_id) = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let previous_active_id = model.active_workspace_id();
+        let Some(selected) = model.select_workspace(WorkspaceSelector::Id(workspace_id)) else {
+            return Ok(false);
+        };
+        (selected.id, previous_active_id)
+    };
+
+    if let Err(err) = spawn_focused_surface_if_needed(state) {
+        if previous_active_id.as_deref() != Some(selected_id.as_str()) {
+            if let Some(previous_active_id) = previous_active_id.as_deref() {
+                if let Ok(mut model) = state.model.lock() {
+                    let _ = model.select_workspace(WorkspaceSelector::Id(previous_active_id));
+                }
+            }
+        }
+        return Err(err);
+    }
+
+    Ok(true)
 }
 
 fn build_workspace_context_menu(
@@ -4270,14 +4297,7 @@ fn select_sidebar_workspace(
     workspace_id: &str,
     controller: &Rc<RefCell<VteController>>,
 ) {
-    {
-        let mut model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => return,
-        };
-        let _ = model.select_workspace(WorkspaceSelector::Id(workspace_id));
-    }
-    if let Err(err) = spawn_focused_surface_if_needed(state) {
+    if let Err(err) = select_workspace_with_terminal(state, workspace_id) {
         eprintln!("Failed to spawn selected workspace terminal: {err}");
         create_global_notification(
             state,
@@ -7933,7 +7953,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_workspace_reports_spawn_failure_from_popover_path() {
+    fn focus_workspace_keeps_previous_workspace_when_spawn_fails() {
         let project_dir = tempfile::tempdir().unwrap();
         let project_cwd = project_dir.path().to_path_buf();
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
@@ -7945,11 +7965,11 @@ mod tests {
             PathBuf::from("/tmp/forktty.sock"),
         )
         .with_notification_dispatch(false);
-        let (first_workspace_id, second_surface_id) = {
+        let (first_workspace_id, second_workspace_id, second_surface_id) = {
             let mut model = model.lock().unwrap();
             let first = model.create_workspace("first", &project_cwd);
             let second = model.create_workspace("second", &project_cwd);
-            (first.id, second.focused_surface_id)
+            (first.id, second.id, second.focused_surface_id)
         };
         spawn_focused_surface_if_needed(&state).unwrap();
 
@@ -7958,7 +7978,7 @@ mod tests {
         let model = model.lock().unwrap();
         assert_eq!(
             model.active_workspace_id().as_deref(),
-            Some(first_workspace_id.as_str())
+            Some(second_workspace_id.as_str())
         );
         assert!(model.list_notifications().iter().any(|notification| {
             notification.title == "Workspace Switch Failed"

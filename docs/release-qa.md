@@ -26,6 +26,7 @@ bash scripts/build-deb.sh
 - Move focus between panes with keyboard shortcuts and pointer clicks.
 - Copy and paste with `Ctrl+Shift+C` / `Ctrl+Shift+V`.
 - Open the terminal context menu in a small split pane and use Paste.
+- If GTK cannot spawn the target workspace terminal while switching workspaces, it shows a Workspace Switch Failed notification and keeps the previous workspace active.
 - Close one pane and confirm focus moves to a remaining pane.
 - Close the focused pane while a long-running shell command is exiting; confirm only one "Terminal exited" notification is created and it does not reference the just-closed surface.
 - If GTK cannot spawn the replacement terminal while closing the only pane in a workspace, it shows a Close Pane Failed notification and keeps the old pane and terminal visible.
