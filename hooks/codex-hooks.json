@@ -7,7 +7,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex session-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Codex hooks",
-            "timeout": 5000
+            "timeout": 30
           }
         ]
       }
@@ -19,7 +19,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex prompt-submit || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Codex hooks",
-            "timeout": 5000
+            "timeout": 30
           }
         ]
       }
@@ -31,7 +31,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex pre-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Codex hooks",
-            "timeout": 5000
+            "timeout": 30
           }
         ]
       }
@@ -43,7 +43,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex post-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Codex hooks",
-            "timeout": 5000
+            "timeout": 30
           }
         ]
       }
@@ -55,7 +55,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Codex hooks",
-            "timeout": 5000
+            "timeout": 30
           }
         ]
       }

@@ -54,7 +54,14 @@ Files in this directory are canonical examples for review or manual repair:
 
 Replace `{{FORKTTY_LAUNCHER}}` with the absolute path to the `forktty` launcher
 if you install these by hand; keep it shell-quoted. The installer handles this
-quoting automatically. Each command is guarded by a per-agent disable variable:
+quoting automatically.
+
+The `timeout` field is provider-defined and measured in **seconds** for both
+Claude Code and Codex (Codex default 600 s; Claude default 600 s, 30 s for
+`UserPromptSubmit`). ForkTTY pins every entry at 30 s so a hook never blocks
+the agent loop longer than a local socket round-trip needs.
+
+Each command is guarded by a per-agent disable variable:
 
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`

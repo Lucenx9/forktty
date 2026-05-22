@@ -147,31 +147,38 @@ struct AgentSpec {
     matcher: Option<&'static str>,
 }
 
+// Codex and Claude Code both treat the `timeout` field as seconds (Codex default 600s;
+// Claude default 600s, 30s for UserPromptSubmit). The previous Codex value of 5000
+// was a millisecond assumption that meant ~83 minutes; cap at 30s for both providers
+// so a forktty hook never holds the agent loop for longer than a generous local
+// round-trip while still leaving headroom over the socket request budget.
+const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
+
 const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionStart",
         hook_event_name: "session-start",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "UserPromptSubmit",
         hook_event_name: "prompt-submit",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PreToolUse",
         hook_event_name: "pre-tool",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PostToolUse",
         hook_event_name: "post-tool",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "Stop",
         hook_event_name: "stop",
-        timeout: 5000,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];
 
@@ -179,47 +186,47 @@ const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionStart",
         hook_event_name: "session-start",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "UserPromptSubmit",
         hook_event_name: "prompt-submit",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PreToolUse",
         hook_event_name: "pre-tool",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PostToolUse",
         hook_event_name: "post-tool",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "SubagentStop",
         hook_event_name: "subagent-stop",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "PreCompact",
         hook_event_name: "pre-compact",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "Stop",
         hook_event_name: "stop",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "Notification",
         hook_event_name: "notification",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
         event_name: "SessionEnd",
         hook_event_name: "session-end",
-        timeout: 5,
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];
 
@@ -4598,6 +4605,42 @@ mod tests {
             entries[0]["hooks"][0]["command"],
             Value::String("custom-wrapper hooks codex session-start".to_string())
         );
+    }
+
+    #[test]
+    fn codex_and_claude_hook_timeouts_are_seconds_within_provider_budget() {
+        // Codex docs treat `timeout` as seconds (default 600). Claude Code
+        // hooks reference also documents seconds (default 600, 30 for
+        // UserPromptSubmit). The installer must emit a value that is
+        // measured in seconds and stays under the smaller of the two
+        // provider defaults so we never block the agent loop longer than a
+        // local round-trip needs.
+        assert_eq!(HOOK_ENTRY_TIMEOUT_SECS, 30);
+        for spec in [agent_spec("codex").unwrap(), agent_spec("claude").unwrap()] {
+            let (_, config) =
+                merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
+            let hooks = config["hooks"].as_object().expect("hooks object");
+            for entries in hooks.values() {
+                for entry in entries.as_array().expect("entry array") {
+                    if !is_forktty_managed_entry(entry) {
+                        continue;
+                    }
+                    for hook in entry["hooks"].as_array().expect("hooks array") {
+                        let timeout = hook["timeout"].as_u64().expect("integer timeout");
+                        assert_eq!(
+                            timeout, HOOK_ENTRY_TIMEOUT_SECS,
+                            "{} entry must encode timeout in seconds",
+                            spec.key
+                        );
+                        assert!(
+                            timeout < 600,
+                            "{} timeout must stay under provider default",
+                            spec.key
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
