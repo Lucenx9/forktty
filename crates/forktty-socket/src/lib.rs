@@ -76,6 +76,9 @@ impl std::fmt::Display for DispatchError {
                 let label = match kind.as_str() {
                     "workspace" => "Workspace not found",
                     "surface" => "Surface not found",
+                    message if message.starts_with("Not a git repository: ") => {
+                        return f.write_str(message);
+                    }
                     other => return write!(f, "{other} not found"),
                 };
                 f.write_str(label)
@@ -108,7 +111,7 @@ impl From<forktty_core::worktree::WorktreeError> for DispatchError {
         match err {
             W::NotFound(name) => DispatchError::NotFound(format!("Worktree '{name}'")),
             W::BranchNotFound(name) => DispatchError::NotFound(format!("Branch '{name}'")),
-            W::NotARepo(path) => DispatchError::Other(format!("Not a git repository: {path}")),
+            W::NotARepo(path) => DispatchError::NotFound(format!("Not a git repository: {path}")),
             W::AlreadyExists(name) => {
                 DispatchError::AlreadyExists(format!("Worktree '{name}' already exists"))
             }
@@ -1924,6 +1927,10 @@ mod tests {
         assert_eq!(
             DispatchError::from(W::InvalidName(forktty_core::WorktreeNameError::Empty)).code(),
             "invalid_param"
+        );
+        assert_eq!(
+            DispatchError::from(W::NotARepo("/tmp/repo".into())).code(),
+            "not_found"
         );
         assert_eq!(DispatchError::from(W::BareRepo).code(), "error");
         assert_eq!(
