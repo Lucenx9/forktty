@@ -241,6 +241,7 @@ pub async fn dispatch(
                     .select_workspace(selector)
                     .ok_or(DispatchError::NotFound("workspace"))?
             };
+            ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(workspace))
         }
         "workspace.close" => {
@@ -2562,6 +2563,32 @@ mod tests {
             backend.sent_text(feature_surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn workspace_select_spawns_missing_terminal_for_selected_workspace() {
+        let (state, backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let main_surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "feature", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        backend.close(main_surface_id).unwrap();
+
+        let selected = dispatch(&state, "workspace.select", json!({"name": "main"}))
+            .await
+            .unwrap();
+
+        assert_eq!(selected["name"], "main");
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == main_surface_id));
     }
 
     #[tokio::test]
