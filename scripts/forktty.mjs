@@ -704,7 +704,7 @@ async function tryWorkspaceSelect(context, params) {
 
 async function handleFocus(context, args) {
   const { options, positionals } = parseFlags(args);
-  const candidates = resolveSelectorParams(options, positionals, context.env);
+  const candidates = resolveSelectorParams(options, positionals, context.env, "focus");
 
   if (!candidates) {
     throw new Error(
@@ -731,7 +731,13 @@ async function handleFocus(context, args) {
   }
 }
 
-function resolveSelectorParams(options, positionals, env = process.env) {
+function resolveSelectorParams(
+  options,
+  positionals,
+  env = process.env,
+  commandName = "workspace selector",
+) {
+  rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, commandName);
   requireTargetSelectorOptions(options);
   const workspaceId =
     typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "";
@@ -767,7 +773,7 @@ function resolveSelectorParams(options, positionals, env = process.env) {
 
 async function handleCloseWorkspace(context, args) {
   const { options, positionals } = parseFlags(args);
-  const candidates = resolveSelectorParams(options, positionals, context.env);
+  const candidates = resolveSelectorParams(options, positionals, context.env, "close-workspace");
   if (!candidates) {
     throw new Error(
       "close-workspace requires a selector, --workspace-id, --workspace-name, or --worktree-name",

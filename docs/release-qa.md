@@ -67,6 +67,7 @@ rebuilding.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty surfaces --workspace main` — exits with `surfaces: unknown option --workspace` instead of listing every surface.
 - `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.
+- `FORKTTY_WORKSPACE_ID=workspace-1 forktty close-workspace --workspace main` — exits with `close-workspace: unknown option --workspace` instead of falling back to and closing the inherited workspace id.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
 - `FORKTTY_WORKSPACE_ID=" workspace-1 " forktty set-status --key qa --value ok` — trims the inherited workspace id before targeting metadata.

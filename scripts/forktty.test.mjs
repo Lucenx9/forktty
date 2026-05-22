@@ -839,6 +839,10 @@ describe("forktty CLI helpers", () => {
       /--workspace-name requires a value/,
     );
     assert.throws(
+      () => resolveSelectorParams({ workspace: "main" }, [], {}, "focus"),
+      /focus: unknown option --workspace/,
+    );
+    assert.throws(
       () => resolveSelectorParams({}, ["   "], { FORKTTY_WORKSPACE_ID: "ws-env" }),
       /workspace selector requires a value/,
     );
