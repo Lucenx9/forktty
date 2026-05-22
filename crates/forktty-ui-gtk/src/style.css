@@ -677,8 +677,15 @@ popover.ft-workspace-popover contents {
   border-color: var(--ft-accent);
 }
 
+/* Echo the sidebar card's "active" treatment: accent rail on the left
+ * and a soft accent fill so the current workspace pops in this list too. */
 .ft-workspace-popover-row.active {
-  background: var(--ft-bg-3);
+  background: alpha(var(--ft-accent), 0.16);
+  box-shadow: inset 3px 0 0 var(--ft-accent);
+}
+
+.ft-workspace-popover-row.active:hover {
+  background: alpha(var(--ft-accent), 0.22);
 }
 
 .ft-workspace-popover-row-inner {

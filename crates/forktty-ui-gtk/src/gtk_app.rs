@@ -2059,10 +2059,12 @@ fn build_workspace_context_menu(
         let state_ = state.clone();
         let controller_ = controller.clone();
         let ws_id = workspace_id.clone();
+        // `go-jump-symbolic` reads as "navigate to" rather than the
+        // submenu-style chevron that `go-next-symbolic` implies.
         add_context_menu_item(
             &menu,
             &popover,
-            "go-next-symbolic",
+            "go-jump-symbolic",
             "Focus Workspace",
             false,
             move || {
