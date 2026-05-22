@@ -107,6 +107,7 @@ rebuilding.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
 - `forktty close-surface <surface-id> extra` — exits with `close-surface: unexpected argument extra` instead of ignoring the extra value.
+- `forktty focus-surface <surface-id-a> --surface-id <surface-id-b>` — exits with `focus-surface: cannot combine --surface-id with a positional surface id` instead of silently focusing one of them.
 - `forktty split-surface --axis=` — exits with `--axis requires a value` instead of creating an unintended horizontal split.
 - `forktty split-surface --axs vertical` — exits with `split-surface: unknown option --axs` instead of creating the default horizontal split.
 - `forktty split-surface <surface-id> extra` — exits with `split-surface: unexpected argument extra` instead of ignoring the extra value.

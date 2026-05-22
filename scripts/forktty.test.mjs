@@ -868,6 +868,16 @@ describe("forktty CLI helpers", () => {
       /surface id requires a value/,
     );
     assert.throws(
+      () =>
+        buildSurfaceActionParams(
+          { "surface-id": "surface-2" },
+          ["surface-1"],
+          {},
+          "focus-surface",
+        ),
+      /focus-surface: cannot combine --surface-id with a positional surface id/,
+    );
+    assert.throws(
       () => buildSurfaceActionParams({}, ["surface-1", "extra"], {}, "close-surface"),
       /close-surface: unexpected argument extra/,
     );
@@ -911,6 +921,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => buildSurfaceSplitParams({ "surface-id": true }, [], {}),
       /--surface-id requires a value/,
+    );
+    assert.throws(
+      () => buildSurfaceSplitParams({ "surface-id": "surface-2" }, ["surface-1"], {}),
+      /split-surface: cannot combine --surface-id with a positional surface id/,
     );
     assert.throws(
       () => buildSurfaceSplitParams({ axs: "vertical" }, ["surface-2"]),

@@ -901,17 +901,24 @@ function surfaceIdFromWorkspaceList(workspaces) {
   return workspace?.focused_surface_id || workspace?.focusedSurfaceId || "";
 }
 
-function surfaceIdFromArgs(options, positionals, env = process.env) {
+function surfaceIdFromArgs(options, positionals, env = process.env, command = "surface") {
   requireNonBlankStringOption(options, "surface-id");
-  if (typeof options["surface-id"] === "string" && options["surface-id"].trim()) {
-    return options["surface-id"].trim();
+  const optionSurfaceId =
+    typeof options["surface-id"] === "string" && options["surface-id"].trim()
+      ? options["surface-id"].trim()
+      : "";
+  const positionalSurfaceId = positionals.length > 0 ? positionals[0].trim() : "";
+  if (positionals.length > 0 && !positionalSurfaceId) {
+    throw new Error("surface id requires a value");
   }
-  if (positionals.length > 0) {
-    const surfaceId = positionals[0].trim();
-    if (!surfaceId) {
-      throw new Error("surface id requires a value");
-    }
-    return surfaceId;
+  if (optionSurfaceId && positionalSurfaceId) {
+    throw new Error(`${command}: cannot combine --surface-id with a positional surface id`);
+  }
+  if (optionSurfaceId) {
+    return optionSurfaceId;
+  }
+  if (positionalSurfaceId) {
+    return positionalSurfaceId;
   }
   if (typeof env.FORKTTY_SURFACE_ID === "string" && env.FORKTTY_SURFACE_ID.trim()) {
     return env.FORKTTY_SURFACE_ID.trim();
@@ -924,7 +931,7 @@ function buildSurfaceActionParams(options, positionals, env = process.env, comma
   if (positionals.length > 1) {
     throw new Error(`${command}: unexpected argument ${positionals[1]}`);
   }
-  const surfaceId = surfaceIdFromArgs(options, positionals, env);
+  const surfaceId = surfaceIdFromArgs(options, positionals, env, command);
   if (!surfaceId) {
     throw new Error(`${command} requires --surface-id, a surface id, or FORKTTY_SURFACE_ID`);
   }
@@ -943,7 +950,7 @@ function buildSurfaceSplitParams(options, positionals, env = process.env) {
     throw new Error("Invalid --axis: expected horizontal or vertical");
   }
   const params = { axis };
-  const surfaceId = surfaceIdFromArgs(options, positionals, env);
+  const surfaceId = surfaceIdFromArgs(options, positionals, env, "split-surface");
   if (surfaceId) {
     params.surface_id = surfaceId;
   }
