@@ -4339,6 +4339,9 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             }
             return Some(title.to_string());
         }
+        if title == "Terminal" || title == compact_cwd.as_str() || title == full_cwd.as_str() {
+            return Some(format!("Pane {}/{}", index + 1, pane_count));
+        }
         Some(format!("Pane {}/{} · {}", index + 1, pane_count, title))
     });
     let mut signature = format!(
@@ -6706,11 +6709,19 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .build();
     let font_family = font_family_combo(parent, &loaded.appearance.font_family);
     font_family.set_tooltip_text(Some("Terminal font family"));
-    font_family.set_width_request(300);
+    font_family.set_hexpand(false);
+    font_family.set_halign(gtk::Align::End);
     font_family.set_valign(gtk::Align::Center);
+    font_family.set_width_request(220);
+    for cell in font_family.cells() {
+        if let Ok(text) = cell.downcast::<gtk::CellRendererText>() {
+            text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            text.set_max_width_chars(28);
+        }
+    }
     let font_family_row = settings_action_row(
         "Font family",
-        "Prefer a monospace font with symbol coverage for terminal prompts.",
+        "Monospace font with symbol coverage.",
     );
     font_family_row.add_suffix(&font_family);
     font_family_row.set_activatable_widget(Some(&font_family));
