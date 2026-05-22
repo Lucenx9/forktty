@@ -391,6 +391,15 @@ impl WorkspaceModel {
 
     pub fn split_surface(&mut self, surface_id: &str, axis: SplitAxis) -> Option<Surface> {
         let source = self.surfaces.get(surface_id)?.clone();
+        // Pre-validate the workspace still owns this surface in its pane tree
+        // before allocating an id, so failure paths don't leak monotonic ids.
+        let workspace_ref = self.workspaces.get(&source.workspace_id)?;
+        if !leaf_surface_ids(&workspace_ref.pane_tree)
+            .iter()
+            .any(|id| id == surface_id)
+        {
+            return None;
+        }
         let new_id = self.next_surface_id();
         let new_surface = Surface {
             id: new_id.clone(),
@@ -400,22 +409,26 @@ impl WorkspaceModel {
             unread: false,
             needs_attention: false,
         };
-        let workspace = self.workspaces.get_mut(&source.workspace_id)?;
-        if replace_leaf_with_split(
+        let workspace = self
+            .workspaces
+            .get_mut(&source.workspace_id)
+            .expect("workspace existence verified above");
+        let inserted = replace_leaf_with_split(
             &mut workspace.pane_tree,
             surface_id,
             axis,
             PaneNode::Leaf {
                 surface_id: new_id.clone(),
             },
-        ) {
-            workspace.focused_surface_id = new_id;
-            self.surfaces
-                .insert(new_surface.id.clone(), new_surface.clone());
-            Some(new_surface)
-        } else {
-            None
+        );
+        debug_assert!(inserted, "leaf existence pre-validated");
+        if !inserted {
+            return None;
         }
+        workspace.focused_surface_id = new_id;
+        self.surfaces
+            .insert(new_surface.id.clone(), new_surface.clone());
+        Some(new_surface)
     }
 
     pub fn update_split_partition_ratio(
@@ -1092,6 +1105,30 @@ mod tests {
         assert_eq!(workspace.focused_surface_id, new_surface.id);
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
         assert!(matches!(workspace.pane_tree, PaneNode::Split { .. }));
+    }
+
+    #[test]
+    fn split_surface_does_not_leak_id_when_source_is_not_a_leaf_in_workspace() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        // Detach the second surface from the pane tree but keep it in the
+        // surface map — emulating a corrupted in-memory state.
+        let first = workspace.focused_surface_id;
+        model.workspaces.get_mut(&workspace.id).unwrap().pane_tree = PaneNode::Leaf {
+            surface_id: first.clone(),
+        };
+        let before = model.next_surface;
+
+        assert!(model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .is_none());
+        assert_eq!(
+            model.next_surface, before,
+            "failed split must not advance the surface id counter"
+        );
     }
 
     #[test]
