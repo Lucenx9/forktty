@@ -12,6 +12,7 @@ use crate::{validate_worktree_name, WorktreeNameError};
 const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SPAWN_RETRIES: usize = 5;
 const HOOK_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKTREE_HEAD_MAX_BYTES: u64 = 4096;
 const MAX_EXCLUDE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Error, Debug)]
@@ -455,8 +456,7 @@ fn get_registered_worktree_branch(
         .join("worktrees")
         .join(worktree_name)
         .join("HEAD");
-    std::fs::read_to_string(head_path)
-        .ok()
+    read_registered_head_ref(&head_path)
         .and_then(|head| {
             head.lines()
                 .next()
@@ -465,6 +465,20 @@ fn get_registered_worktree_branch(
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_default()
+}
+
+fn read_registered_head_ref(head_path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(head_path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > WORKTREE_HEAD_MAX_BYTES {
+        return None;
+    }
+    let mut head = String::new();
+    File::open(head_path)
+        .ok()?
+        .take(WORKTREE_HEAD_MAX_BYTES)
+        .read_to_string(&mut head)
+        .ok()?;
+    Some(head)
 }
 
 fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
@@ -911,6 +925,33 @@ mod tests {
 
         let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert!(exclude.lines().any(|line| line.trim() == ".worktrees/"));
+    }
+
+    #[test]
+    fn registered_head_ref_rejects_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let head_path = dir.path().join("HEAD");
+        fs::write(&head_path, "ref: refs/heads/main\n").unwrap();
+        assert_eq!(
+            read_registered_head_ref(&head_path),
+            Some("ref: refs/heads/main\n".to_string())
+        );
+
+        fs::write(&head_path, "x".repeat(WORKTREE_HEAD_MAX_BYTES as usize + 1)).unwrap();
+
+        assert_eq!(read_registered_head_ref(&head_path), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_head_ref_rejects_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target-head");
+        let head_path = dir.path().join("HEAD");
+        fs::write(&target, "ref: refs/heads/main\n").unwrap();
+        symlink(&target, &head_path).unwrap();
+
+        assert_eq!(read_registered_head_ref(&head_path), None);
     }
 
     #[test]

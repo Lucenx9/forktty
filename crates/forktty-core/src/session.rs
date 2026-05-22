@@ -123,7 +123,6 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
 
 fn session_write_path(path: &Path) -> Result<PathBuf, SessionError> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
@@ -184,10 +183,16 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
     }
 }
 
+fn sanitize_for_terminal(input: &str) -> String {
+    input.chars().flat_map(char::escape_default).collect()
+}
+
 fn log_quarantine_reason(path: &Path, reason: &str) {
     // Operators need to know *why* a session disappeared on startup — silent
     // quarantine masks broken migrations and on-disk corruption.
-    eprintln!("Quarantining session at {}: {reason}", path.display());
+    let safe_path = sanitize_for_terminal(&path.display().to_string());
+    let safe_reason = sanitize_for_terminal(reason);
+    eprintln!("Quarantining session at {safe_path}: {safe_reason}");
 }
 
 fn parse_session_content(content: &str) -> Result<SessionData, SessionError> {
@@ -552,7 +557,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn save_and_load_session_through_symlink_preserves_link() {
+    fn save_and_load_session_through_symlink_replaces_link_with_file() {
         use std::os::unix::fs::symlink;
 
         let dir = tempfile::tempdir().unwrap();
@@ -575,11 +580,11 @@ mod tests {
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data.clone()));
         save_session_to_path(&path, &data).unwrap();
 
-        assert!(fs::symlink_metadata(&path)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read_link(&path).unwrap(), target);
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+        assert!(
+            fs::symlink_metadata(&target).is_ok(),
+            "target file should remain present"
+        );
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
         let link_siblings: Vec<_> = fs::read_dir(&link_dir)
             .unwrap()
@@ -1008,6 +1013,14 @@ mod tests {
         let loaded = load_session_from_path(&path).unwrap();
         assert!(loaded.is_none());
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn sanitize_for_terminal_escapes_control_sequences() {
+        let raw = "dup-id-\u{001b}]52;c;payload\u{0007}\nnext";
+        let sanitized = sanitize_for_terminal(raw);
+        assert_eq!(sanitized, "dup-id-\\u{1b}]52;c;payload\\u{7}\\nnext");
+        assert!(!sanitized.contains("\nnext"));
     }
 
     fn write_legacy_session_file(path: &Path) {

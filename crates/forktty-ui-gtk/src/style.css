@@ -24,6 +24,7 @@
   --ft-text: alpha(var(--window-fg-color), 0.85);
   --ft-text-muted: alpha(var(--window-fg-color), 0.60);
   --ft-text-faint: alpha(var(--window-fg-color), 0.40);
+  --dim-opacity: 0.82;
 
   --ft-accent: var(--accent-color);
   --ft-accent-hover: var(--accent-bg-color);
