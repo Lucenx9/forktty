@@ -12,6 +12,8 @@ pub mod vte;
 pub enum TerminalError {
     #[error("Terminal surface not found: {0}")]
     NotFound(String),
+    #[error("Terminal surface not ready: {0}")]
+    NotReady(String),
     #[error("Terminal backend error: {0}")]
     Backend(String),
     #[error("Lock poisoned")]
@@ -109,6 +111,9 @@ pub trait TerminalBackend: Send + Sync {
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError>;
     fn close(&self, surface_id: &str) -> Result<(), TerminalError>;
+    fn mark_surface_ready(&self, _surface_id: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.close(surface_id)
     }

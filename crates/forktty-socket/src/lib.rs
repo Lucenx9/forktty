@@ -37,7 +37,7 @@ pub enum SocketError {
 ///
 /// The variants map to stable string codes that clients can branch on
 /// (`method_not_found`, `missing_param`, `not_found`, `payload_too_large`,
-/// `error`). Existing handlers that return ad-hoc `String` errors keep
+/// `not_ready`, `error`). Existing handlers that return ad-hoc `String` errors keep
 /// working via the [`From<String>`] impl below; new sites should prefer the
 /// structured variants so the response carries a useful `error.code`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +52,7 @@ pub enum DispatchError {
     },
     Conflict(String),
     AlreadyExists(String),
+    NotReady(String),
     InvalidParam(String),
     Other(String),
 }
@@ -65,6 +66,7 @@ impl DispatchError {
             DispatchError::PayloadTooLarge { .. } => "payload_too_large",
             DispatchError::Conflict(_) => "conflict",
             DispatchError::AlreadyExists(_) => "already_exists",
+            DispatchError::NotReady(_) => "not_ready",
             DispatchError::InvalidParam(_) => "invalid_param",
             DispatchError::Other(_) => "error",
         }
@@ -97,6 +99,7 @@ impl std::fmt::Display for DispatchError {
             ),
             DispatchError::Conflict(message) => f.write_str(message),
             DispatchError::AlreadyExists(message) => f.write_str(message),
+            DispatchError::NotReady(message) => f.write_str(message),
             DispatchError::InvalidParam(message) => f.write_str(message),
             DispatchError::Other(message) => f.write_str(message),
         }
@@ -130,6 +133,18 @@ impl From<forktty_core::worktree::WorktreeError> for DispatchError {
             | W::UpToDate
             | W::HookOutsideWorktree
             | W::WorktreeMetadataMismatch { .. } => DispatchError::Conflict(err.to_string()),
+            other => DispatchError::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<TerminalError> for DispatchError {
+    fn from(err: TerminalError) -> Self {
+        match err {
+            TerminalError::NotFound(_) => DispatchError::NotFound("surface".to_string()),
+            TerminalError::NotReady(surface_id) => DispatchError::NotReady(format!(
+                "Terminal surface is not ready to receive text: {surface_id}"
+            )),
             other => DispatchError::Other(other.to_string()),
         }
     }
@@ -595,7 +610,7 @@ pub async fn dispatch(
             state
                 .terminal
                 .send_text(surface_id, text)
-                .map_err(|err| err.to_string())?;
+                .map_err(DispatchError::from)?;
             Ok(json!({"sent": true}))
         }
         "surface.split" => {
@@ -1873,6 +1888,58 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct NotReadySendBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+    }
+
+    impl TerminalBackend for NotReadySendBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Err(TerminalError::NotReady(surface_id.to_string()))
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
+        }
+    }
+
     #[derive(Debug)]
     struct SpawnFailsCloseSucceedsBackend {
         surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
@@ -2333,6 +2400,33 @@ mod tests {
         .await
         .unwrap();
         assert!(logs.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_text_returns_structured_not_ready_before_terminal_child_ready() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(NotReadySendBackend::default());
+        let state = SocketAppState::new(
+            model,
+            backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({"surface_id": surface_id, "text": "echo not-ready\n"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "not_ready");
+        assert!(err.to_string().contains(surface_id));
     }
 
     #[tokio::test]

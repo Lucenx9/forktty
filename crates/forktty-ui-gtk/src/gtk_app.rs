@@ -84,6 +84,7 @@ enum GtkTerminalCommand {
 struct GtkVteBackend {
     sender: mpsc::Sender<GtkTerminalCommand>,
     surfaces: Arc<Mutex<BTreeMap<String, TerminalSurfaceState>>>,
+    ready_surfaces: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl GtkVteBackend {
@@ -91,6 +92,7 @@ impl GtkVteBackend {
         Self {
             sender,
             surfaces: Arc::new(Mutex::new(BTreeMap::new())),
+            ready_surfaces: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
@@ -120,9 +122,16 @@ impl TerminalBackend for GtkVteBackend {
             },
         );
         drop(surfaces);
+        self.ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(&surface_id);
         if let Err(err) = self.send_command(GtkTerminalCommand::Spawn(request)) {
             if let Ok(mut surfaces) = self.surfaces.lock() {
                 surfaces.remove(&surface_id);
+            }
+            if let Ok(mut ready_surfaces) = self.ready_surfaces.lock() {
+                ready_surfaces.remove(&surface_id);
             }
             return Err(err);
         }
@@ -130,13 +139,22 @@ impl TerminalBackend for GtkVteBackend {
     }
 
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+        {
+            let surfaces = self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?;
+            if !surfaces.contains_key(surface_id) {
+                return Err(TerminalError::NotFound(surface_id.to_string()));
+            }
+        }
         if !self
-            .surfaces
+            .ready_surfaces
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?
-            .contains_key(surface_id)
+            .contains(surface_id)
         {
-            return Err(TerminalError::NotFound(surface_id.to_string()));
+            return Err(TerminalError::NotReady(surface_id.to_string()));
         }
         self.send_command(GtkTerminalCommand::SendText {
             surface_id: surface_id.to_string(),
@@ -181,14 +199,40 @@ impl TerminalBackend for GtkVteBackend {
             .remove(surface_id)
             .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
         drop(surfaces);
+        let was_ready = self
+            .ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(surface_id);
         if let Err(err) = self.send_command(GtkTerminalCommand::Close {
             surface_id: surface_id.to_string(),
         }) {
             if let Ok(mut surfaces) = self.surfaces.lock() {
                 surfaces.insert(surface_id.to_string(), removed);
             }
+            if was_ready {
+                if let Ok(mut ready_surfaces) = self.ready_surfaces.lock() {
+                    ready_surfaces.insert(surface_id.to_string());
+                }
+            }
             return Err(err);
         }
+        Ok(())
+    }
+
+    fn mark_surface_ready(&self, surface_id: &str) -> Result<(), TerminalError> {
+        if !self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .contains_key(surface_id)
+        {
+            return Err(TerminalError::NotFound(surface_id.to_string()));
+        }
+        self.ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .insert(surface_id.to_string());
         Ok(())
     }
 
@@ -198,6 +242,10 @@ impl TerminalBackend for GtkVteBackend {
             .map_err(|_| TerminalError::LockPoisoned)?
             .remove(surface_id)
             .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        self.ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(surface_id);
         Ok(())
     }
 
@@ -300,6 +348,8 @@ impl VteController {
             GtkTerminalCommand::SendText { surface_id, text } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
                     vte_send_text(widget, &text);
+                } else {
+                    eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
                 }
             }
             GtkTerminalCommand::Resize {
@@ -330,9 +380,20 @@ impl VteController {
         let spawn_workspace_id = request.workspace_id.clone();
         let spawn_surface_id = request.surface_id.clone();
         let spawn_state_for_error = self.state.clone();
+        let spawn_state_for_ready = self.state.clone();
         let spawn_model_for_error = spawn_model.clone();
-        match spawn_vte_terminal_with_callback(&request, move |result| {
-            if let Err(err) = result {
+        match spawn_vte_terminal_with_callback(&request, move |result| match result {
+            Ok(_) => {
+                if let Some(state) = &spawn_state_for_ready {
+                    if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
+                        eprintln!(
+                            "Failed to mark terminal surface ready {}: {err}",
+                            spawn_surface_id
+                        );
+                    }
+                }
+            }
+            Err(err) => {
                 record_terminal_spawn_failure(
                     &spawn_model,
                     &spawn_workspace_id,
@@ -3445,7 +3506,6 @@ fn build_ui(app: &adw::Application) {
     });
 
     window.present();
-    start_socket_server(state.clone());
 
     let state_for_bootstrap = state.clone();
     let controller_for_bootstrap = controller.clone();
@@ -3469,6 +3529,7 @@ fn build_ui(app: &adw::Application) {
             &controller_for_bootstrap,
             true,
         );
+        start_socket_server(state_for_bootstrap.clone());
     });
 }
 
