@@ -549,6 +549,32 @@ fn verify_linked_worktree_path(
             name: worktree_name.to_string(),
         });
     }
+    // Both directions of the link metadata can be edited independently
+    // (`.git/worktrees/<name>/gitdir` and `<worktree>/.git`). Restrict the
+    // resolved worktree path to one of the three supported layouts so a
+    // tampered gitdir cannot redirect destructive operations (e.g.
+    // `remove_dir_all`) at an arbitrary filesystem path.
+    let workdir = repo.workdir().ok_or(WorktreeError::BareRepo)?;
+    let canonical_workdir =
+        std::fs::canonicalize(workdir).map_err(|err| WorktreeError::WorktreePathUnresolved {
+            name: worktree_name.to_string(),
+            source: err,
+        })?;
+    let allowed_root = canonical_workdir
+        .parent()
+        .ok_or(WorktreeError::RepositoryAtFilesystemRoot)?;
+    let nested_root = canonical_workdir.join(".worktrees");
+    let outer_root = allowed_root.join(".worktrees");
+    let sibling_parent_ok = canonical_worktree.parent() == Some(allowed_root)
+        && canonical_worktree != canonical_workdir;
+    let inside_allowed_layout = canonical_worktree.starts_with(&nested_root)
+        || canonical_worktree.starts_with(&outer_root)
+        || sibling_parent_ok;
+    if !inside_allowed_layout {
+        return Err(WorktreeError::WorktreeMetadataMismatch {
+            name: worktree_name.to_string(),
+        });
+    }
     Ok(canonical_worktree)
 }
 
@@ -872,6 +898,45 @@ mod tests {
 
         assert!(matches!(result, Err(WorktreeError::WorktreeDirty(_))));
         assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn remove_rejects_worktree_redirected_outside_layout_roots() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "redirect", "nested").unwrap();
+
+        // Stage an "attacker-controlled" directory inside the repo workdir
+        // but outside the supported layout roots (not under .worktrees and
+        // not a sibling of the workdir).
+        let repo_workdir = std::fs::canonicalize(dir.path()).unwrap();
+        let attacker_dir = repo_workdir.join("escape-target");
+        fs::create_dir_all(&attacker_dir).unwrap();
+        let admin_dir = repo_workdir
+            .join(".git/worktrees")
+            .join(&info.worktree_name);
+        // Mirror both directions of the link metadata so the gitdir
+        // equality check passes; only the new layout guard should reject.
+        fs::write(
+            admin_dir.join("gitdir"),
+            format!("{}/.git\n", attacker_dir.display()),
+        )
+        .unwrap();
+        fs::write(
+            attacker_dir.join(".git"),
+            format!("gitdir: {}\n", admin_dir.display()),
+        )
+        .unwrap();
+
+        let result = remove(dir.path().to_str().unwrap(), "redirect", true);
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::WorktreeMetadataMismatch { .. }) | Err(WorktreeError::NotFound(_))
+        ));
+        assert!(
+            attacker_dir.exists(),
+            "the attacker-controlled directory must not be deleted"
+        );
     }
 
     #[test]
