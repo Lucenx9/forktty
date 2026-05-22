@@ -163,7 +163,10 @@ jobs:
 
           rm -rf target/packaging/release
           mkdir -p target/packaging/release
-          cp "$deb_artifact" "$appimage_artifact" target/packaging/release/
+          deb_release_name="$(basename "$deb_artifact")"
+          deb_release_name="${deb_release_name//\~/.}"
+          cp "$appimage_artifact" target/packaging/release/
+          cp "$deb_artifact" "target/packaging/release/$deb_release_name"
 
       - name: Generate SHA256 checksums
         working-directory: target/packaging/release
