@@ -913,6 +913,9 @@ function surfaceIdFromArgs(options, positionals, env = process.env) {
 
 function buildSurfaceActionParams(options, positionals, env = process.env, command = "surface") {
   rejectUnknownOptions(options, SURFACE_ACTION_OPTION_NAMES, command);
+  if (positionals.length > 1) {
+    throw new Error(`${command}: unexpected argument ${positionals[1]}`);
+  }
   const surfaceId = surfaceIdFromArgs(options, positionals, env);
   if (!surfaceId) {
     throw new Error(`${command} requires --surface-id, a surface id, or FORKTTY_SURFACE_ID`);
@@ -922,6 +925,9 @@ function buildSurfaceActionParams(options, positionals, env = process.env, comma
 
 function buildSurfaceSplitParams(options, positionals, env = process.env) {
   rejectUnknownOptions(options, SURFACE_SPLIT_OPTION_NAMES, "split-surface");
+  if (positionals.length > 1) {
+    throw new Error(`split-surface: unexpected argument ${positionals[1]}`);
+  }
   requireNonBlankStringOption(options, "axis");
   const axis =
     typeof options.axis === "string" && options.axis.trim() ? options.axis.trim() : "horizontal";

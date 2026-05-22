@@ -106,8 +106,10 @@ rebuilding.
 - `forktty send-text --txt "echo hello"` — exits with `send-text: unknown option --txt` instead of sending the wrong text or target.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
+- `forktty close-surface <surface-id> extra` — exits with `close-surface: unexpected argument extra` instead of ignoring the extra value.
 - `forktty split-surface --axis=` — exits with `--axis requires a value` instead of creating an unintended horizontal split.
 - `forktty split-surface --axs vertical` — exits with `split-surface: unknown option --axs` instead of creating the default horizontal split.
+- `forktty split-surface <surface-id> extra` — exits with `split-surface: unexpected argument extra` instead of ignoring the extra value.
 - `printf '{"id":"x","method":"surface.split","params":{"surface_id":"<surface-id>","axis":"diagonal"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `axis`; no horizontal split is created.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":42}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of treating it as missing.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of reporting a successful no-op send.
