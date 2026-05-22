@@ -1904,15 +1904,19 @@ fn copy_to_clipboard(text: &str) {
     }
 }
 
-fn focus_workspace(state: &SocketAppState, workspace_id: &str) {
-    if let Err(err) = select_workspace_with_terminal(state, workspace_id) {
-        eprintln!("Failed to spawn workspace terminal: {err}");
-        create_global_notification(
-            state,
-            "Workspace Switch Failed",
-            &err.to_string(),
-            NotificationKind::Error,
-        );
+fn focus_workspace(state: &SocketAppState, workspace_id: &str) -> bool {
+    match select_workspace_with_terminal(state, workspace_id) {
+        Ok(selected) => selected,
+        Err(err) => {
+            eprintln!("Failed to spawn workspace terminal: {err}");
+            create_global_notification(
+                state,
+                "Workspace Switch Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
+            false
+        }
     }
 }
 
@@ -1979,8 +1983,9 @@ fn build_workspace_context_menu(
             "Focus Workspace",
             false,
             move || {
-                focus_workspace(&state_, &ws_id);
-                controller_.borrow_mut().rebuild_layout();
+                if focus_workspace(&state_, &ws_id) {
+                    controller_.borrow_mut().rebuild_layout();
+                }
             },
         );
         add_context_menu_separator(&menu);
@@ -2010,8 +2015,9 @@ fn build_workspace_context_menu(
         "Split Right",
         false,
         move || {
-            focus_workspace(&state_, &ws_id);
-            split_active_surface(&state_, SplitAxis::Horizontal);
+            if focus_workspace(&state_, &ws_id) {
+                split_active_surface(&state_, SplitAxis::Horizontal);
+            }
         },
     );
 
@@ -2024,8 +2030,9 @@ fn build_workspace_context_menu(
         "Split Down",
         false,
         move || {
-            focus_workspace(&state_, &ws_id);
-            split_active_surface(&state_, SplitAxis::Vertical);
+            if focus_workspace(&state_, &ws_id) {
+                split_active_surface(&state_, SplitAxis::Vertical);
+            }
         },
     );
 
@@ -2041,8 +2048,9 @@ fn build_workspace_context_menu(
         "New Worktree from Here...",
         false,
         move || {
-            focus_workspace(&state_, &ws_id);
-            show_worktree_dialog(&parent_, &state_);
+            if focus_workspace(&state_, &ws_id) {
+                show_worktree_dialog(&parent_, &state_);
+            }
         },
     );
 
@@ -2071,7 +2079,9 @@ fn build_workspace_context_menu(
             "Merge Worktree",
             false,
             move || {
-                focus_workspace(&state_, &ws_id);
+                if !focus_workspace(&state_, &ws_id) {
+                    return;
+                }
                 match merge_worktree_from_gtk(&state_, &name_) {
                     Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
                     Err(err) => create_local_notification(&state_, "Merge Failed", &err),
@@ -2101,7 +2111,9 @@ fn build_workspace_context_menu(
                     ),
                     "Remove Worktree",
                     move || {
-                        focus_workspace(&state_confirm, &ws_id_confirm);
+                        if !focus_workspace(&state_confirm, &ws_id_confirm) {
+                            return;
+                        }
                         if let Err(err) = remove_worktree_from_gtk(&state_confirm, &name_confirm) {
                             create_local_notification(&state_confirm, "Remove Failed", &err);
                         }
@@ -2131,8 +2143,9 @@ fn build_workspace_context_menu(
                 "Close this workspace and all panes inside it. Running terminal processes in this workspace will be closed.",
                 "Close Workspace",
                 move || {
-                    focus_workspace(&state_confirm, &ws_id_confirm);
-                    close_active_workspace(&state_confirm);
+                    if focus_workspace(&state_confirm, &ws_id_confirm) {
+                        close_active_workspace(&state_confirm);
+                    }
                 },
             );
         },

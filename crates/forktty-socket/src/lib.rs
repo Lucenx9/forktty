@@ -632,15 +632,21 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
-                let surface = {
+                let (surface, replacement_in_model) = {
                     let mut model = state
                         .model
                         .lock()
                         .map_err(|_| "Lock poisoned".to_string())?;
-                    model
-                        .close_surface_with_replacement(surface_id, Some(replacement))
-                        .ok_or(DispatchError::NotFound("surface".to_string()))?
+                    let surface = model
+                        .close_surface_with_replacement(surface_id, Some(replacement.clone()))
+                        .ok_or(DispatchError::NotFound("surface".to_string()));
+                    let replacement_in_model = model.surface(&replacement.id).is_some();
+                    (surface, replacement_in_model)
                 };
+                if surface.is_err() || !replacement_in_model {
+                    forget_terminal_surface_if_present(state, &replacement.id)?;
+                }
+                let surface = surface?;
                 return Ok(json!(surface));
             }
             close_terminal_surface_if_present(state, surface_id)?;
@@ -1769,6 +1775,72 @@ mod tests {
             Self {
                 surfaces: Mutex::new(surfaces),
             }
+        }
+    }
+
+    #[derive(Debug)]
+    struct CloseMutatesModelBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+        model: Arc<Mutex<WorkspaceModel>>,
+    }
+
+    impl CloseMutatesModelBackend {
+        fn new(initial: TerminalSurfaceState, model: Arc<Mutex<WorkspaceModel>>) -> Self {
+            let mut surfaces = BTreeMap::new();
+            surfaces.insert(initial.surface_id.clone(), initial);
+            Self {
+                surfaces: Mutex::new(surfaces),
+                model,
+            }
+        }
+    }
+
+    impl TerminalBackend for CloseMutatesModelBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            let mut model = self.model.lock().map_err(|_| TerminalError::LockPoisoned)?;
+            let _ = model.close_surface(surface_id);
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
         }
     }
 
@@ -3169,6 +3241,44 @@ mod tests {
         assert_eq!(surfaces[0]["id"], surface_id);
         assert_eq!(backend.surfaces().unwrap().len(), 1);
         assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
+    }
+
+    #[tokio::test]
+    async fn surface_close_root_cleans_replacement_when_model_close_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = fs::canonicalize(project_dir.path()).unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("project", &project_cwd)
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(CloseMutatesModelBackend::new(
+            TerminalSurfaceState {
+                surface_id: surface_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: project_cwd,
+                shell: "/bin/sh".to_string(),
+                cols: 80,
+                rows: 24,
+            },
+            model.clone(),
+        ));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(!error.is_empty());
+        assert_eq!(backend.surfaces().unwrap().len(), 0);
     }
 
     #[tokio::test]

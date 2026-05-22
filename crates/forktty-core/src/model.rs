@@ -893,16 +893,18 @@ impl WorkspaceModel {
     pub fn workspace_id_for(&self, selector: WorkspaceSelector<'_>) -> Option<WorkspaceId> {
         match selector {
             WorkspaceSelector::Id(id) => self.workspaces.contains_key(id).then(|| id.to_string()),
-            WorkspaceSelector::Name(name) => self
-                .workspaces
-                .values()
-                .find(|workspace| workspace.name == name)
-                .map(|workspace| workspace.id.clone()),
-            WorkspaceSelector::WorktreeName(name) => self
-                .workspaces
-                .values()
-                .find(|workspace| workspace.worktree_name.as_deref() == Some(name))
-                .map(|workspace| workspace.id.clone()),
+            WorkspaceSelector::Name(name) => self.workspace_order.iter().find_map(|id| {
+                self.workspaces
+                    .get(id)
+                    .filter(|workspace| workspace.name == name)
+                    .map(|workspace| workspace.id.clone())
+            }),
+            WorkspaceSelector::WorktreeName(name) => self.workspace_order.iter().find_map(|id| {
+                self.workspaces
+                    .get(id)
+                    .filter(|workspace| workspace.worktree_name.as_deref() == Some(name))
+                    .map(|workspace| workspace.id.clone())
+            }),
         }
     }
 }
@@ -1985,6 +1987,26 @@ mod tests {
         assert_eq!(
             model.workspace_id_for(WorkspaceSelector::WorktreeName("missing")),
             None
+        );
+    }
+
+    #[test]
+    fn workspace_id_for_prefers_first_workspace_in_list_order_for_duplicate_names() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("seed", "/tmp/seed");
+        let first_dup = model.create_workspace("dup", "/tmp/dup-1");
+        for idx in 3..=9 {
+            model.create_workspace(format!("w{idx}"), format!("/tmp/w{idx}"));
+        }
+        let second_dup = model.create_workspace("dup", "/tmp/dup-2");
+
+        assert_eq!(
+            model.workspace_id_for(WorkspaceSelector::Name("dup")),
+            Some(first_dup.id),
+        );
+        assert_ne!(
+            model.workspace_id_for(WorkspaceSelector::Name("dup")),
+            Some(second_dup.id),
         );
     }
 
