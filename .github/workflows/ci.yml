@@ -17,6 +17,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  APPIMAGETOOL_VERSION: "1.9.0"
+  APPIMAGE_RUNTIME_VERSION: "20251108"
 
 jobs:
   check:
@@ -30,7 +32,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
-            libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
+            libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
+            appstream
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -93,7 +96,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            curl
+            appstream curl
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -111,7 +114,14 @@ jobs:
           set -euo pipefail
           arch="$(uname -m)"
           case "$arch" in
-            x86_64 | aarch64) ;;
+            x86_64)
+              appimagetool_sha256="46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1"
+              runtime_sha256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+              ;;
+            aarch64)
+              appimagetool_sha256="04f45ea45b5aa07bb2b071aed9dbf7a5185d3953b11b47358c1311f11ea94a96"
+              runtime_sha256="00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444"
+              ;;
             *)
               echo "Unsupported AppImage tool architecture: $arch" >&2
               exit 1
@@ -119,14 +129,71 @@ jobs:
           esac
 
           mkdir -p target/packaging/tools
+          appimagetool_path="target/packaging/tools/appimagetool"
+          runtime_path="target/packaging/tools/runtime-${arch}"
           curl -fsSL \
-            -o target/packaging/tools/appimagetool \
-            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${arch}.AppImage"
-          chmod +x target/packaging/tools/appimagetool
+            -o "$appimagetool_path" \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${arch}.AppImage"
+          printf '%s  %s\n' "$appimagetool_sha256" "$appimagetool_path" | sha256sum -c -
+          chmod +x "$appimagetool_path"
+          curl -fsSL \
+            -o "$runtime_path" \
+            "https://github.com/AppImage/type2-runtime/releases/download/${APPIMAGE_RUNTIME_VERSION}/runtime-${arch}"
+          printf '%s  %s\n' "$runtime_sha256" "$runtime_path" | sha256sum -c -
           echo "$PWD/target/packaging/tools" >> "$GITHUB_PATH"
+          echo "APPIMAGE_RUNTIME_FILE=$PWD/$runtime_path" >> "$GITHUB_ENV"
 
       - name: Build experimental AppImage
         run: bash scripts/build-appimage.sh
+
+      - name: Smoke packaged artifacts
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          deb_version="$version"
+          if [[ "$version" == *-* ]]; then
+            deb_version="${version%%-*}~${version#*-}"
+          fi
+          deb_arch="$(dpkg --print-architecture)"
+          case "$(uname -m)" in
+            x86_64) appimage_arch="x86_64" ;;
+            aarch64 | arm64) appimage_arch="aarch64" ;;
+            *)
+              echo "Unsupported AppImage artifact architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          deb_artifact="target/packaging/deb/forktty_${deb_version}_${deb_arch}.deb"
+          appimage_artifact="target/packaging/appimage/forktty-${version}-${appimage_arch}.AppImage"
+          for artifact in "$deb_artifact" "$appimage_artifact"; do
+            if [[ ! -f "$artifact" ]]; then
+              echo "Expected artifact missing: $artifact" >&2
+              exit 1
+            fi
+          done
+
+          smoke_home="$(mktemp -d)"
+          export HOME="$smoke_home/home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export XDG_DATA_HOME="$HOME/.local/share"
+          export XDG_RUNTIME_DIR="$smoke_home/runtime"
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+
+          dpkg-deb --info "$deb_artifact" >/dev/null
+          dpkg-deb --contents "$deb_artifact" >/dev/null
+          deb_root="$smoke_home/deb-root"
+          dpkg-deb -x "$deb_artifact" "$deb_root"
+          "$deb_root/usr/bin/forktty" --version
+          "$deb_root/usr/bin/forktty" --help
+          "$deb_root/usr/bin/forktty" doctor
+          "$deb_root/usr/bin/forktty" hooks setup --dry-run codex
+
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" --version
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" --help
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" doctor
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" hooks setup --dry-run codex
 
       - name: Stage release artifacts
         run: |

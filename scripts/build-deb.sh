@@ -40,6 +40,12 @@ if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$ROOT_DIR/packaging/linux/forktty.desktop"
 fi
 
+if command -v appstreamcli >/dev/null; then
+  appstreamcli validate --no-net "$APPSTREAM_FILE"
+else
+  echo "appstreamcli not found; skipping AppStream metadata validation" >&2
+fi
+
 cargo build -p forktty-ui-gtk --features gtk-vte --release
 
 rm -rf "$PKG_ROOT"
@@ -68,4 +74,6 @@ Description: Linux-native multi-agent terminal
 CONTROL
 
 dpkg-deb --build --root-owner-group "$PKG_ROOT" "$DEB_PATH"
+dpkg-deb --info "$DEB_PATH" >/dev/null
+dpkg-deb --contents "$DEB_PATH" >/dev/null
 echo "$DEB_PATH"

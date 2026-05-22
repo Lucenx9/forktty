@@ -110,6 +110,15 @@ ERROR
   exit 1
 fi
 
+APPIMAGETOOL_ARGS=("$APPDIR" "$APPIMAGE_PATH")
+if [[ -n "${APPIMAGE_RUNTIME_FILE:-}" ]]; then
+  if [[ ! -f "$APPIMAGE_RUNTIME_FILE" ]]; then
+    echo "APPIMAGE_RUNTIME_FILE is set to '$APPIMAGE_RUNTIME_FILE', but that file does not exist" >&2
+    exit 1
+  fi
+  APPIMAGETOOL_ARGS=(--runtime-file "$APPIMAGE_RUNTIME_FILE" "${APPIMAGETOOL_ARGS[@]}")
+fi
+
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$DESKTOP_FILE"
 else
@@ -149,6 +158,6 @@ export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 export ARCH="$APPIMAGE_ARCH"
 export VERSION="$VERSION"
 
-"$APPIMAGETOOL_TOOL" "$APPDIR" "$APPIMAGE_PATH"
+"$APPIMAGETOOL_TOOL" "${APPIMAGETOOL_ARGS[@]}"
 
 echo "$APPIMAGE_PATH"
