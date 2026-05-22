@@ -1085,6 +1085,7 @@ fn worktree_name_from_params<'a>(
     keys: &[&str],
     missing_label: &'static str,
 ) -> Result<&'a str, DispatchError> {
+    let mut found = Vec::new();
     for key in keys {
         let Some(value) = params.get(*key) else {
             continue;
@@ -1092,9 +1093,20 @@ fn worktree_name_from_params<'a>(
         let Some(name) = value.as_str() else {
             return Err(format!("Invalid parameter {key}: expected string").into());
         };
-        return validate_worktree_name_param(name).map_err(DispatchError::from);
+        let name = validate_worktree_name_param(name).map_err(DispatchError::from)?;
+        found.push((*key, name));
     }
-    Err(DispatchError::MissingParam(missing_label))
+    if found.is_empty() {
+        return Err(DispatchError::MissingParam(missing_label));
+    }
+    if found.len() > 1 {
+        return Err(format!(
+            "Ambiguous worktree selector: cannot combine {}",
+            format_param_names(found.iter().map(|(key, _)| *key))
+        )
+        .into());
+    }
+    Ok(found[0].1)
 }
 
 fn worktree_layout() -> String {
@@ -3452,6 +3464,11 @@ mod tests {
                 "worktree.attach",
                 json!({"name": 42, "branch": "topic/socket"}),
                 "Invalid parameter name: expected string",
+            ),
+            (
+                "worktree.attach",
+                json!({"name": "topic/name", "branch": "topic/branch"}),
+                "Ambiguous worktree selector: cannot combine name and branch",
             ),
             (
                 "worktree.remove",

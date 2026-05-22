@@ -171,6 +171,7 @@ rebuilding.
 - `forktty worktree-list feature/x` — exits with `worktree-list: unexpected argument feature/x` instead of ignoring the branch argument and listing the caller repo.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":"feature/no-cwd"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"missing_param"` for `cwd`; no worktree is created from the app launch directory.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":42,"cwd":"'"$PWD"'"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"error"` and says `name` must be a string.
+- `printf '{"id":"x","method":"worktree.attach","params":{"name":"feature/x","branch":"feature/y","cwd":"'"$PWD"'"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an ambiguous worktree selector instead of silently picking one target.
 - `forktty worktree-create feature/x --cw <repo>` — exits with `worktree-create: unknown option --cw` instead of using the fallback cwd.
 - `forktty worktree-create feature/x --branch feature/y --cwd <repo>` — exits with `cannot combine a positional name with --name or --branch` instead of ignoring one target.
 - `forktty worktree-create --name feature/x --branch feature/y --cwd <repo>` — exits with `cannot combine --name and --branch` instead of ignoring one target.
