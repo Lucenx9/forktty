@@ -814,13 +814,23 @@ impl WorkspaceModel {
     }
 
     fn next_workspace_id(&mut self) -> WorkspaceId {
-        self.next_workspace += 1;
-        format!("workspace-{}", self.next_workspace)
+        loop {
+            self.next_workspace += 1;
+            let candidate = format!("workspace-{}", self.next_workspace);
+            if !self.workspaces.contains_key(&candidate) {
+                return candidate;
+            }
+        }
     }
 
     fn next_surface_id(&mut self) -> SurfaceId {
-        self.next_surface += 1;
-        format!("surface-{}", self.next_surface)
+        loop {
+            self.next_surface += 1;
+            let candidate = format!("surface-{}", self.next_surface);
+            if !self.surfaces.contains_key(&candidate) {
+                return candidate;
+            }
+        }
     }
 
     fn next_notification_id(&mut self) -> String {
@@ -1976,6 +1986,32 @@ mod tests {
             model.workspace_id_for(WorkspaceSelector::WorktreeName("missing")),
             None
         );
+    }
+
+    #[test]
+    fn next_surface_id_skips_collisions_with_non_numeric_ids() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        // Inject a surface keyed with the next monotonic id we would
+        // otherwise hand out, emulating a restore from a session that
+        // pre-allocated that name through some external route.
+        let blocker_id = format!("surface-{}", model.next_surface + 1);
+        model.surfaces.insert(
+            blocker_id.clone(),
+            Surface {
+                id: blocker_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: PathBuf::from("/tmp"),
+                title: String::from("shell"),
+                unread: false,
+                needs_attention: false,
+            },
+        );
+
+        let new_surface = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        assert_ne!(new_surface.id, blocker_id);
     }
 
     #[test]
