@@ -2,10 +2,10 @@ use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -184,7 +184,6 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
     }
     result
 }
-
 
 fn apply_config_permissions(write_path: &Path, tmp_path: &Path) -> Result<(), ConfigError> {
     #[cfg(unix)]
