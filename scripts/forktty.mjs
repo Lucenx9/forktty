@@ -250,13 +250,16 @@ async function sendSocketRequest(socketPath, method, params, timeoutMs = SOCKET_
         `Socket request failed for ${method}`;
       const errorCode =
         response?.error && typeof response.error.code === "string"
-          ? `${response.error.code}: `
+          ? response.error.code
           : "";
-      finish(
-        new Error(
-          `Socket request failed for ${method} at ${socketPath}: ${errorCode}${String(errorMessage)}`,
-        ),
+      const errorPrefix = errorCode ? `${errorCode}: ` : "";
+      const error = new Error(
+        `Socket request failed for ${method} at ${socketPath}: ${errorPrefix}${String(errorMessage)}`,
       );
+      if (errorCode) {
+        error.code = errorCode;
+      }
+      finish(error);
     }
 
     function isConnectionLevelSocketError(response) {
@@ -703,6 +706,10 @@ async function tryWorkspaceSelect(context, params) {
   return sendSocketRequest(context.socketPath, "workspace.select", params);
 }
 
+function isSocketNotFoundError(error) {
+  return error && typeof error === "object" && error.code === "not_found";
+}
+
 async function handleFocus(context, args) {
   const { options, positionals } = parseFlags(args);
   const candidates = resolveSelectorParams(options, positionals, context.env, "focus");
@@ -721,6 +728,9 @@ async function handleFocus(context, args) {
       break;
     } catch (error) {
       lastError = error;
+      if (!isSocketNotFoundError(error)) {
+        break;
+      }
     }
   }
   if (lastError) throw lastError;
@@ -789,6 +799,9 @@ async function handleCloseWorkspace(context, args) {
       break;
     } catch (error) {
       lastError = error;
+      if (!isSocketNotFoundError(error)) {
+        break;
+      }
     }
   }
   if (lastError) throw lastError;

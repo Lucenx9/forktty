@@ -143,12 +143,40 @@ describe("forktty CLI helpers", () => {
         await assert.rejects(
           sendSocketRequest(socketPath, "workspace.select", { id: "missing" }),
           (error) =>
+            error.code === "not_found" &&
             error.message.includes(socketPath) &&
             /workspace\.select/.test(error.message) &&
             /not_found: Workspace not found/.test(error.message),
         );
       },
     );
+  });
+
+  it("does not fall back to workspace name after a non-not-found focus failure", async () => {
+    let requestCount = 0;
+    await withSocketServer(
+      (socket) => {
+        socket.once("data", (chunk) => {
+          requestCount += 1;
+          const request = JSON.parse(String(chunk).trim());
+          socket.end(
+            `${JSON.stringify({
+              id: request.id,
+              ok: false,
+              error: { code: "error", message: "spawn failed" },
+            })}\n`,
+          );
+        });
+      },
+      async (socketPath) => {
+        await assert.rejects(
+          main(["focus", "workspace-1", "--socket", socketPath], {}),
+          /spawn failed/,
+        );
+      },
+    );
+
+    assert.equal(requestCount, 1);
   });
 
   it("rejects socket responses with the wrong request id", async () => {
