@@ -542,14 +542,39 @@ pub async fn dispatch(
         }
         "surface.close" => {
             let surface_id = required_surface_id(&params)?;
-            {
-                let model = state
+            let root_replacement = {
+                let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 if model.surface(surface_id).is_none() {
                     return Err(DispatchError::NotFound("surface"));
                 }
+                model.prepare_root_surface_replacement(surface_id)
+            };
+            if let Some(replacement) = root_replacement {
+                if let Err(err) = spawn_surface_terminal(state, &replacement) {
+                    return Err(err.into());
+                }
+                if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
+                    let mut err = err;
+                    if let Err(cleanup_err) =
+                        forget_terminal_surface_if_present(state, &replacement.id)
+                    {
+                        err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+                    }
+                    return Err(err.into());
+                }
+                let surface = {
+                    let mut model = state
+                        .model
+                        .lock()
+                        .map_err(|_| "Lock poisoned".to_string())?;
+                    model
+                        .close_surface_with_replacement(surface_id, Some(replacement))
+                        .ok_or(DispatchError::NotFound("surface"))?
+                };
+                return Ok(json!(surface));
             }
             close_terminal_surface_if_present(state, surface_id)?;
             let surface = {
@@ -2856,6 +2881,51 @@ mod tests {
         .unwrap();
         assert_eq!(surfaces.as_array().unwrap().len(), 1);
         assert_eq!(surfaces[0]["id"], surface_id);
+    }
+
+    #[tokio::test]
+    async fn surface_close_root_keeps_old_surface_when_replacement_spawn_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = fs::canonicalize(project_dir.path()).unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("project", &project_cwd)
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
+            surface_id: surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            cwd: project_cwd,
+            shell: "/bin/sh".to_string(),
+            cols: 80,
+            rows: 24,
+        }));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("spawn failed"));
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace.id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+        assert_eq!(surfaces[0]["id"], surface_id);
+        assert_eq!(backend.surfaces().unwrap().len(), 1);
+        assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
     }
 
     #[tokio::test]

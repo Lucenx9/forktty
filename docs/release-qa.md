@@ -111,6 +111,7 @@ rebuilding.
 - Against a stub socket that returns a different response `id`, `forktty ping --socket <stub>` errors with a response-id mismatch that names the method and socket path.
 - Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"request_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `request_too_large` instead of reporting a response-id mismatch.
 - Close a split pane, then send `surface.send_text` or `notification.create` for that closed pane's `surface_id` — response includes `"code":"not_found"` and no notification row is added.
+- If replacement terminal spawn fails while closing the only pane in a workspace over the socket, the close request reports the spawn error and keeps the old pane and terminal visible.
 - Close the last workspace over the socket from a project directory — ForkTTY creates the replacement `main` workspace in that project directory, not the app launch directory.
 - If replacement terminal spawn fails while closing the last workspace over the socket, the close request reports the spawn error and keeps the old workspace and terminal visible.
 - If a terminal backend close fails during `workspace.close`, the socket returns the close error and keeps the workspace in the model instead of orphaning its panes.

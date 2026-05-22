@@ -449,10 +449,62 @@ impl WorkspaceModel {
         true
     }
 
-    pub fn close_surface(&mut self, surface_id: &str) -> Option<Surface> {
+    pub fn prepare_root_surface_replacement(&mut self, surface_id: &str) -> Option<Surface> {
         let surface = self.surfaces.get(surface_id)?.clone();
+        let (workspace_id, working_dir) = {
+            let workspace = self.workspaces.get(&surface.workspace_id)?;
+            if !matches!(
+                &workspace.pane_tree,
+                PaneNode::Leaf {
+                    surface_id: leaf_id
+                } if leaf_id == surface_id
+            ) {
+                return None;
+            }
+            (workspace.id.clone(), workspace.working_dir.clone())
+        };
         let replacement_id = self.next_surface_id();
+        Some(Surface {
+            id: replacement_id,
+            workspace_id,
+            cwd: working_dir,
+            title: String::from("shell"),
+            unread: false,
+            needs_attention: false,
+        })
+    }
+
+    pub fn close_surface(&mut self, surface_id: &str) -> Option<Surface> {
+        self.close_surface_with_replacement(surface_id, None)
+    }
+
+    pub fn close_surface_with_replacement(
+        &mut self,
+        surface_id: &str,
+        prepared_replacement: Option<Surface>,
+    ) -> Option<Surface> {
+        let surface = self.surfaces.get(surface_id)?.clone();
         let workspace_id = surface.workspace_id.clone();
+        let working_dir = self.workspaces.get(&workspace_id)?.working_dir.clone();
+        let replacement = match prepared_replacement {
+            Some(replacement)
+                if replacement.workspace_id == workspace_id
+                    && !self.surfaces.contains_key(&replacement.id) =>
+            {
+                replacement
+            }
+            _ => {
+                let replacement_id = self.next_surface_id();
+                Surface {
+                    id: replacement_id,
+                    workspace_id: workspace_id.clone(),
+                    cwd: working_dir,
+                    title: String::from("shell"),
+                    unread: false,
+                    needs_attention: false,
+                }
+            }
+        };
         let workspace = self.workspaces.get_mut(&workspace_id)?;
         let removed_root = remove_leaf(&mut workspace.pane_tree, surface_id)?;
         let removed = self.surfaces.remove(surface_id)?;
@@ -464,19 +516,11 @@ impl WorkspaceModel {
         if let Some(next_focus) = next_focus {
             workspace.focused_surface_id = next_focus;
         } else {
-            let replacement = Surface {
-                id: replacement_id.clone(),
-                workspace_id: workspace_id.clone(),
-                cwd: workspace.working_dir.clone(),
-                title: String::from("shell"),
-                unread: false,
-                needs_attention: false,
-            };
             workspace.pane_tree = PaneNode::Leaf {
-                surface_id: replacement_id.clone(),
+                surface_id: replacement.id.clone(),
             };
-            workspace.focused_surface_id = replacement_id.clone();
-            self.surfaces.insert(replacement_id, replacement);
+            workspace.focused_surface_id = replacement.id.clone();
+            self.surfaces.insert(replacement.id.clone(), replacement);
         }
         self.recompute_workspace_attention(&workspace_id);
         Some(removed)
@@ -1194,6 +1238,24 @@ mod tests {
         };
         assert_eq!(children.len(), 2);
         assert_eq!(sizes, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn root_surface_close_can_use_prepared_replacement() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp/project");
+        let old_surface_id = workspace.focused_surface_id.clone();
+        let replacement = model
+            .prepare_root_surface_replacement(&old_surface_id)
+            .unwrap();
+
+        let removed =
+            model.close_surface_with_replacement(&old_surface_id, Some(replacement.clone()));
+
+        assert_eq!(removed.unwrap().id, old_surface_id);
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, replacement.id);
+        assert_eq!(model.list_surfaces(Some(&workspace.id)), vec![replacement]);
     }
 
     #[test]
