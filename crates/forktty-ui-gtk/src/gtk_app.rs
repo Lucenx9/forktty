@@ -937,8 +937,8 @@ fn record_terminal_spawn_failure(
 
 fn update_pane_chrome(chrome: &PaneChrome, surface: &Surface, active: bool) {
     let title_text = surface_title(surface);
-    chrome.title.set_label(title_text);
-    chrome.title.set_tooltip_text(Some(title_text));
+    chrome.title.set_label(&title_text);
+    chrome.title.set_tooltip_text(Some(&title_text));
     let cwd_text = compact_path(&surface.cwd);
     let full_cwd = surface.cwd.to_string_lossy();
     chrome.cwd.set_label(&cwd_text);
@@ -2983,13 +2983,20 @@ fn compact_status_page(icon_name: &str, title: &str, description: &str) -> adw::
     page
 }
 
-fn surface_title(surface: &Surface) -> &str {
+fn surface_title(surface: &Surface) -> String {
     let title = surface.title.trim();
-    if title.is_empty() || title == "shell" {
-        "Terminal"
-    } else {
-        title
+    if !title.is_empty() && title != "shell" {
+        return title.to_string();
     }
+    if let Some(name) = surface
+        .cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+    {
+        return name.to_string();
+    }
+    "Terminal".to_string()
 }
 
 fn compact_path(path: &Path) -> String {
@@ -4337,22 +4344,27 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             .iter()
             .position(|surface_id| surface_id == &workspace.focused_surface_id)?;
         let surface = model.surface(&workspace.focused_surface_id);
-        let title = surface.map(surface_title).unwrap_or("Terminal");
+        let title = surface
+            .map(surface_title)
+            .unwrap_or_else(|| "Terminal".to_string());
         let compact_cwd = surface
             .map(|surface| compact_path(&surface.cwd))
             .unwrap_or_else(|| compact_path(&workspace.working_dir));
         let full_cwd = surface
             .map(|surface| surface.cwd.to_string_lossy().to_string())
             .unwrap_or_else(|| workspace.working_dir.to_string_lossy().to_string());
+        let title_is_cwd_echo = title == compact_cwd.as_str()
+            || title == full_cwd.as_str()
+            || full_cwd.ends_with(&format!("/{title}"));
         if pane_count <= 1 {
             // With a single pane the "Pane 1/1" prefix is noise; the cwd is
             // already shown in status_location. Only surface a distinct title.
-            if title == "Terminal" || title == compact_cwd.as_str() || title == full_cwd.as_str() {
+            if title == "Terminal" || title_is_cwd_echo {
                 return None;
             }
-            return Some(title.to_string());
+            return Some(title);
         }
-        if title == "Terminal" || title == compact_cwd.as_str() || title == full_cwd.as_str() {
+        if title == "Terminal" || title_is_cwd_echo {
             return Some(format!("Pane {}/{}", index + 1, pane_count));
         }
         Some(format!("Pane {}/{} · {}", index + 1, pane_count, title))
