@@ -883,6 +883,39 @@ fn active_workspace_snapshot(state: &SocketAppState) -> Option<forktty_core::Wor
     model.active_workspace()
 }
 
+fn close_pane_confirmation_body(state: &SocketAppState, surface_id: &str) -> String {
+    let target = state.model.lock().ok().and_then(|model| {
+        let surface = model.surface(surface_id)?;
+        let workspace_name = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == surface.workspace_id)
+            .map(|workspace| workspace.name)
+            .unwrap_or_else(|| surface.workspace_id.clone());
+        Some(format!(
+            "'{}' in workspace '{}' ({})",
+            surface_title(surface),
+            workspace_name,
+            compact_path(&surface.cwd)
+        ))
+    });
+    match target {
+        Some(target) => {
+            format!("Close pane {target}. Any process running inside it will be terminated.")
+        }
+        None => {
+            format!("Close pane {surface_id}. Any process running inside it will be terminated.")
+        }
+    }
+}
+
+fn close_workspace_confirmation_body(name: &str, path: &Path) -> String {
+    format!(
+        "Close workspace '{name}' at {} and all panes inside it. Running terminal processes in this workspace will be closed.",
+        compact_path(path)
+    )
+}
+
 fn show_close_pane_confirmation(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
@@ -890,15 +923,10 @@ fn show_close_pane_confirmation(
 ) {
     let state = state.clone();
     let surface_id = surface_id.to_string();
-    show_destructive_confirmation(
-        parent,
-        "Close Pane?",
-        "Close this terminal pane. Any process running inside it will be terminated.",
-        "Close Pane",
-        move || {
-            focus_surface_and(&state, &surface_id, close_active_surface);
-        },
-    );
+    let body = close_pane_confirmation_body(&state, &surface_id);
+    show_destructive_confirmation(parent, "Close Pane?", &body, "Close Pane", move || {
+        focus_surface_and(&state, &surface_id, close_active_surface);
+    });
 }
 
 fn record_terminal_spawn_failure(
@@ -2213,6 +2241,8 @@ fn build_workspace_context_menu(
     let state_ = state.clone();
     let parent_ = parent.clone();
     let ws_id = workspace_id.clone();
+    let ws_name = workspace_name.clone();
+    let ws_path = working_dir.clone();
     add_context_menu_item(
         &menu,
         &popover,
@@ -2222,10 +2252,11 @@ fn build_workspace_context_menu(
         move || {
             let state_confirm = state_.clone();
             let ws_id_confirm = ws_id.clone();
+            let body = close_workspace_confirmation_body(&ws_name, &ws_path);
             show_destructive_confirmation(
                 &parent_,
                 "Close Workspace?",
-                "Close this workspace and all panes inside it. Running terminal processes in this workspace will be closed.",
+                &body,
                 "Close Workspace",
                 move || {
                     if focus_workspace(&state_confirm, &ws_id_confirm) {
@@ -5397,11 +5428,21 @@ fn show_command_palette_with_query(
         let dialog = dialog.clone();
         move || {
             dialog.close();
+            let Some(workspace) = active_workspace_snapshot(&state) else {
+                create_global_notification(
+                    &state,
+                    "Close Workspace Failed",
+                    "There is no active workspace to close.",
+                    NotificationKind::Error,
+                );
+                return;
+            };
             let state_confirm = state.clone();
+            let body = close_workspace_confirmation_body(&workspace.name, &workspace.working_dir);
             show_destructive_confirmation(
                 &parent,
                 "Close Workspace?",
-                "Close the active workspace and all panes inside it. Running terminal processes in this workspace will be closed.",
+                &body,
                 "Close Workspace",
                 move || close_active_workspace(&state_confirm),
             );
@@ -6755,10 +6796,8 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
             text.set_max_width_chars(28);
         }
     }
-    let font_family_row = settings_action_row(
-        "Font family",
-        "Monospace font with symbol coverage.",
-    );
+    let font_family_row =
+        settings_action_row("Font family", "Monospace font with symbol coverage.");
     font_family_row.add_suffix(&font_family);
     font_family_row.set_activatable_widget(Some(&font_family));
     font_group.add(&font_family_row);
@@ -7177,24 +7216,64 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
         move |_| {
-            let defaults = config::AppConfig::default();
-            suppress_updates.set(true);
-            shell_entry.set_text(&defaults.general.shell);
-            let _ = font_family.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
-            font_size.set_value(i64::from(defaults.appearance.font_size));
-            scrollback_lines.set_value(i64::from(defaults.appearance.scrollback_lines));
-            terminal_audible_bell.set_active(defaults.appearance.terminal_audible_bell);
-            let _ = theme_source.set_active_id(Some(&defaults.general.theme_source));
-            let _ = terminal_theme.set_active_id(Some(&defaults.appearance.terminal_theme));
-            let _ = window_mode.set_active_id(Some(&defaults.appearance.window_mode));
-            let _ = sidebar_position.set_active_id(Some(&defaults.appearance.sidebar_position));
-            sidebar_visible.set_active(defaults.appearance.sidebar_visible);
-            let _ = worktree_layout.set_active_id(Some(&defaults.general.worktree_layout));
-            notification_command.set_text(&defaults.general.notification_command);
-            desktop_notifications.set_active(defaults.notifications.desktop);
-            notification_sound.set_active(defaults.notifications.sound);
-            suppress_updates.set(false);
-            persist_settings_change(&dialog, &current, &on_apply, defaults, "Defaults restored.");
+            let confirmation_parent = dialog.clone();
+            let dialog_for_reset = dialog.clone();
+            let current_for_reset = current.clone();
+            let on_apply_for_reset = on_apply.clone();
+            let suppress_updates_for_reset = suppress_updates.clone();
+            let shell_entry_for_reset = shell_entry.clone();
+            let font_family_for_reset = font_family.clone();
+            let font_size_for_reset = font_size.clone();
+            let scrollback_lines_for_reset = scrollback_lines.clone();
+            let terminal_audible_bell_for_reset = terminal_audible_bell.clone();
+            let theme_source_for_reset = theme_source.clone();
+            let terminal_theme_for_reset = terminal_theme.clone();
+            let window_mode_for_reset = window_mode.clone();
+            let sidebar_position_for_reset = sidebar_position.clone();
+            let sidebar_visible_for_reset = sidebar_visible.clone();
+            let worktree_layout_for_reset = worktree_layout.clone();
+            let notification_command_for_reset = notification_command.clone();
+            let desktop_notifications_for_reset = desktop_notifications.clone();
+            let notification_sound_for_reset = notification_sound.clone();
+            show_destructive_confirmation(
+                &confirmation_parent,
+                "Reset Settings?",
+                "Restore ForkTTY settings to their default values. This changes the saved shell, appearance, workspace, and notification preferences.",
+                "Reset Settings",
+                move || {
+                    let defaults = config::AppConfig::default();
+                    suppress_updates_for_reset.set(true);
+                    shell_entry_for_reset.set_text(&defaults.general.shell);
+                    let _ = font_family_for_reset.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
+                    font_size_for_reset.set_value(i64::from(defaults.appearance.font_size));
+                    scrollback_lines_for_reset
+                        .set_value(i64::from(defaults.appearance.scrollback_lines));
+                    terminal_audible_bell_for_reset
+                        .set_active(defaults.appearance.terminal_audible_bell);
+                    let _ =
+                        theme_source_for_reset.set_active_id(Some(&defaults.general.theme_source));
+                    let _ = terminal_theme_for_reset
+                        .set_active_id(Some(&defaults.appearance.terminal_theme));
+                    let _ =
+                        window_mode_for_reset.set_active_id(Some(&defaults.appearance.window_mode));
+                    let _ = sidebar_position_for_reset
+                        .set_active_id(Some(&defaults.appearance.sidebar_position));
+                    sidebar_visible_for_reset.set_active(defaults.appearance.sidebar_visible);
+                    let _ =
+                        worktree_layout_for_reset.set_active_id(Some(&defaults.general.worktree_layout));
+                    notification_command_for_reset.set_text(&defaults.general.notification_command);
+                    desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
+                    notification_sound_for_reset.set_active(defaults.notifications.sound);
+                    suppress_updates_for_reset.set(false);
+                    persist_settings_change(
+                        &dialog_for_reset,
+                        &current_for_reset,
+                        &on_apply_for_reset,
+                        defaults,
+                        "Defaults restored.",
+                    );
+                },
+            );
         }
     });
 
