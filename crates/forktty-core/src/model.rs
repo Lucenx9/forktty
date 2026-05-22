@@ -333,6 +333,14 @@ impl WorkspaceModel {
                     canonical_leaf_ids.push(surface_id);
                 }
             }
+            let replacement_leaf_id = if canonical_leaf_ids.is_empty() {
+                changed = true;
+                let new_id = self.next_surface_id();
+                canonical_leaf_ids.push(new_id.clone());
+                Some(new_id)
+            } else {
+                None
+            };
 
             {
                 let workspace = self
@@ -345,7 +353,12 @@ impl WorkspaceModel {
                         workspace.focused_surface_id = new_id.clone();
                     }
                 }
-                if !canonical_leaf_ids.contains(&workspace.focused_surface_id) {
+                if let Some(replacement_leaf_id) = replacement_leaf_id {
+                    workspace.pane_tree = PaneNode::Leaf {
+                        surface_id: replacement_leaf_id.clone(),
+                    };
+                    workspace.focused_surface_id = replacement_leaf_id;
+                } else if !canonical_leaf_ids.contains(&workspace.focused_surface_id) {
                     if let Some(first_leaf) = canonical_leaf_ids.first() {
                         workspace.focused_surface_id = first_leaf.clone();
                         changed = true;
@@ -2573,6 +2586,36 @@ mod tests {
         );
         assert_eq!(
             model.surface(&leaves[1]).unwrap().workspace_id,
+            workspace.id
+        );
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn repair_session_invariants_replaces_leafless_pane_tree() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let old_surface_id = workspace.focused_surface_id.clone();
+        {
+            let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
+            workspace.pane_tree = PaneNode::Split {
+                axis: SplitAxis::Horizontal,
+                children: Vec::new(),
+                sizes: Vec::new(),
+            };
+            workspace.focused_surface_id = "missing-surface".to_string();
+        }
+
+        assert!(model.repair_session_invariants());
+
+        let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
+        let leaves = leaf_surface_ids(&repaired.pane_tree);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(repaired.focused_surface_id, leaves[0]);
+        assert_ne!(leaves[0], old_surface_id);
+        assert!(model.surface(&old_surface_id).is_none());
+        assert_eq!(
+            model.surface(&leaves[0]).unwrap().workspace_id,
             workspace.id
         );
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
