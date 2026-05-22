@@ -591,10 +591,11 @@ popover.ft-context-menu contents {
 }
 
 .app-status-bar {
-  min-height: 26px;
-  padding: 0 14px;
-  background: var(--ft-bg-2);
-  border-top: 1px solid var(--ft-border-subtle);
+  min-height: 28px;
+  padding: 2px 14px;
+  background: var(--ft-bg-0);
+  border-top: 1px solid var(--ft-border);
+  box-shadow: inset 0 1px 0 0 alpha(var(--window-fg-color), 0.04);
   color: var(--ft-text);
   font-size: 0.82em;
 }
@@ -604,8 +605,9 @@ popover.ft-context-menu contents {
   background: transparent;
   border: 0;
   color: var(--ft-text-strong);
-  font-size: 0.83em;
-  font-weight: 600;
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   border-radius: 5px;
 }
 
@@ -629,9 +631,9 @@ popover.ft-context-menu contents {
 }
 
 .pane-status {
-  color: var(--ft-text-muted);
-  font-size: 0.82em;
-  margin-left: 12px;
+  color: var(--ft-text-faint);
+  font-size: 0.80em;
+  margin-left: 14px;
 }
 
 .status-location:hover {
