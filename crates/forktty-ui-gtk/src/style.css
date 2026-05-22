@@ -758,11 +758,14 @@ popover.ft-workspace-popover contents {
   font-size: 0.78em;
 }
 
+/* Inactive attention panes already carry a 2px warning border on top.
+ * Keep the dot as a redundant cue for screen-magnifier users but shrink
+ * its visual weight so it reads as accent, not duplicate alarm. */
 .pane-attention-dot {
-  min-width: 6px;
-  min-height: 6px;
+  min-width: 4px;
+  min-height: 4px;
   border-radius: 50%;
-  background: var(--ft-warning);
+  background: alpha(var(--ft-warning), 0.7);
   margin-right: 4px;
 }
 
@@ -1156,6 +1159,45 @@ window.ft-dialog,
   padding: 0;
   font-size: 1.05em;
   font-weight: 700;
+}
+
+/* Adwaita PreferencesWindow polish:
+ *   - the view-switcher in the title bar gets a clear "checked" state so
+ *     the active tab is unambiguous;
+ *   - PreferencesGroup titles get extra breathing room to act as actual
+ *     section dividers instead of blurring into the first row. */
+preferenceswindow viewswitcher button:checked,
+preferenceswindow viewswitcher button.checked {
+  background: alpha(var(--ft-accent), 0.18);
+  color: var(--ft-text-strong);
+  box-shadow: inset 0 -2px 0 0 var(--ft-accent);
+}
+
+preferenceswindow viewswitcher button:checked:hover,
+preferenceswindow viewswitcher button.checked:hover {
+  background: alpha(var(--ft-accent), 0.24);
+}
+
+preferenceswindow preferencesgroup > box > .header {
+  margin-top: 18px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ft-border-subtle);
+}
+
+preferenceswindow preferencespage > scrolledwindow > viewport > clamp > box > preferencesgroup:first-child > box > .header {
+  margin-top: 4px;
+}
+
+preferenceswindow preferencesgroup > box > .header > label.title {
+  color: var(--ft-text-strong);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+preferenceswindow preferencesgroup > box > .header > label.description {
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
 }
 
 .ft-form-row {
