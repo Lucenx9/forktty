@@ -474,6 +474,35 @@ describe("forktty CLI helpers", () => {
     assert.equal(config.hooks.Stop.length, 1);
   });
 
+
+  it("replaces legacy bare-node hook commands instead of appending pinned duplicates", () => {
+    const scriptPath = "/tmp/forktty/scripts/forktty.mjs";
+    const legacyCommand =
+      `[ "\${FORKTTY_CODEX_HOOKS_DISABLED:-}" != "1" ] && node '${scriptPath}' hooks codex session-start || echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","permissionDecision":"allow","permissionDecisionReason":"ForkTTY hook disabled"}}'`;
+    const existing = {
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: legacyCommand,
+                timeout: 5000,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const { changed, config } = mergeHookConfig(existing, "codex", scriptPath, "/usr/bin/node");
+
+    assert.equal(changed, true);
+    assert.equal(config.hooks.SessionStart.length, 1);
+    assert.ok(config.hooks.SessionStart[0].hooks[0].command.includes("'/usr/bin/node'"));
+    assert.ok(!config.hooks.SessionStart[0].hooks[0].command.includes(" && node "));
+  });
+
   it("strips prior forktty-tagged hook entries when reinstalling from a new script path", () => {
     const oldScriptPath = "/old/forktty/scripts/forktty.mjs";
     const newScriptPath = "/new/forktty/scripts/forktty.mjs";
@@ -1053,10 +1082,6 @@ describe("forktty CLI helpers", () => {
       path: "/repo/process-cwd",
     });
     assert.throws(
-      () => buildWorktreeStatusParams({}, [], {}, ""),
-      /worktree-status requires --path, --cwd, a path, PWD, or the current directory/,
-    );
-    assert.throws(
       () => buildWorktreeStatusParams({ path: true }, [], { PWD: "/repo/current" }),
       /--path requires a value/,
     );
@@ -1072,6 +1097,26 @@ describe("forktty CLI helpers", () => {
       () => buildWorktreeStatusParams({}, ["/repo/wt", "extra"], {}),
       /worktree-status: unexpected argument extra/,
     );
+
+    const originalCwd = process.cwd;
+    process.cwd = () => {
+      throw new Error("cwd boom");
+    };
+    try {
+      assert.deepEqual(buildWorktreeStatusParams({ path: "/repo/wt" }, [], {}), {
+        path: "/repo/wt",
+      });
+      assert.deepEqual(worktreeParams({ cwd: "/repo/explicit" }, ["feature/x"], true, {}), {
+        name: "feature/x",
+        cwd: "/repo/explicit",
+      });
+      assert.throws(
+        () => buildWorktreeStatusParams({}, [], {}),
+        /worktree-status requires --path, --cwd, a path, PWD, or the current directory/,
+      );
+    } finally {
+      process.cwd = originalCwd;
+    }
   });
 
   it("defaults worktree command cwd to the caller PWD", () => {
@@ -1096,10 +1141,18 @@ describe("forktty CLI helpers", () => {
       () => worktreeParams({ cwd: true }, ["feature/x"], true, { PWD: "/repo/current" }),
       /--cwd requires a value/,
     );
-    assert.throws(
-      () => worktreeParams({}, ["feature/x"], true, {}, ""),
-      /worktree command requires --cwd, PWD, or the current directory/,
-    );
+    {
+      const originalCwd = process.cwd;
+      process.cwd = () => "";
+      try {
+        assert.throws(
+          () => worktreeParams({}, ["feature/x"], true, {}),
+          /worktree command requires --cwd, PWD, or the current directory/,
+        );
+      } finally {
+        process.cwd = originalCwd;
+      }
+    }
     assert.throws(
       () => worktreeParams({ branch: "" }, [], true, { PWD: "/repo/current" }),
       /--branch requires a value/,
@@ -1302,6 +1355,26 @@ describe("hook installer", () => {
     assert.ok(JSON.parse(await fs.readFile(path.join(home, ".codex/hooks.json"), "utf8")));
     assert.ok(JSON.parse(await fs.readFile(path.join(home, ".claude/settings.json"), "utf8")));
     assert.ok(JSON.parse(await fs.readFile(path.join(home, ".gemini/settings.json"), "utf8")));
+  });
+
+
+  it("supports hook setup paths containing spaces", async () => {
+    const context = makeContext({
+      CODEX_HOME: path.join(tmpDir, "codex home"),
+      CLAUDE_CONFIG_DIR: path.join(tmpDir, "claude config"),
+      HOME: path.join(tmpDir, "home dir"),
+    });
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex", "claude"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    assert.ok(JSON.parse(await fs.readFile(path.join(context.env.CODEX_HOME, "hooks.json"), "utf8")));
+    assert.ok(JSON.parse(await fs.readFile(path.join(context.env.CLAUDE_CONFIG_DIR, "settings.json"), "utf8")));
   });
 
   it("preserves unrelated keys in an existing config", async () => {

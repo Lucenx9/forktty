@@ -1,7 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -12,6 +12,8 @@ use crate::{validate_worktree_name, WorktreeNameError};
 const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SPAWN_RETRIES: usize = 5;
 const HOOK_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKTREE_HEAD_MAX_BYTES: u64 = 4096;
+const MAX_EXCLUDE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Error, Debug)]
 pub enum WorktreeError {
@@ -454,8 +456,7 @@ fn get_registered_worktree_branch(
         .join("worktrees")
         .join(worktree_name)
         .join("HEAD");
-    std::fs::read_to_string(head_path)
-        .ok()
+    read_registered_head_ref(&head_path)
         .and_then(|head| {
             head.lines()
                 .next()
@@ -464,6 +465,20 @@ fn get_registered_worktree_branch(
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_default()
+}
+
+fn read_registered_head_ref(head_path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(head_path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > WORKTREE_HEAD_MAX_BYTES {
+        return None;
+    }
+    let mut head = String::new();
+    File::open(head_path)
+        .ok()?
+        .take(WORKTREE_HEAD_MAX_BYTES)
+        .read_to_string(&mut head)
+        .ok()?;
+    Some(head)
 }
 
 fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
@@ -657,16 +672,40 @@ fn ensure_local_exclude_for_worktree_path(
     }
 
     let exclude_path = repo.path().join("info").join("exclude");
-    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
-    if existing
-        .lines()
-        .map(str::trim)
-        .any(|line| line == ".worktrees/" || line == "/.worktrees/")
-    {
-        return Ok(());
-    }
     if let Some(parent) = exclude_path.parent() {
         std::fs::create_dir_all(parent)?;
+    }
+    let mut existing = String::new();
+    if exclude_path.exists() {
+        let metadata = std::fs::symlink_metadata(&exclude_path)?;
+        if !metadata.file_type().is_file() {
+            return Err(WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ".git/info/exclude must be a regular file",
+            )));
+        }
+        if metadata.len() > MAX_EXCLUDE_BYTES {
+            return Err(WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ".git/info/exclude is too large",
+            )));
+        }
+        File::open(&exclude_path)?
+            .take(MAX_EXCLUDE_BYTES + 1)
+            .read_to_string(&mut existing)?;
+        if existing.len() as u64 > MAX_EXCLUDE_BYTES {
+            return Err(WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ".git/info/exclude is too large",
+            )));
+        }
+        if existing
+            .lines()
+            .map(str::trim)
+            .any(|line| line == ".worktrees/" || line == "/.worktrees/")
+        {
+            return Ok(());
+        }
     }
     let mut file = OpenOptions::new()
         .create(true)
@@ -886,6 +925,77 @@ mod tests {
 
         let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert!(exclude.lines().any(|line| line.trim() == ".worktrees/"));
+    }
+
+    #[test]
+    fn registered_head_ref_rejects_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let head_path = dir.path().join("HEAD");
+        fs::write(&head_path, "ref: refs/heads/main\n").unwrap();
+        assert_eq!(
+            read_registered_head_ref(&head_path),
+            Some("ref: refs/heads/main\n".to_string())
+        );
+
+        fs::write(&head_path, "x".repeat(WORKTREE_HEAD_MAX_BYTES as usize + 1)).unwrap();
+
+        assert_eq!(read_registered_head_ref(&head_path), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_head_ref_rejects_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target-head");
+        let head_path = dir.path().join("HEAD");
+        fs::write(&target, "ref: refs/heads/main\n").unwrap();
+        symlink(&target, &head_path).unwrap();
+
+        assert_eq!(read_registered_head_ref(&head_path), None);
+    }
+
+    #[test]
+    fn local_exclude_rejects_oversized_file() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        fs::write(&exclude_path, "x".repeat(MAX_EXCLUDE_BYTES as usize + 1)).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_exclude_rejects_symlink() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        let outside = dir.path().join("outside-exclude");
+        fs::write(&outside, "# outside\n").unwrap();
+        fs::remove_file(&exclude_path).unwrap();
+        symlink(&outside, &exclude_path).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
     }
 
     #[test]

@@ -17,6 +17,7 @@ use tokio::net::UnixListener;
 
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
+const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Error, Debug)]
@@ -40,7 +41,7 @@ pub enum SocketError {
 pub enum DispatchError {
     MethodNotFound(String),
     MissingParam(&'static str),
-    NotFound(&'static str),
+    NotFound(String),
     PayloadTooLarge {
         field: &'static str,
         limit: usize,
@@ -73,9 +74,12 @@ impl std::fmt::Display for DispatchError {
             DispatchError::MethodNotFound(method) => write!(f, "Unknown method: {method}"),
             DispatchError::MissingParam(name) => write!(f, "Missing {name}"),
             DispatchError::NotFound(kind) => {
-                let label = match *kind {
+                let label = match kind.as_str() {
                     "workspace" => "Workspace not found",
                     "surface" => "Surface not found",
+                    message if message.starts_with("Not a git repository: ") => {
+                        return f.write_str(message);
+                    }
                     other => return write!(f, "{other} not found"),
                 };
                 f.write_str(label)
@@ -106,9 +110,9 @@ impl From<forktty_core::worktree::WorktreeError> for DispatchError {
     fn from(err: forktty_core::worktree::WorktreeError) -> Self {
         use forktty_core::worktree::WorktreeError as W;
         match err {
-            W::NotFound(_) => DispatchError::NotFound("worktree"),
-            W::BranchNotFound(_) => DispatchError::NotFound("branch"),
-            W::NotARepo(_) => DispatchError::NotFound("repository"),
+            W::NotFound(name) => DispatchError::NotFound(format!("Worktree '{name}'")),
+            W::BranchNotFound(name) => DispatchError::NotFound(format!("Branch '{name}'")),
+            W::NotARepo(path) => DispatchError::NotFound(format!("Not a git repository: {path}")),
             W::AlreadyExists(name) => {
                 DispatchError::AlreadyExists(format!("Worktree '{name}' already exists"))
             }
@@ -281,7 +285,7 @@ pub async fn dispatch(
                 (
                     model
                         .select_workspace(selector)
-                        .ok_or(DispatchError::NotFound("workspace"))?,
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
                     previous_active_id,
                 )
             };
@@ -316,7 +320,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let workspace_id = model
                     .workspace_id_for(selector)
-                    .ok_or(DispatchError::NotFound("workspace"))?;
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
                 let surface_ids = model
                     .list_surfaces(Some(&workspace_id))
                     .into_iter()
@@ -326,7 +330,7 @@ pub async fn dispatch(
                     .list_workspaces()
                     .into_iter()
                     .find(|workspace| workspace.id == workspace_id)
-                    .ok_or(DispatchError::NotFound("workspace"))?;
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
                 let is_last_workspace = model.list_workspaces().len() == 1;
                 (workspace_id, workspace, surface_ids, is_last_workspace)
             };
@@ -367,7 +371,7 @@ pub async fn dispatch(
                         .map_err(|_| "Lock poisoned".to_string())?;
                     model
                         .close_workspace(WorkspaceSelector::Id(&workspace_id))
-                        .ok_or(DispatchError::NotFound("workspace"))?;
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?;
                 }
                 return Ok(json!(workspace));
             }
@@ -379,7 +383,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .close_workspace(WorkspaceSelector::Id(&workspace_id))
-                    .ok_or(DispatchError::NotFound("workspace"))?;
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
             }
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(workspace))
@@ -469,7 +473,7 @@ pub async fn dispatch(
             if is_last_workspace {
                 let workspace = workspace
                     .as_ref()
-                    .ok_or(DispatchError::NotFound("workspace"))?;
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
                 let (replacement, previous_active_id) = {
                     let mut model = state
                         .model
@@ -544,7 +548,7 @@ pub async fn dispatch(
                 Ok(selector) => Some(
                     model
                         .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace"))?,
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
                 ),
                 Err(DispatchError::MissingParam(_)) => None,
                 Err(err) => return Err(err),
@@ -581,7 +585,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .split_surface(surface_id, axis)
-                    .ok_or(DispatchError::NotFound("surface"))?
+                    .ok_or(DispatchError::NotFound("surface".to_string()))?
             };
             if let Err(err) = spawn_surface_terminal(state, &surface) {
                 rollback_surface_creation(state, &surface.id)?;
@@ -601,7 +605,7 @@ pub async fn dispatch(
             if focused {
                 Ok(json!({"focused": true}))
             } else {
-                Err(DispatchError::NotFound("surface"))
+                Err(DispatchError::NotFound("surface".to_string()))
             }
         }
         "surface.close" => {
@@ -612,7 +616,7 @@ pub async fn dispatch(
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 if model.surface(surface_id).is_none() {
-                    return Err(DispatchError::NotFound("surface"));
+                    return Err(DispatchError::NotFound("surface".to_string()));
                 }
                 model.prepare_root_surface_replacement(surface_id)
             };
@@ -629,15 +633,21 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
-                let surface = {
+                let (surface, replacement_in_model) = {
                     let mut model = state
                         .model
                         .lock()
                         .map_err(|_| "Lock poisoned".to_string())?;
-                    model
-                        .close_surface_with_replacement(surface_id, Some(replacement))
-                        .ok_or(DispatchError::NotFound("surface"))?
+                    let surface = model
+                        .close_surface_with_replacement(surface_id, Some(replacement.clone()))
+                        .ok_or(DispatchError::NotFound("surface".to_string()));
+                    let replacement_in_model = model.surface(&replacement.id).is_some();
+                    (surface, replacement_in_model)
                 };
+                if surface.is_err() || !replacement_in_model {
+                    forget_terminal_surface_if_present(state, &replacement.id)?;
+                }
+                let surface = surface?;
                 return Ok(json!(surface));
             }
             close_terminal_surface_if_present(state, surface_id)?;
@@ -648,7 +658,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .close_surface(surface_id)
-                    .ok_or(DispatchError::NotFound("surface"))?
+                    .ok_or(DispatchError::NotFound("surface".to_string()))?
             };
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(surface))
@@ -656,6 +666,8 @@ pub async fn dispatch(
         "notification.create" => {
             let title = notification_title_from_params(&params)?;
             let body = notification_body_from_params(&params)?;
+            ensure_max_text_size("title", title)?;
+            ensure_max_text_size("body", body)?;
             let kind = notification_kind_from_params(&params)?;
             let (workspace_id, surface_id) = resolve_notification_target(state, &params)?;
             let item = {
@@ -689,7 +701,10 @@ pub async fn dispatch(
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_trimmed_string(&params, "key")?;
             let label = required_trimmed_string(&params, "label")?;
+            ensure_max_text_size("key", key)?;
+            ensure_max_text_size("label", label)?;
             let value = required_trimmed_string(&params, "value")?;
+            ensure_max_text_size("value", value)?;
             let color = status_color_from_params(&params)?;
             let status = {
                 let mut model = state
@@ -698,7 +713,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .set_status(&workspace_id, key, label, value, color)
-                    .ok_or(DispatchError::NotFound("workspace"))?
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(status))
         }
@@ -726,13 +741,15 @@ pub async fn dispatch(
             if cleared {
                 Ok(json!({"cleared": true}))
             } else {
-                Err(DispatchError::NotFound("workspace"))
+                Err(DispatchError::NotFound("workspace".to_string()))
             }
         }
         "metadata.set_progress" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_trimmed_string(&params, "key")?;
             let label = required_trimmed_string(&params, "label")?;
+            ensure_max_text_size("key", key)?;
+            ensure_max_text_size("label", label)?;
             let value = required_f64(&params, "value")?;
             let total = optional_f64(&params, "total")?;
             if total.is_some_and(|total| total <= 0.0) {
@@ -747,7 +764,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .set_progress(&workspace_id, key, label, value, total)
-                    .ok_or(DispatchError::NotFound("workspace"))?
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(progress))
         }
@@ -775,13 +792,14 @@ pub async fn dispatch(
             if cleared {
                 Ok(json!({"cleared": true}))
             } else {
-                Err(DispatchError::NotFound("workspace"))
+                Err(DispatchError::NotFound("workspace".to_string()))
             }
         }
         "metadata.log" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let level = log_level_from_params(&params)?;
             let message = required_string(&params, "message")?;
+            ensure_max_text_size("message", message)?;
             let log = {
                 let mut model = state
                     .model
@@ -789,7 +807,7 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
                     .append_log(&workspace_id, level, message)
-                    .ok_or(DispatchError::NotFound("workspace"))?
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(log))
         }
@@ -816,11 +834,22 @@ pub async fn dispatch(
             if cleared {
                 Ok(json!({"cleared": true}))
             } else {
-                Err(DispatchError::NotFound("workspace"))
+                Err(DispatchError::NotFound("workspace".to_string()))
             }
         }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
+}
+
+fn ensure_max_text_size(field: &'static str, value: &str) -> Result<(), DispatchError> {
+    if value.len() > MAX_METADATA_TEXT_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field,
+            limit: MAX_METADATA_TEXT_BYTES,
+            actual: value.len(),
+        });
+    }
+    Ok(())
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
@@ -1325,7 +1354,7 @@ fn ensure_model_surface_exists(
     if model.surface(surface_id).is_some() {
         Ok(())
     } else {
-        Err(DispatchError::NotFound("surface"))
+        Err(DispatchError::NotFound("surface".to_string()))
     }
 }
 
@@ -1341,7 +1370,7 @@ fn resolve_notification_target(
         Ok(selector) => Some(
             model
                 .workspace_id_for(selector)
-                .ok_or(DispatchError::NotFound("workspace"))?,
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
         ),
         Err(DispatchError::MissingParam(_)) => None,
         Err(err) => return Err(err),
@@ -1351,12 +1380,12 @@ fn resolve_notification_target(
     if let Some(surface_id) = surface_id {
         let surface = model
             .surface(&surface_id)
-            .ok_or(DispatchError::NotFound("surface"))?;
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
         if workspace_id
             .as_deref()
             .is_some_and(|workspace_id| workspace_id != surface.workspace_id)
         {
-            return Err(DispatchError::NotFound("surface"));
+            return Err(DispatchError::NotFound("surface".to_string()));
         }
         return Ok((Some(surface.workspace_id.clone()), Some(surface_id)));
     }
@@ -1393,14 +1422,14 @@ fn resolve_workspace_id_for_metadata(
         Ok(selector) => {
             return model
                 .workspace_id_for(selector)
-                .ok_or(DispatchError::NotFound("workspace"));
+                .ok_or(DispatchError::NotFound("workspace".to_string()));
         }
         Err(DispatchError::MissingParam(_)) => {}
         Err(err) => return Err(err),
     }
     model
         .active_workspace_id()
-        .ok_or(DispatchError::NotFound("workspace"))
+        .ok_or(DispatchError::NotFound("workspace".to_string()))
 }
 
 #[derive(Clone, Copy)]
@@ -1769,6 +1798,72 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct CloseMutatesModelBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+        model: Arc<Mutex<WorkspaceModel>>,
+    }
+
+    impl CloseMutatesModelBackend {
+        fn new(initial: TerminalSurfaceState, model: Arc<Mutex<WorkspaceModel>>) -> Self {
+            let mut surfaces = BTreeMap::new();
+            surfaces.insert(initial.surface_id.clone(), initial);
+            Self {
+                surfaces: Mutex::new(surfaces),
+                model,
+            }
+        }
+    }
+
+    impl TerminalBackend for CloseMutatesModelBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            let mut model = self.model.lock().map_err(|_| TerminalError::LockPoisoned)?;
+            let _ = model.close_surface(surface_id);
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
+        }
+    }
+
     impl TerminalBackend for SpawnFailsCloseSucceedsBackend {
         fn spawn(&self, _request: SpawnRequest) -> Result<(), TerminalError> {
             Err(TerminalError::Backend("spawn failed".to_string()))
@@ -1925,7 +2020,23 @@ mod tests {
             DispatchError::from(W::InvalidName(forktty_core::WorktreeNameError::Empty)).code(),
             "invalid_param"
         );
+        assert_eq!(
+            DispatchError::from(W::NotARepo("/tmp/repo".into())).code(),
+            "not_found"
+        );
         assert_eq!(DispatchError::from(W::BareRepo).code(), "error");
+        assert_eq!(
+            DispatchError::from(W::NotFound("foo".into())).to_string(),
+            "Worktree 'foo' not found"
+        );
+        assert_eq!(
+            DispatchError::from(W::BranchNotFound("bar".into())).to_string(),
+            "Branch 'bar' not found"
+        );
+        assert_eq!(
+            DispatchError::from(W::NotARepo("/tmp/repo".into())).to_string(),
+            "Not a git repository: /tmp/repo"
+        );
     }
 
     #[test]
@@ -2362,6 +2473,41 @@ mod tests {
         .await
         .unwrap();
         assert!(logs.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_reject_oversized_payload_fields() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let oversized = "x".repeat(MAX_METADATA_TEXT_BYTES + 1);
+
+        for (method, params, expected_field) in [
+            (
+                "metadata.set_status",
+                json!({"workspace_id": workspace_id, "key": oversized, "label": "Codex", "value": "Running"}),
+                "key",
+            ),
+            (
+                "metadata.set_progress",
+                json!({"workspace_id": workspace_id, "key": "build", "label": oversized, "value": 1}),
+                "label",
+            ),
+            (
+                "metadata.log",
+                json!({"workspace_id": workspace_id, "level": "info", "message": oversized}),
+                "message",
+            ),
+            (
+                "notification.create",
+                json!({"workspace_id": workspace_id, "title": oversized, "body": "body"}),
+                "title",
+            ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "payload_too_large");
+            assert!(error.to_string().contains(expected_field));
+        }
     }
 
     #[tokio::test]
@@ -3150,6 +3296,44 @@ mod tests {
         assert_eq!(surfaces[0]["id"], surface_id);
         assert_eq!(backend.surfaces().unwrap().len(), 1);
         assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
+    }
+
+    #[tokio::test]
+    async fn surface_close_root_cleans_replacement_when_model_close_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = fs::canonicalize(project_dir.path()).unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("project", &project_cwd)
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(CloseMutatesModelBackend::new(
+            TerminalSurfaceState {
+                surface_id: surface_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: project_cwd,
+                shell: "/bin/sh".to_string(),
+                cols: 80,
+                rows: 24,
+            },
+            model.clone(),
+        ));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(!error.is_empty());
+        assert_eq!(backend.surfaces().unwrap().len(), 0);
     }
 
     #[tokio::test]
