@@ -1268,6 +1268,11 @@ fn repair_pane_tree_structure(node: &mut PaneNode) -> bool {
                 changed = true;
             }
         }
+        let child_count_before_prune = children.len();
+        children.retain(|child| first_leaf_surface_id(child).is_some());
+        if children.len() != child_count_before_prune {
+            changed = true;
+        }
         if children.len() == 1 {
             *node = children.remove(0);
             return true;
@@ -2618,6 +2623,39 @@ mod tests {
             model.surface(&leaves[0]).unwrap().workspace_id,
             workspace.id
         );
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn repair_session_invariants_prunes_nested_leafless_splits() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let leaf_id = workspace.focused_surface_id.clone();
+        {
+            let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
+            workspace.pane_tree = PaneNode::Split {
+                axis: SplitAxis::Horizontal,
+                children: vec![
+                    PaneNode::Split {
+                        axis: SplitAxis::Vertical,
+                        children: Vec::new(),
+                        sizes: Vec::new(),
+                    },
+                    PaneNode::Leaf {
+                        surface_id: leaf_id.clone(),
+                    },
+                ],
+                sizes: vec![0.5, 0.5],
+            };
+        }
+
+        assert!(model.repair_session_invariants());
+
+        let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
+        assert!(matches!(
+            repaired.pane_tree,
+            PaneNode::Leaf { surface_id } if surface_id == leaf_id
+        ));
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 

@@ -1500,16 +1500,19 @@ fn resolve_workspace_id_for_metadata(
         Err(err) => return Err(err),
     };
     if let Some(surface_id) = surface_id {
-        let surface = model
-            .surface(&surface_id)
-            .ok_or(DispatchError::NotFound("surface".to_string()))?;
-        if workspace_id
-            .as_deref()
-            .is_some_and(|workspace_id| workspace_id != surface.workspace_id)
-        {
-            return Err(DispatchError::NotFound("surface".to_string()));
+        if let Some(surface) = model.surface(&surface_id) {
+            if workspace_id
+                .as_deref()
+                .is_some_and(|workspace_id| workspace_id != surface.workspace_id)
+            {
+                return Err(DispatchError::NotFound("surface".to_string()));
+            }
+            return Ok(surface.workspace_id.clone());
         }
-        return Ok(surface.workspace_id.clone());
+        if let Some(workspace_id) = workspace_id {
+            return Ok(workspace_id);
+        }
+        return Err(DispatchError::NotFound("surface".to_string()));
     }
     if let Some(workspace_id) = workspace_id {
         return Ok(workspace_id);
@@ -1829,7 +1832,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::sync::{Arc, Mutex};
-    use tokio::io::BufReader;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
@@ -2551,6 +2554,80 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code(), "not_found");
         assert_eq!(error.to_string(), "Surface not found");
+    }
+
+    #[tokio::test]
+    async fn metadata_hooks_can_finish_cleanup_after_target_surface_closes() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_event_name": "prompt-submit",
+                "hook_event_clock": "monotonic-ns",
+                "hook_event_order": 100,
+                "hook_turn_id": "prompt:one"
+            }),
+        )
+        .await
+        .unwrap();
+        {
+            let mut model = state.model.lock().unwrap();
+            model.close_surface(surface_id).unwrap();
+        }
+
+        dispatch(
+            &state,
+            "metadata.log",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "level": "info",
+                "message": "Codex session ended"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "hook_event_name": "session-end",
+                "hook_event_clock": "monotonic-ns",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let logs = dispatch(
+            &state,
+            "metadata.list_logs",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
+        assert_eq!(logs.as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -4314,5 +4391,28 @@ mod tests {
             read_limited_line(&mut reader, 3).await,
             Some(Err(ReadLineError::TooLarge))
         );
+    }
+
+    #[tokio::test]
+    async fn socket_connection_returns_structured_error_for_oversize_request() {
+        let (state, _backend) = test_state();
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let server = tokio::spawn(handle_connection(server, state));
+        let (read_half, mut write_half) = client.into_split();
+        let oversize_request = vec![b'x'; MAX_REQUEST_SIZE + 1];
+
+        write_half.write_all(&oversize_request).await.unwrap();
+        write_half.write_all(b"\n").await.unwrap();
+        write_half.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let response: JsonRpcResponse = serde_json::from_str(line.trim_end()).unwrap();
+
+        assert!(!response.ok);
+        assert_eq!(response.id, Value::Null);
+        assert_eq!(response.error.unwrap().code, "request_too_large");
+        server.await.unwrap().unwrap();
     }
 }

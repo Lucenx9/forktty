@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DOCTOR_MAX_CONFIG_SIZE_BYTES: u64 = 1_048_576;
 const DOCTOR_MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
+const APPIMAGE_GTK_RUNTIME_LIBS: &[&str] =
+    &["libgtk-4.so", "libadwaita-1.so", "libvte-2.91-gtk4.so"];
 
 const HELP_TEXT: &str = "\
 forktty — Linux-native multi-agent terminal
@@ -266,6 +268,12 @@ fn collect_report() -> DoctorReport {
 
     let hooks = collect_hooks();
     append_hook_warnings(&mut warnings, &hooks);
+    append_appimage_runtime_warnings(
+        &mut warnings,
+        cfg!(feature = "gtk-vte"),
+        std::env::var_os("APPIMAGE"),
+        std::env::var_os("APPDIR"),
+    );
 
     DoctorReport {
         version: VERSION,
@@ -470,6 +478,76 @@ fn append_hook_warnings(warnings: &mut Vec<String>, hooks: &[HookState]) {
             ));
         }
     }
+}
+
+fn append_appimage_runtime_warnings(
+    warnings: &mut Vec<String>,
+    gtk_vte_enabled: bool,
+    appimage_env: Option<OsString>,
+    appdir_env: Option<OsString>,
+) {
+    if !gtk_vte_enabled {
+        return;
+    }
+    let Some(appimage) = trimmed_os_string(appimage_env) else {
+        return;
+    };
+    let Some(appdir) = trimmed_os_string(appdir_env).map(PathBuf::from) else {
+        warnings.push(format!(
+            "AppImage {appimage} did not expose APPDIR; doctor cannot verify bundled GTK/VTE runtime libraries."
+        ));
+        return;
+    };
+    if !appdir.is_dir() {
+        warnings.push(format!(
+            "AppImage {appimage} APPDIR {} is not a directory; doctor cannot verify bundled GTK/VTE runtime libraries.",
+            appdir.display()
+        ));
+        return;
+    }
+    let missing = APPIMAGE_GTK_RUNTIME_LIBS
+        .iter()
+        .copied()
+        .filter(|lib| !appdir_contains_library(&appdir, lib))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        warnings.push(format!(
+            "AppImage {appimage} does not bundle GTK/VTE runtime libraries (missing {}); this build depends on host packages.",
+            missing.join(", ")
+        ));
+    }
+}
+
+fn trimmed_os_string(value: Option<OsString>) -> Option<String> {
+    value
+        .map(|value| value.to_string_lossy().trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn appdir_contains_library(appdir: &Path, lib_prefix: &str) -> bool {
+    [appdir.join("usr/lib"), appdir.join("usr/lib64")]
+        .iter()
+        .any(|dir| directory_contains_library(dir, lib_prefix))
+}
+
+fn directory_contains_library(dir: &Path, lib_prefix: &str) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(lib_prefix))
+        {
+            return true;
+        }
+        if path.is_dir() && directory_contains_library(&path, lib_prefix) {
+            return true;
+        }
+    }
+    false
 }
 
 fn path_display(state: &PathState) -> String {
@@ -1128,6 +1206,46 @@ mod tests {
                 && warning.contains(&hook_path.display().to_string())
                 && warning.contains("broken symlink")
         }));
+    }
+
+    #[test]
+    fn doctor_warns_when_appimage_runtime_libs_are_missing() {
+        let appdir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(appdir.path().join("usr/lib")).unwrap();
+        let mut warnings = Vec::new();
+
+        append_appimage_runtime_warnings(
+            &mut warnings,
+            true,
+            Some(OsString::from("/tmp/ForkTTY.AppImage")),
+            Some(appdir.path().as_os_str().to_os_string()),
+        );
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("AppImage /tmp/ForkTTY.AppImage")
+                && warning.contains("does not bundle GTK/VTE runtime libraries")
+                && warning.contains("libgtk-4.so")
+        }));
+    }
+
+    #[test]
+    fn doctor_accepts_bundled_appimage_runtime_libs() {
+        let appdir = tempfile::tempdir().unwrap();
+        let libdir = appdir.path().join("usr/lib/x86_64-linux-gnu");
+        fs::create_dir_all(&libdir).unwrap();
+        fs::write(libdir.join("libgtk-4.so.1"), "").unwrap();
+        fs::write(libdir.join("libadwaita-1.so.0"), "").unwrap();
+        fs::write(libdir.join("libvte-2.91-gtk4.so.0"), "").unwrap();
+        let mut warnings = Vec::new();
+
+        append_appimage_runtime_warnings(
+            &mut warnings,
+            true,
+            Some(OsString::from("/tmp/ForkTTY.AppImage")),
+            Some(appdir.path().as_os_str().to_os_string()),
+        );
+
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 
     #[test]
