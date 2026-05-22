@@ -1,7 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -12,6 +12,7 @@ use crate::{validate_worktree_name, WorktreeNameError};
 const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SPAWN_RETRIES: usize = 5;
 const HOOK_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WORKTREE_HEAD_MAX_BYTES: u64 = 4096;
 
 #[derive(Error, Debug)]
 pub enum WorktreeError {
@@ -454,8 +455,7 @@ fn get_registered_worktree_branch(
         .join("worktrees")
         .join(worktree_name)
         .join("HEAD");
-    std::fs::read_to_string(head_path)
-        .ok()
+    read_registered_head_ref(&head_path)
         .and_then(|head| {
             head.lines()
                 .next()
@@ -464,6 +464,20 @@ fn get_registered_worktree_branch(
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_default()
+}
+
+fn read_registered_head_ref(head_path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(head_path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > WORKTREE_HEAD_MAX_BYTES {
+        return None;
+    }
+    let mut head = String::new();
+    File::open(head_path)
+        .ok()?
+        .take(WORKTREE_HEAD_MAX_BYTES)
+        .read_to_string(&mut head)
+        .ok()?;
+    Some(head)
 }
 
 fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
