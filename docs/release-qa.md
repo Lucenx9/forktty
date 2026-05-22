@@ -86,6 +86,7 @@ rebuilding.
 - `printf '{"id":"x","method":"workspace.create","params":{"name":"","workingDir":"/tmp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `name`; no default-named workspace is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"","key":"qa","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `workspace_id`; the status is not added to the active workspace.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":42,"label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key` instead of treating it as missing.
+- Send `notification.create`, `metadata.set_status`, `metadata.set_progress`, or `metadata.log` with any text field over 16 KiB — response code is `payload_too_large` and names the oversized field.
 - `printf '{"id":"x","method":"notification.create","params":{"title":"bad target","surface_id":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `surface_id`; no global notification is created.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id-a>","surfaceId":"<surface-id-b>","text":"echo bad\n"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an ambiguous surface selector instead of silently picking one target.
 - `printf '{"id":"x","method":"notification.create","params":{"title":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `title`; no blank notification is created.
