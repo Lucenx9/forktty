@@ -2271,6 +2271,11 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
     let config_path = (spec.config_path)();
     let config_info = inspect_path(&config_path);
     let launcher_check = describe_launcher_check(spec, &config_path, current_launcher.as_deref());
+    let supported_events: Vec<&str> = spec
+        .hook_entries
+        .iter()
+        .map(|entry| entry.event_name)
+        .collect();
     let report = json!({
         "agent": spec.key,
         "socket": {
@@ -2291,6 +2296,7 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         },
         "hookConfig": config_info,
         "launcherCheck": launcher_check,
+        "supportedEvents": supported_events,
     });
     if context.json {
         return print_json(&report);
@@ -2710,6 +2716,9 @@ fn add_hook_metadata(
     if let Some(turn_id) = extract_hook_turn_id(event, payload) {
         params.insert("hook_turn_id".to_string(), Value::String(turn_id));
     }
+    if let Some(session_id) = extract_hook_session_id(payload) {
+        params.insert("hook_session_id".to_string(), Value::String(session_id));
+    }
     Value::Object(params)
 }
 
@@ -2739,20 +2748,48 @@ fn build_hook_actions(
             add_hook_metadata(params, event_name, payload, order),
         )
     };
+    let permission_key = format!("agent:{}:permission", spec.key);
+    let permission_status = |mode: &str, event_name: &str| {
+        let mut params = target.clone();
+        params.insert("key".to_string(), Value::String(permission_key.clone()));
+        params.insert(
+            "label".to_string(),
+            Value::String(format!("{} mode", spec.label)),
+        );
+        params.insert("value".to_string(), Value::String(mode.to_string()));
+        params.insert("color".to_string(), Value::String("muted".to_string()));
+        (
+            "metadata.set_status".to_string(),
+            add_hook_metadata(params, event_name, payload, order),
+        )
+    };
+    let permission_mode = extract_hook_permission_mode(payload);
+    let with_permission = |mut actions: Vec<(String, Value)>, event_name: &str| {
+        if let Some(mode) = permission_mode.as_deref() {
+            actions.push(permission_status(mode, event_name));
+        }
+        actions
+    };
     match event {
         "session-start" => {
             let source = extract_hook_source(payload)
                 .map(|source| format!(" ({source})"))
                 .unwrap_or_default();
-            vec![
-                log("info", format!("{} session started{source}", spec.label)),
-                status("Ready", "green", event),
-            ]
+            with_permission(
+                vec![
+                    log("info", format!("{} session started{source}", spec.label)),
+                    status("Ready", "green", event),
+                ],
+                event,
+            )
         }
-        "prompt-submit" => vec![
-            log("info", format!("{} prompt submitted", spec.label)),
-            status("Running", "blue", event),
-        ],
+        "prompt-submit" => with_permission(
+            vec![
+                log("info", format!("{} prompt submitted", spec.label)),
+                status("Running", "blue", event),
+            ],
+            event,
+        ),
         "notification" => {
             let mut note = target.clone();
             note.insert(
@@ -2902,11 +2939,17 @@ fn build_hook_actions(
         "session-end" => {
             let mut clear = target.clone();
             clear.insert("key".to_string(), Value::String(key));
+            let mut clear_permission = target.clone();
+            clear_permission.insert("key".to_string(), Value::String(permission_key));
             vec![
                 log("info", format!("{} session ended", spec.label)),
                 (
                     "metadata.clear_status".to_string(),
                     add_hook_metadata(clear, event, payload, order),
+                ),
+                (
+                    "metadata.clear_status".to_string(),
+                    add_hook_metadata(clear_permission, event, payload, order),
                 ),
             ]
         }
@@ -3110,6 +3153,28 @@ fn extract_hook_tool_error(payload: &Value) -> bool {
         }
     }
     false
+}
+
+fn extract_hook_permission_mode(payload: &Value) -> Option<String> {
+    extract_first_string_like(payload, &["permission_mode", "permissionMode"])
+        .map(|value| {
+            sanitize_for_terminal(&value)
+                .chars()
+                .take(64)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_hook_session_id(payload: &Value) -> Option<String> {
+    extract_first_string_like(payload, &["session_id", "sessionId"])
+        .map(|value| {
+            sanitize_for_terminal(&value)
+                .chars()
+                .take(96)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
 }
 
 fn extract_hook_turn_id(event: &str, payload: &Value) -> Option<String> {
@@ -3863,10 +3928,12 @@ mod tests {
 
                 let gemini = agent_spec("gemini").unwrap();
                 let actions = build_hook_actions(gemini, "session-end", &Value::Null, "99");
-                assert_eq!(actions.len(), 2);
+                assert_eq!(actions.len(), 3);
                 assert_eq!(actions[0].1["message"], "Gemini session ended");
                 assert_eq!(actions[1].0, "metadata.clear_status");
                 assert_eq!(actions[1].1["key"], "agent:gemini");
+                assert_eq!(actions[2].0, "metadata.clear_status");
+                assert_eq!(actions[2].1["key"], "agent:gemini:permission");
             },
         );
     }
@@ -4077,6 +4144,174 @@ mod tests {
         )
         .unwrap();
         assert_eq!(codex, plain);
+    }
+
+    #[test]
+    fn permission_mode_publishes_separate_status_for_codex_and_claude() {
+        // Codex docs: `permission_mode` is "string, for most events"; Claude
+        // Code docs document the enum (default|plan|acceptEdits|auto|
+        // dontAsk|bypassPermissions). Both providers ship the field in
+        // SessionStart and UserPromptSubmit stdin payloads, so we publish a
+        // sibling status entry that never collides with the existing
+        // `agent:<key>` activity status.
+        let claude_payload = json!({
+            "session_id": "sess-claude-1",
+            "permission_mode": "acceptEdits",
+            "transcript_path": "/tmp/transcript.jsonl"
+        });
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "session-start",
+            &claude_payload,
+            "1",
+        );
+        assert_eq!(actions.len(), 3);
+        let permission = &actions[2];
+        assert_eq!(permission.0, "metadata.set_status");
+        assert_eq!(permission.1["key"], "agent:claude:permission");
+        assert_eq!(permission.1["label"], "Claude mode");
+        assert_eq!(permission.1["value"], "acceptEdits");
+        assert_eq!(permission.1["color"], "muted");
+        assert_eq!(permission.1["hook_session_id"], "sess-claude-1");
+
+        let codex_payload = json!({
+            "session_id": "sess-codex-9",
+            "permission_mode": "on-request",
+            "model": "gpt-5",
+        });
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "prompt-submit",
+            &codex_payload,
+            "2",
+        );
+        assert_eq!(actions.len(), 3);
+        let permission = &actions[2];
+        assert_eq!(permission.1["key"], "agent:codex:permission");
+        assert_eq!(permission.1["label"], "Codex mode");
+        assert_eq!(permission.1["value"], "on-request");
+        assert_eq!(permission.1["hook_session_id"], "sess-codex-9");
+    }
+
+    #[test]
+    fn permission_status_omitted_when_payload_has_no_permission_mode() {
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "session-start",
+            &json!({ "session_id": "sess-codex-no-mode" }),
+            "1",
+        );
+        assert_eq!(actions.len(), 2);
+        for (_, params) in &actions {
+            assert_ne!(params["key"], "agent:codex:permission");
+        }
+    }
+
+    #[test]
+    fn session_end_clears_activity_and_permission_status() {
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "session-end",
+            &json!({ "session_id": "sess-claude-end" }),
+            "9",
+        );
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[1].0, "metadata.clear_status");
+        assert_eq!(actions[1].1["key"], "agent:claude");
+        assert_eq!(actions[2].0, "metadata.clear_status");
+        assert_eq!(actions[2].1["key"], "agent:claude:permission");
+        // hook_session_id rides on every metadata action so the daemon can
+        // correlate the clear with its originating session.
+        assert_eq!(actions[1].1["hook_session_id"], "sess-claude-end");
+        assert_eq!(actions[2].1["hook_session_id"], "sess-claude-end");
+    }
+
+    #[test]
+    fn hook_metadata_includes_codex_turn_id_extension() {
+        // Codex CLI hook payloads add `turn_id` to turn-scoped events.
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "pre-tool",
+            &json!({
+                "session_id": "sess-codex-turn",
+                "turn_id": "turn-42",
+                "tool_name": "shell",
+            }),
+            "5",
+        );
+        assert_eq!(actions[1].0, "metadata.set_status");
+        let turn = actions[1].1["hook_turn_id"]
+            .as_str()
+            .expect("hook_turn_id encoded");
+        assert!(turn.starts_with("id:"));
+        // Claude's PreToolUse payload uses `tool_use_id` and `tool_input`.
+        // Claude documents `tool_use_id` as per-tool-call (not per-turn), so
+        // we deliberately don't promote it to hook_turn_id; instead
+        // session_id rides on every metadata action so the daemon can
+        // correlate logs and statuses across the tool invocation.
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "pre-tool",
+            &json!({
+                "session_id": "sess-claude-tool",
+                "tool_use_id": "toolu_abc",
+                "tool_name": "Bash",
+                "tool_input": { "command": "ls" },
+            }),
+            "6",
+        );
+        assert_eq!(actions[1].0, "metadata.set_status");
+        assert_eq!(actions[1].1["hook_session_id"], "sess-claude-tool");
+        assert_eq!(actions[1].1["value"], "Running Bash");
+        assert!(actions[1].1.get("hook_turn_id").is_none());
+    }
+
+    #[test]
+    fn doctor_supported_events_track_installed_entries_per_provider() {
+        // Codex officially supports 10 events; ForkTTY installs the subset
+        // relevant to terminal state. Claude installs the full documented
+        // lifecycle. The doctor report mirrors the installer so users can
+        // confirm parity without hand-diffing JSON files.
+        let codex_events: Vec<&str> = agent_spec("codex")
+            .unwrap()
+            .hook_entries
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect();
+        assert_eq!(
+            codex_events,
+            vec![
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUse",
+                "Stop",
+            ]
+        );
+        let claude_events: Vec<&str> = agent_spec("claude")
+            .unwrap()
+            .hook_entries
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect();
+        assert_eq!(
+            claude_events,
+            vec![
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUse",
+                "SubagentStop",
+                "PreCompact",
+                "Stop",
+                "Notification",
+                "SessionEnd",
+            ]
+        );
+        // Codex docs do not list Notification or SessionEnd, so the Codex
+        // installer must never target them.
+        assert!(!codex_events.contains(&"Notification"));
+        assert!(!codex_events.contains(&"SessionEnd"));
     }
 
     #[test]
