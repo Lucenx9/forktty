@@ -71,6 +71,7 @@ rebuilding.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `forktty surfaces --workspace main` — exits with `surfaces: unknown option --workspace` instead of listing every surface.
 - `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.
+- `forktty focus <selector-a> --workspace-name <selector-b>` — exits with `focus: cannot combine a positional selector with --workspace-name` instead of silently focusing one selector.
 - If positional `forktty focus <selector>` hits an existing workspace id but the socket returns a spawn error, the CLI reports that spawn error instead of retrying the selector as a workspace name and masking it as not found.
 - If selecting a workspace over the socket needs to respawn its terminal and that spawn fails, the focus request reports the spawn error and keeps the previous workspace active.
 - `FORKTTY_WORKSPACE_ID=workspace-1 forktty close-workspace --workspace main` — exits with `close-workspace: unknown option --workspace` instead of falling back to and closing the inherited workspace id.
@@ -79,6 +80,7 @@ rebuilding.
 - `FORKTTY_WORKSPACE_ID=" workspace-1 " forktty set-status --key qa --value ok` — trims the inherited workspace id before targeting metadata.
 - `forktty set-status --key qa --value ok --color=` — exits with `--color requires a value` instead of silently creating an uncolored status.
 - `FORKTTY_WORKSPACE_ID=workspace-1 forktty set-status --workspace-id= --key qa --value ok` — exits with `--workspace-id requires a value` instead of falling back to the inherited id.
+- `forktty set-status --workspace-id workspace-1 --workspace-name main --key qa --value ok` — exits with `set-status: cannot combine --workspace-id and --workspace-name` instead of silently picking one target.
 - `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
 - `printf '{"id":"x","method":"workspace.create","params":{"name":"","workingDir":"/tmp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `name`; no default-named workspace is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"","key":"qa","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `workspace_id`; the status is not added to the active workspace.

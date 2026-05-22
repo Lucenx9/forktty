@@ -394,34 +394,62 @@ function requireNoCommandArgs(args, commandName) {
   }
 }
 
-function buildTargetParams(options, env = process.env) {
-  requireTargetSelectorOptions(options);
-  const params = {};
-  const workspaceId =
-    typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "";
-  const workspaceName =
-    typeof options["workspace-name"] === "string" ? options["workspace-name"].trim() : "";
-  const worktreeName =
-    typeof options["worktree-name"] === "string" ? options["worktree-name"].trim() : "";
+function buildTargetParams(options, env = process.env, commandName = "workspace target") {
+  const selectors = targetSelectorValues(options);
+  if (selectors.length > 1) {
+    throw new Error(
+      `${commandName}: cannot combine ${formatOptionNames(selectors.map(({ option }) => option))}`,
+    );
+  }
   const envWorkspaceId =
     typeof env.FORKTTY_WORKSPACE_ID === "string" ? env.FORKTTY_WORKSPACE_ID.trim() : "";
 
-  if (workspaceId) {
-    params.workspace_id = workspaceId;
-  } else if (workspaceName) {
-    params.workspace_name = workspaceName;
-  } else if (worktreeName) {
-    params.worktreeName = worktreeName;
-  } else if (envWorkspaceId) {
-    params.workspace_id = envWorkspaceId;
+  if (selectors.length === 1) {
+    const selector = selectors[0];
+    return { [selector.field]: selector.value };
   }
-  return params;
+  return envWorkspaceId ? { workspace_id: envWorkspaceId } : {};
 }
 
 function requireTargetSelectorOptions(options) {
   requireNonBlankStringOption(options, "workspace-id");
   requireNonBlankStringOption(options, "workspace-name");
   requireNonBlankStringOption(options, "worktree-name");
+}
+
+function targetSelectorValues(options) {
+  requireTargetSelectorOptions(options);
+  return [
+    {
+      option: "workspace-id",
+      field: "workspace_id",
+      value:
+        typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "",
+    },
+    {
+      option: "workspace-name",
+      field: "workspace_name",
+      value:
+        typeof options["workspace-name"] === "string" ? options["workspace-name"].trim() : "",
+    },
+    {
+      option: "worktree-name",
+      field: "worktreeName",
+      value:
+        typeof options["worktree-name"] === "string" ? options["worktree-name"].trim() : "",
+    },
+  ].filter(({ value }) => value);
+}
+
+function formatOptionNames(options) {
+  const formatted = options.map((option) => `--${option}`);
+  if (formatted.length <= 1) {
+    return formatted[0] || "";
+  }
+  if (formatted.length === 2) {
+    return `${formatted[0]} and ${formatted[1]}`;
+  }
+  return `${formatted.slice(0, -1).join(", ")}, and ${formatted[formatted.length - 1]}`;
 }
 
 function parseFiniteNumber(value, optionName) {
@@ -464,7 +492,7 @@ function buildProgressParams(options, env = process.env) {
 
   const value = parseFiniteNumber(options.value, "--value");
   const params = {
-    ...buildTargetParams(options, env),
+    ...buildTargetParams(options, env, "set-progress"),
     key,
     label,
     value,
@@ -502,7 +530,7 @@ function buildLogParams(options, positionals, stdinText = "", env = process.env)
   }
 
   return {
-    ...buildTargetParams(options, env),
+    ...buildTargetParams(options, env, "log"),
     level,
     message,
   };
@@ -512,7 +540,7 @@ function buildClearMetadataParams(options, env = process.env) {
   rejectUnknownOptions(options, CLEAR_METADATA_OPTION_NAMES, "clear metadata");
   requireNonBlankStringOption(options, "key");
   return {
-    ...buildTargetParams(options, env),
+    ...buildTargetParams(options, env, "clear metadata"),
     ...(typeof options.key === "string" ? { key: options.key.trim() } : {}),
   };
 }
@@ -537,7 +565,7 @@ function buildStatusParams(options, env = process.env) {
   }
 
   return {
-    ...buildTargetParams(options, env),
+    ...buildTargetParams(options, env, "set-status"),
     key,
     label,
     value,
@@ -569,7 +597,7 @@ function buildNotificationParams(options, positionals, stdinText = "", env = pro
   }
 
   return {
-    ...buildTargetParams(options, env),
+    ...buildTargetParams(options, env, "notify"),
     title,
     body,
     kind,
@@ -757,28 +785,35 @@ function resolveSelectorParams(
   commandName = "workspace selector",
 ) {
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, commandName);
-  requireTargetSelectorOptions(options);
-  const workspaceId =
-    typeof options["workspace-id"] === "string" ? options["workspace-id"].trim() : "";
-  const workspaceName =
-    typeof options["workspace-name"] === "string" ? options["workspace-name"].trim() : "";
-  const worktreeName =
-    typeof options["worktree-name"] === "string" ? options["worktree-name"].trim() : "";
+  const selectors = targetSelectorValues(options);
+  if (selectors.length > 1) {
+    throw new Error(
+      `${commandName}: cannot combine ${formatOptionNames(selectors.map(({ option }) => option))}`,
+    );
+  }
+  if (positionals.length > 1) {
+    throw new Error(`${commandName}: unexpected argument ${positionals[1]}`);
+  }
+  const selector = positionals.length > 0 ? positionals[0].trim() : "";
+  if (positionals.length > 0 && !selector) {
+    throw new Error("workspace selector requires a value");
+  }
+  if (selectors.length === 1 && selector) {
+    throw new Error(
+      `${commandName}: cannot combine a positional selector with --${selectors[0].option}`,
+    );
+  }
 
-  if (workspaceId) {
-    return [{ id: workspaceId }];
+  if (selectors[0]?.field === "workspace_id") {
+    return [{ id: selectors[0].value }];
   }
-  if (workspaceName) {
-    return [{ name: workspaceName }];
+  if (selectors[0]?.field === "workspace_name") {
+    return [{ name: selectors[0].value }];
   }
-  if (worktreeName) {
-    return [{ worktreeName }];
+  if (selectors[0]?.field === "worktreeName") {
+    return [{ worktreeName: selectors[0].value }];
   }
-  if (positionals.length > 0) {
-    const selector = positionals[0].trim();
-    if (!selector) {
-      throw new Error("workspace selector requires a value");
-    }
+  if (selector) {
     // Workspace ids and names both routinely contain dashes (e.g. `workspace-1`
     // vs. `my-feature`), so we can't tell them apart by string shape. Try the
     // id first and fall back to the name, matching `handleFocus`.
@@ -969,7 +1004,7 @@ async function handleSurfaces(context, args) {
   requireNoCommandArgs(positionals, "surfaces");
   rejectUnknownOptions(options, SURFACE_LIST_OPTION_NAMES, "surfaces");
   const result = await sendSocketRequest(context.socketPath, "surface.list", {
-    ...buildTargetParams(options, context.env),
+    ...buildTargetParams(options, context.env, "surfaces"),
   });
 
   if (context.json) {
@@ -1238,7 +1273,7 @@ async function handleListStatus(context, args) {
   requireNoCommandArgs(positionals, "list-status");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "list-status");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_status", {
-    ...buildTargetParams(options, context.env),
+    ...buildTargetParams(options, context.env, "list-status"),
   });
 
   if (context.json) {
@@ -1298,7 +1333,7 @@ async function handleListProgress(context, args) {
   requireNoCommandArgs(positionals, "list-progress");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "list-progress");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_progress", {
-    ...buildTargetParams(options, context.env),
+    ...buildTargetParams(options, context.env, "list-progress"),
   });
 
   if (context.json) {
@@ -1356,7 +1391,7 @@ async function handleLogs(context, args) {
   requireNoCommandArgs(positionals, "logs");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "logs");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_logs", {
-    ...buildTargetParams(options, context.env),
+    ...buildTargetParams(options, context.env, "logs"),
   });
 
   if (context.json) {
@@ -1379,7 +1414,7 @@ async function handleClearLogs(context, args) {
   requireNoCommandArgs(positionals, "clear-logs");
   rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "clear-logs");
   await sendSocketRequest(context.socketPath, "metadata.clear_logs", {
-    ...buildTargetParams(options, context.env),
+    ...buildTargetParams(options, context.env, "clear-logs"),
   });
 
   if (context.json) {

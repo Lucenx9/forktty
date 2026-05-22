@@ -711,6 +711,19 @@ describe("forktty CLI helpers", () => {
       () => buildProgressParams({ key: "build", value: "1", totl: "100" }, {}),
       /set-progress: unknown option --totl/,
     );
+    assert.throws(
+      () =>
+        buildProgressParams(
+          {
+            key: "build",
+            value: "1",
+            "workspace-id": "ws-1",
+            "workspace-name": "main",
+          },
+          {},
+        ),
+      /set-progress: cannot combine --workspace-id and --workspace-name/,
+    );
   });
 
   it("rejects invalid progress values", () => {
@@ -946,8 +959,26 @@ describe("forktty CLI helpers", () => {
       [{ id: "my-feature" }, { name: "my-feature" }],
     );
     assert.deepEqual(
-      resolveSelectorParams({ "workspace-name": " release " }, ["ignored"], {}),
+      resolveSelectorParams({ "workspace-name": " release " }, [], {}),
       [{ name: "release" }],
+    );
+    assert.throws(
+      () => resolveSelectorParams({ "workspace-name": " release " }, ["ignored"], {}, "focus"),
+      /focus: cannot combine a positional selector with --workspace-name/,
+    );
+    assert.throws(
+      () =>
+        resolveSelectorParams(
+          { "workspace-id": "workspace-1", "workspace-name": "release" },
+          [],
+          {},
+          "focus",
+        ),
+      /focus: cannot combine --workspace-id and --workspace-name/,
+    );
+    assert.throws(
+      () => resolveSelectorParams({}, ["workspace-1", "extra"], {}, "focus"),
+      /focus: unexpected argument extra/,
     );
     assert.throws(
       () => resolveSelectorParams({ "worktree-name": true }, ["ignored"], {}),
