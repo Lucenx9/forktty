@@ -31,9 +31,53 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
 
-## Quick Start
+## Install
 
-### Requirements
+The fastest paths are the prebuilt artifacts from the
+[v0.2.0-alpha.4 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.4).
+Each release ships:
+
+- `forktty-0.2.0-alpha.4-x86_64.AppImage` — experimental, recommended for quick trials.
+- `forktty_0.2.0~alpha.4_amd64.deb` — Debian/Ubuntu package.
+- `SHA256SUMS` — checksums for both artifacts.
+
+After downloading, verify checksums:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+### AppImage (experimental)
+
+```bash
+chmod +x forktty-0.2.0-alpha.4-x86_64.AppImage
+./forktty-0.2.0-alpha.4-x86_64.AppImage
+```
+
+The AppImage bundles the GTK4, libadwaita, and VTE shared libraries it
+links against, but it still depends on the host system for glibc, the
+GSettings/GIO data tree, Wayland/X11 session services, fontconfig, and
+desktop notification services. Treat the AppImage as a smoke-test
+artifact: it works on most modern distros that ship VTE 0.76+ and a
+recent glibc, but it is not as portable as a typical Linux binary and
+should be tested on the target distro before being relied on.
+
+### Debian / Ubuntu (.deb)
+
+```bash
+sudo apt install ./forktty_0.2.0~alpha.4_amd64.deb
+# or, if apt cannot read the file path directly:
+sudo dpkg -i forktty_0.2.0~alpha.4_amd64.deb
+sudo apt -f install
+```
+
+The package installs the `forktty` binary, the desktop entry, and the
+icon. Removing it (`sudo apt remove forktty`) cleans up
+`/usr/bin/forktty` and the desktop integration.
+
+### Build from source
+
+Requirements:
 
 - Linux
 - [Rust 1.88+](https://rustup.rs/)
@@ -57,9 +101,9 @@ Arch / CachyOS:
 sudo pacman -S base-devel openssl gtk4 libadwaita vte4 desktop-file-utils
 ```
 
-ForkTTY currently builds with libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
+ForkTTY requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
 
-### Build and Run
+Clone and run:
 
 ```bash
 git clone https://github.com/Lucenx9/forktty.git
@@ -67,27 +111,41 @@ cd forktty
 cargo run -p forktty-ui-gtk --features gtk-vte
 ```
 
-Build the Debian package:
+Build the Debian package locally:
 
 ```bash
 bash scripts/build-deb.sh
 sudo dpkg -i target/packaging/deb/forktty_*.deb
 ```
 
-Build the experimental AppImage:
+Build the experimental AppImage locally (requires `appimagetool` on
+`PATH`, or `APPIMAGETOOL=/path/to/appimagetool`):
 
 ```bash
 bash scripts/build-appimage.sh
-./target/packaging/appimage/forktty-0.2.0-alpha.4-*.AppImage
+./target/packaging/appimage/forktty-*-x86_64.AppImage
 ```
 
-This path requires `appimagetool` on `PATH`, or `APPIMAGETOOL=/path/to/appimagetool`.
+## First Run
 
-The release page also includes a Debian package and `SHA256SUMS` for both artifacts.
+### Check the environment
 
-### First Run Basics
+After install, confirm the runtime looks healthy:
 
-ForkTTY opens the current directory as the `main` workspace. Use the command palette for most navigation and pane actions:
+```bash
+forktty --version
+forktty doctor
+```
+
+`forktty doctor` is a local-only inspector. It reports the resolved
+config, session, socket, hook config paths, and known recovery
+behaviors, and exits 0 on a clean environment or 2 with explicit
+warnings.
+
+### Default workspace and shortcuts
+
+ForkTTY opens the current directory as the `main` workspace. Use the
+command palette for most navigation and pane actions:
 
 - `Ctrl+Shift+P`: command palette
 - `Ctrl+Shift+N`: new workspace
@@ -103,10 +161,20 @@ ForkTTY opens the current directory as the `main` workspace. Use the command pal
 
 ## Socket CLI
 
-ForkTTY ships a CLI over the Unix socket API:
+The same `forktty` binary speaks the local socket API. Diagnostic
+commands work even when the GTK app is not running:
 
 ```bash
-forktty ping
+forktty --help
+forktty --version
+forktty doctor          # local diagnostics, no socket required
+forktty ping            # check the running daemon
+```
+
+Workspace, surface, worktree, notification, and metadata commands talk
+to the live socket:
+
+```bash
 forktty list
 forktty focus "Workspace 2"
 forktty surfaces --workspace-name main
@@ -120,8 +188,9 @@ forktty log --level warn "Waiting for reviewer input"
 forktty notifications
 ```
 
-The socket CLI and agent hook bridge are native Rust code in the `forktty`
-binary, so source checkouts and packaged builds do not require Node.js.
+The socket CLI and agent hook bridge are native Rust code in the
+`forktty` binary, so source checkouts and packaged builds do not
+require Node.js.
 
 Spawned shells receive:
 
@@ -143,21 +212,41 @@ default socket location.
 Install hook templates for Codex, Claude Code, and Gemini CLI:
 
 ```bash
-forktty hooks setup
-forktty hooks setup codex claude gemini
+forktty hooks setup                       # install all three
+forktty hooks setup codex                 # install just one
+forktty hooks setup codex claude --dry-run
 ```
 
-The installer merges commands into:
+`--dry-run` prints the would-be diff without touching disk.
 
-- Codex: `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`
-- Claude Code: `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`
-- Gemini CLI: `~/.gemini/settings.json`
+The installer merges commands into the agent's own config file:
 
-When `HOME` is overridden, the `~` defaults are resolved under that home directory.
+| Agent       | Destination                                                       |
+| ----------- | ----------------------------------------------------------------- |
+| Codex       | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`                 |
+| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`   |
+| Gemini CLI  | `~/.gemini/settings.json`                                         |
 
-Hooks report status, progress, logs, and prompt notifications through the same local socket
-pipeline. Manual hook-event commands can pass `--socket <path>` when they run outside a
-ForkTTY-spawned shell.
+When `HOME` is overridden, the `~` defaults are resolved under that home
+directory. Existing configs are written atomically (tmp + rename) and a
+timestamped `.bak-*` backup is created when content changes.
+
+Diagnose and exercise installed hooks:
+
+```bash
+forktty hooks doctor codex     # inspect socket, launcher, env, hook config
+forktty hooks test codex       # round-trip a status update through the socket
+```
+
+Each agent's hook commands honor a per-agent disable variable:
+
+- `FORKTTY_CODEX_HOOKS_DISABLED=1`
+- `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
+- `FORKTTY_GEMINI_HOOKS_DISABLED=1`
+
+Hooks report status, progress, logs, and prompt notifications through
+the same local socket pipeline. Manual hook-event commands can pass
+`--socket <path>` when they run outside a ForkTTY-spawned shell.
 
 ## Features
 
@@ -227,12 +316,20 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 ## Known Limitations
 
 - Linux only. There are no supported macOS or Windows builds.
-- VTE 0.76+ is currently required by the native terminal integration.
-- The AppImage is the default download but remains experimental and should be smoke-tested on the target distro before relying on it; use the `.deb` on Debian/Ubuntu when possible.
-- PTYs and scrollback are not persisted across restart.
+- VTE 0.76+ and libadwaita 1.4+ are required by the native terminal integration.
+- The AppImage bundles GTK4/libadwaita/VTE but still relies on the host's glibc, GSettings/GIO data, fontconfig, and desktop session services. Treat it as experimental and smoke-test it on the target distro; prefer the `.deb` on Debian/Ubuntu when possible.
+- PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
 - Full theme customization, multi-window, persistent scrollback, and browser panes are backlog items.
+
+## Troubleshooting
+
+- `forktty doctor` is the first stop: it explains config, session, socket, and hook config problems before they trigger a launch failure.
+- If the GTK app refuses to start, run it from a terminal to see GLib/GTK error output, then re-run `forktty doctor`.
+- The local socket lives at `$XDG_RUNTIME_DIR/forktty.sock` (or `/tmp/forktty-<uid>/forktty.sock`). Stale or foreign sockets are refused on startup; remove them by hand only after confirming no other ForkTTY instance owns them.
+- A corrupt `~/.config/forktty/config.toml` or `~/.local/share/forktty/session-v2.json` is renamed aside as `*.bad-<timestamp>` so the app can start with defaults; the rename reason is logged to stderr.
+- Local logs live under `~/.local/share/forktty/logs/`.
 
 ## Contributing
 

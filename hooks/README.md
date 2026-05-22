@@ -17,7 +17,28 @@ That writes agent-specific hook config into the user config for:
 
 The installer writes an absolute path to the `forktty` launcher so hooks can run
 from any project. Re-run `forktty hooks setup` if the AppImage or installed
-binary moves.
+binary moves. `--dry-run` prints the would-be diff without touching disk:
+
+```bash
+forktty hooks setup --dry-run
+forktty hooks setup codex --dry-run
+```
+
+Each setup run writes the agent config atomically (tmp + rename) and, when
+content changes, leaves a timestamped `.bak-*` backup next to the original.
+
+## Inspect and exercise installed hooks
+
+```bash
+forktty hooks doctor codex     # report socket, launcher, env, and hook config state
+forktty hooks test codex       # round-trip a status update and a log over the socket
+```
+
+`hooks doctor` is local-only and never mutates state. `hooks test` writes a
+single transient `agent:<name>:hook-test` status entry through the socket so
+you can confirm the daemon is reachable.
+
+## Manual editing
 
 Files in this directory are canonical examples for review or manual repair:
 

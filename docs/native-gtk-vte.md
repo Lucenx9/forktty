@@ -19,7 +19,12 @@ bash scripts/build-appimage.sh
 ```
 
 The AppImage target is experimental and intended for alpha smoke testing
-alongside the Debian package.
+alongside the Debian package. `scripts/build-appimage.sh` resolves the
+`forktty` binary's `ldd` graph and bundles GTK4, libadwaita, VTE, and
+their direct dependencies into `AppDir/usr/lib`. It does not bundle
+glibc, GSettings schemas, GIO modules, fontconfig data, or desktop
+session services, so the AppImage still relies on those parts of the
+host system.
 
 Before tagging an alpha, run the runtime and package checklist in
 [release-qa.md](release-qa.md).
