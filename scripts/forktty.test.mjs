@@ -1177,6 +1177,27 @@ describe("hook installer", () => {
     );
   });
 
+  it("preflights all requested configs before writing any hook config", async () => {
+    const context = makeContext();
+    const claudeDir = context.env.CLAUDE_CONFIG_DIR;
+    await fs.mkdir(claudeDir, { recursive: true });
+    const claudeConfig = path.join(claudeDir, "settings.json");
+    await fs.writeFile(claudeConfig, "{ not json ::: ");
+
+    await assert.rejects(
+      handleHooksSetup(context, ["codex", "claude"]),
+      (error) =>
+        /claude/.test(error.message) &&
+        error.message.includes(claudeConfig) &&
+        /JSON/i.test(error.message),
+    );
+
+    await assert.rejects(
+      fs.access(path.join(context.env.CODEX_HOME, "hooks.json")),
+      /ENOENT/,
+    );
+  });
+
   it("rejects non-object hook configs without overwriting them", async () => {
     const context = makeContext();
     const codexDir = context.env.CODEX_HOME;

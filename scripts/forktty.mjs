@@ -1582,25 +1582,34 @@ async function handleHooksSetup(context, args) {
   const agentNames = supportedAgents(positionals);
   const scriptPath = fileURLToPath(import.meta.url);
 
-  const summaries = [];
+  const plans = [];
   for (const agent of agentNames) {
     const spec = AGENT_SPECS[agent];
     const configPath = spec.configPath(context.env);
     const existing = await readAgentConfig(agent, configPath);
     const { changed, config } = mergeHookConfig(existing, agent, scriptPath);
-
-    let backupPath = null;
-    if (changed && !dryRun) {
-      const writePath = await hookConfigWritePath(configPath);
-      await ensureParentDir(writePath);
-      backupPath = await backupFile(writePath);
-      await atomicWriteFile(writePath, `${JSON.stringify(config, null, 2)}\n`);
-    }
-
-    summaries.push({
+    plans.push({
       agent,
       configPath,
       changed,
+      config,
+    });
+  }
+
+  const summaries = [];
+  for (const plan of plans) {
+    let backupPath = null;
+    if (plan.changed && !dryRun) {
+      const writePath = await hookConfigWritePath(plan.configPath);
+      await ensureParentDir(writePath);
+      backupPath = await backupFile(writePath);
+      await atomicWriteFile(writePath, `${JSON.stringify(plan.config, null, 2)}\n`);
+    }
+
+    summaries.push({
+      agent: plan.agent,
+      configPath: plan.configPath,
+      changed: plan.changed,
       backupPath,
       dryRun,
     });
