@@ -111,6 +111,7 @@ terminal_audible_bell = true
 sidebar_position = "left"
 sidebar_visible = true
 terminal_renderer = "vte"
+terminal_theme = "system"
 window_mode = "normal"
 
 [notifications]
@@ -118,7 +119,7 @@ desktop = true
 sound = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, window mode, renderer value, and notification command. `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
+Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, and notification command. `terminal_theme = "system"` follows the app light/dark scheme; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
 
 ## Socket API
 

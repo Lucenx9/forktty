@@ -6,6 +6,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Added
 - Unread counter badge on the notifications toolbar button so the queue depth is visible without opening the panel.
+- Configurable VTE terminal theme presets via `appearance.terminal_theme`, with System, Catppuccin Mocha, Rose Pine, Tokyo Night, Dracula, and Gruvbox Dark choices exposed in Settings.
 
 ### Changed
 - Refreshed the README screenshot and updated terminal environment documentation after the alpha.3 release.

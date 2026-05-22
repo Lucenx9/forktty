@@ -176,6 +176,7 @@ terminal_audible_bell = true
 sidebar_position = "left" # "left" or "right"
 sidebar_visible = true
 terminal_renderer = "vte"
+terminal_theme = "system" # "system", "catppuccin-mocha", "rose-pine", "tokyo-night", "dracula", or "gruvbox-dark"
 window_mode = "normal" # "normal" or "quake"
 
 [notifications]
@@ -185,7 +186,7 @@ sound = true
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
-`scrollback_lines` controls VTE scrollback per pane; set it to `0` to disable scrollback. `terminal_renderer` is kept for config compatibility; the native GTK app uses VTE.
+`scrollback_lines` controls VTE scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` follows the app light/dark scheme; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; the native GTK app uses VTE.
 
 See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 

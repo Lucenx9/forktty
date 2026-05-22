@@ -36,6 +36,14 @@ const APP_ID: &str = "dev.forktty.ForkTTY";
 const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
 const SYSTEM_MONOSPACE_FONT_FAMILY_ID: &str = "__forktty_system_monospace__";
 const INSTALLED_FONT_FAMILY_ID_PREFIX: &str = "font:";
+const TERMINAL_THEME_ITEMS: &[(&str, &str)] = &[
+    (config::TERMINAL_THEME_SYSTEM, "System"),
+    (config::TERMINAL_THEME_CATPPUCCIN_MOCHA, "Catppuccin Mocha"),
+    (config::TERMINAL_THEME_ROSE_PINE, "Rose Pine"),
+    (config::TERMINAL_THEME_TOKYO_NIGHT, "Tokyo Night"),
+    (config::TERMINAL_THEME_DRACULA, "Dracula"),
+    (config::TERMINAL_THEME_GRUVBOX_DARK, "Gruvbox Dark"),
+];
 const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "JetBrainsMono Nerd Font Mono",
     "JetBrainsMono Nerd Font",
@@ -1004,12 +1012,7 @@ fn apply_vte_appearance(widget: &VteTerminalWidget) {
     widget.set_cursor_blink_mode(CursorBlinkMode::System);
     widget.set_cursor_shape(CursorShape::Block);
     widget.set_word_char_exceptions("-#%&+,./:=?@_~");
-    let colors = if terminal_prefers_dark_palette(&config) {
-        &DARK_TERMINAL_COLORS
-    } else {
-        &LIGHT_TERMINAL_COLORS
-    };
-    apply_terminal_colors(widget, colors);
+    apply_terminal_colors(widget, terminal_colors_for_config(&config));
 }
 
 struct TerminalColors {
@@ -1023,17 +1026,86 @@ struct TerminalColors {
     ansi: [&'static str; 16],
 }
 
-const DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#20222c",
-    foreground: "#d7dce7",
-    bold: "#f2f4f8",
-    cursor: "#8ab4f8",
-    cursor_foreground: "#101216",
-    highlight: "#3a3d4d",
+fn terminal_colors_for_config(config: &config::AppConfig) -> &'static TerminalColors {
+    let theme = config.appearance.terminal_theme.trim().to_ascii_lowercase();
+    match theme.as_str() {
+        config::TERMINAL_THEME_CATPPUCCIN_MOCHA => &CATPPUCCIN_MOCHA_TERMINAL_COLORS,
+        config::TERMINAL_THEME_ROSE_PINE => &ROSE_PINE_TERMINAL_COLORS,
+        config::TERMINAL_THEME_TOKYO_NIGHT => &TOKYO_NIGHT_TERMINAL_COLORS,
+        config::TERMINAL_THEME_DRACULA => &DRACULA_TERMINAL_COLORS,
+        config::TERMINAL_THEME_GRUVBOX_DARK => &GRUVBOX_DARK_TERMINAL_COLORS,
+        _ if terminal_prefers_dark_palette(config) => &CATPPUCCIN_MOCHA_TERMINAL_COLORS,
+        _ => &LIGHT_TERMINAL_COLORS,
+    }
+}
+
+const CATPPUCCIN_MOCHA_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#1e1e2e",
+    foreground: "#cdd6f4",
+    bold: "#cdd6f4",
+    cursor: "#f5e0dc",
+    cursor_foreground: "#1e1e2e",
+    highlight: "#f5e0dc",
+    highlight_foreground: "#1e1e2e",
+    ansi: [
+        "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+        "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+    ],
+};
+
+const ROSE_PINE_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#191724",
+    foreground: "#e0def4",
+    bold: "#e0def4",
+    cursor: "#524f67",
+    cursor_foreground: "#e0def4",
+    highlight: "#403d52",
+    highlight_foreground: "#e0def4",
+    ansi: [
+        "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
+        "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
+    ],
+};
+
+const TOKYO_NIGHT_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#1a1b26",
+    foreground: "#c0caf5",
+    bold: "#c0caf5",
+    cursor: "#c0caf5",
+    cursor_foreground: "#1a1b26",
+    highlight: "#283457",
+    highlight_foreground: "#c0caf5",
+    ansi: [
+        "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+        "#414868", "#ff899d", "#9fe044", "#faba4a", "#8db0ff", "#c7a9ff", "#a4daff", "#c0caf5",
+    ],
+};
+
+const DRACULA_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#282a36",
+    foreground: "#f8f8f2",
+    bold: "#ffffff",
+    cursor: "#f8f8f2",
+    cursor_foreground: "#282a36",
+    highlight: "#44475a",
     highlight_foreground: "#ffffff",
     ansi: [
-        "#242932", "#ff6b6b", "#63c174", "#d5a03f", "#6ca9ff", "#c792ea", "#56c7d8", "#d7dce7",
-        "#7d8590", "#ff8f87", "#7bd88f", "#e3b75a", "#8ab4ff", "#d6a6ff", "#73d7e5", "#f2f4f8",
+        "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
+        "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+    ],
+};
+
+const GRUVBOX_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#282828",
+    foreground: "#ebdbb2",
+    bold: "#fbf1c7",
+    cursor: "#ebdbb2",
+    cursor_foreground: "#282828",
+    highlight: "#504945",
+    highlight_foreground: "#fbf1c7",
+    ansi: [
+        "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
+        "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
     ],
 };
 
@@ -6676,7 +6748,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         .build();
     let theme_group = adw::PreferencesGroup::builder()
         .title("Theme")
-        .description("Keeps the GTK chrome and terminal palette in sync.")
+        .description("Controls the GTK chrome and VTE palette.")
         .build();
     let (theme_source_row, theme_source) = settings_combo_row(
         "Color scheme",
@@ -6685,6 +6757,13 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         &loaded.general.theme_source,
     );
     theme_group.add(&theme_source_row);
+    let (terminal_theme_row, terminal_theme) = settings_combo_row(
+        "Terminal theme",
+        "System follows the app color scheme; named themes use fixed dark palettes.",
+        TERMINAL_THEME_ITEMS,
+        &loaded.appearance.terminal_theme,
+    );
+    theme_group.add(&terminal_theme_row);
     appearance_page.add(&theme_group);
 
     let window_group = adw::PreferencesGroup::builder()
@@ -6878,6 +6957,28 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
             }
         }
     });
+    terminal_theme.connect_changed({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |combo| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(theme) = combo.active_id() {
+                let mut next = current.borrow().clone();
+                next.appearance.terminal_theme = theme.to_string();
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    next,
+                    "Terminal theme applied.",
+                );
+            }
+        }
+    });
     window_mode.connect_changed({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -7028,6 +7129,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
             scrollback_lines.set_value(i64::from(defaults.appearance.scrollback_lines));
             terminal_audible_bell.set_active(defaults.appearance.terminal_audible_bell);
             let _ = theme_source.set_active_id(Some(&defaults.general.theme_source));
+            let _ = terminal_theme.set_active_id(Some(&defaults.appearance.terminal_theme));
             let _ = window_mode.set_active_id(Some(&defaults.appearance.window_mode));
             let _ = sidebar_position.set_active_id(Some(&defaults.appearance.sidebar_position));
             sidebar_visible.set_active(defaults.appearance.sidebar_visible);
@@ -8312,6 +8414,45 @@ mod tests {
 
         assert!(description.to_string().contains("JetBrains Mono"));
         assert!(description.to_string().contains("16"));
+    }
+
+    #[test]
+    fn terminal_theme_system_follows_color_scheme() {
+        let mut config = config::AppConfig::default();
+        config.general.theme_source = "light".to_string();
+        config.appearance.terminal_theme = config::TERMINAL_THEME_SYSTEM.to_string();
+
+        assert_eq!(terminal_colors_for_config(&config).background, "#fbfbfe");
+
+        config.general.theme_source = "dark".to_string();
+
+        assert_eq!(terminal_colors_for_config(&config).background, "#1e1e2e");
+    }
+
+    #[test]
+    fn named_terminal_theme_overrides_light_color_scheme() {
+        let mut config = config::AppConfig::default();
+        config.general.theme_source = "light".to_string();
+        config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
+
+        assert_eq!(terminal_colors_for_config(&config).background, "#282a36");
+    }
+
+    #[test]
+    fn terminal_theme_presets_use_expected_ansi_values() {
+        let mut config = config::AppConfig::default();
+
+        config.appearance.terminal_theme = config::TERMINAL_THEME_CATPPUCCIN_MOCHA.to_string();
+        assert_eq!(terminal_colors_for_config(&config).ansi[5], "#f5c2e7");
+
+        config.appearance.terminal_theme = config::TERMINAL_THEME_ROSE_PINE.to_string();
+        assert_eq!(terminal_colors_for_config(&config).ansi[15], "#e0def4");
+
+        config.appearance.terminal_theme = config::TERMINAL_THEME_TOKYO_NIGHT.to_string();
+        assert_eq!(terminal_colors_for_config(&config).ansi[9], "#ff899d");
+
+        config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
+        assert_eq!(terminal_colors_for_config(&config).ansi[7], "#f8f8f2");
     }
 
     #[test]

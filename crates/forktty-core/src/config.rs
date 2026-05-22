@@ -66,6 +66,8 @@ pub struct AppearanceConfig {
     pub sidebar_visible: bool,
     #[serde(default = "default_terminal_renderer")]
     pub terminal_renderer: String,
+    #[serde(default = "default_terminal_theme")]
+    pub terminal_theme: String,
     #[serde(default = "default_window_mode")]
     pub window_mode: String,
 }
@@ -77,6 +79,21 @@ pub struct NotificationConfig {
     #[serde(default = "default_true")]
     pub sound: bool,
 }
+
+pub const TERMINAL_THEME_SYSTEM: &str = "system";
+pub const TERMINAL_THEME_CATPPUCCIN_MOCHA: &str = "catppuccin-mocha";
+pub const TERMINAL_THEME_ROSE_PINE: &str = "rose-pine";
+pub const TERMINAL_THEME_TOKYO_NIGHT: &str = "tokyo-night";
+pub const TERMINAL_THEME_DRACULA: &str = "dracula";
+pub const TERMINAL_THEME_GRUVBOX_DARK: &str = "gruvbox-dark";
+pub const TERMINAL_THEME_CHOICES: &[&str] = &[
+    TERMINAL_THEME_SYSTEM,
+    TERMINAL_THEME_CATPPUCCIN_MOCHA,
+    TERMINAL_THEME_ROSE_PINE,
+    TERMINAL_THEME_TOKYO_NIGHT,
+    TERMINAL_THEME_DRACULA,
+    TERMINAL_THEME_GRUVBOX_DARK,
+];
 
 const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
 
@@ -101,6 +118,7 @@ impl Default for AppearanceConfig {
             sidebar_position: default_sidebar_position(),
             sidebar_visible: default_sidebar_visible(),
             terminal_renderer: default_terminal_renderer(),
+            terminal_theme: default_terminal_theme(),
             window_mode: default_window_mode(),
         }
     }
@@ -292,6 +310,12 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
                 .to_string(),
         ));
     }
+    if !TERMINAL_THEME_CHOICES.contains(&config.appearance.terminal_theme.as_str()) {
+        return Err(ConfigError::Invalid(format!(
+            "appearance.terminal_theme must be one of: {}",
+            TERMINAL_THEME_CHOICES.join(", ")
+        )));
+    }
     if !matches!(config.appearance.window_mode.as_str(), "normal" | "quake") {
         return Err(ConfigError::Invalid(
             "appearance.window_mode must be one of: normal, quake".to_string(),
@@ -321,6 +345,9 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
         &["auto", "dom", "canvas", "webgl", "vte"],
     )
     .unwrap_or_else(default_terminal_renderer);
+    config.appearance.terminal_theme =
+        normalize_config_choice(&config.appearance.terminal_theme, TERMINAL_THEME_CHOICES)
+            .unwrap_or_else(default_terminal_theme);
     config.appearance.window_mode =
         normalize_config_choice(&config.appearance.window_mode, &["normal", "quake"])
             .unwrap_or_else(default_window_mode);
@@ -452,6 +479,9 @@ fn default_sidebar_visible() -> bool {
 fn default_terminal_renderer() -> String {
     "auto".to_string()
 }
+fn default_terminal_theme() -> String {
+    TERMINAL_THEME_SYSTEM.to_string()
+}
 fn default_window_mode() -> String {
     "normal".to_string()
 }
@@ -470,6 +500,7 @@ mod tests {
         assert_eq!(config.appearance.font_size, 14);
         assert_eq!(config.appearance.scrollback_lines, 20_000);
         assert!(config.appearance.terminal_audible_bell);
+        assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_SYSTEM);
     }
 
     #[test]
@@ -533,6 +564,7 @@ mod tests {
             [appearance]
             sidebar_position = " Right "
             terminal_renderer = " VTE "
+            terminal_theme = " Tokyo-Night "
             window_mode = " Quake "
             "#,
         )
@@ -544,6 +576,7 @@ mod tests {
         assert_eq!(config.general.worktree_layout, "sibling");
         assert_eq!(config.appearance.sidebar_position, "right");
         assert_eq!(config.appearance.terminal_renderer, "vte");
+        assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_TOKYO_NIGHT);
         assert_eq!(config.appearance.window_mode, "quake");
     }
 
@@ -556,6 +589,17 @@ mod tests {
         let error = validate_config(&config).unwrap_err();
 
         assert!(error.to_string().contains("theme_source"));
+    }
+
+    #[test]
+    fn saved_config_rejects_invalid_terminal_theme() {
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.appearance.terminal_theme = "solarized".to_string();
+
+        let error = validate_config(&config).unwrap_err();
+
+        assert!(error.to_string().contains("terminal_theme"));
     }
 
     #[test]
