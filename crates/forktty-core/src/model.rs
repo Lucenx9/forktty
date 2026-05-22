@@ -284,6 +284,15 @@ impl WorkspaceModel {
             if !self.workspaces.contains_key(&workspace_id) {
                 continue;
             }
+            {
+                let workspace = self
+                    .workspaces
+                    .get_mut(&workspace_id)
+                    .expect("workspace presence verified above");
+                if repair_pane_tree_structure(&mut workspace.pane_tree) {
+                    changed = true;
+                }
+            }
             let leaf_ids = leaf_surface_ids(&self.workspaces[&workspace_id].pane_tree);
             // Detect duplicate leaf ids that already appear in an earlier
             // workspace and assign fresh ids before they collide in the
@@ -1080,6 +1089,31 @@ fn apply_partition_ratio(sizes: &mut [f64], split_at: usize, ratio: f64) {
             };
         }
     }
+}
+
+fn repair_pane_tree_structure(node: &mut PaneNode) -> bool {
+    let mut changed = false;
+    if let PaneNode::Split {
+        children, sizes, ..
+    } = node
+    {
+        for child in children.iter_mut() {
+            if repair_pane_tree_structure(child) {
+                changed = true;
+            }
+        }
+        if children.len() == 1 {
+            *node = children.remove(0);
+            return true;
+        }
+        let size_mismatch = sizes.len() != children.len();
+        let invalid_size = sizes.iter().any(|s| !s.is_finite() || *s <= 0.0);
+        if size_mismatch || invalid_size {
+            rebalance_split_sizes(sizes, children.len());
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn rename_leaf(node: &mut PaneNode, old_id: &str, new_id: &str) -> bool {
@@ -1942,6 +1976,63 @@ mod tests {
             model.workspace_id_for(WorkspaceSelector::WorktreeName("missing")),
             None
         );
+    }
+
+    #[test]
+    fn repair_session_invariants_collapses_single_child_splits() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let leaf_id = workspace.focused_surface_id.clone();
+        {
+            let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
+            workspace.pane_tree = PaneNode::Split {
+                axis: SplitAxis::Horizontal,
+                children: vec![PaneNode::Leaf {
+                    surface_id: leaf_id.clone(),
+                }],
+                sizes: vec![1.0],
+            };
+        }
+
+        assert!(model.repair_session_invariants());
+
+        let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
+        assert!(matches!(
+            repaired.pane_tree,
+            PaneNode::Leaf { surface_id } if surface_id == leaf_id
+        ));
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn repair_session_invariants_rebalances_non_finite_split_sizes() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let split = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        {
+            let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
+            if let PaneNode::Split { sizes, .. } = &mut workspace.pane_tree {
+                sizes[0] = f64::NAN;
+                sizes[1] = -1.0;
+            } else {
+                panic!("expected split pane tree");
+            }
+        }
+
+        assert!(model.repair_session_invariants());
+
+        let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
+        match repaired.pane_tree {
+            PaneNode::Split { sizes, .. } => {
+                assert!(sizes.iter().all(|s| s.is_finite() && *s > 0.0));
+            }
+            _ => panic!("expected split"),
+        }
+        // Ensure the split surface is still reachable.
+        assert!(model.surface(&split.id).is_some());
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]
