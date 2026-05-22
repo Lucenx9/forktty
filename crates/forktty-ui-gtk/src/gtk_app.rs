@@ -4054,7 +4054,7 @@ fn refresh_sidebar(
         row.add_css_class("workspace-row");
         let mut accessible_label = format!("Workspace {}. {}", workspace.name, meta);
         if let Some(status) = status.as_ref() {
-            accessible_label.push_str(&format!(". {}", status.label));
+            accessible_label.push_str(&format!(". {}", status.tooltip));
         }
         if !summary.is_empty() {
             accessible_label.push_str(&format!(". {summary}"));
@@ -4148,7 +4148,7 @@ fn refresh_sidebar(
         let mut tooltip = format!("{}\n{}", workspace.name, meta);
         if let Some(status) = status.as_ref() {
             tooltip.push('\n');
-            tooltip.push_str(status.label);
+            tooltip.push_str(status.tooltip);
         }
         if !summary.is_empty() {
             tooltip.push('\n');
