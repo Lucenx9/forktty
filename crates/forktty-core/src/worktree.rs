@@ -43,6 +43,54 @@ pub enum WorktreeError {
     AlreadyExists(String),
     #[error("Invalid worktree name: {0}")]
     InvalidName(WorktreeNameError),
+    #[error("No HEAD: {0}")]
+    NoHead(git2::Error),
+    #[error("HEAD is not a commit: {0}")]
+    HeadNotCommit(git2::Error),
+    #[error("HEAD has no name")]
+    HeadHasNoName,
+    #[error("Branch has no target commit")]
+    BranchHasNoTarget,
+    #[error("Bare repository")]
+    BareRepo,
+    #[error("Repository is at filesystem root")]
+    RepositoryAtFilesystemRoot,
+    #[error("Cannot resolve repository root")]
+    RepositoryRootUnresolved,
+    #[error("Invalid hook name: {0}")]
+    InvalidHookName(String),
+    #[error("Cannot resolve hook path: {0}")]
+    HookPathUnresolved(std::io::Error),
+    #[error("Cannot resolve worktree path: {0}")]
+    HookWorkdirUnresolved(std::io::Error),
+    #[error("Hook path escapes worktree boundary")]
+    HookOutsideWorktree,
+    #[error("Cannot resolve worktree path for '{name}': {source}")]
+    WorktreePathUnresolved {
+        name: String,
+        source: std::io::Error,
+    },
+    #[error("Cannot resolve admin directory for '{name}': {source}")]
+    WorktreeAdminUnresolved {
+        name: String,
+        source: std::io::Error,
+    },
+    #[error("Cannot read linked worktree metadata for '{name}': {source}")]
+    LinkedMetadataUnreadable {
+        name: String,
+        source: std::io::Error,
+    },
+    #[error("Worktree '{name}' does not contain a valid linked .git file")]
+    LinkedMetadataInvalid { name: String },
+    #[error("Cannot resolve gitdir for worktree '{name}': {source}")]
+    WorktreeGitdirUnresolved {
+        name: String,
+        source: std::io::Error,
+    },
+    #[error("Worktree '{name}' metadata does not match this repository")]
+    WorktreeMetadataMismatch { name: String },
+    #[error("Merge analysis inconclusive")]
+    MergeAnalysisInconclusive,
     #[error("{0}")]
     Other(String),
 }
@@ -66,16 +114,14 @@ pub fn create(
     let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
     let head_commit = repo
         .head()
-        .map_err(|e| WorktreeError::Other(format!("No HEAD: {e}")))?
+        .map_err(WorktreeError::NoHead)?
         .peel_to_commit()
-        .map_err(|e| WorktreeError::Other(format!("HEAD is not a commit: {e}")))?;
+        .map_err(WorktreeError::HeadNotCommit)?;
     let worktree_name = derive_worktree_name(&repo, branch_name);
     if worktree_exists(&repo, &worktree_name) {
         return Err(WorktreeError::AlreadyExists(worktree_name));
     }
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| WorktreeError::Other("Bare repository".to_string()))?;
+    let workdir = repo.workdir().ok_or(WorktreeError::BareRepo)?;
     let wt_path = worktree_path(workdir, &worktree_name, layout)?;
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -119,9 +165,7 @@ pub fn attach(
         }
         return Ok(info(branch, existing_path, existing_name));
     }
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| WorktreeError::Other("Bare repository".to_string()))?;
+    let workdir = repo.workdir().ok_or(WorktreeError::BareRepo)?;
     let worktree_name = derive_worktree_name(&repo, branch_name);
     let wt_path = worktree_path(workdir, &worktree_name, layout)?;
     if let Some(parent) = wt_path.parent() {
@@ -208,7 +252,7 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
     let source_oid = source_branch
         .get()
         .target()
-        .ok_or_else(|| WorktreeError::Other("Branch has no target".to_string()))?;
+        .ok_or(WorktreeError::BranchHasNoTarget)?;
     let annotated_commit = repo.find_annotated_commit(source_oid)?;
     let (analysis, _) = repo.merge_analysis(&[&annotated_commit])?;
 
@@ -220,7 +264,7 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
         let head_ref_name = repo
             .head()?
             .name()
-            .ok_or_else(|| WorktreeError::Other("HEAD has no name".to_string()))?
+            .ok_or(WorktreeError::HeadHasNoName)?
             .to_string();
         let mut reference = repo.find_reference(&head_ref_name)?;
         reference.set_target(
@@ -263,9 +307,7 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
         return Ok(format!("Merged '{branch_name}' into HEAD"));
     }
 
-    Err(WorktreeError::Other(
-        "Merge analysis inconclusive".to_string(),
-    ))
+    Err(WorktreeError::MergeAnalysisInconclusive)
 }
 
 pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
@@ -296,27 +338,23 @@ fn repository_root_for_repo(repo: &Repository) -> Result<PathBuf, WorktreeError>
         .parent()
         .map(Path::to_path_buf)
         .or_else(|| repo.workdir().map(Path::to_path_buf))
-        .ok_or_else(|| WorktreeError::Other("Cannot resolve repository root".to_string()))
+        .ok_or(WorktreeError::RepositoryRootUnresolved)
 }
 
 pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, WorktreeError> {
     if hook_name != "setup" && hook_name != "teardown" {
-        return Err(WorktreeError::Other(format!(
-            "Invalid hook name: {hook_name}"
-        )));
+        return Err(WorktreeError::InvalidHookName(hook_name.to_string()));
     }
     let hook_path = Path::new(worktree_path).join(".forktty").join(hook_name);
     if !hook_path.exists() {
         return Ok(None);
     }
-    let canonical_hook = std::fs::canonicalize(&hook_path)
-        .map_err(|e| WorktreeError::Other(format!("Cannot resolve hook path: {e}")))?;
-    let canonical_wt = std::fs::canonicalize(worktree_path)
-        .map_err(|e| WorktreeError::Other(format!("Cannot resolve worktree path: {e}")))?;
+    let canonical_hook =
+        std::fs::canonicalize(&hook_path).map_err(WorktreeError::HookPathUnresolved)?;
+    let canonical_wt =
+        std::fs::canonicalize(worktree_path).map_err(WorktreeError::HookWorkdirUnresolved)?;
     if !canonical_hook.starts_with(&canonical_wt) {
-        return Err(WorktreeError::Other(
-            "Hook path escapes worktree boundary".to_string(),
-        ));
+        return Err(WorktreeError::HookOutsideWorktree);
     }
     let mut child = spawn_hook(&canonical_hook, worktree_path)?;
     let start = Instant::now();
@@ -470,26 +508,29 @@ fn verify_linked_worktree_path(
     reported_path: &Path,
 ) -> Result<PathBuf, WorktreeError> {
     let canonical_worktree = std::fs::canonicalize(reported_path).map_err(|err| {
-        WorktreeError::Other(format!(
-            "Cannot resolve worktree path for '{worktree_name}': {err}"
-        ))
+        WorktreeError::WorktreePathUnresolved {
+            name: worktree_name.to_string(),
+            source: err,
+        }
     })?;
     let admin_dir = repo.path().join("worktrees").join(worktree_name);
     let canonical_admin_dir = std::fs::canonicalize(&admin_dir).map_err(|err| {
-        WorktreeError::Other(format!(
-            "Cannot resolve admin directory for '{worktree_name}': {err}"
-        ))
+        WorktreeError::WorktreeAdminUnresolved {
+            name: worktree_name.to_string(),
+            source: err,
+        }
     })?;
     let git_file = canonical_worktree.join(".git");
     let git_file_contents = std::fs::read_to_string(&git_file).map_err(|err| {
-        WorktreeError::Other(format!(
-            "Cannot read linked worktree metadata for '{worktree_name}': {err}"
-        ))
+        WorktreeError::LinkedMetadataUnreadable {
+            name: worktree_name.to_string(),
+            source: err,
+        }
     })?;
     let referenced_gitdir = parse_linked_worktree_gitdir(&git_file_contents).ok_or_else(|| {
-        WorktreeError::Other(format!(
-            "Worktree '{worktree_name}' does not contain a valid linked .git file"
-        ))
+        WorktreeError::LinkedMetadataInvalid {
+            name: worktree_name.to_string(),
+        }
     })?;
     let gitdir_path = Path::new(referenced_gitdir);
     let resolved_gitdir = if gitdir_path.is_absolute() {
@@ -498,14 +539,15 @@ fn verify_linked_worktree_path(
         canonical_worktree.join(gitdir_path)
     };
     let canonical_gitdir = std::fs::canonicalize(&resolved_gitdir).map_err(|err| {
-        WorktreeError::Other(format!(
-            "Cannot resolve gitdir for worktree '{worktree_name}': {err}"
-        ))
+        WorktreeError::WorktreeGitdirUnresolved {
+            name: worktree_name.to_string(),
+            source: err,
+        }
     })?;
     if canonical_gitdir != canonical_admin_dir {
-        return Err(WorktreeError::Other(format!(
-            "Worktree '{worktree_name}' metadata does not match this repository"
-        )));
+        return Err(WorktreeError::WorktreeMetadataMismatch {
+            name: worktree_name.to_string(),
+        });
     }
     Ok(canonical_worktree)
 }
@@ -564,15 +606,15 @@ fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> Result<PathBu
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("repo");
-            let parent = repo_workdir.parent().ok_or_else(|| {
-                WorktreeError::Other("Repository is at filesystem root".to_string())
-            })?;
+            let parent = repo_workdir
+                .parent()
+                .ok_or(WorktreeError::RepositoryAtFilesystemRoot)?;
             Ok(parent.join(format!("{repo_name}-{name}")))
         }
         "outer-nested" => {
-            let parent = repo_workdir.parent().ok_or_else(|| {
-                WorktreeError::Other("Repository is at filesystem root".to_string())
-            })?;
+            let parent = repo_workdir
+                .parent()
+                .ok_or(WorktreeError::RepositoryAtFilesystemRoot)?;
             Ok(parent.join(".worktrees").join(name))
         }
         _ => Ok(repo_workdir.join(".worktrees").join(name)),
@@ -840,7 +882,10 @@ mod tests {
 
         let result = remove(dir.path().to_str().unwrap(), "remove-tamper", true);
 
-        assert!(matches!(result, Err(WorktreeError::Other(_))));
+        assert!(matches!(
+            result,
+            Err(WorktreeError::WorktreeMetadataMismatch { .. })
+        ));
         assert!(Path::new(&info.path).exists());
     }
 
@@ -1036,6 +1081,6 @@ mod tests {
 
         let result = run_hook(dir.path().to_str().unwrap(), "setup");
 
-        assert!(matches!(result, Err(WorktreeError::Other(_))));
+        assert!(matches!(result, Err(WorktreeError::HookOutsideWorktree)));
     }
 }
