@@ -145,8 +145,10 @@ rebuilding.
 
 - From an open repo workspace, run `forktty worktree-list` without `--cwd` — it uses the shell's current `PWD`, not the app launch directory.
 - `env -u PWD forktty worktree-list` from an open repo workspace — it still uses the CLI process current directory, not the app launch directory.
+- `forktty worktree-list feature/x` — exits with `worktree-list: unexpected argument feature/x` instead of ignoring the branch argument and listing the caller repo.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":"feature/no-cwd"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"missing_param"` for `cwd`; no worktree is created from the app launch directory.
 - `printf '{"id":"x","method":"worktree.create","params":{"name":42,"cwd":"'"$PWD"'"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"error"` and says `name` must be a string.
+- `forktty worktree-create feature/x --cw <repo>` — exits with `worktree-create: unknown option --cw` instead of using the fallback cwd.
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
 - If terminal spawn fails during `forktty worktree-create feature/x`, the action
   reports the spawn failure and removes the newly created git worktree and branch.
@@ -154,6 +156,7 @@ rebuilding.
 - If the GTK worktree dialog is opened while no workspace is active, actions report that no active workspace is available instead of using the app launch directory.
 - In the original workspace, run `forktty worktree-status` — returns `clean`; ForkTTY's `.worktrees/` directory should not make the target checkout dirty.
 - From a subdirectory inside that worktree, run `forktty worktree-status` — returns `clean` or `dirty`, not a repository error.
+- `forktty worktree-status <path> extra` — exits with `worktree-status: unexpected argument extra` instead of ignoring the extra selector.
 - Create an uncommitted file in the worktree, then run `forktty worktree-merge feature/x` from the original workspace — merge is rejected and the error says to commit, stash, or resolve the source worktree first.
 - Inside the new workspace, commit a change and then `forktty worktree-merge feature/x` from the original workspace's prompt.
 - `forktty worktree-remove feature/x` — the workspace closes, the worktree is removed from the repo, and the local `feature/x` branch still exists.

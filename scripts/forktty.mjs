@@ -57,6 +57,9 @@ const SURFACE_ACTION_OPTION_NAMES = new Set(["surface-id"]);
 const SURFACE_LIST_OPTION_NAMES = TARGET_SELECTOR_OPTION_NAMES;
 const SURFACE_SPLIT_OPTION_NAMES = new Set(["axis", "surface-id"]);
 const SEND_TEXT_OPTION_NAMES = new Set(["surface-id", "text"]);
+const WORKTREE_COMMAND_OPTION_NAMES = new Set(["branch", "cwd", "name"]);
+const WORKTREE_LIST_OPTION_NAMES = new Set(["cwd"]);
+const WORKTREE_STATUS_OPTION_NAMES = new Set(["cwd", "path"]);
 let fileNonceCounter = 0;
 
 const AGENT_SPECS = {
@@ -1002,7 +1005,13 @@ function worktreeParams(
   requireName = false,
   env = process.env,
   fallbackCwd = process.cwd(),
+  commandName = "worktree command",
+  allowedOptions = WORKTREE_COMMAND_OPTION_NAMES,
 ) {
+  rejectUnknownOptions(options, allowedOptions, commandName);
+  if (positionals.length > 1) {
+    throw new Error(`${commandName}: unexpected argument ${positionals[1]}`);
+  }
   requireNonBlankStringOption(options, "branch");
   requireNonBlankStringOption(options, "cwd");
   requireNonBlankStringOption(options, "name");
@@ -1037,6 +1046,10 @@ function buildWorktreeStatusParams(
   env = process.env,
   fallbackCwd = process.cwd(),
 ) {
+  rejectUnknownOptions(options, WORKTREE_STATUS_OPTION_NAMES, "worktree-status");
+  if (positionals.length > 1) {
+    throw new Error(`worktree-status: unexpected argument ${positionals[1]}`);
+  }
   requireNonBlankStringOption(options, "cwd");
   requireNonBlankStringOption(options, "path");
   const pathValue =
@@ -1067,11 +1080,20 @@ function formatWorktreeLine(worktree) {
 }
 
 async function handleWorktreeList(context, args) {
-  const { options } = parseFlags(args);
+  const { options, positionals } = parseFlags(args);
+  requireNoCommandArgs(positionals, "worktree-list");
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.list",
-    worktreeParams(options, [], false, context.env),
+    worktreeParams(
+      options,
+      [],
+      false,
+      context.env,
+      process.cwd(),
+      "worktree-list",
+      WORKTREE_LIST_OPTION_NAMES,
+    ),
   );
   if (context.json) {
     printJson(result);
@@ -1098,10 +1120,11 @@ async function handleWorktreeStatus(context, args) {
 
 async function handleWorktreeCreate(context, args, method) {
   const { options, positionals } = parseFlags(args);
+  const commandName = method === "worktree.create" ? "worktree-create" : "worktree-attach";
   const result = await sendSocketRequest(
     context.socketPath,
     method,
-    worktreeParams(options, positionals, true, context.env),
+    worktreeParams(options, positionals, true, context.env, process.cwd(), commandName),
   );
   if (context.json) {
     printJson(result);
@@ -1115,7 +1138,7 @@ async function handleWorktreeRemove(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.remove",
-    worktreeParams(options, positionals, true, context.env),
+    worktreeParams(options, positionals, true, context.env, process.cwd(), "worktree-remove"),
   );
   if (context.json) {
     printJson(result);
@@ -1129,7 +1152,7 @@ async function handleWorktreeMerge(context, args) {
   const result = await sendSocketRequest(
     context.socketPath,
     "worktree.merge",
-    worktreeParams(options, positionals, true, context.env),
+    worktreeParams(options, positionals, true, context.env, process.cwd(), "worktree-merge"),
   );
   if (context.json) {
     printJson(result);

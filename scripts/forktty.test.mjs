@@ -305,6 +305,7 @@ describe("forktty CLI helpers", () => {
       ],
       [["surfaces", "--workspace", "main"], /surfaces: unknown option --workspace/],
       [["send-text", "--txt", "hello"], /send-text: unknown option --txt/],
+      [["worktree-list", "feature/x"], /worktree-list: unexpected argument feature\/x/],
     ]) {
       await assert.rejects(main(argv, { XDG_RUNTIME_DIR: "/tmp" }), message);
     }
@@ -866,6 +867,14 @@ describe("forktty CLI helpers", () => {
       () => buildWorktreeStatusParams({ cwd: "" }, [], { PWD: "/repo/current" }),
       /--cwd requires a value/,
     );
+    assert.throws(
+      () => buildWorktreeStatusParams({ pth: "/repo/wt" }, [], { PWD: "/repo/current" }),
+      /worktree-status: unknown option --pth/,
+    );
+    assert.throws(
+      () => buildWorktreeStatusParams({}, ["/repo/wt", "extra"], {}),
+      /worktree-status: unexpected argument extra/,
+    );
   });
 
   it("defaults worktree command cwd to the caller PWD", () => {
@@ -897,6 +906,14 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => worktreeParams({ branch: "" }, [], true, { PWD: "/repo/current" }),
       /--branch requires a value/,
+    );
+    assert.throws(
+      () => worktreeParams({ cw: "/repo/current" }, ["feature/x"], true, {}),
+      /worktree command: unknown option --cw/,
+    );
+    assert.throws(
+      () => worktreeParams({}, ["feature/x", "extra"], true, { PWD: "/repo/current" }),
+      /worktree command: unexpected argument extra/,
     );
     assert.throws(
       () => worktreeParams({ name: "feature/x" }, ["   "], true, { PWD: "/repo/current" }),
