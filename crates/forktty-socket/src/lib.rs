@@ -1782,10 +1782,7 @@ mod tests {
     }
 
     impl CloseMutatesModelBackend {
-        fn new(
-            initial: TerminalSurfaceState,
-            model: Arc<Mutex<WorkspaceModel>>,
-        ) -> Self {
+        fn new(initial: TerminalSurfaceState, model: Arc<Mutex<WorkspaceModel>>) -> Self {
             let mut surfaces = BTreeMap::new();
             surfaces.insert(initial.surface_id.clone(), initial);
             Self {
