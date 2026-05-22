@@ -1,7 +1,6 @@
 use forktty_core::{
     config, dispatch_notification, validate_worktree_name, worktree, JsonRpcRequest,
     JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
-    WorktreeNameError,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
@@ -94,6 +93,12 @@ impl std::fmt::Display for DispatchError {
             DispatchError::InvalidParam(message) => f.write_str(message),
             DispatchError::Other(message) => f.write_str(message),
         }
+    }
+}
+
+impl From<forktty_core::WorktreeNameError> for DispatchError {
+    fn from(err: forktty_core::WorktreeNameError) -> Self {
+        DispatchError::InvalidParam(format!("Invalid worktree name: {err}"))
     }
 }
 
@@ -1100,21 +1105,6 @@ fn fallback_cwd() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-fn validate_worktree_name_param(name: &str) -> Result<&str, String> {
-    validate_worktree_name(name).map_err(|err| match err {
-        WorktreeNameError::Empty => "Invalid worktree name: must not be empty".to_string(),
-        WorktreeNameError::TooLong => {
-            "Invalid worktree name: must be 255 bytes or fewer".to_string()
-        }
-        WorktreeNameError::UnsupportedCharacters => {
-            "Invalid worktree name: contains unsupported characters".to_string()
-        }
-        WorktreeNameError::UnsafeSegment => {
-            "Invalid worktree name: contains an unsafe path segment".to_string()
-        }
-    })
-}
-
 fn worktree_name_from_params<'a>(
     params: &'a Value,
     keys: &[&str],
@@ -1128,7 +1118,7 @@ fn worktree_name_from_params<'a>(
         let Some(name) = value.as_str() else {
             return Err(format!("Invalid parameter {key}: expected string").into());
         };
-        let name = validate_worktree_name_param(name).map_err(DispatchError::from)?;
+        let name = validate_worktree_name(name).map_err(DispatchError::from)?;
         found.push((*key, name));
     }
     if found.is_empty() {
@@ -3512,45 +3502,52 @@ mod tests {
     async fn worktree_socket_rejects_invalid_name_params() {
         let (state, _backend) = test_state();
 
-        for (method, params, message) in [
+        for (method, params, code, message) in [
             (
                 "worktree.create",
                 json!({"name": 42}),
+                "error",
                 "Invalid parameter name: expected string",
             ),
             (
                 "worktree.create",
                 json!({"name": ""}),
+                "invalid_param",
                 "Invalid worktree name: must not be empty",
             ),
             (
                 "worktree.attach",
                 json!({"branch": 42}),
+                "error",
                 "Invalid parameter branch: expected string",
             ),
             (
                 "worktree.attach",
                 json!({"name": 42, "branch": "topic/socket"}),
+                "error",
                 "Invalid parameter name: expected string",
             ),
             (
                 "worktree.attach",
                 json!({"name": "topic/name", "branch": "topic/branch"}),
+                "error",
                 "Ambiguous worktree selector: cannot combine name and branch",
             ),
             (
                 "worktree.remove",
                 json!({"name": 42}),
+                "error",
                 "Invalid parameter name: expected string",
             ),
             (
                 "worktree.merge",
                 json!({"name": 42}),
+                "error",
                 "Invalid parameter name: expected string",
             ),
         ] {
             let error = dispatch(&state, method, params).await.unwrap_err();
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), code, "method={method}");
             assert!(error.to_string().contains(message));
         }
 
@@ -3814,14 +3811,12 @@ mod tests {
 
     #[test]
     fn validates_worktree_name_params() {
-        assert_eq!(
-            validate_worktree_name_param(" feature/x ").unwrap(),
-            "feature/x"
-        );
-        assert!(validate_worktree_name_param("../escape").is_err());
-        assert!(validate_worktree_name_param("feature//empty").is_err());
-        assert!(validate_worktree_name_param("feature\\windows").is_err());
-        assert!(validate_worktree_name_param("").is_err());
+        assert_eq!(validate_worktree_name(" feature/x ").unwrap(), "feature/x");
+        let err = DispatchError::from(validate_worktree_name("../escape").unwrap_err());
+        assert_eq!(err.code(), "invalid_param");
+        assert!(validate_worktree_name("feature//empty").is_err());
+        assert!(validate_worktree_name("feature\\windows").is_err());
+        assert!(validate_worktree_name("").is_err());
     }
 
     #[test]
