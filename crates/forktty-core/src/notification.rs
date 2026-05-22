@@ -41,13 +41,9 @@ fn should_dispatch(notification: &NotificationItem, now: Instant) -> bool {
     let mut cache = dedupe_cache()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
-    while let Some((_, ts)) = cache.front() {
-        if now.duration_since(*ts) >= NOTIFICATION_DEDUPE_WINDOW {
-            cache.pop_front();
-        } else {
-            break;
-        }
-    }
+    // Calls can race before taking the mutex, so insertion order is not a
+    // reliable proxy for timestamp order.
+    cache.retain(|(_, ts)| now.duration_since(*ts) < NOTIFICATION_DEDUPE_WINDOW);
     if cache.iter().any(|(existing, _)| existing == &key) {
         return false;
     }
