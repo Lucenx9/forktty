@@ -109,15 +109,23 @@ window {
   font-weight: 700;
 }
 
-/* Pre-release tag chip beside the brand name. Dot + ALPHA in a compact
- * pill so it reads as a build marker, not a noisy accent. */
+/* Pre-release tag chip beside the brand name. Tinted with the brand
+ * accent so it reads as part of the product mark, not a neutral chip. */
 .app-brand-tag {
   margin-left: 6px;
   padding: 2px 8px;
   min-height: 18px;
   border-radius: 999px;
-  background: alpha(var(--window-fg-color), 0.14);
+  background: alpha(var(--ft-accent), 0.18);
   color: var(--ft-text);
+}
+
+.app-brand-tag-dot {
+  border-radius: 50%;
+  background: var(--ft-accent);
+}
+
+.app-brand-tag-label {
   font-size: 0.72em;
   font-weight: 700;
   letter-spacing: 0.08em;
