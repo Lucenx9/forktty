@@ -75,6 +75,15 @@ const TEMPLATES: &[HookTemplate] = &[
     },
 ];
 
+const REMOVED_NODE_CLI_FILES: &[&str] = &["scripts/forktty.mjs", "scripts/forktty.test.mjs"];
+
+const OBSOLETE_NODE_CLI_REFS: &[&str] = &[
+    "node --test scripts/forktty.test.mjs",
+    "node scripts/forktty.mjs",
+    "scripts/forktty.test.mjs",
+    "scripts/forktty.mjs",
+];
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -113,7 +122,45 @@ Usage:
 }
 
 fn check_all() -> Result<()> {
+    check_no_legacy_node_cli()?;
     check_hook_templates()
+}
+
+fn check_no_legacy_node_cli() -> Result<()> {
+    let root = repo_root();
+    let mut found = Vec::new();
+    for path in REMOVED_NODE_CLI_FILES {
+        if root.join(path).exists() {
+            found.push(*path);
+        }
+    }
+    if !found.is_empty() {
+        return Err(format!(
+            "legacy Node CLI files should stay removed: {}",
+            found.join(", ")
+        ));
+    }
+    for path in [
+        ".github/workflows/ci.yml",
+        "README.md",
+        "CONTRIBUTING.md",
+        "RELEASING.md",
+        "docs/release-qa.md",
+    ] {
+        let full_path = root.join(path);
+        let raw = fs::read_to_string(&full_path)
+            .map_err(|err| format!("failed to read {}: {err}", full_path.display()))?;
+        for needle in OBSOLETE_NODE_CLI_REFS {
+            if raw.contains(needle) {
+                return Err(format!(
+                    "{} contains obsolete `{needle}`",
+                    full_path.display()
+                ));
+            }
+        }
+    }
+    println!("legacy Node CLI: absent");
+    Ok(())
 }
 
 fn check_hook_templates() -> Result<()> {

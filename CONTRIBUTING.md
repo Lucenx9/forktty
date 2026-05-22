@@ -23,7 +23,6 @@ You will need:
 
 - Linux
 - Rust 1.88+ (install via [rustup](https://rustup.rs/))
-- Node.js 20+ (only for the legacy development CLI helper and its tests)
 - GTK4, libadwaita, and VTE GTK4 development libraries
 
 Distro-specific install commands are in the [README](README.md#quick-start).
@@ -62,7 +61,6 @@ cargo run -p xtask -- check
 cargo clippy --workspace --features gtk-vte -- -D warnings
 cargo test --workspace
 cargo build -p forktty-ui-gtk --features gtk-vte
-node --test scripts/forktty.test.mjs
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
@@ -80,8 +78,7 @@ cargo deny check    # optional, requires cargo-deny
 - Rust unit and integration tests live next to the code under
   `crates/*/src/` and `crates/*/tests/`.
 - Native socket CLI and hook behavior is covered by Rust tests in
-  `crates/forktty-ui-gtk/src/socket_cli.rs`; the legacy Node helper still has
-  compatibility tests in `scripts/forktty.test.mjs`.
+  `crates/forktty-ui-gtk/src/socket_cli.rs`.
 - Repository consistency checks live in the Rust `xtask` crate. Run
   `cargo run -p xtask -- check` after editing hook templates or release
   automation.

@@ -32,14 +32,6 @@ jobs:
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
 
-      - name: Setup Node.js for CLI tests
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 22
-
-      - name: CLI tests
-        run: node --test scripts/forktty.test.mjs
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
         with:

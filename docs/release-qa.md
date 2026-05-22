@@ -12,7 +12,6 @@ cargo test --workspace
 cargo test -p forktty-ui-gtk --features gtk-vte
 cargo clippy --workspace --features gtk-vte -- -D warnings
 cargo build -p forktty-ui-gtk --features gtk-vte
-node --test scripts/forktty.test.mjs
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
@@ -63,7 +62,7 @@ rebuilding.
 - `forktty ping --socket=` — exits with `--socket requires a value` instead of trying to connect to an empty path.
 - Start a stub Unix socket at the default path that replies `{"id":"other","ok":true,"result":"pong"}` to `system.ping`, then launch ForkTTY; startup should treat it as a foreign socket, not as another ForkTTY instance.
 - Replace the default socket path with a broken symlink, then launch ForkTTY; startup should refuse to replace the non-socket path and leave it for manual inspection.
-- Against a stub socket that resets before replying, `forktty ping --socket <stub>` reports the socket path and reset code instead of a raw Node socket error.
+- Against a stub socket that resets before replying, `forktty ping --socket <stub>` reports the socket path and reset code instead of a raw socket error.
 - `forktty list` — returns at least one workspace.
 - `forktty ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
 - `forktty clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.

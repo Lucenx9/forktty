@@ -3159,10 +3159,13 @@ fn read_token_usage_from_transcript(path: &Path) -> Option<TokenUsage> {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        let usage = entry
+        let Some(usage) = entry
             .get("message")
             .and_then(|message| message.get("usage"))
-            .or_else(|| entry.get("usage"))?;
+            .or_else(|| entry.get("usage"))
+        else {
+            continue;
+        };
         return Some(TokenUsage {
             input: usage
                 .get("input_tokens")
@@ -3327,20 +3330,891 @@ fn format_doctor_path(label: &str, info: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+    use std::sync::Mutex;
+    use std::thread;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_env<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var_os(key)))
+            .collect::<Vec<_>>();
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let result = catch_unwind(AssertUnwindSafe(f));
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        match result {
+            Ok(value) => value,
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn assert_err_contains<T>(result: CliResult<T>, expected: &str) {
+        match result {
+            Ok(_) => panic!("expected error containing {expected:?}"),
+            Err(err) => assert!(
+                err.message.contains(expected),
+                "expected {:?} to contain {:?}",
+                err.message,
+                expected
+            ),
+        }
+    }
+
+    fn with_socket_response(
+        response: impl FnOnce(&Value) -> String + Send + 'static,
+        test: impl FnOnce(&Path),
+    ) -> Value {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            reader.read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(line.trim()).unwrap();
+            stream.write_all(response(&request).as_bytes()).unwrap();
+            request
+        });
+        test(&socket_path);
+        handle.join().unwrap()
+    }
+
+    fn test_context() -> CliContext {
+        CliContext {
+            json: true,
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            socket_explicit: true,
+            verbose: false,
+        }
+    }
+
+    fn read_json(path: &Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn backup_count(dir: &Path, prefix: &str) -> usize {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(prefix))
+            })
+            .count()
+    }
 
     #[test]
     fn parse_global_flags_after_command() {
-        let parsed = parse_global_args(vec![
-            "ping".into(),
-            "--socket".into(),
-            "/tmp/forktty.sock".into(),
-            "--json".into(),
-        ])
+        with_env(
+            &[
+                ("FORKTTY_SOCKET_PATH", None),
+                ("XDG_RUNTIME_DIR", Some("/run/user/1000")),
+            ],
+            || {
+                let parsed = parse_global_args(strings(&[
+                    "ping",
+                    "--socket",
+                    "/tmp/forktty.sock",
+                    "--json",
+                ]))
+                .unwrap();
+                assert_eq!(parsed.args, vec!["ping"]);
+                assert!(parsed.json);
+                assert!(parsed.socket_explicit);
+                assert_eq!(parsed.socket_path, PathBuf::from("/tmp/forktty.sock"));
+
+                let parsed = parse_global_args(strings(&[
+                    "worktree-create",
+                    "feature/x",
+                    "--cwd",
+                    "/repo",
+                    "--socket=/tmp/forktty-2.sock",
+                ]))
+                .unwrap();
+                assert_eq!(
+                    parsed.args,
+                    vec!["worktree-create", "feature/x", "--cwd", "/repo"]
+                );
+                assert!(parsed.socket_explicit);
+                assert_eq!(parsed.socket_path, PathBuf::from("/tmp/forktty-2.sock"));
+
+                let parsed = parse_global_args(strings(&[
+                    "send-text",
+                    "--",
+                    "--socket",
+                    "literal",
+                    "--json",
+                ]))
+                .unwrap();
+                assert_eq!(
+                    parsed.args,
+                    vec!["send-text", "--", "--socket", "literal", "--json"]
+                );
+                assert!(!parsed.json);
+                assert!(!parsed.socket_explicit);
+                assert_eq!(
+                    parsed.socket_path,
+                    PathBuf::from("/run/user/1000/forktty.sock")
+                );
+
+                assert_err_contains(
+                    parse_global_args(strings(&["ping", "--socket="])),
+                    "--socket requires a value",
+                );
+                assert_err_contains(
+                    parse_global_args(strings(&["ping", "--socket", "--json"])),
+                    "--socket requires a value",
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn parse_flags_handles_boolean_options_and_terminator() {
+        let parsed = parse_flags(strings(&["--dry-run", "codex"]), &["dry-run"]);
+        assert_eq!(parsed.options.get("dry-run"), Some(&FlagValue::Bool));
+        assert_eq!(parsed.positionals, vec!["codex"]);
+
+        let parsed = parse_flags(strings(&["--title", "Heads up", "--", "--body"]), &[]);
+        assert_eq!(
+            parsed.options.get("title"),
+            Some(&FlagValue::String("Heads up".to_string()))
+        );
+        assert_eq!(parsed.positionals, vec!["--body"]);
+
+        let parsed = parse_flags(strings(&["--", "--help", "--literal"]), &[]);
+        assert!(parsed.options.is_empty());
+        assert_eq!(parsed.positionals, vec!["--help", "--literal"]);
+    }
+
+    #[test]
+    fn default_socket_path_prefers_absolute_env_then_runtime_dir() {
+        with_env(
+            &[
+                ("FORKTTY_SOCKET_PATH", Some("relative.sock")),
+                ("XDG_RUNTIME_DIR", Some(" /run/user/1000 ")),
+            ],
+            || {
+                assert_eq!(
+                    default_socket_path(),
+                    PathBuf::from("/run/user/1000/forktty.sock")
+                );
+            },
+        );
+        with_env(
+            &[
+                ("FORKTTY_SOCKET_PATH", Some(" /tmp/explicit.sock ")),
+                ("XDG_RUNTIME_DIR", Some("/run/user/1000")),
+            ],
+            || {
+                assert_eq!(default_socket_path(), PathBuf::from("/tmp/explicit.sock"));
+            },
+        );
+    }
+
+    #[test]
+    fn socket_error_messages_keep_path_and_reason() {
+        let missing = format_socket_connect_error(
+            io::Error::new(io::ErrorKind::NotFound, "connect ENOENT"),
+            Path::new("/tmp/forktty.sock"),
+        );
+        assert!(missing
+            .message
+            .contains("Cannot reach ForkTTY at /tmp/forktty.sock"));
+        assert!(missing
+            .message
+            .contains("FORKTTY_SOCKET_PATH to an absolute path"));
+
+        let denied = format_socket_connect_error(
+            io::Error::new(io::ErrorKind::PermissionDenied, "connect EACCES"),
+            Path::new("/run/user/1000/forktty.sock"),
+        );
+        assert!(denied.message.contains("Cannot access ForkTTY socket"));
+        assert!(denied.message.contains("/run/user/1000/forktty.sock"));
+
+        let reset = format_socket_connect_error(
+            io::Error::new(io::ErrorKind::ConnectionReset, "read ECONNRESET"),
+            Path::new("/tmp/forktty.sock"),
+        );
+        assert!(reset
+            .message
+            .contains("ForkTTY socket error at /tmp/forktty.sock"));
+        assert!(reset.message.contains("read ECONNRESET"));
+    }
+
+    #[test]
+    fn socket_response_errors_preserve_method_path_and_codes() {
+        with_socket_response(
+            |request| {
+                format!(
+                    "{}\n",
+                    json!({
+                        "id": request["id"],
+                        "ok": false,
+                        "error": { "code": "not_found", "message": "Workspace not found" }
+                    })
+                )
+            },
+            |socket_path| {
+                let err = send_socket_request(
+                    socket_path,
+                    "workspace.select",
+                    json!({ "id": "missing" }),
+                )
+                .unwrap_err();
+                assert_eq!(err.code.as_deref(), Some("not_found"));
+                assert!(err.message.contains(&socket_path.display().to_string()));
+                assert!(err.message.contains("workspace.select"));
+                assert!(err.message.contains("not_found: Workspace not found"));
+            },
+        );
+
+        with_socket_response(
+            |_| {
+                format!(
+                    "{}\n",
+                    json!({
+                        "id": "stale-response",
+                        "ok": true,
+                        "result": "pong"
+                    })
+                )
+            },
+            |socket_path| {
+                let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
+                assert!(err.message.contains(&socket_path.display().to_string()));
+                assert!(err.message.contains("system.ping"));
+                assert!(err.message.contains("response id mismatch"));
+                assert!(err.message.contains("stale-response"));
+            },
+        );
+
+        with_socket_response(
+            |_| {
+                format!(
+                    "{}\n",
+                    json!({
+                        "id": null,
+                        "ok": false,
+                        "error": { "code": "request_too_large", "message": "Request exceeds 1 MiB" }
+                    })
+                )
+            },
+            |socket_path| {
+                let err =
+                    send_socket_request(socket_path, "surface.send_text", json!({ "text": "x" }))
+                        .unwrap_err();
+                assert_eq!(err.code.as_deref(), Some("request_too_large"));
+                assert!(err.message.contains("surface.send_text"));
+                assert!(err
+                    .message
+                    .contains("request_too_large: Request exceeds 1 MiB"));
+                assert!(!err.message.contains("response id mismatch"));
+            },
+        );
+
+        with_socket_response(
+            |_| "not json\n".to_string(),
+            |socket_path| {
+                let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
+                assert!(err.message.contains(&socket_path.display().to_string()));
+                assert!(err.message.contains("system.ping"));
+                assert!(err.message.contains("Invalid socket response"));
+            },
+        );
+    }
+
+    #[test]
+    fn formatting_and_target_helpers_match_cli_contract() {
+        assert_eq!(
+            format_notification_line(&json!({
+                "read": false,
+                "kind": "info",
+                "title": "Smoke",
+                "body": "GTK"
+            })),
+            "[unread] global · info · Smoke — GTK"
+        );
+
+        let options = BTreeMap::from([("body".to_string(), FlagValue::String(String::new()))]);
+        assert!(should_read_stdin(&BTreeMap::new(), &[], "text"));
+        assert!(!should_read_stdin(
+            &BTreeMap::from([("text".to_string(), FlagValue::String("echo ok".to_string()))]),
+            &[],
+            "text"
+        ));
+        assert!(!should_read_stdin(
+            &BTreeMap::new(),
+            &["echo".to_string()],
+            "text"
+        ));
+        assert!(!should_read_stdin(&options, &[], "body"));
+
+        with_env(&[("FORKTTY_WORKSPACE_ID", Some(" ws-1 "))], || {
+            let params = build_target_params(&BTreeMap::new(), "set-status").unwrap();
+            assert_eq!(params["workspace_id"], Value::String("ws-1".to_string()));
+        });
+
+        let selectors = BTreeMap::from([
+            (
+                "workspace-id".to_string(),
+                FlagValue::String("ws-1".to_string()),
+            ),
+            (
+                "workspace-name".to_string(),
+                FlagValue::String("main".to_string()),
+            ),
+        ]);
+        assert_err_contains(
+            build_target_params(&selectors, "set-progress"),
+            "set-progress: cannot combine --workspace-id and --workspace-name",
+        );
+    }
+
+    #[test]
+    fn hook_actions_cover_attention_status_tools_and_shutdown() {
+        with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("ws-1")),
+                ("FORKTTY_SURFACE_ID", Some("surface-1")),
+            ],
+            || {
+                let claude = agent_spec("claude").unwrap();
+                let actions = build_hook_actions(
+                    claude,
+                    "notification",
+                    &json!({ "message": "Review needed" }),
+                    "12345",
+                );
+                assert_eq!(actions.len(), 3);
+                assert_eq!(actions[0].0, "metadata.log");
+                assert_eq!(actions[0].1["workspace_id"], "ws-1");
+                assert_eq!(actions[0].1["surface_id"], "surface-1");
+                assert_eq!(actions[0].1["level"], "warn");
+                assert_eq!(actions[0].1["message"], "Review needed");
+                assert_eq!(actions[1].0, "metadata.set_status");
+                assert_eq!(actions[1].1["key"], "agent:claude");
+                assert_eq!(actions[1].1["value"], "Needs input");
+                assert_eq!(actions[1].1["color"], "yellow");
+                assert_eq!(actions[1].1["hook_event_name"], "notification");
+                assert_eq!(actions[2].0, "notification.create");
+                assert_eq!(actions[2].1["title"], "Claude needs input");
+                assert_eq!(actions[2].1["kind"], "prompt");
+
+                let actions = build_hook_actions(
+                    claude,
+                    "pre-tool",
+                    &json!({ "tool_name": "Bash", "tool_input": { "command": "ls" } }),
+                    "77",
+                );
+                assert_eq!(actions[0].1["message"], "Claude running Bash");
+                assert_eq!(actions[1].1["value"], "Running Bash");
+                assert_eq!(actions[1].1["hook_event_order"], "77");
+
+                let actions = build_hook_actions(
+                    claude,
+                    "post-tool",
+                    &json!({ "tool_name": "Bash", "tool_response": { "is_error": true } }),
+                    "78",
+                );
+                assert_eq!(actions.len(), 2);
+                assert_eq!(actions[0].1["level"], "error");
+                assert!(actions[0].1["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Bash reported an error"));
+                assert_eq!(actions[1].0, "notification.create");
+                assert_eq!(actions[1].1["kind"], "error");
+
+                let gemini = agent_spec("gemini").unwrap();
+                let actions = build_hook_actions(gemini, "session-end", &Value::Null, "99");
+                assert_eq!(actions.len(), 2);
+                assert_eq!(actions[0].1["message"], "Gemini session ended");
+                assert_eq!(actions[1].0, "metadata.clear_status");
+                assert_eq!(actions[1].1["key"], "agent:gemini");
+            },
+        );
+    }
+
+    #[test]
+    fn hook_payload_extraction_sanitizes_and_hashes_sensitive_text() {
+        assert_eq!(
+            sanitize_for_terminal("bad\u{1b}[31m\nnext"),
+            "bad\\x1b[31m\\nnext"
+        );
+        assert_eq!(
+            extract_hook_tool_name(&json!({ "tool_name": "Bash\u{1b}[31m" })).unwrap(),
+            "Bash\\x1b[31m"
+        );
+        let long = "a".repeat(120);
+        let tool = extract_hook_tool_name(&json!({ "tool_name": long })).unwrap();
+        assert_eq!(tool.chars().count(), HOOK_TOOL_LABEL_MAX);
+        assert!(tool.ends_with("..."));
+
+        assert!(extract_hook_tool_error(
+            &json!({ "result": { "error": { "message": "bad" } } })
+        ));
+        assert!(extract_hook_tool_error(
+            &json!({ "tool_response": { "is_error": true } })
+        ));
+        assert!(!extract_hook_tool_error(
+            &json!({ "tool_response": { "is_error": false } })
+        ));
+
+        let actions = build_hook_actions(
+            agent_spec("codex").unwrap(),
+            "prompt-submit",
+            &json!({ "prompt": "ship the secret feature" }),
+            "12345",
+        );
+        let turn_id = actions[1].1["hook_turn_id"].as_str().unwrap();
+        assert!(turn_id.starts_with("prompt:"));
+        assert!(!turn_id.contains("secret"));
+
+        assert_eq!(
+            extract_hook_source(&json!({ "source": "resume" })).as_deref(),
+            Some("resume")
+        );
+        assert_eq!(
+            extract_hook_compact_trigger(&json!({ "compactTrigger": "manual" })).as_deref(),
+            Some("manual")
+        );
+    }
+
+    #[test]
+    fn pending_notifications_and_token_usage_feed_claude_context() {
+        let list = json!([
+            { "id": "self", "kind": "prompt", "title": "Claude needs input", "read": false, "workspace_id": "ws-A" },
+            { "id": "user", "kind": "info", "title": "Build broke", "body": "exit 1", "read": false, "workspace_id": "ws-A" },
+            { "id": "other", "kind": "info", "title": "Other", "read": false, "workspace_id": "ws-B" },
+            { "id": "read", "kind": "info", "title": "Read", "read": true, "workspace_id": "ws-A" }
+        ]);
+        let filtered = with_env(&[("FORKTTY_WORKSPACE_ID", Some("ws-A"))], || {
+            filter_pending_notifications(&list)
+        });
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["id"], "user");
+
+        let block = format_pending_notifications_block(&filtered).unwrap();
+        assert!(block.contains("ForkTTY pending notifications:"));
+        assert!(block.contains("[info] Build broke"));
+        assert!(block.contains("exit 1"));
+        assert!(format_pending_notifications_block(&[]).is_none());
+
+        let many = (0..12)
+            .map(|index| json!({ "kind": "info", "title": format!("n{index}") }))
+            .collect::<Vec<_>>();
+        let truncated = format_pending_notifications_block(&many).unwrap();
+        assert!(truncated.contains("...and 2 more"));
+
+        let usage = TokenUsage {
+            input: 1_000,
+            cache_read: 4_000,
+            cache_creation: 500,
+            output: 250,
+        };
+        let block = with_env(&[("FORKTTY_HOOK_TOKEN_CEILING", None)], || {
+            format_token_usage_block(usage)
+        });
+        assert!(block.contains("5,500 / 200,000 input tokens"));
+        assert!(block.contains("input=1000"));
+        assert!(block.contains("cache_read=4000"));
+
+        let block = with_env(&[("FORKTTY_HOOK_TOKEN_CEILING", Some("50000"))], || {
+            format_token_usage_block(TokenUsage {
+                input: 1_000,
+                cache_read: 9_000,
+                cache_creation: 0,
+                output: 0,
+            })
+        });
+        assert!(block.contains("10,000 / 50,000 input tokens"));
+        assert!(block.contains("20%"));
+
+        let progress = with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("ws-A")),
+                ("FORKTTY_HOOK_TOKEN_CEILING", Some("12345")),
+            ],
+            || {
+                build_token_progress_action(
+                    agent_spec("claude").unwrap(),
+                    &HookEnrichments {
+                        pending_notifications: Vec::new(),
+                        token_usage: Some(TokenUsage {
+                            input: 100,
+                            cache_read: 200,
+                            cache_creation: 50,
+                            output: 10,
+                        }),
+                    },
+                    "prompt-submit",
+                    "77",
+                )
+                .unwrap()
+            },
+        );
+        assert_eq!(progress["workspace_id"], "ws-A");
+        assert_eq!(progress["key"], "agent:claude:tokens");
+        assert_eq!(progress["value"], 350);
+        assert_eq!(progress["total"], 12345);
+        assert_eq!(progress["hook_event_order"], "77");
+    }
+
+    #[test]
+    fn hook_response_adds_context_only_for_supported_claude_events() {
+        let response = with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("ws-4")),
+                ("FORKTTY_SURFACE_ID", Some("surface-9")),
+                ("FORKTTY_SOCKET_PATH", Some("/tmp/forktty.sock")),
+            ],
+            || {
+                build_hook_response(
+                    agent_spec("claude").unwrap(),
+                    "session-start",
+                    &HookEnrichments {
+                        pending_notifications: vec![json!({ "kind": "info", "title": "Hello" })],
+                        token_usage: None,
+                    },
+                )
+                .unwrap()
+            },
+        );
+        assert_eq!(response["continue"], true);
+        assert_eq!(
+            response["hookSpecificOutput"]["hookEventName"],
+            "SessionStart"
+        );
+        let context = response["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("ForkTTY"));
+        assert!(context.contains("ws-4"));
+        assert!(context.contains("surface-9"));
+        assert!(context.contains("forktty.sock"));
+        assert!(context.contains("Hello"));
+
+        let response = build_hook_response(
+            agent_spec("claude").unwrap(),
+            "prompt-submit",
+            &HookEnrichments {
+                pending_notifications: vec![json!({ "kind": "error", "title": "Build broke" })],
+                token_usage: Some(TokenUsage {
+                    input: 500,
+                    cache_read: 1_000,
+                    cache_creation: 0,
+                    output: 50,
+                }),
+            },
+        )
         .unwrap();
-        assert_eq!(parsed.args, vec!["ping"]);
-        assert!(parsed.json);
-        assert!(parsed.socket_explicit);
-        assert_eq!(parsed.socket_path, PathBuf::from("/tmp/forktty.sock"));
+        assert_eq!(
+            response["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
+        let context = response["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("Build broke"));
+        assert!(context.contains("1,500 / 200,000 input tokens"));
+
+        let plain = build_hook_response(
+            agent_spec("claude").unwrap(),
+            "prompt-submit",
+            &HookEnrichments {
+                pending_notifications: Vec::new(),
+                token_usage: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plain,
+            serde_json::from_str::<Value>(HOOK_CONTINUE_JSON.trim()).unwrap()
+        );
+        let codex = build_hook_response(
+            agent_spec("codex").unwrap(),
+            "session-start",
+            &HookEnrichments {
+                pending_notifications: vec![json!({ "title": "ignored" })],
+                token_usage: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(codex, plain);
+    }
+
+    #[test]
+    fn transcript_usage_reader_returns_latest_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.jsonl");
+        fs::write(
+            &transcript,
+            format!(
+                "{}\n{}\n{}\n",
+                json!({ "type": "user", "message": { "content": "hi" } }),
+                json!({
+                    "type": "assistant",
+                    "message": {
+                        "usage": {
+                            "input_tokens": 1200,
+                            "output_tokens": 80,
+                            "cache_read_input_tokens": 4500,
+                            "cache_creation_input_tokens": 300
+                        }
+                    }
+                }),
+                json!({ "type": "tool_use" })
+            ),
+        )
+        .unwrap();
+        let usage = read_token_usage_from_transcript(&transcript).unwrap();
+        assert_eq!(usage.input, 1200);
+        assert_eq!(usage.output, 80);
+        assert_eq!(usage.cache_read, 4500);
+        assert_eq!(usage.cache_creation, 300);
+        assert!(read_token_usage_from_transcript(&dir.path().join("missing.jsonl")).is_none());
+    }
+
+    #[test]
+    fn hook_setup_writes_all_agent_configs_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex home");
+        let claude_dir = dir.path().join("claude config");
+        let home = dir.path().join("home dir");
+        let codex_home_s = codex_home.display().to_string();
+        let claude_dir_s = claude_dir.display().to_string();
+        let home_s = home.display().to_string();
+
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", Some(&claude_dir_s)),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let context = test_context();
+                handle_hooks_setup(&context, strings(&["codex", "claude", "gemini", "codex"]))
+                    .unwrap();
+
+                let codex_path = codex_home.join("hooks.json");
+                let claude_path = claude_dir.join("settings.json");
+                let gemini_path = home.join(".gemini/settings.json");
+                let codex = read_json(&codex_path);
+                assert!(codex["hooks"]["SessionStart"].is_array());
+                assert!(codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains(" hooks codex pre-tool"));
+                assert!(!codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains("forktty.mjs"));
+
+                let claude = read_json(&claude_path);
+                for event in ["PreToolUse", "PostToolUse", "SubagentStop", "PreCompact"] {
+                    assert!(claude["hooks"][event].is_array(), "missing {event}");
+                }
+                assert!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains(" hooks claude pre-tool"));
+
+                let gemini = read_json(&gemini_path);
+                for event in ["BeforeTool", "AfterTool", "Notification", "PreCompress"] {
+                    assert!(gemini["hooks"][event].is_array(), "missing {event}");
+                }
+                assert!(gemini["hooks"]["PreCompress"][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains(" hooks gemini pre-compact"));
+
+                let first = fs::read_to_string(&codex_path).unwrap();
+                handle_hooks_setup(&context, strings(&["codex"])).unwrap();
+                assert_eq!(fs::read_to_string(&codex_path).unwrap(), first);
+                assert_eq!(backup_count(&codex_home, "hooks.json.bak-"), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn hook_setup_dry_run_and_option_errors_do_not_write_configs() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        let codex_home_s = codex_home.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", None),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let context = test_context();
+                handle_hooks_setup(&context, strings(&["--dry-run", "codex"])).unwrap();
+                assert!(!codex_home.join("hooks.json").exists());
+
+                assert_err_contains(
+                    handle_hooks_setup(&context, strings(&["--dry-run=yes", "codex"])),
+                    "hooks setup: --dry-run must be true or false",
+                );
+                assert_err_contains(
+                    handle_hooks_setup(&context, strings(&["--dryrun", "codex"])),
+                    "hooks setup: unknown option --dryrun",
+                );
+                assert!(!codex_home.join("hooks.json").exists());
+            },
+        );
+    }
+
+    #[test]
+    fn hook_setup_preserves_unrelated_json_and_preflights_all_configs() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        let claude_dir = dir.path().join("claude");
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::create_dir_all(&claude_dir).unwrap();
+        let codex_path = codex_home.join("hooks.json");
+        let claude_path = claude_dir.join("settings.json");
+        fs::write(&codex_path, "{\"customKey\":{\"keepMe\":true}}\n").unwrap();
+        fs::write(&claude_path, "{ not json ::: ").unwrap();
+
+        let codex_home_s = codex_home.display().to_string();
+        let claude_dir_s = claude_dir.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", Some(&claude_dir_s)),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let context = test_context();
+                assert_err_contains(
+                    handle_hooks_setup(&context, strings(&["codex", "claude"])),
+                    "failed to read claude hook config",
+                );
+                assert_eq!(
+                    fs::read_to_string(&codex_path).unwrap(),
+                    "{\"customKey\":{\"keepMe\":true}}\n"
+                );
+
+                fs::write(&claude_path, "{}\n").unwrap();
+                handle_hooks_setup(&context, strings(&["codex"])).unwrap();
+                let parsed = read_json(&codex_path);
+                assert_eq!(parsed["customKey"]["keepMe"], true);
+                assert!(parsed["hooks"]["SessionStart"].is_array());
+                assert_eq!(backup_count(&codex_home, "hooks.json.bak-"), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn hook_setup_updates_symlink_targets_without_replacing_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        let managed_dir = dir.path().join("managed-codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::create_dir_all(&managed_dir).unwrap();
+        let target_path = managed_dir.join("hooks.json");
+        let config_path = codex_home.join("hooks.json");
+        fs::write(&target_path, "{\"customKey\":\"managed\"}\n").unwrap();
+        std::os::unix::fs::symlink(&target_path, &config_path).unwrap();
+
+        let codex_home_s = codex_home.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", None),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                handle_hooks_setup(&test_context(), strings(&["codex"])).unwrap();
+                assert!(fs::symlink_metadata(&config_path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink());
+                assert_eq!(fs::read_link(&config_path).unwrap(), target_path);
+                let parsed = read_json(&target_path);
+                assert_eq!(parsed["customKey"], "managed");
+                assert!(parsed["hooks"]["SessionStart"].is_array());
+                assert_eq!(backup_count(&managed_dir, "hooks.json.bak-"), 1);
+                assert_eq!(backup_count(&codex_home, "hooks.json.bak-"), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn hook_config_reader_rejects_unsafe_or_invalid_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("codex").unwrap();
+
+        let whitespace = dir.path().join("whitespace.json");
+        fs::write(&whitespace, "   \n\t  \n").unwrap();
+        assert_eq!(read_agent_config(spec, &whitespace).unwrap(), json!({}));
+
+        let array = dir.path().join("array.json");
+        fs::write(&array, "[]\n").unwrap();
+        assert_err_contains(
+            read_agent_config(spec, &array),
+            "expected a JSON object at the top level",
+        );
+        assert_eq!(fs::read_to_string(&array).unwrap(), "[]\n");
+
+        let directory = dir.path().join("directory.json");
+        fs::create_dir(&directory).unwrap();
+        assert_err_contains(
+            read_agent_config(spec, &directory),
+            "path exists but is not a regular file",
+        );
+        assert!(directory.is_dir());
+
+        let broken = dir.path().join("broken.json");
+        std::os::unix::fs::symlink(dir.path().join("missing.json"), &broken).unwrap();
+        assert_err_contains(read_agent_config(spec, &broken), "path is a broken symlink");
+        assert!(fs::symlink_metadata(&broken)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn atomic_write_replaces_target_and_cleans_temp_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("atomic.json");
+        atomic_write_file(&target, b"first\n").unwrap();
+        atomic_write_file(&target, b"second\n").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "second\n");
+        assert_eq!(backup_count(dir.path(), ".atomic.json.tmp-"), 0);
+
+        let target_in_missing_dir = dir.path().join("missing").join("atomic.json");
+        assert_err_contains(
+            atomic_write_file(&target_in_missing_dir, b"content\n"),
+            "No such file or directory",
+        );
+        assert!(!target_in_missing_dir.exists());
+        assert_eq!(backup_count(dir.path(), ".atomic.json.tmp-"), 0);
     }
 
     #[test]

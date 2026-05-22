@@ -37,7 +37,6 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 - Linux
 - [Rust 1.88+](https://rustup.rs/)
-- Node.js 20+ only for the legacy development CLI helper/tests
 - GTK4, libadwaita, VTE GTK4 development libraries
 
 Debian / Ubuntu:
@@ -121,9 +120,8 @@ forktty log --level warn "Waiting for reviewer input"
 forktty notifications
 ```
 
-Source checkouts can still run the legacy development wrapper directly with
-`node scripts/forktty.mjs ...`, but packaged builds and normal usage do not
-require Node.js.
+The socket CLI and agent hook bridge are native Rust code in the `forktty`
+binary, so source checkouts and packaged builds do not require Node.js.
 
 Spawned shells receive:
 
@@ -246,7 +244,6 @@ cargo run -p xtask -- check
 cargo test --workspace
 cargo clippy --workspace --features gtk-vte -- -D warnings
 cargo build -p forktty-ui-gtk --features gtk-vte
-node --test scripts/forktty.test.mjs
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
