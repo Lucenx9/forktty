@@ -7,6 +7,8 @@ VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/
 DEB_VERSION="${FORKTTY_DEB_VERSION:-$VERSION}"
 TARGET_DIR="$ROOT_DIR/target/packaging/deb"
 ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
+DESKTOP_ID="dev.forktty.ForkTTY"
+APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.appdata.xml"
 
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
@@ -43,9 +45,10 @@ cargo build -p forktty-ui-gtk --features gtk-vte --release
 rm -rf "$PKG_ROOT"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$PKG_ROOT/usr/bin/forktty"
 install -Dm644 "$ROOT_DIR/packaging/linux/forktty.desktop" \
-  "$PKG_ROOT/usr/share/applications/forktty.desktop"
+  "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"
+install -Dm644 "$APPSTREAM_FILE" "$PKG_ROOT/usr/share/metainfo/$DESKTOP_ID.appdata.xml"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
 INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"

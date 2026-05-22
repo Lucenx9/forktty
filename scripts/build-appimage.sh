@@ -8,7 +8,7 @@ TARGET_DIR="$ROOT_DIR/target/packaging/appimage"
 APPDIR="$TARGET_DIR/ForkTTY.AppDir"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/forktty.desktop"
 ICON_FILE="$ROOT_DIR/packaging/linux/icons/forktty.png"
-APPIMAGE_DESKTOP_ID="io.github.lucenx9.forktty"
+APPIMAGE_DESKTOP_ID="dev.forktty.ForkTTY"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.appdata.xml"
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"

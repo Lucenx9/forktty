@@ -7,4 +7,4 @@ Icon=forktty
 Categories=System;TerminalEmulator;
 Terminal=false
 StartupNotify=true
-StartupWMClass=forktty
+StartupWMClass=dev.forktty.ForkTTY
