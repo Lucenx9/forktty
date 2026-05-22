@@ -123,7 +123,6 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
 
 fn session_write_path(path: &Path) -> Result<PathBuf, SessionError> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(fs::canonicalize(path)?),
         Ok(_) => Ok(path.to_path_buf()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
         Err(err) => Err(err.into()),
@@ -552,7 +551,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn save_and_load_session_through_symlink_preserves_link() {
+    fn save_and_load_session_through_symlink_replaces_link_with_file() {
         use std::os::unix::fs::symlink;
 
         let dir = tempfile::tempdir().unwrap();
@@ -575,11 +574,11 @@ mod tests {
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data.clone()));
         save_session_to_path(&path, &data).unwrap();
 
-        assert!(fs::symlink_metadata(&path)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read_link(&path).unwrap(), target);
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+        assert!(
+            fs::symlink_metadata(&target).is_ok(),
+            "target file should remain present"
+        );
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
         let link_siblings: Vec<_> = fs::read_dir(&link_dir)
             .unwrap()
