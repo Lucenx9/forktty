@@ -152,7 +152,7 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
 }
 
 pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
-    let repo = open_repo(repo_path)?;
+    let repo = open_worktree_admin_repo(repo_path)?;
     let selector = validate_worktree_name(selector).map_err(WorktreeError::InvalidName)?;
     let worktree_name = resolve_worktree_name(&repo, selector)?;
     let wt = repo
@@ -287,6 +287,10 @@ pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
 
 pub fn repository_root(repo_path: &str) -> Result<PathBuf, WorktreeError> {
     let repo = open_repo(repo_path)?;
+    repository_root_for_repo(&repo)
+}
+
+fn repository_root_for_repo(repo: &Repository) -> Result<PathBuf, WorktreeError> {
     let common_dir = repo.commondir();
     common_dir
         .parent()
@@ -357,6 +361,15 @@ fn is_transient_text_file_busy(err: &std::io::Error) -> bool {
 
 fn open_repo(path: &str) -> Result<Repository, WorktreeError> {
     Repository::discover(path).map_err(|_| WorktreeError::NotARepo(path.to_string()))
+}
+
+fn open_worktree_admin_repo(path: &str) -> Result<Repository, WorktreeError> {
+    let repo = open_repo(path)?;
+    if repo.is_worktree() {
+        let root = repository_root_for_repo(&repo)?;
+        return Repository::open(&root).map_err(WorktreeError::from);
+    }
+    Ok(repo)
 }
 
 fn info(branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
@@ -761,6 +774,20 @@ mod tests {
         let repo = Repository::open(dir.path()).unwrap();
         assert!(repo
             .find_branch("preserve-branch", BranchType::Local)
+            .is_ok());
+    }
+
+    #[test]
+    fn remove_accepts_cwd_inside_removed_worktree() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "remove-from-self", "nested").unwrap();
+
+        remove(&info.path, "remove-from-self", false).unwrap();
+
+        assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
+        let repo = Repository::open(dir.path()).unwrap();
+        assert!(repo
+            .find_branch("remove-from-self", BranchType::Local)
             .is_ok());
     }
 
