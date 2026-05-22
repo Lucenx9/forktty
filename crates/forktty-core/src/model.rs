@@ -315,13 +315,16 @@ impl WorkspaceModel {
                 }
             }
             let leaf_ids = leaf_surface_ids(&self.workspaces[&workspace_id].pane_tree);
-            // Detect duplicate leaf ids that already appear in an earlier
-            // workspace and assign fresh ids before they collide in the
-            // surface map.
+            // Detect duplicate leaf ids that already appear in this or an
+            // earlier workspace and assign fresh ids before they collide in
+            // the surface map.
             let mut renames: Vec<(SurfaceId, SurfaceId)> = Vec::new();
             let mut canonical_leaf_ids: Vec<SurfaceId> = Vec::with_capacity(leaf_ids.len());
+            let mut workspace_leaf_ids: BTreeSet<SurfaceId> = BTreeSet::new();
             for surface_id in leaf_ids {
-                if valid_surface_ids.contains(&surface_id) {
+                if valid_surface_ids.contains(&surface_id)
+                    || !workspace_leaf_ids.insert(surface_id.clone())
+                {
                     let new_id = self.next_surface_id();
                     renames.push((surface_id.clone(), new_id.clone()));
                     canonical_leaf_ids.push(new_id);
@@ -2529,6 +2532,48 @@ mod tests {
         assert_eq!(
             model.surface(&second_leaves[0]).unwrap().workspace_id,
             second.id
+        );
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn repair_session_invariants_renames_duplicate_leaf_ids_within_workspace() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let shared_id = workspace.focused_surface_id.clone();
+        {
+            let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
+            workspace.pane_tree = PaneNode::Split {
+                axis: SplitAxis::Horizontal,
+                children: vec![
+                    PaneNode::Leaf {
+                        surface_id: shared_id.clone(),
+                    },
+                    PaneNode::Leaf {
+                        surface_id: shared_id.clone(),
+                    },
+                ],
+                sizes: vec![0.5, 0.5],
+            };
+        }
+
+        assert!(model.repair_session_invariants());
+
+        let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
+        let leaves = leaf_surface_ids(&repaired.pane_tree);
+        assert_eq!(leaves.len(), 2);
+        assert_ne!(
+            leaves[0], leaves[1],
+            "duplicate leaf ids must be split within a workspace"
+        );
+        assert_eq!(repaired.focused_surface_id, leaves[0]);
+        assert_eq!(
+            model.surface(&leaves[0]).unwrap().workspace_id,
+            workspace.id
+        );
+        assert_eq!(
+            model.surface(&leaves[1]).unwrap().workspace_id,
+            workspace.id
         );
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
