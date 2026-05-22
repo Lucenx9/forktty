@@ -10,15 +10,15 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.4)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.5)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
 
-[Download v0.2.0-alpha.4 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.4/forktty-0.2.0-alpha.4-x86_64.AppImage)
+[Download v0.2.0-alpha.5 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.5/forktty-0.2.0-alpha.5-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.4). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the default download for this alpha and remains experimental; the Debian package is still available for Debian/Ubuntu users.
+> **Status**: Early alpha (v0.2.0-alpha.5). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the default download for this alpha and remains experimental; the Debian package is still available for Debian/Ubuntu users.
 
 <p align="center">
   <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />
@@ -34,11 +34,11 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 ## Install
 
 The fastest paths are the prebuilt artifacts from the
-[v0.2.0-alpha.4 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.4).
+[v0.2.0-alpha.5 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.5).
 Each release ships:
 
-- `forktty-0.2.0-alpha.4-x86_64.AppImage` — experimental, recommended for quick trials.
-- `forktty_0.2.0~alpha.4_amd64.deb` — Debian/Ubuntu package.
+- `forktty-0.2.0-alpha.5-x86_64.AppImage` — experimental, recommended for quick trials.
+- `forktty_0.2.0~alpha.5_amd64.deb` — Debian/Ubuntu package.
 - `SHA256SUMS` — checksums for both artifacts.
 
 After downloading, verify checksums:
@@ -50,8 +50,8 @@ sha256sum -c SHA256SUMS
 ### AppImage (experimental)
 
 ```bash
-chmod +x forktty-0.2.0-alpha.4-x86_64.AppImage
-./forktty-0.2.0-alpha.4-x86_64.AppImage
+chmod +x forktty-0.2.0-alpha.5-x86_64.AppImage
+./forktty-0.2.0-alpha.5-x86_64.AppImage
 ```
 
 The AppImage bundles the GTK4, libadwaita, and VTE shared libraries it
@@ -65,9 +65,9 @@ should be tested on the target distro before being relied on.
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo apt install ./forktty_0.2.0~alpha.4_amd64.deb
+sudo apt install ./forktty_0.2.0~alpha.5_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0~alpha.4_amd64.deb
+sudo dpkg -i forktty_0.2.0~alpha.5_amd64.deb
 sudo apt -f install
 ```
 
