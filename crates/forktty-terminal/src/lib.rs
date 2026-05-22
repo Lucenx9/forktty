@@ -109,6 +109,9 @@ pub trait TerminalBackend: Send + Sync {
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError>;
     fn close(&self, surface_id: &str) -> Result<(), TerminalError>;
+    fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+        self.close(surface_id)
+    }
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError>;
 }
 

@@ -184,6 +184,15 @@ impl TerminalBackend for GtkVteBackend {
         Ok(())
     }
 
+    fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+        self.surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(())
+    }
+
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
         let surfaces = self
             .surfaces
