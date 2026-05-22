@@ -305,6 +305,10 @@ describe("forktty CLI helpers", () => {
       ],
       [["surfaces", "--workspace", "main"], /surfaces: unknown option --workspace/],
       [["send-text", "--txt", "hello"], /send-text: unknown option --txt/],
+      [["list-status", "--workspace", "main"], /list-status: unknown option --workspace/],
+      [["list-progress", "--workspace", "main"], /list-progress: unknown option --workspace/],
+      [["logs", "--workspace", "main"], /logs: unknown option --workspace/],
+      [["clear-logs", "--workspace", "main"], /clear-logs: unknown option --workspace/],
       [["worktree-list", "feature/x"], /worktree-list: unexpected argument feature\/x/],
     ]) {
       await assert.rejects(main(argv, { XDG_RUNTIME_DIR: "/tmp" }), message);

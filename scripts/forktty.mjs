@@ -1186,6 +1186,7 @@ function formatStatusLine(status) {
 
 async function handleListStatus(context, args) {
   const { options } = parseFlags(args);
+  rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "list-status");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_status", {
     ...buildTargetParams(options, context.env),
   });
@@ -1242,6 +1243,7 @@ function formatProgressLine(progress) {
 
 async function handleListProgress(context, args) {
   const { options } = parseFlags(args);
+  rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "list-progress");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_progress", {
     ...buildTargetParams(options, context.env),
   });
@@ -1297,6 +1299,7 @@ async function handleLog(context, args) {
 
 async function handleLogs(context, args) {
   const { options } = parseFlags(args);
+  rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "logs");
   const result = await sendSocketRequest(context.socketPath, "metadata.list_logs", {
     ...buildTargetParams(options, context.env),
   });
@@ -1318,6 +1321,7 @@ async function handleLogs(context, args) {
 
 async function handleClearLogs(context, args) {
   const { options } = parseFlags(args);
+  rejectUnknownOptions(options, TARGET_SELECTOR_OPTION_NAMES, "clear-logs");
   await sendSocketRequest(context.socketPath, "metadata.clear_logs", {
     ...buildTargetParams(options, context.env),
   });
