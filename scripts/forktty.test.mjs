@@ -474,6 +474,49 @@ describe("forktty CLI helpers", () => {
     assert.equal(config.hooks.Stop.length, 1);
   });
 
+  it("strips prior forktty-tagged hook entries when reinstalling from a new script path", () => {
+    const oldScriptPath = "/old/forktty/scripts/forktty.mjs";
+    const newScriptPath = "/new/forktty/scripts/forktty.mjs";
+    const installed = mergeHookConfig({}, "codex", oldScriptPath).config;
+    assert.equal(installed.hooks.SessionStart.length, 1);
+
+    const { changed, config } = mergeHookConfig(installed, "codex", newScriptPath);
+
+    assert.equal(changed, true);
+    // Each event should still have exactly one ForkTTY entry — no stale
+    // command from the old script path remains alongside the new one.
+    assert.equal(config.hooks.SessionStart.length, 1);
+    assert.equal(config.hooks.UserPromptSubmit.length, 1);
+    assert.equal(config.hooks.Stop.length, 1);
+    assert.ok(
+      config.hooks.SessionStart[0].hooks[0].command.includes(newScriptPath),
+    );
+    assert.ok(
+      !config.hooks.SessionStart[0].hooks[0].command.includes(oldScriptPath),
+    );
+  });
+
+  it("preserves foreign hook entries when uninstalling ForkTTY hooks would leave them alone", () => {
+    const scriptPath = "/tmp/forktty/scripts/forktty.mjs";
+    const foreignEntry = {
+      hooks: [
+        {
+          type: "command",
+          command: "/usr/local/bin/other-tool",
+          timeout: 1000,
+        },
+      ],
+    };
+    const existing = {
+      hooks: { SessionStart: [foreignEntry] },
+    };
+
+    const { config } = mergeHookConfig(existing, "codex", scriptPath);
+
+    assert.equal(config.hooks.SessionStart.length, 2);
+    assert.deepEqual(config.hooks.SessionStart[0], foreignEntry);
+  });
+
   it("builds notification params and rejects missing option values", () => {
     assert.deepEqual(
       buildNotificationParams(

@@ -1469,6 +1469,8 @@ function buildHookShellCommand(scriptPath, agent, event, nodePath = process.exec
   return `${disabledGuard} && ${command} || echo '${HOOK_CONTINUE_JSON.trimEnd()}'`;
 }
 
+const FORKTTY_HOOK_TAG = "forktty";
+
 function buildHookEntry(command, statusMessage, timeout, matcher) {
   const entry = {
     hooks: [
@@ -1479,11 +1481,16 @@ function buildHookEntry(command, statusMessage, timeout, matcher) {
         timeout,
       },
     ],
+    forkttySource: FORKTTY_HOOK_TAG,
   };
   if (matcher) {
     entry.matcher = matcher;
   }
   return entry;
+}
+
+function isForkttyManagedEntry(entry) {
+  return isObject(entry) && entry.forkttySource === FORKTTY_HOOK_TAG;
 }
 
 function deepCloneJson(value) {
@@ -1505,16 +1512,27 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
     const command = buildHookShellCommand(scriptPath, agent, hookEventName, nodePath);
     const nextEntry = buildHookEntry(command, statusMessage, timeout, spec.matcher);
     const existingEntries = Array.isArray(hooks[eventName]) ? [...hooks[eventName]] : [];
-    const alreadyPresent = existingEntries.some((entry) =>
-      Array.isArray(entry?.hooks)
-        ? entry.hooks.some((hook) => hook?.type === "command" && hook.command === command)
-        : false,
-    );
-    if (!alreadyPresent) {
-      existingEntries.push(nextEntry);
-      hooks[eventName] = existingEntries;
+    // Strip any previously-installed ForkTTY entries before appending so a
+    // moved repo, an upgraded node binary, or a tweaked shell guard does not
+    // leave stale duplicates behind. Recognise both tagged entries (new
+    // installs) and entries whose command exactly matches the one we're
+    // about to write (legacy untagged installs).
+    const filtered = existingEntries.filter((entry) => {
+      if (isForkttyManagedEntry(entry)) return false;
+      if (
+        isObject(entry) &&
+        Array.isArray(entry.hooks) &&
+        entry.hooks.some((hook) => hook?.type === "command" && hook.command === command)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    filtered.push(nextEntry);
+    if (JSON.stringify(filtered) !== JSON.stringify(existingEntries)) {
       changed = true;
     }
+    hooks[eventName] = filtered;
   }
 
   nextConfig.hooks = hooks;
