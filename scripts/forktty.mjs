@@ -12,6 +12,14 @@ const HOOK_CONTINUE_RESPONSE = { continue: true, suppressOutput: false };
 const HOOK_CONTINUE_JSON = `${JSON.stringify(HOOK_CONTINUE_RESPONSE)}\n`;
 const HOOK_STATUS_TIMEOUT_MS = 5_000;
 const SOCKET_TIMEOUT_MS = 5_000;
+const SUPPORTED_HOOK_EVENTS = new Set([
+  "notification",
+  "prompt-submit",
+  "session-end",
+  "session-start",
+  "stop",
+  "stop-failure",
+]);
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
 const VALID_STATUS_COLORS = new Set(["green", "yellow", "red", "blue", "muted"]);
 const VALID_LOG_LEVELS = new Set(["info", "warn", "error"]);
@@ -1840,6 +1848,12 @@ async function handleHookEvent(context, args) {
 
   if (!AGENT_SPECS[agent]) {
     process.stderr.write(`Unsupported hook agent: ${agentName}\n`);
+    process.stdout.write(HOOK_CONTINUE_JSON);
+    return;
+  }
+  if (!SUPPORTED_HOOK_EVENTS.has(event)) {
+    const label = eventName === undefined ? "(missing)" : eventName;
+    process.stderr.write(`Unsupported hook event for ${agent}: ${label}\n`);
     process.stdout.write(HOOK_CONTINUE_JSON);
     return;
   }

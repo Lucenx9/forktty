@@ -22,6 +22,7 @@ import {
   formatSocketConnectError,
   formatNotificationLine,
   HELP_TEXT,
+  HOOK_CONTINUE_RESPONSE,
   handleHooksSetup,
   main,
   mergeHookConfig,
@@ -582,6 +583,30 @@ describe("forktty CLI helpers", () => {
         },
       },
     ]);
+  });
+
+  it("warns and continues for unsupported hook events", async () => {
+    const stdout = [];
+    const stderr = [];
+    const originalStdout = process.stdout.write.bind(process.stdout);
+    const originalStderr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = (chunk) => {
+      stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    process.stderr.write = (chunk) => {
+      stderr.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await main(["hooks", "codex", "sesion-start"], {});
+    } finally {
+      process.stdout.write = originalStdout;
+      process.stderr.write = originalStderr;
+    }
+
+    assert.deepEqual(JSON.parse(stdout.join("")), HOOK_CONTINUE_RESPONSE);
+    assert.match(stderr.join(""), /Unsupported hook event for codex: sesion-start/);
   });
 
   it("builds progress metadata params with workspace targeting", () => {
