@@ -10,15 +10,15 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.3)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.4)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
 
-[Download v0.2.0-alpha.3](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.3)
+[Download v0.2.0-alpha.4 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.4/forktty-0.2.0-alpha.4-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.3). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation.
+> **Status**: Early alpha (v0.2.0-alpha.4). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the default download for this alpha and remains experimental; the Debian package is still available for Debian/Ubuntu users.
 
 <p align="center">
   <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />
@@ -74,6 +74,17 @@ Build the Debian package:
 bash scripts/build-deb.sh
 sudo dpkg -i target/packaging/deb/forktty_*.deb
 ```
+
+Build the experimental AppImage:
+
+```bash
+bash scripts/build-appimage.sh
+./target/packaging/appimage/forktty-0.2.0-alpha.4-*.AppImage
+```
+
+This path requires `appimagetool` on `PATH`, or `APPIMAGETOOL=/path/to/appimagetool`.
+
+The release page also includes a Debian package and `SHA256SUMS` for both artifacts.
 
 ### First Run Basics
 
@@ -215,6 +226,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 - Linux only. There are no supported macOS or Windows builds.
 - VTE 0.76+ is currently required by the native terminal integration.
+- The AppImage is the default download but remains experimental and should be smoke-tested on the target distro before relying on it; use the `.deb` on Debian/Ubuntu when possible.
 - PTYs and scrollback are not persisted across restart.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
@@ -232,6 +244,7 @@ cargo build -p forktty-ui-gtk --features gtk-vte
 node --test scripts/forktty.test.mjs
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
+bash scripts/build-appimage.sh
 ```
 
 See [SPEC.md](SPEC.md), [ROADMAP.md](ROADMAP.md), and [docs/native-gtk-vte.md](docs/native-gtk-vte.md).

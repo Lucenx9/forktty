@@ -41,7 +41,9 @@ should be one of:
 | Install dependencies (per README)     |                           |                       |                  |                          |
 | `cargo build -p forktty-ui-gtk --features gtk-vte` |              |                       |                  |                          |
 | `bash scripts/build-deb.sh`           |                           |                       |                  | n/a                      |
+| `bash scripts/build-appimage.sh`      |                           |                       |                  |                          |
 | `dpkg -i target/packaging/deb/forktty_*.deb` |                    |                       | n/a              | n/a                      |
+| Run `target/packaging/appimage/*.AppImage` |                       |                       |                  |                          |
 | Launch from terminal (`forktty`)      |                           |                       |                  |                          |
 | Launch from desktop launcher          |                           |                       |                  |                          |
 | `forktty --version` / `forktty --help`|                           |                       |                  |                          |

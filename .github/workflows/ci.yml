@@ -97,7 +97,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
-            libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev
+            libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
+            curl
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -110,24 +111,79 @@ jobs:
       - name: Build Debian package
         run: bash scripts/build-deb.sh
 
+      - name: Install AppImage packaging tool
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64 | aarch64) ;;
+            *)
+              echo "Unsupported AppImage tool architecture: $arch" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p target/packaging/tools
+          curl -fsSL \
+            -o target/packaging/tools/appimagetool \
+            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${arch}.AppImage"
+          chmod +x target/packaging/tools/appimagetool
+          echo "$PWD/target/packaging/tools" >> "$GITHUB_PATH"
+
+      - name: Build experimental AppImage
+        run: bash scripts/build-appimage.sh
+
+      - name: Stage release artifacts
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          deb_version="$version"
+          if [[ "$version" == *-* ]]; then
+            deb_version="${version%%-*}~${version#*-}"
+          fi
+
+          deb_arch="$(dpkg --print-architecture)"
+          case "$(uname -m)" in
+            x86_64) appimage_arch="x86_64" ;;
+            aarch64 | arm64) appimage_arch="aarch64" ;;
+            *)
+              echo "Unsupported AppImage artifact architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          deb_artifact="target/packaging/deb/forktty_${deb_version}_${deb_arch}.deb"
+          appimage_artifact="target/packaging/appimage/forktty-${version}-${appimage_arch}.AppImage"
+          for artifact in "$deb_artifact" "$appimage_artifact"; do
+            if [[ ! -f "$artifact" ]]; then
+              echo "Expected artifact missing: $artifact" >&2
+              exit 1
+            fi
+          done
+
+          rm -rf target/packaging/release
+          mkdir -p target/packaging/release
+          cp "$deb_artifact" "$appimage_artifact" target/packaging/release/
+
       - name: Generate SHA256 checksums
-        working-directory: target/packaging/deb
+        working-directory: target/packaging/release
         run: |
           shopt -s nullglob
-          artifacts=( *.deb )
+          artifacts=( *.AppImage *.deb )
           if [ ${#artifacts[@]} -eq 0 ]; then
-            echo "No .deb artifacts found" >&2
+            echo "No package artifacts found" >&2
             exit 1
           fi
           sha256sum "${artifacts[@]}" > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Upload Debian package and checksums to release
+      - name: Upload packages and checksums to release
         env:
           GH_TOKEN: ${{ github.token }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           gh release upload "$REF_NAME" \
-            target/packaging/deb/*.deb \
-            target/packaging/deb/SHA256SUMS \
+            target/packaging/release/*.AppImage \
+            target/packaging/release/*.deb \
+            target/packaging/release/SHA256SUMS \
             --clobber

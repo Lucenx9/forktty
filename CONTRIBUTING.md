@@ -64,6 +64,7 @@ cargo build -p forktty-ui-gtk --features gtk-vte
 node --test scripts/forktty.test.mjs
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
+bash scripts/build-appimage.sh
 ```
 
 If your change touches dependencies, also run:

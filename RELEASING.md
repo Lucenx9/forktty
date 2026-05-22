@@ -20,6 +20,7 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
    - `node --test scripts/forktty.test.mjs`
    - `desktop-file-validate packaging/linux/forktty.desktop`
    - `bash scripts/build-deb.sh`
+   - `bash scripts/build-appimage.sh`
 3. Run `cargo audit` and (optionally) `cargo deny check`. Resolve any
    `high`/`critical` advisories before tagging.
 4. Walk the GTK runtime smoke tests in [`docs/release-qa.md`](docs/release-qa.md).
@@ -57,26 +58,30 @@ Signed tags (`-s`) are preferred; if you don't have a signing key,
 2. Title: `ForkTTY 0.2.0-alpha.N`.
 3. Body: copy the section you just moved in `CHANGELOG.md`, plus:
    - Supported distros (link to `docs/QA.md`).
-   - The SHA256SUMS line for the `.deb`.
+   - A note that the AppImage is the default download for this alpha,
+     while the `.deb` remains available for Debian/Ubuntu.
+   - The SHA256SUMS lines for the `.deb` and experimental AppImage.
 4. Tick "Set as a pre-release" while we are in alpha.
 5. Publish.
 
 Publishing the release triggers the `release-package` job in
 `.github/workflows/ci.yml`, which:
 
-- Builds the `.deb` from the tagged commit.
-- Generates `SHA256SUMS`.
-- Uploads both into the release.
+- Builds the `.deb` and experimental AppImage from the tagged commit.
+- Generates `SHA256SUMS` for both artifacts.
+- Uploads both artifacts and `SHA256SUMS` into the release.
 
 ## 5. Post-publish verification
 
-1. Download the `.deb` and `SHA256SUMS` from the published release.
+1. Download the `.deb`, AppImage, and `SHA256SUMS` from the published release.
 2. Run `sha256sum -c SHA256SUMS` in the download directory — it must
-   print `OK` for the `.deb`.
+   print `OK` for both artifacts.
 3. Install on a clean VM (`sudo dpkg -i forktty_*.deb`).
 4. Launch `forktty`, run `forktty doctor`, and walk the runtime smoke
    checks from [`docs/release-qa.md`](docs/release-qa.md).
-5. Remove the package and confirm `/usr/bin/forktty` and the desktop
+5. Mark the AppImage executable, launch it on the same VM, and note any
+   AppImage-specific runtime dependency issue in the release notes.
+6. Remove the package and confirm `/usr/bin/forktty` and the desktop
    entry are gone (`dpkg -L forktty` should fail after removal).
 
 ## 6. If anything is wrong

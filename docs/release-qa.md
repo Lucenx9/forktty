@@ -14,6 +14,7 @@ cargo build -p forktty-ui-gtk --features gtk-vte
 node --test scripts/forktty.test.mjs
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
+bash scripts/build-appimage.sh
 ```
 
 ## Manual Runtime Smoke
@@ -236,6 +237,16 @@ rebuilding.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published `.deb`.
 - Remove the package and confirm `/usr/bin/forktty` and the desktop entry are removed.
+
+## Experimental AppImage Smoke
+
+- Build or download the generated AppImage from `target/packaging/appimage/`.
+- Mark it executable and launch it directly.
+- Confirm `forktty --version`, `forktty --help`, and `forktty doctor` work from the AppImage.
+- Launch the GTK app and walk the basic terminal, split-pane, desktop icon, and notification checks above.
+- `sha256sum -c SHA256SUMS` (run from the release download dir) prints
+  `OK` for the published AppImage.
+- Treat any missing runtime library or desktop integration issue as an AppImage-specific alpha note unless it also reproduces from the `.deb`.
 
 ## Suggested Matrix
 
