@@ -53,6 +53,10 @@ const CREATE_WORKSPACE_OPTION_NAMES = new Set([
   "name",
   "working-dir",
 ]);
+const SURFACE_ACTION_OPTION_NAMES = new Set(["surface-id"]);
+const SURFACE_LIST_OPTION_NAMES = TARGET_SELECTOR_OPTION_NAMES;
+const SURFACE_SPLIT_OPTION_NAMES = new Set(["axis", "surface-id"]);
+const SEND_TEXT_OPTION_NAMES = new Set(["surface-id", "text"]);
 let fileNonceCounter = 0;
 
 const AGENT_SPECS = {
@@ -804,6 +808,7 @@ async function handleNotify(context, args) {
 
 async function handleSendText(context, args) {
   const { options, positionals } = parseFlags(args);
+  rejectUnknownOptions(options, SEND_TEXT_OPTION_NAMES, "send-text");
   const stdinText = shouldReadCommandStdin(options, positionals, "text")
     ? await readStdinText()
     : "";
@@ -884,6 +889,7 @@ function surfaceIdFromArgs(options, positionals, env = process.env) {
 }
 
 function buildSurfaceActionParams(options, positionals, env = process.env, command = "surface") {
+  rejectUnknownOptions(options, SURFACE_ACTION_OPTION_NAMES, command);
   const surfaceId = surfaceIdFromArgs(options, positionals, env);
   if (!surfaceId) {
     throw new Error(`${command} requires --surface-id, a surface id, or FORKTTY_SURFACE_ID`);
@@ -892,6 +898,7 @@ function buildSurfaceActionParams(options, positionals, env = process.env, comma
 }
 
 function buildSurfaceSplitParams(options, positionals, env = process.env) {
+  rejectUnknownOptions(options, SURFACE_SPLIT_OPTION_NAMES, "split-surface");
   requireNonBlankStringOption(options, "axis");
   const axis =
     typeof options.axis === "string" && options.axis.trim() ? options.axis.trim() : "horizontal";
@@ -915,6 +922,7 @@ function formatSurfaceLine(surface) {
 
 async function handleSurfaces(context, args) {
   const { options } = parseFlags(args);
+  rejectUnknownOptions(options, SURFACE_LIST_OPTION_NAMES, "surfaces");
   const result = await sendSocketRequest(context.socketPath, "surface.list", {
     ...buildTargetParams(options, context.env),
   });

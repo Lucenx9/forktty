@@ -65,6 +65,7 @@ rebuilding.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty create-workspace --workingdir /tmp` — exits with `create-workspace: unknown option --workingdir` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
+- `forktty surfaces --workspace main` — exits with `surfaces: unknown option --workspace` instead of listing every surface.
 - `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.
 - `forktty notify --workspace-name main --title "target" "body"` — notification is targeted to the `main` workspace, not listed as global.
@@ -93,9 +94,11 @@ rebuilding.
 - `forktty clear-progress --kee build` — exits with `clear metadata: unknown option --kee` instead of clearing every progress entry in the targeted workspace.
 - `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
+- `forktty send-text --txt "echo hello"` — exits with `send-text: unknown option --txt` instead of sending the wrong text or target.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `./scripts/forktty.mjs --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
 - `forktty split-surface --axis=` — exits with `--axis requires a value` instead of creating an unintended horizontal split.
+- `forktty split-surface --axs vertical` — exits with `split-surface: unknown option --axs` instead of creating the default horizontal split.
 - `printf '{"id":"x","method":"surface.split","params":{"surface_id":"<surface-id>","axis":"diagonal"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `axis`; no horizontal split is created.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":42}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of treating it as missing.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of reporting a successful no-op send.

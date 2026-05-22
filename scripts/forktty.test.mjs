@@ -303,6 +303,8 @@ describe("forktty CLI helpers", () => {
         ["clear-notifications", "--workspace-id", "main"],
         /clear-notifications: unexpected argument --workspace-id/,
       ],
+      [["surfaces", "--workspace", "main"], /surfaces: unknown option --workspace/],
+      [["send-text", "--txt", "hello"], /send-text: unknown option --txt/],
     ]) {
       await assert.rejects(main(argv, { XDG_RUNTIME_DIR: "/tmp" }), message);
     }
@@ -750,6 +752,10 @@ describe("forktty CLI helpers", () => {
       /--surface-id requires a value/,
     );
     assert.throws(
+      () => buildSurfaceActionParams({ surface: "surface-1" }, [], {}, "focus-surface"),
+      /focus-surface: unknown option --surface/,
+    );
+    assert.throws(
       () =>
         buildSurfaceActionParams(
           { "surface-id": "" },
@@ -803,6 +809,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => buildSurfaceSplitParams({ "surface-id": true }, [], {}),
       /--surface-id requires a value/,
+    );
+    assert.throws(
+      () => buildSurfaceSplitParams({ axs: "vertical" }, ["surface-2"]),
+      /split-surface: unknown option --axs/,
     );
   });
 
