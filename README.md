@@ -242,6 +242,7 @@ Useful commands:
 
 ```bash
 cargo fmt --all --check
+cargo run -p xtask -- check
 cargo test --workspace
 cargo clippy --workspace --features gtk-vte -- -D warnings
 cargo build -p forktty-ui-gtk --features gtk-vte

@@ -3448,6 +3448,46 @@ mod tests {
     }
 
     #[test]
+    fn hook_templates_match_native_installer_specs() {
+        for (agent, template) in [
+            ("codex", "codex-hooks.json"),
+            ("claude", "claude-settings.json"),
+            ("gemini", "gemini-settings.json"),
+        ] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("hooks")
+                .join(template);
+            let template_json: Value =
+                serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let (_, generated) = merge_hook_config(
+                &json!({}),
+                agent_spec(agent).unwrap(),
+                Path::new("{{FORKTTY_LAUNCHER}}"),
+            )
+            .unwrap();
+            assert_eq!(
+                template_json,
+                generated_without_installer_tags(generated),
+                "{template} is out of sync with the native hook installer"
+            );
+        }
+    }
+
+    fn generated_without_installer_tags(mut value: Value) -> Value {
+        if let Some(hooks) = value.get_mut("hooks").and_then(Value::as_object_mut) {
+            for entries in hooks.values_mut().filter_map(Value::as_array_mut) {
+                for entry in entries {
+                    if let Some(object) = entry.as_object_mut() {
+                        object.remove("forkttySource");
+                    }
+                }
+            }
+        }
+        value
+    }
+
+    #[test]
     fn merge_hook_config_preserves_unrelated_hook_commands() {
         let spec = agent_spec("codex").unwrap();
         let existing = json!({

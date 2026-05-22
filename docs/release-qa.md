@@ -7,6 +7,7 @@ package regressions that unit tests cannot see.
 
 ```bash
 cargo fmt --all --check
+cargo run -p xtask -- check
 cargo test --workspace
 cargo test -p forktty-ui-gtk --features gtk-vte
 cargo clippy --workspace --features gtk-vte -- -D warnings

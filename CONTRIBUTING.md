@@ -58,6 +58,7 @@ Run these locally before pushing. CI runs the same set in
 
 ```bash
 cargo fmt --all --check
+cargo run -p xtask -- check
 cargo clippy --workspace --features gtk-vte -- -D warnings
 cargo test --workspace
 cargo build -p forktty-ui-gtk --features gtk-vte
@@ -81,6 +82,9 @@ cargo deny check    # optional, requires cargo-deny
 - Native socket CLI and hook behavior is covered by Rust tests in
   `crates/forktty-ui-gtk/src/socket_cli.rs`; the legacy Node helper still has
   compatibility tests in `scripts/forktty.test.mjs`.
+- Repository consistency checks live in the Rust `xtask` crate. Run
+  `cargo run -p xtask -- check` after editing hook templates or release
+  automation.
 - GTK runtime smoke is manual; see [`docs/release-qa.md`](docs/release-qa.md).
 
 Prefer tests that pin observable behavior (socket responses, config

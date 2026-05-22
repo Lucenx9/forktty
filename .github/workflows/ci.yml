@@ -53,6 +53,9 @@ jobs:
       - name: Rust fmt
         run: cargo fmt --all --check
 
+      - name: Repository checks
+        run: cargo run -p xtask -- check
+
       - name: Rust tests
         run: cargo test --workspace
 

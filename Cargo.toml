@@ -4,6 +4,7 @@ members = [
     "crates/forktty-terminal",
     "crates/forktty-socket",
     "crates/forktty-ui-gtk",
+    "xtask",
 ]
 resolver = "2"
 

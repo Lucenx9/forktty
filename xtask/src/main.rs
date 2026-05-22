@@ -1,0 +1,280 @@
+use serde_json::Value;
+use std::collections::BTreeSet;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+type Result<T> = std::result::Result<T, String>;
+
+#[derive(Clone, Copy)]
+struct HookTemplate {
+    file: &'static str,
+    agent: &'static str,
+    label: &'static str,
+    disabled_env: &'static str,
+    matcher: Option<&'static str>,
+    entries: &'static [(&'static str, &'static str, u64)],
+}
+
+const CODEX_ENTRIES: &[(&str, &str, u64)] = &[
+    ("SessionStart", "session-start", 5000),
+    ("UserPromptSubmit", "prompt-submit", 5000),
+    ("PreToolUse", "pre-tool", 5000),
+    ("PostToolUse", "post-tool", 5000),
+    ("Stop", "stop", 5000),
+];
+
+const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
+    ("SessionStart", "session-start", 5),
+    ("UserPromptSubmit", "prompt-submit", 5),
+    ("PreToolUse", "pre-tool", 5),
+    ("PostToolUse", "post-tool", 5),
+    ("SubagentStop", "subagent-stop", 5),
+    ("PreCompact", "pre-compact", 5),
+    ("Stop", "stop", 5),
+    ("Notification", "notification", 5),
+    ("SessionEnd", "session-end", 5),
+];
+
+const GEMINI_ENTRIES: &[(&str, &str, u64)] = &[
+    ("SessionStart", "session-start", 5000),
+    ("BeforeAgent", "prompt-submit", 5000),
+    ("BeforeTool", "pre-tool", 5000),
+    ("AfterTool", "post-tool", 5000),
+    ("AfterAgent", "stop", 5000),
+    ("Notification", "notification", 5000),
+    ("PreCompress", "pre-compact", 5000),
+    ("SessionEnd", "session-end", 5000),
+];
+
+const TEMPLATES: &[HookTemplate] = &[
+    HookTemplate {
+        file: "codex-hooks.json",
+        agent: "codex",
+        label: "Codex",
+        disabled_env: "FORKTTY_CODEX_HOOKS_DISABLED",
+        matcher: None,
+        entries: CODEX_ENTRIES,
+    },
+    HookTemplate {
+        file: "claude-settings.json",
+        agent: "claude",
+        label: "Claude",
+        disabled_env: "FORKTTY_CLAUDE_HOOKS_DISABLED",
+        matcher: Some("*"),
+        entries: CLAUDE_ENTRIES,
+    },
+    HookTemplate {
+        file: "gemini-settings.json",
+        agent: "gemini",
+        label: "Gemini",
+        disabled_env: "FORKTTY_GEMINI_HOOKS_DISABLED",
+        matcher: None,
+        entries: GEMINI_ENTRIES,
+    },
+];
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("xtask: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
+    let command = env::args().nth(1).unwrap_or_else(|| "check".to_string());
+    match command.as_str() {
+        "check" => check_all(),
+        "check-hooks" | "hooks" => check_hook_templates(),
+        "help" | "--help" | "-h" => {
+            print_help();
+            Ok(())
+        }
+        other => Err(format!(
+            "unknown command `{other}`\nRun `cargo run -p xtask -- help` for usage."
+        )),
+    }
+}
+
+fn print_help() {
+    println!(
+        "\
+ForkTTY repository tasks
+
+Usage:
+  cargo run -p xtask -- check        Run all repository consistency checks
+  cargo run -p xtask -- check-hooks  Validate agent hook templates
+"
+    );
+}
+
+fn check_all() -> Result<()> {
+    check_hook_templates()
+}
+
+fn check_hook_templates() -> Result<()> {
+    let hooks_dir = repo_root().join("hooks");
+    for template in TEMPLATES {
+        let path = hooks_dir.join(template.file);
+        let raw = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        reject_obsolete_hook_refs(&path, &raw)?;
+        let value: Value = serde_json::from_str(&raw)
+            .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+        validate_hook_template(template, &path, &value)?;
+    }
+    println!("hook templates: ok");
+    Ok(())
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask lives under repo root")
+        .to_path_buf()
+}
+
+fn reject_obsolete_hook_refs(path: &Path, raw: &str) -> Result<()> {
+    for needle in [
+        "{{FORKTTY_SCRIPT}}",
+        "FORKTTY_SCRIPT",
+        "FORKTTY_NODE",
+        "forktty.mjs",
+    ] {
+        if raw.contains(needle) {
+            return Err(format!("{} contains obsolete `{needle}`", path.display()));
+        }
+    }
+    Ok(())
+}
+
+fn validate_hook_template(template: &HookTemplate, path: &Path, value: &Value) -> Result<()> {
+    let hooks = value
+        .get("hooks")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{} must contain a top-level hooks object", path.display()))?;
+    let expected_events = template
+        .entries
+        .iter()
+        .map(|(event, _, _)| *event)
+        .collect::<BTreeSet<_>>();
+    let actual_events = hooks.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    if actual_events != expected_events {
+        return Err(format!(
+            "{} event set mismatch: expected {:?}, got {:?}",
+            path.display(),
+            expected_events,
+            actual_events
+        ));
+    }
+
+    for (event, hook_event, timeout) in template.entries {
+        let entries = hooks
+            .get(*event)
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("{}: {event} must be an array", path.display()))?;
+        if entries.len() != 1 {
+            return Err(format!(
+                "{}: {event} must have exactly one ForkTTY entry",
+                path.display()
+            ));
+        }
+        validate_hook_group(template, path, event, hook_event, *timeout, &entries[0])?;
+    }
+    Ok(())
+}
+
+fn validate_hook_group(
+    template: &HookTemplate,
+    path: &Path,
+    event: &str,
+    hook_event: &str,
+    timeout: u64,
+    group: &Value,
+) -> Result<()> {
+    let object = group
+        .as_object()
+        .ok_or_else(|| format!("{}: {event} entry must be an object", path.display()))?;
+    match template.matcher {
+        Some(matcher) if object.get("matcher").and_then(Value::as_str) == Some(matcher) => {}
+        Some(matcher) => {
+            return Err(format!(
+                "{}: {event} must use matcher `{matcher}`",
+                path.display()
+            ))
+        }
+        None if object.get("matcher").is_none() => {}
+        None => {
+            return Err(format!(
+                "{}: {event} must not set a matcher",
+                path.display()
+            ))
+        }
+    }
+
+    let hooks = object
+        .get("hooks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{}: {event}.hooks must be an array", path.display()))?;
+    if hooks.len() != 1 {
+        return Err(format!(
+            "{}: {event}.hooks must contain exactly one command",
+            path.display()
+        ));
+    }
+    validate_hook_command(template, path, event, hook_event, timeout, &hooks[0])
+}
+
+fn validate_hook_command(
+    template: &HookTemplate,
+    path: &Path,
+    event: &str,
+    hook_event: &str,
+    timeout: u64,
+    hook: &Value,
+) -> Result<()> {
+    let object = hook
+        .as_object()
+        .ok_or_else(|| format!("{}: {event} command must be an object", path.display()))?;
+    if object.get("type").and_then(Value::as_str) != Some("command") {
+        return Err(format!(
+            "{}: {event} hook type must be command",
+            path.display()
+        ));
+    }
+    let expected_status = format!("ForkTTY {} hooks", template.label);
+    if object.get("statusMessage").and_then(Value::as_str) != Some(expected_status.as_str()) {
+        return Err(format!(
+            "{}: {event} statusMessage must be `{expected_status}`",
+            path.display()
+        ));
+    }
+    if object.get("timeout").and_then(Value::as_u64) != Some(timeout) {
+        return Err(format!(
+            "{}: {event} timeout must be {timeout}",
+            path.display()
+        ));
+    }
+    let command = object
+        .get("command")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{}: {event} command must be a string", path.display()))?;
+    for needle in [
+        format!("${{{}:-}}", template.disabled_env),
+        "'{{FORKTTY_LAUNCHER}}'".to_string(),
+        format!("hooks {} {hook_event}", template.agent),
+        "echo '{\"continue\":true,\"suppressOutput\":false}'".to_string(),
+    ] {
+        if !command.contains(&needle) {
+            return Err(format!(
+                "{}: {event} command is missing `{needle}`",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
