@@ -1304,6 +1304,26 @@ describe("hook installer", () => {
     assert.ok(JSON.parse(await fs.readFile(path.join(home, ".gemini/settings.json"), "utf8")));
   });
 
+
+  it("supports hook setup paths containing spaces", async () => {
+    const context = makeContext({
+      CODEX_HOME: path.join(tmpDir, "codex home"),
+      CLAUDE_CONFIG_DIR: path.join(tmpDir, "claude config"),
+      HOME: path.join(tmpDir, "home dir"),
+    });
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["codex", "claude"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    assert.ok(JSON.parse(await fs.readFile(path.join(context.env.CODEX_HOME, "hooks.json"), "utf8")));
+    assert.ok(JSON.parse(await fs.readFile(path.join(context.env.CLAUDE_CONFIG_DIR, "settings.json"), "utf8")));
+  });
+
   it("preserves unrelated keys in an existing config", async () => {
     const context = makeContext();
     const codexDir = context.env.CODEX_HOME;

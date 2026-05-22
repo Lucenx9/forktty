@@ -17,6 +17,7 @@ use tokio::net::UnixListener;
 
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
+const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Error, Debug)]
@@ -656,6 +657,8 @@ pub async fn dispatch(
         "notification.create" => {
             let title = notification_title_from_params(&params)?;
             let body = notification_body_from_params(&params)?;
+            ensure_max_text_size("title", title)?;
+            ensure_max_text_size("body", body)?;
             let kind = notification_kind_from_params(&params)?;
             let (workspace_id, surface_id) = resolve_notification_target(state, &params)?;
             let item = {
@@ -689,7 +692,10 @@ pub async fn dispatch(
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_trimmed_string(&params, "key")?;
             let label = required_trimmed_string(&params, "label")?;
+            ensure_max_text_size("key", key)?;
+            ensure_max_text_size("label", label)?;
             let value = required_trimmed_string(&params, "value")?;
+            ensure_max_text_size("value", value)?;
             let color = status_color_from_params(&params)?;
             let status = {
                 let mut model = state
@@ -733,6 +739,8 @@ pub async fn dispatch(
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = required_trimmed_string(&params, "key")?;
             let label = required_trimmed_string(&params, "label")?;
+            ensure_max_text_size("key", key)?;
+            ensure_max_text_size("label", label)?;
             let value = required_f64(&params, "value")?;
             let total = optional_f64(&params, "total")?;
             if total.is_some_and(|total| total <= 0.0) {
@@ -782,6 +790,7 @@ pub async fn dispatch(
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let level = log_level_from_params(&params)?;
             let message = required_string(&params, "message")?;
+            ensure_max_text_size("message", message)?;
             let log = {
                 let mut model = state
                     .model
@@ -821,6 +830,17 @@ pub async fn dispatch(
         }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
+}
+
+fn ensure_max_text_size(field: &'static str, value: &str) -> Result<(), DispatchError> {
+    if value.len() > MAX_METADATA_TEXT_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field,
+            limit: MAX_METADATA_TEXT_BYTES,
+            actual: value.len(),
+        });
+    }
+    Ok(())
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
@@ -2362,6 +2382,41 @@ mod tests {
         .await
         .unwrap();
         assert!(logs.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_reject_oversized_payload_fields() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let oversized = "x".repeat(MAX_METADATA_TEXT_BYTES + 1);
+
+        for (method, params, expected_field) in [
+            (
+                "metadata.set_status",
+                json!({"workspace_id": workspace_id, "key": oversized, "label": "Codex", "value": "Running"}),
+                "key",
+            ),
+            (
+                "metadata.set_progress",
+                json!({"workspace_id": workspace_id, "key": "build", "label": oversized, "value": 1}),
+                "label",
+            ),
+            (
+                "metadata.log",
+                json!({"workspace_id": workspace_id, "level": "info", "message": oversized}),
+                "message",
+            ),
+            (
+                "notification.create",
+                json!({"workspace_id": workspace_id, "title": oversized, "body": "body"}),
+                "title",
+            ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "payload_too_large");
+            assert!(error.to_string().contains(expected_field));
+        }
     }
 
     #[tokio::test]
