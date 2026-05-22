@@ -1,6 +1,9 @@
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
-use crate::{AppConfig, NotificationItem};
+use crate::{AppConfig, NotificationItem, NotificationKind};
+use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationDispatchError {
@@ -8,10 +11,60 @@ pub struct NotificationDispatchError {
     pub message: String,
 }
 
+/// Suppress identical notifications fired in rapid succession. Flapping
+/// agents would otherwise spawn one desktop notification and one custom
+/// command per emission, with one OS thread per spawn.
+const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
+const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
+
+type DedupeKey = (
+    NotificationKind,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
+fn dedupe_cache() -> &'static Mutex<VecDeque<(DedupeKey, Instant)>> {
+    static CACHE: OnceLock<Mutex<VecDeque<(DedupeKey, Instant)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn should_dispatch(notification: &NotificationItem, now: Instant) -> bool {
+    let key: DedupeKey = (
+        notification.kind,
+        notification.title.clone(),
+        notification.body.clone(),
+        notification.workspace_id.clone(),
+        notification.surface_id.clone(),
+    );
+    let mut cache = dedupe_cache()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    while let Some((_, ts)) = cache.front() {
+        if now.duration_since(*ts) >= NOTIFICATION_DEDUPE_WINDOW {
+            cache.pop_front();
+        } else {
+            break;
+        }
+    }
+    if cache.iter().any(|(existing, _)| existing == &key) {
+        return false;
+    }
+    if cache.len() >= NOTIFICATION_DEDUPE_CAPACITY {
+        cache.pop_front();
+    }
+    cache.push_back((key, now));
+    true
+}
+
 pub fn dispatch_notification(
     config: &AppConfig,
     notification: &NotificationItem,
 ) -> Vec<NotificationDispatchError> {
+    if !should_dispatch(notification, Instant::now()) {
+        return Vec::new();
+    }
     let mut errors = Vec::new();
     if config.notifications.desktop {
         if let Err(message) = send_desktop_notification(
@@ -124,8 +177,13 @@ mod tests {
         let mut config = AppConfig::default();
         config.notifications.desktop = false;
         let mut model = WorkspaceModel::new();
-        let notification =
-            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model.create_notification(
+            "empty-command-test",
+            "Body",
+            NotificationKind::Info,
+            None,
+            None,
+        );
 
         assert!(dispatch_notification(&config, &notification).is_empty());
     }
@@ -136,8 +194,13 @@ mod tests {
         config.notifications.desktop = false;
         config.general.notification_command = "notify-send".to_string();
         let mut model = WorkspaceModel::new();
-        let notification =
-            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model.create_notification(
+            "relative-command-test",
+            "Body",
+            NotificationKind::Info,
+            None,
+            None,
+        );
 
         let errors = dispatch_notification(&config, &notification);
 
@@ -152,8 +215,13 @@ mod tests {
         config.notifications.desktop = false;
         config.general.notification_command = "/bin/sh -c notify-send".to_string();
         let mut model = WorkspaceModel::new();
-        let notification =
-            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model.create_notification(
+            "trampoline-test",
+            "Body",
+            NotificationKind::Info,
+            None,
+            None,
+        );
 
         let errors = dispatch_notification(&config, &notification);
 
@@ -163,13 +231,46 @@ mod tests {
     }
 
     #[test]
+    fn dedupes_identical_back_to_back_notifications() {
+        let now = Instant::now();
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let notification = model.create_notification(
+            "Title",
+            "Body",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+
+        assert!(should_dispatch(&notification, now));
+        assert!(!should_dispatch(&notification, now));
+        // After the dedupe window elapses, the same key dispatches again.
+        assert!(should_dispatch(
+            &notification,
+            now + NOTIFICATION_DEDUPE_WINDOW
+        ));
+        // A different surface_id is treated as a distinct notification.
+        let other = NotificationItem {
+            surface_id: Some("surface-other".to_string()),
+            ..notification
+        };
+        assert!(should_dispatch(&other, now));
+    }
+
+    #[test]
     fn accepts_absolute_custom_command() {
         let mut config = AppConfig::default();
         config.notifications.desktop = false;
         config.general.notification_command = "/bin/true".to_string();
         let mut model = WorkspaceModel::new();
-        let notification =
-            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model.create_notification(
+            "absolute-command-test",
+            "Body",
+            NotificationKind::Info,
+            None,
+            None,
+        );
 
         assert!(dispatch_notification(&config, &notification).is_empty());
     }
