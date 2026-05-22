@@ -7291,7 +7291,7 @@ fn rename_workspace_gtk(
 }
 
 fn close_active_workspace(state: &SocketAppState) {
-    let (workspace, surface_ids) = {
+    let (workspace, surface_ids, is_last_workspace) = {
         let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
@@ -7304,17 +7304,60 @@ fn close_active_workspace(state: &SocketAppState) {
             .into_iter()
             .map(|surface| surface.id)
             .collect::<Vec<_>>();
-        (workspace, surface_ids)
+        let is_last_workspace = model.list_workspaces().len() == 1;
+        (workspace, surface_ids, is_last_workspace)
     };
 
+    if is_last_workspace {
+        let (replacement, previous_active_id) = {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return,
+            };
+            let previous_active_id = model.active_workspace_id();
+            (
+                model.create_workspace("main", workspace.working_dir.clone()),
+                previous_active_id,
+            )
+        };
+        if let Err(err) = spawn_workspace_terminal_gtk(state, &replacement) {
+            let mut message = err.to_string();
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                message = format!("{message}; workspace rollback failed: {rollback_err}");
+            }
+            notify_close_workspace_failed(state, &message);
+            return;
+        }
+        if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
+            let mut message = err.to_string();
+            if let Err(cleanup_err) =
+                forget_terminal_surface_gtk(state, &replacement.focused_surface_id)
+            {
+                message = format!("{message}; replacement cleanup failed: {cleanup_err}");
+            }
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                message = format!("{message}; workspace rollback failed: {rollback_err}");
+            }
+            notify_close_workspace_failed(state, &message);
+            return;
+        }
+        {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return,
+            };
+            let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+        }
+        save_session_from_state(state);
+        return;
+    }
+
     if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
-        eprintln!("Failed to close workspace terminal surfaces: {err}");
-        create_global_notification(
-            state,
-            "Close Workspace Failed",
-            &err.to_string(),
-            NotificationKind::Error,
-        );
+        notify_close_workspace_failed(state, &err.to_string());
         return;
     }
 
@@ -7324,14 +7367,22 @@ fn close_active_workspace(state: &SocketAppState) {
             Err(_) => return,
         };
         let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
-        if model.list_workspaces().is_empty() {
-            model.create_workspace("main", workspace.working_dir.clone());
-        }
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
     save_session_from_state(state);
+}
+
+fn spawn_workspace_terminal_gtk(
+    state: &SocketAppState,
+    workspace: &forktty_core::Workspace,
+) -> Result<(), TerminalError> {
+    state.terminal.spawn(SpawnRequest::for_workspace(
+        workspace,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    ))
 }
 
 fn close_terminal_surfaces(
@@ -7345,6 +7396,26 @@ fn close_terminal_surfaces(
         }
     }
     Ok(())
+}
+
+fn forget_terminal_surface_gtk(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), TerminalError> {
+    match state.terminal.forget_surface(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn notify_close_workspace_failed(state: &SocketAppState, message: &str) {
+    eprintln!("Failed to close workspace: {message}");
+    create_global_notification(
+        state,
+        "Close Workspace Failed",
+        message,
+        NotificationKind::Error,
+    );
 }
 
 fn create_global_notification(
@@ -7461,6 +7532,124 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct SecondSpawnFailsBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+        spawn_count: Mutex<usize>,
+    }
+
+    impl TerminalBackend for SecondSpawnFailsBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            let mut spawn_count = self
+                .spawn_count
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?;
+            *spawn_count += 1;
+            if *spawn_count > 1 {
+                return Err(TerminalError::Backend("spawn failed".to_string()));
+            }
+            drop(spawn_count);
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct CloseFailsBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+    }
+
+    impl TerminalBackend for CloseFailsBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("close failed".to_string()))
+        }
+
+        fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
         }
     }
 
@@ -7611,12 +7800,11 @@ mod tests {
     }
 
     #[test]
-    fn close_active_workspace_keeps_model_when_backend_close_fails() {
+    fn close_active_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
         let project_dir = tempfile::tempdir().unwrap();
         let project_cwd = project_dir.path().to_path_buf();
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-        let (tx, rx) = mpsc::channel();
-        let terminal = Arc::new(GtkVteBackend::new(tx));
+        let terminal = Arc::new(SecondSpawnFailsBackend::default());
         let state = SocketAppState::new(
             model.clone(),
             terminal.clone(),
@@ -7630,7 +7818,46 @@ mod tests {
             workspace.focused_surface_id
         };
         spawn_focused_surface_if_needed(&state).unwrap();
-        drop(rx);
+
+        close_active_workspace(&state);
+
+        let model = model.lock().unwrap();
+        let workspaces = model.list_workspaces();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].name, "project");
+        assert_eq!(workspaces[0].working_dir, project_cwd);
+        assert!(workspaces[0].active);
+        let model_surfaces = model.list_surfaces(Some(&workspaces[0].id));
+        assert_eq!(model_surfaces.len(), 1);
+        assert_eq!(model_surfaces[0].id, surface_id);
+        let backend_surfaces = terminal.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, surface_id);
+        assert!(model.list_notifications().iter().any(|notification| {
+            notification.title == "Close Workspace Failed"
+                && notification.body.contains("spawn failed")
+        }));
+    }
+
+    #[test]
+    fn close_active_workspace_keeps_model_when_backend_close_fails() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(CloseFailsBackend::default());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let surface_id = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("project", &project_cwd);
+            workspace.focused_surface_id
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
 
         close_active_workspace(&state);
 
@@ -7648,7 +7875,10 @@ mod tests {
         assert!(model
             .list_notifications()
             .iter()
-            .any(|notification| notification.title == "Close Workspace Failed"));
+            .any(
+                |notification| notification.title == "Close Workspace Failed"
+                    && notification.body.contains("close failed")
+            ));
     }
 
     #[test]
