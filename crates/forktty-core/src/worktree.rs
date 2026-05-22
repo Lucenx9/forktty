@@ -903,6 +903,33 @@ mod tests {
     }
 
     #[test]
+    fn registered_head_ref_rejects_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let head_path = dir.path().join("HEAD");
+        fs::write(&head_path, "ref: refs/heads/main\n").unwrap();
+        assert_eq!(
+            read_registered_head_ref(&head_path),
+            Some("ref: refs/heads/main\n".to_string())
+        );
+
+        fs::write(&head_path, "x".repeat(WORKTREE_HEAD_MAX_BYTES as usize + 1)).unwrap();
+
+        assert_eq!(read_registered_head_ref(&head_path), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_head_ref_rejects_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target-head");
+        let head_path = dir.path().join("HEAD");
+        fs::write(&target, "ref: refs/heads/main\n").unwrap();
+        symlink(&target, &head_path).unwrap();
+
+        assert_eq!(read_registered_head_ref(&head_path), None);
+    }
+
+    #[test]
     fn remove_rejects_dirty_worktree() {
         let dir = make_repo();
         let info = create(dir.path().to_str().unwrap(), "remove-dirty", "nested").unwrap();
