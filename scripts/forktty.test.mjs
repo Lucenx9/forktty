@@ -1042,6 +1042,17 @@ describe("hook installer", () => {
     await assert.rejects(fs.access(codexConfig), /ENOENT/);
   });
 
+  it("rejects invalid --dry-run values before writing hook configs", async () => {
+    const context = makeContext();
+    await assert.rejects(
+      handleHooksSetup(context, ["--dry-run=yes", "codex"]),
+      /hooks setup: --dry-run must be true or false/,
+    );
+
+    const codexConfig = path.join(context.env.CODEX_HOME, "hooks.json");
+    await assert.rejects(fs.access(codexConfig), /ENOENT/);
+  });
+
   it("rejects unknown setup options before writing hook configs", async () => {
     const context = makeContext();
     await assert.rejects(

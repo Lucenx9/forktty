@@ -1578,7 +1578,16 @@ async function handleHooksSetup(context, args) {
   const allowedOptions = new Set(["dry-run"]);
   const { options, positionals } = parseFlags(args, allowedOptions);
   rejectUnknownOptions(options, allowedOptions, "hooks setup");
-  const dryRun = options["dry-run"] === true || options["dry-run"] === "true";
+  const dryRunOption = options["dry-run"];
+  if (
+    dryRunOption !== undefined &&
+    dryRunOption !== true &&
+    dryRunOption !== "true" &&
+    dryRunOption !== "false"
+  ) {
+    throw new Error("hooks setup: --dry-run must be true or false");
+  }
+  const dryRun = dryRunOption === true || dryRunOption === "true";
   const agentNames = supportedAgents(positionals);
   const scriptPath = fileURLToPath(import.meta.url);
 
