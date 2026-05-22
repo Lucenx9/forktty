@@ -26,6 +26,29 @@ const NOTIFICATION_OPTION_NAMES = new Set([
   "kind",
   "title",
 ]);
+const STATUS_OPTION_NAMES = new Set([
+  ...TARGET_SELECTOR_OPTION_NAMES,
+  "color",
+  "key",
+  "label",
+  "value",
+]);
+const PROGRESS_OPTION_NAMES = new Set([
+  ...TARGET_SELECTOR_OPTION_NAMES,
+  "key",
+  "label",
+  "total",
+  "value",
+]);
+const LOG_OPTION_NAMES = new Set([
+  ...TARGET_SELECTOR_OPTION_NAMES,
+  "level",
+  "message",
+]);
+const CLEAR_METADATA_OPTION_NAMES = new Set([
+  ...TARGET_SELECTOR_OPTION_NAMES,
+  "key",
+]);
 let fileNonceCounter = 0;
 
 const AGENT_SPECS = {
@@ -406,6 +429,7 @@ function requireNonBlankStringOption(options, key, optionName = `--${key}`) {
 }
 
 function buildProgressParams(options, env = process.env) {
+  rejectUnknownOptions(options, PROGRESS_OPTION_NAMES, "set-progress");
   requireStringOption(options, "label");
   requireStringOption(options, "value");
   requireStringOption(options, "total");
@@ -436,6 +460,7 @@ function buildProgressParams(options, env = process.env) {
 }
 
 function buildLogParams(options, positionals, stdinText = "", env = process.env) {
+  rejectUnknownOptions(options, LOG_OPTION_NAMES, "log");
   requireNonBlankStringOption(options, "level");
   requireStringOption(options, "message");
   const level =
@@ -462,6 +487,7 @@ function buildLogParams(options, positionals, stdinText = "", env = process.env)
 }
 
 function buildClearMetadataParams(options, env = process.env) {
+  rejectUnknownOptions(options, CLEAR_METADATA_OPTION_NAMES, "clear metadata");
   requireNonBlankStringOption(options, "key");
   return {
     ...buildTargetParams(options, env),
@@ -470,6 +496,7 @@ function buildClearMetadataParams(options, env = process.env) {
 }
 
 function buildStatusParams(options, env = process.env) {
+  rejectUnknownOptions(options, STATUS_OPTION_NAMES, "set-status");
   requireNonBlankStringOption(options, "key");
   requireNonBlankStringOption(options, "value");
   requireNonBlankStringOption(options, "label");

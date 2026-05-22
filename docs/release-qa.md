@@ -85,7 +85,11 @@ rebuilding.
 - `forktty notify --knd prompt "review"` — exits with `notify: unknown option --knd` instead of silently sending an `info` notification.
 - `forktty notify --title=` — exits with `--title requires a value` instead of creating a notification with an empty title.
 - `forktty log --level=` — exits with `--level requires a value` instead of logging at the default level.
+- `forktty log --levl warn "review"` — exits with `log: unknown option --levl` instead of recording an `info` log.
+- `forktty set-status --key qa --value ok --colour red` — exits with `set-status: unknown option --colour` instead of creating an uncolored status.
+- `forktty set-progress --key build --value 1 --totl 100` — exits with `set-progress: unknown option --totl` instead of creating progress without a total.
 - `forktty clear-status --key=` — exits with `--key requires a value` instead of clearing every status entry in the targeted workspace.
+- `forktty clear-progress --kee build` — exits with `clear metadata: unknown option --kee` instead of clearing every progress entry in the targeted workspace.
 - `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
 - `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
 - `./scripts/forktty.mjs --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.

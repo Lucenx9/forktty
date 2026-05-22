@@ -603,6 +603,10 @@ describe("forktty CLI helpers", () => {
         ),
       /--workspace-id requires a value/,
     );
+    assert.throws(
+      () => buildProgressParams({ key: "build", value: "1", totl: "100" }, {}),
+      /set-progress: unknown option --totl/,
+    );
   });
 
   it("rejects invalid progress values", () => {
@@ -649,6 +653,10 @@ describe("forktty CLI helpers", () => {
       () => buildLogParams({ message: true }, []),
       /--message requires a value/,
     );
+    assert.throws(
+      () => buildLogParams({ levl: "warn" }, ["hello"]),
+      /log: unknown option --levl/,
+    );
     assert.throws(() => buildLogParams({ level: "debug" }, ["hello"]), /Invalid --level/);
   });
 
@@ -673,6 +681,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => buildClearMetadataParams({ key: "" }, { FORKTTY_WORKSPACE_ID: "ws-1" }),
       /--key requires a value/,
+    );
+    assert.throws(
+      () => buildClearMetadataParams({ kee: "build" }, { FORKTTY_WORKSPACE_ID: "ws-1" }),
+      /clear metadata: unknown option --kee/,
     );
   });
 
@@ -715,6 +727,10 @@ describe("forktty CLI helpers", () => {
     assert.throws(
       () => buildStatusParams({ key: "qa", value: "ok", color: true }, {}),
       /--color requires a value/,
+    );
+    assert.throws(
+      () => buildStatusParams({ key: "qa", value: "ok", colour: "red" }, {}),
+      /set-status: unknown option --colour/,
     );
   });
 
