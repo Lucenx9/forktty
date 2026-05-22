@@ -706,13 +706,14 @@ pub async fn dispatch(
             let value = required_trimmed_string(&params, "value")?;
             ensure_max_text_size("value", value)?;
             let color = status_color_from_params(&params)?;
+            let order = optional_order_param(&params)?;
             let status = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .set_status(&workspace_id, key, label, value, color)
+                    .set_status_ordered(&workspace_id, key, label, value, color, order)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(status))
@@ -731,12 +732,13 @@ pub async fn dispatch(
         "metadata.clear_status" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = optional_non_blank_string_param(&params, "key")?;
+            let order = optional_order_param(&params)?;
             let cleared = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.clear_status(&workspace_id, key)
+                model.clear_status_ordered(&workspace_id, key, order)
             };
             if cleared {
                 Ok(json!({"cleared": true}))
@@ -1302,6 +1304,22 @@ fn status_color_from_params(params: &Value) -> Result<Option<String>, DispatchEr
     }
 }
 
+fn optional_order_param(params: &Value) -> Result<Option<u128>, DispatchError> {
+    let Some(order) = params.get("hook_event_order") else {
+        return Ok(None);
+    };
+    if let Some(order) = order.as_u64() {
+        return Ok(Some(u128::from(order)));
+    }
+    if let Some(order) = order.as_str().map(str::trim) {
+        return order
+            .parse::<u128>()
+            .map(Some)
+            .map_err(|_| "Invalid parameter hook_event_order: expected unsigned integer".into());
+    }
+    Err("Invalid parameter hook_event_order: expected unsigned integer".into())
+}
+
 fn optional_non_blank_string_param<'a>(
     params: &'a Value,
     key: &str,
@@ -1414,18 +1432,34 @@ fn resolve_workspace_id_for_metadata(
     state: &SocketAppState,
     params: &Value,
 ) -> Result<String, DispatchError> {
+    let surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let model = state
         .model
         .lock()
         .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
-    match workspace_selector_from_params(params) {
-        Ok(selector) => {
-            return model
+    let workspace_id = match workspace_selector_from_params(params) {
+        Ok(selector) => Some(
+            model
                 .workspace_id_for(selector)
-                .ok_or(DispatchError::NotFound("workspace".to_string()));
-        }
-        Err(DispatchError::MissingParam(_)) => {}
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+        ),
+        Err(DispatchError::MissingParam(_)) => None,
         Err(err) => return Err(err),
+    };
+    if let Some(surface_id) = surface_id {
+        let surface = model
+            .surface(&surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        if workspace_id
+            .as_deref()
+            .is_some_and(|workspace_id| workspace_id != surface.workspace_id)
+        {
+            return Err(DispatchError::NotFound("surface".to_string()));
+        }
+        return Ok(surface.workspace_id.clone());
+    }
+    if let Some(workspace_id) = workspace_id {
+        return Ok(workspace_id);
     }
     model
         .active_workspace_id()
@@ -2412,6 +2446,147 @@ mod tests {
 
         assert_eq!(error.code(), "not_found");
         assert_eq!(error.to_string(), "Workspace not found");
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_can_target_workspace_by_surface_id() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses[0]["value"], "Running");
+
+        let other_workspace = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "other", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        let error = dispatch(
+            &state,
+            "metadata.log",
+            json!({
+                "workspace_id": other_workspace["id"],
+                "surface_id": surface_id,
+                "level": "info",
+                "message": "mismatch"
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "not_found");
+        assert_eq!(error.to_string(), "Surface not found");
+    }
+
+    #[tokio::test]
+    async fn ordered_metadata_status_ignores_stale_hook_events() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Ready",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses[0]["value"], "Ready");
+
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "hook_event_order": "300"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_event_order": 250
+            }),
+        )
+        .await
+        .unwrap();
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

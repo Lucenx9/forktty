@@ -12,6 +12,8 @@ const HOOK_CONTINUE_RESPONSE = { continue: true, suppressOutput: false };
 const HOOK_CONTINUE_JSON = `${JSON.stringify(HOOK_CONTINUE_RESPONSE)}\n`;
 const HOOK_STATUS_TIMEOUT_MS = 5_000;
 const SOCKET_TIMEOUT_MS = 5_000;
+const HOOK_EVENT_ORDER_PARAM = "hook_event_order";
+const HOOK_TEST_STATUS_KEY_SUFFIX = "hook-test";
 const SUPPORTED_HOOK_EVENTS = new Set([
   "notification",
   "prompt-submit",
@@ -133,6 +135,48 @@ function isObject(value) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function trimEnv(env, key) {
+  return typeof env[key] === "string" && env[key].trim() ? env[key].trim() : "";
+}
+
+function sanitizeForTerminal(value) {
+  return String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, (char) => {
+    switch (char) {
+      case "\n":
+        return "\\n";
+      case "\r":
+        return "\\r";
+      case "\t":
+        return "\\t";
+      default:
+        return `\\x${char.codePointAt(0).toString(16).padStart(2, "0")}`;
+    }
+  });
+}
+
+function terminalLine(message) {
+  return `${sanitizeForTerminal(message)}\n`;
+}
+
+function formatErrorForTerminal(error) {
+  return sanitizeForTerminal(error instanceof Error ? error.message : String(error));
+}
+
+function nextHookEventOrder() {
+  if (process.hrtime && typeof process.hrtime.bigint === "function") {
+    return process.hrtime.bigint().toString();
+  }
+  return String(Date.now());
+}
+
+function incrementHookEventOrder(order) {
+  try {
+    return (BigInt(order) + 1n).toString();
+  } catch {
+    return String(Date.now());
+  }
 }
 
 function defaultSocketPath(env = process.env) {
@@ -640,7 +684,10 @@ Usage:
   ./scripts/forktty.mjs notifications [--json]
   ./scripts/forktty.mjs clear-notifications
   ./scripts/forktty.mjs hooks setup [codex] [claude] [gemini]
+  ./scripts/forktty.mjs hooks doctor codex
+  ./scripts/forktty.mjs hooks test codex
   ./scripts/forktty.mjs hooks <agent> <event>
+  ./scripts/forktty.mjs doctor
   ./scripts/forktty.mjs ping
 
 Selector flags:
@@ -654,6 +701,7 @@ Notes:
   - Inside a ForkTTY terminal, FORKTTY_WORKSPACE_ID is used automatically for notify and metadata commands.
   - Worktree commands default --cwd to PWD, then the CLI process cwd, so repo operations follow the shell you run them from.
   - send-text targets --surface-id, then FORKTTY_SURFACE_ID, then the active workspace's focused surface.
+  - Hook debug output uses stderr only. Enable it with --verbose or FORKTTY_HOOK_DEBUG=1.
   - Hook commands always return a continue JSON payload and never fail the agent hook pipeline.
 `;
 
@@ -1807,19 +1855,40 @@ function extractHookMessage(payload) {
   return "";
 }
 
-function buildHookActions(agent, eventName, payload, env = process.env) {
+function buildHookTargetParams(env = process.env) {
+  const workspaceId = trimEnv(env, "FORKTTY_WORKSPACE_ID");
+  const surfaceId = trimEnv(env, "FORKTTY_SURFACE_ID");
+  return {
+    ...(workspaceId ? { workspace_id: workspaceId } : {}),
+    ...(surfaceId ? { surface_id: surfaceId } : {}),
+  };
+}
+
+function addHookEventOrder(params, hookEventOrder) {
+  if (hookEventOrder === undefined || hookEventOrder === null) {
+    return params;
+  }
+  return {
+    ...params,
+    [HOOK_EVENT_ORDER_PARAM]: hookEventOrder,
+  };
+}
+
+function buildHookActions(
+  agent,
+  eventName,
+  payload,
+  env = process.env,
+  hookEventOrder,
+) {
   const spec = AGENT_SPECS[agent];
   if (!spec) {
     throw new Error(`Unsupported agent: ${agent}`);
   }
 
-  const workspaceId =
-    typeof env.FORKTTY_WORKSPACE_ID === "string" && env.FORKTTY_WORKSPACE_ID.trim()
-      ? env.FORKTTY_WORKSPACE_ID.trim()
-      : "";
-  const target = workspaceId ? { workspace_id: workspaceId } : {};
+  const target = buildHookTargetParams(env);
   const key = `agent:${agent}`;
-  const message = extractHookMessage(payload);
+  const message = sanitizeForTerminal(extractHookMessage(payload));
   const log = (level, logMessage) => ({
     method: "metadata.log",
     params: {
@@ -1835,13 +1904,16 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
         log("info", `${spec.label} session started`),
         {
           method: "metadata.set_status",
-          params: {
-            ...target,
-            key,
-            label: spec.label,
-            value: "Ready",
-            color: "green",
-          },
+          params: addHookEventOrder(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Ready",
+              color: "green",
+            },
+            hookEventOrder,
+          ),
         },
       ];
     case "prompt-submit":
@@ -1849,13 +1921,16 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
         log("info", `${spec.label} prompt submitted`),
         {
           method: "metadata.set_status",
-          params: {
-            ...target,
-            key,
-            label: spec.label,
-            value: "Running",
-            color: "blue",
-          },
+          params: addHookEventOrder(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Running",
+              color: "blue",
+            },
+            hookEventOrder,
+          ),
         },
       ];
     case "notification":
@@ -1863,13 +1938,16 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
         log("warn", message || `${spec.label} requested attention`),
         {
           method: "metadata.set_status",
-          params: {
-            ...target,
-            key,
-            label: spec.label,
-            value: "Needs input",
-            color: "yellow",
-          },
+          params: addHookEventOrder(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Needs input",
+              color: "yellow",
+            },
+            hookEventOrder,
+          ),
         },
         {
           method: "notification.create",
@@ -1886,13 +1964,16 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
         log("error", message || `${spec.label} reported a failure`),
         {
           method: "metadata.set_status",
-          params: {
-            ...target,
-            key,
-            label: spec.label,
-            value: "Error",
-            color: "red",
-          },
+          params: addHookEventOrder(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Error",
+              color: "red",
+            },
+            hookEventOrder,
+          ),
         },
         {
           method: "notification.create",
@@ -1909,13 +1990,16 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
         log("info", message || `${spec.label} stopped`),
         {
           method: "metadata.set_status",
-          params: {
-            ...target,
-            key,
-            label: spec.label,
-            value: "Ready",
-            color: "green",
-          },
+          params: addHookEventOrder(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Ready",
+              color: "green",
+            },
+            hookEventOrder,
+          ),
         },
       ];
     case "session-end":
@@ -1923,15 +2007,246 @@ function buildHookActions(agent, eventName, payload, env = process.env) {
         log("info", `${spec.label} session ended`),
         {
           method: "metadata.clear_status",
-          params: {
-            ...target,
-            key,
-          },
+          params: addHookEventOrder(
+            {
+              ...target,
+              key,
+            },
+            hookEventOrder,
+          ),
         },
       ];
     default:
       return [];
   }
+}
+
+function isTruthyEnv(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function isHookDebugEnabled(context) {
+  return Boolean(context.verbose) || isTruthyEnv(context.env.FORKTTY_HOOK_DEBUG);
+}
+
+function hookDebug(context, message) {
+  if (!isHookDebugEnabled(context)) return;
+  process.stderr.write(terminalLine(`ForkTTY hook debug: ${message}`));
+}
+
+function summarizeHookAction(action) {
+  const params = JSON.stringify(action.params);
+  return `${action.method} ${params.length > 500 ? `${params.slice(0, 500)}...` : params}`;
+}
+
+function assertObjectResult(method, result) {
+  if (!isObject(result)) {
+    throw new Error(`${method} returned ${JSON.stringify(result)}, expected an object`);
+  }
+  return result;
+}
+
+function assertFieldEquals(method, result, field, expected) {
+  if (result[field] !== expected) {
+    throw new Error(
+      `${method} returned ${field}=${JSON.stringify(result[field])}, expected ${JSON.stringify(expected)}`,
+    );
+  }
+}
+
+function hookTestStatusKey(agent) {
+  return `agent:${agent}:${HOOK_TEST_STATUS_KEY_SUFFIX}`;
+}
+
+async function handleHooksTest(context, args) {
+  const [agentName, ...extraArgs] = args;
+  const agent = typeof agentName === "string" ? agentName.toLowerCase() : "";
+  if (!agent) {
+    throw new Error("hooks test requires an agent");
+  }
+  if (!AGENT_SPECS[agent]) {
+    throw new Error(`Unsupported hook test agent: ${agentName}`);
+  }
+  requireNoCommandArgs(extraArgs, `hooks test ${agent}`);
+
+  const spec = AGENT_SPECS[agent];
+  const target = buildHookTargetParams(context.env);
+  const statusKey = hookTestStatusKey(agent);
+  const order = nextHookEventOrder();
+  let statusSet = false;
+  let notificationsBefore = null;
+  let createdNotification = null;
+
+  const note = (message) => process.stderr.write(terminalLine(message));
+  note(`ForkTTY ${spec.label} hook test`);
+  note(`socket: ${context.socketPath}`);
+  note(`workspace: ${target.workspace_id || "(active workspace fallback)"}`);
+  note(`surface: ${target.surface_id || "(none)"}`);
+
+  try {
+    const ping = await sendSocketRequest(context.socketPath, "system.ping", {});
+    if (ping !== "pong") {
+      throw new Error(`system.ping returned ${JSON.stringify(ping)}, expected "pong"`);
+    }
+    note("system.ping: ok");
+
+    const statusParams = {
+      ...target,
+      key: statusKey,
+      label: `${spec.label} hook test`,
+      value: "Running",
+      color: "blue",
+      [HOOK_EVENT_ORDER_PARAM]: order,
+    };
+    const status = assertObjectResult(
+      "metadata.set_status",
+      await sendSocketRequest(context.socketPath, "metadata.set_status", statusParams),
+    );
+    assertFieldEquals("metadata.set_status", status, "key", statusKey);
+    assertFieldEquals("metadata.set_status", status, "value", "Running");
+    statusSet = true;
+    note("metadata.set_status: ok");
+
+    const log = assertObjectResult(
+      "metadata.log",
+      await sendSocketRequest(context.socketPath, "metadata.log", {
+        ...target,
+        level: "info",
+        message: `${spec.label} hook roundtrip test`,
+      }),
+    );
+    assertFieldEquals("metadata.log", log, "level", "info");
+    note("metadata.log: ok");
+
+    notificationsBefore = await sendSocketRequest(
+      context.socketPath,
+      "notification.list",
+      {},
+    );
+    if (!Array.isArray(notificationsBefore)) {
+      throw new Error("notification.list returned a non-array response before test notification");
+    }
+
+    createdNotification = assertObjectResult(
+      "notification.create",
+      await sendSocketRequest(context.socketPath, "notification.create", {
+        ...target,
+        title: `${spec.label} hook test`,
+        body: "Roundtrip validation",
+        kind: "prompt",
+      }),
+    );
+    assertFieldEquals("notification.create", createdNotification, "title", `${spec.label} hook test`);
+    assertFieldEquals("notification.create", createdNotification, "kind", "prompt");
+    if (target.surface_id) {
+      assertFieldEquals("notification.create", createdNotification, "surface_id", target.surface_id);
+    }
+    note("notification.create: ok");
+  } finally {
+    if (statusSet) {
+      try {
+        await sendSocketRequest(context.socketPath, "metadata.clear_status", {
+          ...target,
+          key: statusKey,
+          [HOOK_EVENT_ORDER_PARAM]: incrementHookEventOrder(order),
+        });
+        note("metadata.clear_status: ok");
+        statusSet = false;
+      } catch (error) {
+        process.stderr.write(
+          terminalLine(`metadata.clear_status cleanup warning: ${formatErrorForTerminal(error)}`),
+        );
+      }
+    }
+
+    if (
+      Array.isArray(notificationsBefore) &&
+      notificationsBefore.length === 0 &&
+      createdNotification?.id
+    ) {
+      try {
+        const notificationsAfter = await sendSocketRequest(
+          context.socketPath,
+          "notification.list",
+          {},
+        );
+        const onlyTestNotification =
+          Array.isArray(notificationsAfter) &&
+          notificationsAfter.length === 1 &&
+          notificationsAfter[0]?.id === createdNotification.id;
+        if (onlyTestNotification) {
+          await sendSocketRequest(context.socketPath, "notification.clear", {});
+          note("notification.clear: ok");
+        } else {
+          note("notification.clear: skipped because other notifications are present");
+        }
+      } catch (error) {
+        process.stderr.write(
+          terminalLine(`notification cleanup warning: ${formatErrorForTerminal(error)}`),
+        );
+      }
+    } else if (createdNotification?.id) {
+      note(
+        `notification.clear: skipped; test notification remains as ${createdNotification.id}`,
+      );
+    }
+  }
+
+  note(`ForkTTY ${spec.label} hook test: ok`);
+}
+
+async function handleHooksDoctor(context, args) {
+  const [agentName, ...extraArgs] = args;
+  const agent = typeof agentName === "string" ? agentName.toLowerCase() : "";
+  if (!agent) {
+    throw new Error("hooks doctor requires an agent");
+  }
+  if (!AGENT_SPECS[agent]) {
+    throw new Error(`Unsupported hook doctor agent: ${agentName}`);
+  }
+  requireNoCommandArgs(extraArgs, `hooks doctor ${agent}`);
+
+  const spec = AGENT_SPECS[agent];
+  const scriptPath = fileURLToPath(import.meta.url);
+  const report = {
+    agent,
+    socket: {
+      path: context.socketPath,
+      source: socketPathSource(context),
+      inspect: await inspectPath(context.socketPath, fsConstants.R_OK | fsConstants.W_OK),
+    },
+    env: {
+      FORKTTY_SOCKET_PATH: trimEnv(context.env, "FORKTTY_SOCKET_PATH") || null,
+      FORKTTY_WORKSPACE_ID: trimEnv(context.env, "FORKTTY_WORKSPACE_ID") || null,
+      FORKTTY_SURFACE_ID: trimEnv(context.env, "FORKTTY_SURFACE_ID") || null,
+      CODEX_HOME: trimEnv(context.env, "CODEX_HOME") || null,
+      HOME: trimEnv(context.env, "HOME") || null,
+    },
+    executable: {
+      node: await inspectPath(process.execPath, fsConstants.X_OK),
+      script: await inspectPath(scriptPath, fsConstants.R_OK),
+    },
+    hookConfig: await inspectPath(spec.configPath(context.env), fsConstants.R_OK),
+  };
+
+  if (context.json) {
+    printJson(report);
+    return;
+  }
+
+  const note = (message) => process.stderr.write(terminalLine(message));
+  note(`ForkTTY ${spec.label} hook doctor`);
+  note(`socket source: ${report.socket.source}`);
+  note(formatDoctorPath("socket", report.socket.inspect));
+  note(formatDoctorPath("node", report.executable.node));
+  note(formatDoctorPath("script", report.executable.script));
+  note("environment:");
+  for (const [key, value] of Object.entries(report.env)) {
+    note(`  ${key}=${value || "(unset)"}`);
+  }
+  note(formatDoctorPath(`${agent} hook config`, report.hookConfig));
 }
 
 async function handleHookEvent(context, args) {
@@ -1941,30 +2256,36 @@ async function handleHookEvent(context, args) {
   const extraArgs = args.slice(2);
 
   if (!AGENT_SPECS[agent]) {
-    process.stderr.write(`Unsupported hook agent: ${agentName}\n`);
+    process.stderr.write(terminalLine(`Unsupported hook agent: ${agentName}`));
     process.stdout.write(HOOK_CONTINUE_JSON);
     return;
   }
   if (!SUPPORTED_HOOK_EVENTS.has(event)) {
     const label = eventName === undefined ? "(missing)" : eventName;
-    process.stderr.write(`Unsupported hook event for ${agent}: ${label}\n`);
+    process.stderr.write(terminalLine(`Unsupported hook event for ${agent}: ${label}`));
     process.stdout.write(HOOK_CONTINUE_JSON);
     return;
   }
   if (extraArgs.length > 0) {
     process.stderr.write(
-      `Unexpected hook argument for ${agent} ${event}: ${extraArgs[0]}\n`,
+      terminalLine(`Unexpected hook argument for ${agent} ${event}: ${extraArgs[0]}`),
     );
     process.stdout.write(HOOK_CONTINUE_JSON);
     return;
   }
 
+  const hookEventOrder = nextHookEventOrder();
   const payload = await readOptionalStdinJson();
-  const actions = buildHookActions(agent, event, payload, context.env);
+  const actions = buildHookActions(agent, event, payload, context.env, hookEventOrder);
+  hookDebug(
+    context,
+    `${agent} ${event} order=${hookEventOrder} actions=${actions.length} socket=${shouldSendHookActions(context) ? context.socketPath : "(disabled)"}`,
+  );
 
   if (shouldSendHookActions(context)) {
     for (const action of actions) {
       try {
+        hookDebug(context, summarizeHookAction(action));
         await sendSocketRequest(
           context.socketPath,
           action.method,
@@ -1972,7 +2293,9 @@ async function handleHookEvent(context, args) {
           HOOK_STATUS_TIMEOUT_MS,
         );
       } catch (error) {
-        process.stderr.write(`ForkTTY hook warning: ${error}\n`);
+        process.stderr.write(
+          terminalLine(`ForkTTY hook warning: ${formatErrorForTerminal(error)}`),
+        );
         break;
       }
     }
@@ -1986,6 +2309,127 @@ function shouldSendHookActions(context) {
     context.socketExplicit ||
     Boolean(socketPathFromEnv(context.env))
   );
+}
+
+async function inspectPath(filePath, accessMode = fsConstants.R_OK) {
+  const result = {
+    path: filePath,
+    exists: false,
+    kind: "missing",
+    readable: false,
+    writable: false,
+    executable: false,
+    mode: null,
+    error: null,
+  };
+  try {
+    const stat = await fs.lstat(filePath);
+    result.exists = true;
+    result.mode = `0${(stat.mode & 0o777).toString(8)}`;
+    if (stat.isSymbolicLink()) {
+      result.kind = "symlink";
+    } else if (stat.isFile()) {
+      result.kind = "file";
+    } else if (stat.isDirectory()) {
+      result.kind = "directory";
+    } else if (typeof stat.isSocket === "function" && stat.isSocket()) {
+      result.kind = "socket";
+    } else {
+      result.kind = "other";
+    }
+    await fs.access(filePath, fsConstants.R_OK).then(
+      () => {
+        result.readable = true;
+      },
+      () => {},
+    );
+    await fs.access(filePath, fsConstants.W_OK).then(
+      () => {
+        result.writable = true;
+      },
+      () => {},
+    );
+    await fs.access(filePath, fsConstants.X_OK).then(
+      () => {
+        result.executable = true;
+      },
+      () => {},
+    );
+    if (accessMode) {
+      await fs.access(filePath, accessMode);
+    }
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  return result;
+}
+
+function socketPathSource(context) {
+  if (context.socketExplicit) return "argument";
+  return socketPathFromEnv(context.env) ? "FORKTTY_SOCKET_PATH" : "default";
+}
+
+async function buildDoctorReport(context) {
+  const scriptPath = fileURLToPath(import.meta.url);
+  const hookConfigs = {};
+  for (const [agent, spec] of Object.entries(AGENT_SPECS)) {
+    hookConfigs[agent] = await inspectPath(spec.configPath(context.env), fsConstants.R_OK);
+  }
+  return {
+    socket: {
+      path: context.socketPath,
+      source: socketPathSource(context),
+      inspect: await inspectPath(context.socketPath, fsConstants.R_OK | fsConstants.W_OK),
+    },
+    env: {
+      FORKTTY_SOCKET_PATH: trimEnv(context.env, "FORKTTY_SOCKET_PATH") || null,
+      FORKTTY_WORKSPACE_ID: trimEnv(context.env, "FORKTTY_WORKSPACE_ID") || null,
+      FORKTTY_SURFACE_ID: trimEnv(context.env, "FORKTTY_SURFACE_ID") || null,
+      CODEX_HOME: trimEnv(context.env, "CODEX_HOME") || null,
+      HOME: trimEnv(context.env, "HOME") || null,
+    },
+    executable: {
+      node: await inspectPath(process.execPath, fsConstants.X_OK),
+      script: await inspectPath(scriptPath, fsConstants.R_OK),
+    },
+    hookConfigs,
+  };
+}
+
+function formatDoctorPath(label, info) {
+  const details = [
+    info.kind,
+    info.exists ? "exists" : "missing",
+    info.readable ? "readable" : "not readable",
+    info.writable ? "writable" : "not writable",
+    info.executable ? "executable" : "not executable",
+  ];
+  if (info.mode) details.push(info.mode);
+  const error = info.error ? ` (${info.error})` : "";
+  return `${label}: ${info.path} [${details.join(", ")}]${error}`;
+}
+
+async function handleDoctor(context, args = []) {
+  requireNoCommandArgs(args, "doctor");
+  const report = await buildDoctorReport(context);
+  if (context.json) {
+    printJson(report);
+    return;
+  }
+
+  process.stdout.write(terminalLine("ForkTTY doctor"));
+  process.stdout.write(terminalLine(`socket source: ${report.socket.source}`));
+  process.stdout.write(terminalLine(formatDoctorPath("socket", report.socket.inspect)));
+  process.stdout.write(terminalLine(formatDoctorPath("node", report.executable.node)));
+  process.stdout.write(terminalLine(formatDoctorPath("script", report.executable.script)));
+  process.stdout.write(terminalLine("environment:"));
+  for (const [key, value] of Object.entries(report.env)) {
+    process.stdout.write(terminalLine(`  ${key}=${value || "(unset)"}`));
+  }
+  process.stdout.write(terminalLine("hook configs:"));
+  for (const [agent, info] of Object.entries(report.hookConfigs)) {
+    process.stdout.write(terminalLine(`  ${formatDoctorPath(agent, info)}`));
+  }
 }
 
 async function handlePing(context, args = []) {
@@ -2004,6 +2448,7 @@ function parseGlobalArgs(argv, env = process.env) {
   let socketPath = defaultSocketPath(env);
   let socketExplicit = false;
   let help = false;
+  let verbose = false;
   let stopGlobalParsing = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -2015,6 +2460,10 @@ function parseGlobalArgs(argv, env = process.env) {
     }
     if (!stopGlobalParsing && token === "--json") {
       json = true;
+      continue;
+    }
+    if (!stopGlobalParsing && (token === "--verbose" || token === "--debug")) {
+      verbose = true;
       continue;
     }
     if (!stopGlobalParsing && token === "--socket") {
@@ -2049,7 +2498,7 @@ function parseGlobalArgs(argv, env = process.env) {
     args.push(token);
   }
 
-  return { args, json, socketPath, socketExplicit, help };
+  return { args, json, socketPath, socketExplicit, help, verbose };
 }
 
 async function main(argv = process.argv.slice(2), env = process.env) {
@@ -2067,6 +2516,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     json: parsed.json,
     socketPath: parsed.socketPath,
     socketExplicit: parsed.socketExplicit,
+    verbose: parsed.verbose,
   };
 
   switch (command) {
@@ -2172,9 +2622,16 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     case "hooks":
       if (args[0] === "setup") {
         await handleHooksSetup(context, args.slice(1));
+      } else if (args[0] === "doctor") {
+        await handleHooksDoctor(context, args.slice(1));
+      } else if (args[0] === "test") {
+        await handleHooksTest(context, args.slice(1));
       } else {
         await handleHookEvent(context, args);
       }
+      return;
+    case "doctor":
+      await handleDoctor(context, args);
       return;
     case "ping":
       await handlePing(context, args);
@@ -2196,6 +2653,7 @@ export {
   buildClearMetadataParams,
   buildHookActions,
   buildHookShellCommand,
+  buildHookTargetParams,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
@@ -2207,6 +2665,8 @@ export {
   formatSocketConnectError,
   formatNotificationLine,
   handleHooksSetup,
+  handleHooksDoctor,
+  handleHooksTest,
   mergeHookConfig,
   main,
   parseGlobalArgs,
@@ -2217,6 +2677,7 @@ export {
   shellQuote,
   shouldSendHookActions,
   shouldReadCommandStdin,
+  sanitizeForTerminal,
   surfaceIdFromWorkspaceList,
   worktreeParams,
 };

@@ -11,6 +11,7 @@ import {
   buildCreateWorkspaceParams,
   buildHookActions,
   buildHookShellCommand,
+  buildHookTargetParams,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
@@ -23,7 +24,9 @@ import {
   formatNotificationLine,
   HELP_TEXT,
   HOOK_CONTINUE_RESPONSE,
+  handleHooksDoctor,
   handleHooksSetup,
+  handleHooksTest,
   main,
   mergeHookConfig,
   parseGlobalArgs,
@@ -31,6 +34,7 @@ import {
   readAgentConfig,
   resolveSelectorParams,
   sendSocketRequest,
+  sanitizeForTerminal,
   surfaceIdFromWorkspaceList,
   shouldSendHookActions,
   shouldReadCommandStdin,
@@ -270,6 +274,7 @@ describe("forktty CLI helpers", () => {
         socketPath: "/tmp/stub.sock",
         socketExplicit: true,
         help: false,
+        verbose: false,
       },
     );
     assert.deepEqual(
@@ -283,16 +288,18 @@ describe("forktty CLI helpers", () => {
         socketPath: "/tmp/forktty.sock",
         socketExplicit: true,
         help: false,
+        verbose: false,
       },
     );
     assert.deepEqual(
-      parseGlobalArgs(["ping", "--socket", " /tmp/trimmed.sock "], {}),
+      parseGlobalArgs(["ping", "--socket", " /tmp/trimmed.sock ", "--verbose"], {}),
       {
         args: ["ping"],
         json: false,
         socketPath: "/tmp/trimmed.sock",
         socketExplicit: true,
         help: false,
+        verbose: true,
       },
     );
     assert.throws(
@@ -316,8 +323,65 @@ describe("forktty CLI helpers", () => {
         socketPath: "/run/user/1000/forktty.sock",
         socketExplicit: false,
         help: false,
+        verbose: false,
       },
     );
+  });
+
+  it("exposes a minimal doctor command from the Node CLI", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "forktty-doctor-"));
+    const stdout = [];
+    const originalStdout = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk) => {
+      stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await main(["doctor"], { HOME: tmpDir, XDG_RUNTIME_DIR: tmpDir });
+    } finally {
+      process.stdout.write = originalStdout;
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+
+    const output = stdout.join("");
+    assert.match(output, /ForkTTY doctor/);
+    assert.match(output, /hook configs:/);
+    assert.match(output, /codex:/);
+  });
+
+  it("exposes hooks doctor codex without hook protocol stdout", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "forktty-hooks-doctor-"));
+    const stdout = [];
+    const stderr = [];
+    const originalStdout = process.stdout.write.bind(process.stdout);
+    const originalStderr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = (chunk) => {
+      stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    process.stderr.write = (chunk) => {
+      stderr.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await handleHooksDoctor(
+        {
+          env: { HOME: tmpDir, XDG_RUNTIME_DIR: tmpDir },
+          json: false,
+          socketPath: path.join(tmpDir, "forktty.sock"),
+          socketExplicit: false,
+        },
+        ["codex"],
+      );
+    } finally {
+      process.stdout.write = originalStdout;
+      process.stderr.write = originalStderr;
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+
+    assert.equal(stdout.join(""), "");
+    assert.match(stderr.join(""), /ForkTTY Codex hook doctor/);
+    assert.match(stderr.join(""), /codex hook config/);
   });
 
   it("rejects unexpected args for commands that take none", async () => {
@@ -630,6 +694,61 @@ describe("forktty CLI helpers", () => {
     ]);
   });
 
+  it("attaches hook workspace and surface targets when both env vars are present", () => {
+    assert.deepEqual(
+      buildHookTargetParams({
+        FORKTTY_WORKSPACE_ID: " ws-1 ",
+        FORKTTY_SURFACE_ID: " surface-1\n",
+      }),
+      {
+        workspace_id: "ws-1",
+        surface_id: "surface-1",
+      },
+    );
+
+    const actions = buildHookActions(
+      "codex",
+      "prompt-submit",
+      null,
+      {
+        FORKTTY_WORKSPACE_ID: "ws-1",
+        FORKTTY_SURFACE_ID: "surface-1",
+      },
+      12345,
+    );
+
+    assert.deepEqual(actions[0].params, {
+      workspace_id: "ws-1",
+      surface_id: "surface-1",
+      level: "info",
+      message: "Codex prompt submitted",
+    });
+    assert.deepEqual(actions[1].params, {
+      workspace_id: "ws-1",
+      surface_id: "surface-1",
+      key: "agent:codex",
+      label: "Codex",
+      value: "Running",
+      color: "blue",
+      hook_event_order: 12345,
+    });
+  });
+
+  it("escapes control characters before hook messages reach terminal-visible output", () => {
+    assert.equal(sanitizeForTerminal("bad\u001b[31m\nnext"), "bad\\x1b[31m\\nnext");
+
+    const actions = buildHookActions(
+      "claude",
+      "notification",
+      { message: "review\u001b[31m\nneeded" },
+      { FORKTTY_WORKSPACE_ID: "ws-1" },
+      99,
+    );
+
+    assert.equal(actions[0].params.message, "review\\x1b[31m\\nneeded");
+    assert.equal(actions[2].params.body, "review\\x1b[31m\\nneeded");
+  });
+
   it("clears agent status on session end", () => {
     const actions = buildHookActions(
       "gemini",
@@ -703,6 +822,180 @@ describe("forktty CLI helpers", () => {
 
     assert.deepEqual(JSON.parse(stdout.join("")), HOOK_CONTINUE_RESPONSE);
     assert.match(stderr.join(""), /Unexpected hook argument for codex session-start: extra/);
+  });
+
+  it("keeps hook stdout as JSON while verbose details go to stderr", async () => {
+    const requests = [];
+    await withSocketServer(
+      (socket) => {
+        socket.once("data", (chunk) => {
+          const request = JSON.parse(String(chunk).trim());
+          requests.push(request);
+          const result =
+            request.method === "metadata.log"
+              ? { id: "log-1", level: request.params.level, message: request.params.message }
+              : {
+                  key: request.params.key,
+                  label: request.params.label,
+                  value: request.params.value,
+                  color: request.params.color,
+                };
+          socket.end(`${JSON.stringify({ id: request.id, ok: true, result })}\n`);
+        });
+      },
+      async (socketPath) => {
+        const stdout = [];
+        const stderr = [];
+        const originalStdout = process.stdout.write.bind(process.stdout);
+        const originalStderr = process.stderr.write.bind(process.stderr);
+        const originalStdinIsTTY = process.stdin.isTTY;
+        process.stdout.write = (chunk) => {
+          stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+          return true;
+        };
+        process.stderr.write = (chunk) => {
+          stderr.push(typeof chunk === "string" ? chunk : chunk.toString());
+          return true;
+        };
+        process.stdin.isTTY = true;
+        try {
+          await main(
+            ["--verbose", "hooks", "codex", "prompt-submit", "--socket", socketPath],
+            {
+              FORKTTY_WORKSPACE_ID: "ws-1",
+              FORKTTY_SURFACE_ID: "surface-1",
+            },
+          );
+        } finally {
+          process.stdout.write = originalStdout;
+          process.stderr.write = originalStderr;
+          if (originalStdinIsTTY === undefined) {
+            delete process.stdin.isTTY;
+          } else {
+            process.stdin.isTTY = originalStdinIsTTY;
+          }
+        }
+
+        assert.deepEqual(JSON.parse(stdout.join("")), HOOK_CONTINUE_RESPONSE);
+        assert.match(stderr.join(""), /ForkTTY hook debug: codex prompt-submit/);
+      },
+    );
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].method, "metadata.set_status");
+    assert.equal(requests[1].params.surface_id, "surface-1");
+    assert.equal(typeof requests[1].params.hook_event_order, "string");
+  });
+
+  it("runs hooks test codex as a socket roundtrip without stdout noise", async () => {
+    const requests = [];
+    let notificationCreated = null;
+    await withSocketServer(
+      (socket) => {
+        socket.once("data", (chunk) => {
+          const request = JSON.parse(String(chunk).trim());
+          requests.push(request);
+          let result;
+          switch (request.method) {
+            case "system.ping":
+              result = "pong";
+              break;
+            case "metadata.set_status":
+              result = {
+                key: request.params.key,
+                label: request.params.label,
+                value: request.params.value,
+                color: request.params.color,
+              };
+              break;
+            case "metadata.log":
+              result = {
+                id: "log-1",
+                level: request.params.level,
+                message: request.params.message,
+              };
+              break;
+            case "notification.list":
+              result = notificationCreated ? [notificationCreated] : [];
+              break;
+            case "notification.create":
+              notificationCreated = {
+                id: "notification-1",
+                title: request.params.title,
+                body: request.params.body,
+                kind: request.params.kind,
+                workspace_id: request.params.workspace_id,
+                surface_id: request.params.surface_id,
+              };
+              result = notificationCreated;
+              break;
+            case "metadata.clear_status":
+              result = { cleared: true };
+              break;
+            case "notification.clear":
+              notificationCreated = null;
+              result = { cleared: true };
+              break;
+            default:
+              result = {};
+          }
+          socket.end(`${JSON.stringify({ id: request.id, ok: true, result })}\n`);
+        });
+      },
+      async (socketPath) => {
+        const stdout = [];
+        const stderr = [];
+        const originalStdout = process.stdout.write.bind(process.stdout);
+        const originalStderr = process.stderr.write.bind(process.stderr);
+        process.stdout.write = (chunk) => {
+          stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+          return true;
+        };
+        process.stderr.write = (chunk) => {
+          stderr.push(typeof chunk === "string" ? chunk : chunk.toString());
+          return true;
+        };
+        try {
+          await handleHooksTest(
+            {
+              env: {
+                FORKTTY_WORKSPACE_ID: "ws-1",
+                FORKTTY_SURFACE_ID: "surface-1",
+              },
+              json: false,
+              socketPath,
+              socketExplicit: true,
+            },
+            ["codex"],
+          );
+        } finally {
+          process.stdout.write = originalStdout;
+          process.stderr.write = originalStderr;
+        }
+
+        assert.equal(stdout.join(""), "");
+        assert.match(stderr.join(""), /ForkTTY Codex hook test: ok/);
+      },
+    );
+
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        "system.ping",
+        "metadata.set_status",
+        "metadata.log",
+        "notification.list",
+        "notification.create",
+        "metadata.clear_status",
+        "notification.list",
+        "notification.clear",
+      ],
+    );
+    assert.equal(requests[1].params.key, "agent:codex:hook-test");
+    assert.equal(requests[1].params.surface_id, "surface-1");
+    assert.equal(requests[2].params.surface_id, "surface-1");
+    assert.equal(requests[4].params.surface_id, "surface-1");
+    assert.equal(notificationCreated, null);
   });
 
   it("builds progress metadata params with workspace targeting", () => {

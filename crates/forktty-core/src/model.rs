@@ -125,6 +125,7 @@ pub struct WorkspaceModel {
     workspace_order: Vec<WorkspaceId>,
     notifications: Vec<NotificationItem>,
     statuses: BTreeMap<WorkspaceId, Vec<StatusEntry>>,
+    status_orders: BTreeMap<WorkspaceId, BTreeMap<String, u128>>,
     progress: BTreeMap<WorkspaceId, Vec<ProgressEntry>>,
     logs: BTreeMap<WorkspaceId, Vec<LogEntry>>,
     next_workspace: u64,
@@ -394,6 +395,7 @@ impl WorkspaceModel {
         self.surfaces
             .retain(|_, surface| surface.workspace_id != removed.id);
         self.statuses.remove(&removed.id);
+        self.status_orders.remove(&removed.id);
         self.progress.remove(&removed.id);
         self.logs.remove(&removed.id);
         if removed.active {
@@ -693,6 +695,18 @@ impl WorkspaceModel {
         value: impl Into<String>,
         color: Option<String>,
     ) -> Option<StatusEntry> {
+        self.set_status_ordered(workspace_id, key, label, value, color, None)
+    }
+
+    pub fn set_status_ordered(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        color: Option<String>,
+        order: Option<u128>,
+    ) -> Option<StatusEntry> {
         if !self.workspaces.contains_key(workspace_id) {
             return None;
         }
@@ -702,6 +716,35 @@ impl WorkspaceModel {
             value: value.into(),
             color,
         };
+        if let Some(order) = order {
+            if self
+                .status_orders
+                .get(workspace_id)
+                .and_then(|orders| orders.get(&entry.key))
+                .is_some_and(|current_order| order < *current_order)
+            {
+                return self
+                    .statuses
+                    .get(workspace_id)
+                    .and_then(|entries| {
+                        entries
+                            .iter()
+                            .find(|existing| existing.key == entry.key)
+                            .cloned()
+                    })
+                    .or(Some(entry));
+            }
+            self.status_orders
+                .entry(workspace_id.to_string())
+                .or_default()
+                .insert(entry.key.clone(), order);
+        } else if let Some(orders) = self.status_orders.get_mut(workspace_id) {
+            orders.remove(&entry.key);
+            let remove_workspace_orders = orders.is_empty();
+            if remove_workspace_orders {
+                self.status_orders.remove(workspace_id);
+            }
+        }
         let entries = self.statuses.entry(workspace_id.to_string()).or_default();
         if let Some(existing) = entries
             .iter_mut()
@@ -719,8 +762,46 @@ impl WorkspaceModel {
     }
 
     pub fn clear_status(&mut self, workspace_id: &str, key: Option<&str>) -> bool {
+        self.clear_status_ordered(workspace_id, key, None)
+    }
+
+    pub fn clear_status_ordered(
+        &mut self,
+        workspace_id: &str,
+        key: Option<&str>,
+        order: Option<u128>,
+    ) -> bool {
+        if !self.workspaces.contains_key(workspace_id) {
+            return false;
+        }
+        if let (Some(key), Some(order)) = (key, order) {
+            if self
+                .status_orders
+                .get(workspace_id)
+                .and_then(|orders| orders.get(key))
+                .is_some_and(|current_order| order < *current_order)
+            {
+                return true;
+            }
+            self.status_orders
+                .entry(workspace_id.to_string())
+                .or_default()
+                .insert(key.to_string(), order);
+        } else if order.is_none() {
+            if let Some(key) = key {
+                if let Some(orders) = self.status_orders.get_mut(workspace_id) {
+                    orders.remove(key);
+                    let remove_workspace_orders = orders.is_empty();
+                    if remove_workspace_orders {
+                        self.status_orders.remove(workspace_id);
+                    }
+                }
+            } else {
+                self.status_orders.remove(workspace_id);
+            }
+        }
         let Some(entries) = self.statuses.get_mut(workspace_id) else {
-            return self.workspaces.contains_key(workspace_id);
+            return true;
         };
         if let Some(key) = key {
             entries.retain(|entry| entry.key != key);
@@ -1746,6 +1827,75 @@ mod tests {
 
         assert!(model.clear_status(&workspace.id, Some("agent:codex")));
         assert!(model.list_status(&workspace.id).is_empty());
+    }
+
+    #[test]
+    fn ordered_status_updates_ignore_stale_hook_events() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        model
+            .set_status_ordered(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(10),
+            )
+            .unwrap();
+        model
+            .set_status_ordered(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Ready",
+                Some("green".to_string()),
+                Some(20),
+            )
+            .unwrap();
+        model
+            .set_status_ordered(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(10),
+            )
+            .unwrap();
+
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Ready");
+
+        assert!(model.clear_status_ordered(&workspace.id, Some("agent:codex"), Some(30)));
+        assert!(model.list_status(&workspace.id).is_empty());
+
+        model
+            .set_status_ordered(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(20),
+            )
+            .unwrap();
+        assert!(
+            model.list_status(&workspace.id).is_empty(),
+            "stale prompt-submit must not revive a status cleared by a newer session-end",
+        );
+
+        model
+            .set_status_ordered(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(40),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
     }
 
     #[test]
