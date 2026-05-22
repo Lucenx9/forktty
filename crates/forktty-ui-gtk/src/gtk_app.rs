@@ -231,6 +231,7 @@ struct SidebarWorkspaceRow {
 #[derive(Clone)]
 struct WorkspaceStatusBadge {
     label: &'static str,
+    tooltip: &'static str,
     class_name: &'static str,
 }
 
@@ -4101,7 +4102,7 @@ fn refresh_sidebar(
                 .build();
             status_badge.add_css_class("workspace-status-badge");
             status_badge.add_css_class(status.class_name);
-            status_badge.set_tooltip_text(Some(status.label));
+            status_badge.set_tooltip_text(Some(status.tooltip));
             name_line.append(&status_badge);
         }
 
@@ -4493,14 +4494,17 @@ fn workspace_status_badge(
         return Some(match notification.kind {
             NotificationKind::Error => WorkspaceStatusBadge {
                 label: "Error",
+                tooltip: "Error reported in this workspace",
                 class_name: "error",
             },
             NotificationKind::Prompt => WorkspaceStatusBadge {
-                label: "Needs Input",
+                label: "Input",
+                tooltip: "Needs input",
                 class_name: "needs-input",
             },
             NotificationKind::Info | NotificationKind::Custom => WorkspaceStatusBadge {
-                label: "Attention",
+                label: "Alert",
+                tooltip: "Attention",
                 class_name: "attention",
             },
         });
@@ -4508,7 +4512,8 @@ fn workspace_status_badge(
 
     if workspace.needs_attention {
         return Some(WorkspaceStatusBadge {
-            label: "Attention",
+            label: "Alert",
+            tooltip: "Attention",
             class_name: "attention",
         });
     }
@@ -4516,6 +4521,7 @@ fn workspace_status_badge(
     if statuses.iter().any(status_entry_suggests_error) {
         return Some(WorkspaceStatusBadge {
             label: "Error",
+            tooltip: "Error reported in this workspace",
             class_name: "error",
         });
     }
@@ -4523,6 +4529,7 @@ fn workspace_status_badge(
     if statuses.iter().any(status_entry_suggests_exited) {
         return Some(WorkspaceStatusBadge {
             label: "Exited",
+            tooltip: "Process exited",
             class_name: "exited",
         });
     }
@@ -4530,6 +4537,7 @@ fn workspace_status_badge(
     if statuses.iter().any(status_entry_suggests_running) {
         return Some(WorkspaceStatusBadge {
             label: "Running",
+            tooltip: "Process running",
             class_name: "running",
         });
     }
@@ -4537,6 +4545,7 @@ fn workspace_status_badge(
     if !progress.is_empty() {
         return Some(WorkspaceStatusBadge {
             label: "Working",
+            tooltip: "Work in progress",
             class_name: "working",
         });
     }
