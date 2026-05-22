@@ -1,6 +1,7 @@
 use forktty_core::{
     config, dispatch_notification, validate_worktree_name, worktree, JsonRpcRequest,
-    JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, WorkspaceModel, WorkspaceSelector,
+    JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel,
+    WorkspaceSelector,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
@@ -706,14 +707,14 @@ pub async fn dispatch(
             let value = required_trimmed_string(&params, "value")?;
             ensure_max_text_size("value", value)?;
             let color = status_color_from_params(&params)?;
-            let order = optional_order_param(&params)?;
+            let hook = optional_hook_status_metadata(&params)?;
             let status = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .set_status_ordered(&workspace_id, key, label, value, color, order)
+                    .set_status_with_hook_metadata(&workspace_id, key, label, value, color, hook)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(status))
@@ -732,13 +733,13 @@ pub async fn dispatch(
         "metadata.clear_status" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = optional_non_blank_string_param(&params, "key")?;
-            let order = optional_order_param(&params)?;
+            let hook = optional_hook_status_metadata(&params)?;
             let cleared = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.clear_status_ordered(&workspace_id, key, order)
+                model.clear_status_with_hook_metadata(&workspace_id, key, hook)
             };
             if cleared {
                 Ok(json!({"cleared": true}))
@@ -1318,6 +1319,36 @@ fn optional_order_param(params: &Value) -> Result<Option<u128>, DispatchError> {
             .map_err(|_| "Invalid parameter hook_event_order: expected unsigned integer".into());
     }
     Err("Invalid parameter hook_event_order: expected unsigned integer".into())
+}
+
+fn optional_hook_status_metadata(
+    params: &Value,
+) -> Result<Option<StatusHookMetadata>, DispatchError> {
+    let order = optional_order_param(params)?;
+    let event = optional_non_blank_string_param(params, "hook_event_name")?
+        .map(str::to_string)
+        .unwrap_or_default();
+    let clock = optional_non_blank_string_param(params, "hook_event_clock")?.map(str::to_string);
+    let turn_id = optional_non_blank_string_param(params, "hook_turn_id")?.map(str::to_string);
+
+    if event.is_empty() && order.is_none() && clock.is_none() && turn_id.is_none() {
+        return Ok(None);
+    }
+
+    ensure_max_text_size("hook_event_name", &event)?;
+    if let Some(clock) = &clock {
+        ensure_max_text_size("hook_event_clock", clock)?;
+    }
+    if let Some(turn_id) = &turn_id {
+        ensure_max_text_size("hook_turn_id", turn_id)?;
+    }
+
+    Ok(Some(StatusHookMetadata {
+        event,
+        order,
+        clock,
+        turn_id,
+    }))
 }
 
 fn optional_non_blank_string_param<'a>(
@@ -2587,6 +2618,70 @@ mod tests {
         .await
         .unwrap();
         assert!(statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_hook_state_ignores_late_prompt_submit_for_same_turn() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_event_name": "prompt-submit",
+                "hook_event_clock": "monotonic-ns",
+                "hook_event_order": "100",
+                "hook_turn_id": "prompt:one"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Ready",
+                "hook_event_name": "stop",
+                "hook_event_clock": "monotonic-ns",
+                "hook_event_order": "200"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_event_name": "prompt-submit",
+                "hook_event_clock": "monotonic-ns",
+                "hook_event_order": "300",
+                "hook_turn_id": "prompt:one"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses[0]["value"], "Ready");
     }
 
     #[tokio::test]

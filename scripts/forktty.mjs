@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import net from "node:net";
@@ -13,6 +14,7 @@ const HOOK_CONTINUE_JSON = `${JSON.stringify(HOOK_CONTINUE_RESPONSE)}\n`;
 const HOOK_STATUS_TIMEOUT_MS = 5_000;
 const SOCKET_TIMEOUT_MS = 5_000;
 const HOOK_EVENT_ORDER_PARAM = "hook_event_order";
+const HOOK_EVENT_CLOCK = "monotonic-ns";
 const HOOK_TEST_STATUS_KEY_SUFFIX = "hook-test";
 const SUPPORTED_HOOK_EVENTS = new Set([
   "notification",
@@ -54,6 +56,17 @@ const LOG_OPTION_NAMES = new Set([
   ...TARGET_SELECTOR_OPTION_NAMES,
   "level",
   "message",
+]);
+const HOOK_DEBUG_REDACT_KEYS = new Set([
+  "body",
+  "detail",
+  "error",
+  "last_assistant_message",
+  "message",
+  "prompt",
+  "reason",
+  "summary",
+  "text",
 ]);
 const CLEAR_METADATA_OPTION_NAMES = new Set([
   ...TARGET_SELECTOR_OPTION_NAMES,
@@ -177,6 +190,10 @@ function incrementHookEventOrder(order) {
   } catch {
     return String(Date.now());
   }
+}
+
+function shortSha256(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 }
 
 function defaultSocketPath(env = process.env) {
@@ -1855,6 +1872,68 @@ function extractHookMessage(payload) {
   return "";
 }
 
+function extractFirstStringLikeValue(payload, keys) {
+  if (!payload || typeof payload !== "object") return "";
+
+  const queue = [payload];
+  const seen = new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!isObject(current) || seen.has(current)) continue;
+    seen.add(current);
+
+    for (const key of keys) {
+      const value = current[key];
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+      }
+    }
+
+    for (const value of Object.values(current)) {
+      if (isObject(value)) {
+        queue.push(value);
+      }
+    }
+  }
+
+  return "";
+}
+
+function extractHookTurnId(eventName, payload) {
+  const explicit = extractFirstStringLikeValue(payload, [
+    "turn_id",
+    "turnId",
+    "prompt_id",
+    "promptId",
+    "request_id",
+    "requestId",
+    "message_id",
+    "messageId",
+    "event_id",
+    "eventId",
+    "sequence",
+    "seq",
+  ]);
+  if (explicit) {
+    return `id:${shortSha256(explicit)}`;
+  }
+
+  if (eventName !== "prompt-submit") {
+    return "";
+  }
+
+  const prompt = extractFirstStringLikeValue(payload, [
+    "prompt",
+    "message",
+    "text",
+    "body",
+  ]);
+  return prompt ? `prompt:${shortSha256(prompt)}` : "";
+}
+
 function buildHookTargetParams(env = process.env) {
   const workspaceId = trimEnv(env, "FORKTTY_WORKSPACE_ID");
   const surfaceId = trimEnv(env, "FORKTTY_SURFACE_ID");
@@ -1864,13 +1943,17 @@ function buildHookTargetParams(env = process.env) {
   };
 }
 
-function addHookEventOrder(params, hookEventOrder) {
+function addHookEventMetadata(params, eventName, payload, hookEventOrder) {
   if (hookEventOrder === undefined || hookEventOrder === null) {
     return params;
   }
+  const turnId = extractHookTurnId(eventName, payload);
   return {
     ...params,
     [HOOK_EVENT_ORDER_PARAM]: hookEventOrder,
+    hook_event_clock: HOOK_EVENT_CLOCK,
+    hook_event_name: eventName,
+    ...(turnId ? { hook_turn_id: turnId } : {}),
   };
 }
 
@@ -1904,7 +1987,7 @@ function buildHookActions(
         log("info", `${spec.label} session started`),
         {
           method: "metadata.set_status",
-          params: addHookEventOrder(
+          params: addHookEventMetadata(
             {
               ...target,
               key,
@@ -1912,6 +1995,8 @@ function buildHookActions(
               value: "Ready",
               color: "green",
             },
+            eventName,
+            payload,
             hookEventOrder,
           ),
         },
@@ -1921,7 +2006,7 @@ function buildHookActions(
         log("info", `${spec.label} prompt submitted`),
         {
           method: "metadata.set_status",
-          params: addHookEventOrder(
+          params: addHookEventMetadata(
             {
               ...target,
               key,
@@ -1929,6 +2014,8 @@ function buildHookActions(
               value: "Running",
               color: "blue",
             },
+            eventName,
+            payload,
             hookEventOrder,
           ),
         },
@@ -1938,7 +2025,7 @@ function buildHookActions(
         log("warn", message || `${spec.label} requested attention`),
         {
           method: "metadata.set_status",
-          params: addHookEventOrder(
+          params: addHookEventMetadata(
             {
               ...target,
               key,
@@ -1946,6 +2033,8 @@ function buildHookActions(
               value: "Needs input",
               color: "yellow",
             },
+            eventName,
+            payload,
             hookEventOrder,
           ),
         },
@@ -1964,7 +2053,7 @@ function buildHookActions(
         log("error", message || `${spec.label} reported a failure`),
         {
           method: "metadata.set_status",
-          params: addHookEventOrder(
+          params: addHookEventMetadata(
             {
               ...target,
               key,
@@ -1972,6 +2061,8 @@ function buildHookActions(
               value: "Error",
               color: "red",
             },
+            eventName,
+            payload,
             hookEventOrder,
           ),
         },
@@ -1990,7 +2081,7 @@ function buildHookActions(
         log("info", message || `${spec.label} stopped`),
         {
           method: "metadata.set_status",
-          params: addHookEventOrder(
+          params: addHookEventMetadata(
             {
               ...target,
               key,
@@ -1998,6 +2089,8 @@ function buildHookActions(
               value: "Ready",
               color: "green",
             },
+            eventName,
+            payload,
             hookEventOrder,
           ),
         },
@@ -2007,11 +2100,13 @@ function buildHookActions(
         log("info", `${spec.label} session ended`),
         {
           method: "metadata.clear_status",
-          params: addHookEventOrder(
+          params: addHookEventMetadata(
             {
               ...target,
               key,
             },
+            eventName,
+            payload,
             hookEventOrder,
           ),
         },
@@ -2036,8 +2131,29 @@ function hookDebug(context, message) {
   process.stderr.write(terminalLine(`ForkTTY hook debug: ${message}`));
 }
 
+function redactHookDebugValue(value, key = "", depth = 0) {
+  if (HOOK_DEBUG_REDACT_KEYS.has(key)) {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    return `<redacted:${text ? text.length : 0}:sha256:${shortSha256(text || "")}>`;
+  }
+  if (depth >= 4) {
+    return "<redacted:depth>";
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => redactHookDebugValue(item, "", depth + 1));
+  }
+  if (isObject(value)) {
+    const out = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      out[childKey] = redactHookDebugValue(childValue, childKey, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
 function summarizeHookAction(action) {
-  const params = JSON.stringify(action.params);
+  const params = JSON.stringify(redactHookDebugValue(action.params));
   return `${action.method} ${params.length > 500 ? `${params.slice(0, 500)}...` : params}`;
 }
 
@@ -2677,6 +2793,7 @@ export {
   shellQuote,
   shouldSendHookActions,
   shouldReadCommandStdin,
+  summarizeHookAction,
   sanitizeForTerminal,
   surfaceIdFromWorkspaceList,
   worktreeParams,

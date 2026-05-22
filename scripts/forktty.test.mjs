@@ -38,6 +38,7 @@ import {
   surfaceIdFromWorkspaceList,
   shouldSendHookActions,
   shouldReadCommandStdin,
+  summarizeHookAction,
   worktreeParams,
 } from "./forktty.mjs";
 
@@ -731,7 +732,22 @@ describe("forktty CLI helpers", () => {
       value: "Running",
       color: "blue",
       hook_event_order: 12345,
+      hook_event_clock: "monotonic-ns",
+      hook_event_name: "prompt-submit",
     });
+  });
+
+  it("adds stable hook turn ids without exposing prompt text", () => {
+    const actions = buildHookActions(
+      "codex",
+      "prompt-submit",
+      { prompt: "ship the secret feature" },
+      { FORKTTY_WORKSPACE_ID: "ws-1" },
+      "12345",
+    );
+
+    assert.match(actions[1].params.hook_turn_id, /^prompt:[a-f0-9]{16}$/);
+    assert.doesNotMatch(actions[1].params.hook_turn_id, /secret/);
   });
 
   it("escapes control characters before hook messages reach terminal-visible output", () => {
@@ -747,6 +763,23 @@ describe("forktty CLI helpers", () => {
 
     assert.equal(actions[0].params.message, "review\\x1b[31m\\nneeded");
     assert.equal(actions[2].params.body, "review\\x1b[31m\\nneeded");
+  });
+
+  it("redacts sensitive fields from hook debug summaries", () => {
+    const summary = summarizeHookAction({
+      method: "metadata.log",
+      params: {
+        workspace_id: "ws-1",
+        level: "info",
+        message: "secret prompt text",
+        nested: { body: "secret body" },
+      },
+    });
+
+    assert.match(summary, /metadata\.log/);
+    assert.match(summary, /<redacted:/);
+    assert.doesNotMatch(summary, /secret prompt text/);
+    assert.doesNotMatch(summary, /secret body/);
   });
 
   it("clears agent status on session end", () => {

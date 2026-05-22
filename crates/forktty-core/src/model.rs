@@ -109,6 +109,25 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusHookMetadata {
+    pub event: String,
+    pub order: Option<u128>,
+    pub clock: Option<String>,
+    pub turn_id: Option<String>,
+}
+
+impl StatusHookMetadata {
+    pub fn from_order(order: u128) -> Self {
+        Self {
+            event: String::new(),
+            order: Some(order),
+            clock: None,
+            turn_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationKind {
@@ -125,7 +144,7 @@ pub struct WorkspaceModel {
     workspace_order: Vec<WorkspaceId>,
     notifications: Vec<NotificationItem>,
     statuses: BTreeMap<WorkspaceId, Vec<StatusEntry>>,
-    status_orders: BTreeMap<WorkspaceId, BTreeMap<String, u128>>,
+    status_hooks: BTreeMap<WorkspaceId, BTreeMap<String, StatusHookMetadata>>,
     progress: BTreeMap<WorkspaceId, Vec<ProgressEntry>>,
     logs: BTreeMap<WorkspaceId, Vec<LogEntry>>,
     next_workspace: u64,
@@ -135,6 +154,7 @@ pub struct WorkspaceModel {
 }
 
 const MAX_LOG_ENTRIES: usize = 200;
+const HOOK_TERMINAL_PROMPT_GUARD_NS: u128 = 2_000_000_000;
 
 impl WorkspaceModel {
     pub fn new() -> Self {
@@ -395,7 +415,7 @@ impl WorkspaceModel {
         self.surfaces
             .retain(|_, surface| surface.workspace_id != removed.id);
         self.statuses.remove(&removed.id);
-        self.status_orders.remove(&removed.id);
+        self.status_hooks.remove(&removed.id);
         self.progress.remove(&removed.id);
         self.logs.remove(&removed.id);
         if removed.active {
@@ -707,6 +727,25 @@ impl WorkspaceModel {
         color: Option<String>,
         order: Option<u128>,
     ) -> Option<StatusEntry> {
+        self.set_status_with_hook_metadata(
+            workspace_id,
+            key,
+            label,
+            value,
+            color,
+            order.map(StatusHookMetadata::from_order),
+        )
+    }
+
+    pub fn set_status_with_hook_metadata(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        color: Option<String>,
+        hook: Option<StatusHookMetadata>,
+    ) -> Option<StatusEntry> {
         if !self.workspaces.contains_key(workspace_id) {
             return None;
         }
@@ -716,13 +755,12 @@ impl WorkspaceModel {
             value: value.into(),
             color,
         };
-        if let Some(order) = order {
-            if self
-                .status_orders
+        if let Some(hook) = hook {
+            let current_hook = self
+                .status_hooks
                 .get(workspace_id)
-                .and_then(|orders| orders.get(&entry.key))
-                .is_some_and(|current_order| order < *current_order)
-            {
+                .and_then(|hooks| hooks.get(&entry.key));
+            if should_ignore_hook_status(current_hook, &hook) {
                 return self
                     .statuses
                     .get(workspace_id)
@@ -734,15 +772,16 @@ impl WorkspaceModel {
                     })
                     .or(Some(entry));
             }
-            self.status_orders
+            let next_hook = merge_hook_metadata(current_hook, hook);
+            self.status_hooks
                 .entry(workspace_id.to_string())
                 .or_default()
-                .insert(entry.key.clone(), order);
-        } else if let Some(orders) = self.status_orders.get_mut(workspace_id) {
-            orders.remove(&entry.key);
-            let remove_workspace_orders = orders.is_empty();
-            if remove_workspace_orders {
-                self.status_orders.remove(workspace_id);
+                .insert(entry.key.clone(), next_hook);
+        } else if let Some(hooks) = self.status_hooks.get_mut(workspace_id) {
+            hooks.remove(&entry.key);
+            let remove_workspace_hooks = hooks.is_empty();
+            if remove_workspace_hooks {
+                self.status_hooks.remove(workspace_id);
             }
         }
         let entries = self.statuses.entry(workspace_id.to_string()).or_default();
@@ -771,33 +810,51 @@ impl WorkspaceModel {
         key: Option<&str>,
         order: Option<u128>,
     ) -> bool {
+        self.clear_status_with_hook_metadata(
+            workspace_id,
+            key,
+            order.map(StatusHookMetadata::from_order),
+        )
+    }
+
+    pub fn clear_status_with_hook_metadata(
+        &mut self,
+        workspace_id: &str,
+        key: Option<&str>,
+        hook: Option<StatusHookMetadata>,
+    ) -> bool {
         if !self.workspaces.contains_key(workspace_id) {
             return false;
         }
-        if let (Some(key), Some(order)) = (key, order) {
-            if self
-                .status_orders
-                .get(workspace_id)
-                .and_then(|orders| orders.get(key))
-                .is_some_and(|current_order| order < *current_order)
-            {
-                return true;
+        match (key, hook) {
+            (Some(key), Some(hook)) => {
+                let current_hook = self
+                    .status_hooks
+                    .get(workspace_id)
+                    .and_then(|hooks| hooks.get(key));
+                if should_ignore_hook_status(current_hook, &hook) {
+                    return true;
+                }
+                let next_hook = merge_hook_metadata(current_hook, hook);
+                self.status_hooks
+                    .entry(workspace_id.to_string())
+                    .or_default()
+                    .insert(key.to_string(), next_hook);
             }
-            self.status_orders
-                .entry(workspace_id.to_string())
-                .or_default()
-                .insert(key.to_string(), order);
-        } else if order.is_none() {
-            if let Some(key) = key {
-                if let Some(orders) = self.status_orders.get_mut(workspace_id) {
-                    orders.remove(key);
-                    let remove_workspace_orders = orders.is_empty();
-                    if remove_workspace_orders {
-                        self.status_orders.remove(workspace_id);
+            (Some(key), None) => {
+                if let Some(hooks) = self.status_hooks.get_mut(workspace_id) {
+                    hooks.remove(key);
+                    let remove_workspace_hooks = hooks.is_empty();
+                    if remove_workspace_hooks {
+                        self.status_hooks.remove(workspace_id);
                     }
                 }
-            } else {
-                self.status_orders.remove(workspace_id);
+            }
+            (None, None) => {
+                self.status_hooks.remove(workspace_id);
+            }
+            (None, Some(_)) => {
+                self.status_hooks.remove(workspace_id);
             }
         }
         let Some(entries) = self.statuses.get_mut(workspace_id) else {
@@ -1264,6 +1321,61 @@ fn numeric_suffix(id: &str) -> u64 {
     id.rsplit_once('-')
         .and_then(|(_, suffix)| suffix.parse::<u64>().ok())
         .unwrap_or(0)
+}
+
+fn should_ignore_hook_status(
+    current: Option<&StatusHookMetadata>,
+    incoming: &StatusHookMetadata,
+) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if let (Some(incoming_order), Some(current_order)) = (incoming.order, current.order) {
+        if incoming_order < current_order {
+            return true;
+        }
+    }
+    if incoming.event == "prompt-submit" && is_terminal_hook_event(&current.event) {
+        if incoming
+            .turn_id
+            .as_deref()
+            .is_some_and(|turn_id| current.turn_id.as_deref() == Some(turn_id))
+        {
+            return true;
+        }
+        if incoming.turn_id.is_none()
+            && same_monotonic_clock(current, incoming)
+            && incoming
+                .order
+                .zip(current.order)
+                .is_some_and(|(incoming_order, current_order)| {
+                    incoming_order >= current_order
+                        && incoming_order - current_order <= HOOK_TERMINAL_PROMPT_GUARD_NS
+                })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn merge_hook_metadata(
+    current: Option<&StatusHookMetadata>,
+    mut incoming: StatusHookMetadata,
+) -> StatusHookMetadata {
+    if is_terminal_hook_event(&incoming.event) && incoming.turn_id.is_none() {
+        incoming.turn_id = current.and_then(|current| current.turn_id.clone());
+    }
+    incoming
+}
+
+fn is_terminal_hook_event(event: &str) -> bool {
+    matches!(event, "stop" | "stop-failure" | "session-end")
+}
+
+fn same_monotonic_clock(current: &StatusHookMetadata, incoming: &StatusHookMetadata) -> bool {
+    current.clock.as_deref() == Some("monotonic-ns")
+        && incoming.clock.as_deref() == Some("monotonic-ns")
 }
 
 fn now_ms() -> u128 {
@@ -1893,6 +2005,132 @@ mod tests {
                 "Running",
                 Some("blue".to_string()),
                 Some(40),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
+    }
+
+    #[test]
+    fn hook_status_state_ignores_late_prompt_for_completed_turn() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(StatusHookMetadata {
+                    event: "prompt-submit".to_string(),
+                    order: Some(10),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: Some("prompt:one".to_string()),
+                }),
+            )
+            .unwrap();
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Ready",
+                Some("green".to_string()),
+                Some(StatusHookMetadata {
+                    event: "stop".to_string(),
+                    order: Some(20),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: None,
+                }),
+            )
+            .unwrap();
+
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(StatusHookMetadata {
+                    event: "prompt-submit".to_string(),
+                    order: Some(30),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: Some("prompt:one".to_string()),
+                }),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Ready");
+
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(StatusHookMetadata {
+                    event: "prompt-submit".to_string(),
+                    order: Some(40),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: Some("prompt:two".to_string()),
+                }),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
+    }
+
+    #[test]
+    fn hook_status_state_briefly_guards_prompt_after_terminal_without_turn_id() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Ready",
+                Some("green".to_string()),
+                Some(StatusHookMetadata {
+                    event: "stop".to_string(),
+                    order: Some(20),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: None,
+                }),
+            )
+            .unwrap();
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(StatusHookMetadata {
+                    event: "prompt-submit".to_string(),
+                    order: Some(20 + HOOK_TERMINAL_PROMPT_GUARD_NS),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: None,
+                }),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Ready");
+
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(StatusHookMetadata {
+                    event: "prompt-submit".to_string(),
+                    order: Some(21 + HOOK_TERMINAL_PROMPT_GUARD_NS),
+                    clock: Some("monotonic-ns".to_string()),
+                    turn_id: None,
+                }),
             )
             .unwrap();
         assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
