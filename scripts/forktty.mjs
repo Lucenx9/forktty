@@ -18,12 +18,15 @@ const HOOK_EVENT_CLOCK = "monotonic-ns";
 const HOOK_TEST_STATUS_KEY_SUFFIX = "hook-test";
 const SUPPORTED_HOOK_EVENTS = new Set([
   "notification",
+  "post-tool",
+  "pre-tool",
   "prompt-submit",
   "session-end",
   "session-start",
   "stop",
   "stop-failure",
 ]);
+const HOOK_TOOL_LABEL_MAX = 48;
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
 const VALID_STATUS_COLORS = new Set(["green", "yellow", "red", "blue", "muted"]);
 const VALID_LOG_LEVELS = new Set(["info", "warn", "error"]);
@@ -115,6 +118,8 @@ const AGENT_SPECS = {
     hookEntries: [
       ["SessionStart", "session-start", 5],
       ["UserPromptSubmit", "prompt-submit", 5],
+      ["PreToolUse", "pre-tool", 5],
+      ["PostToolUse", "post-tool", 5],
       ["Stop", "stop", 5],
       ["Notification", "notification", 5],
       ["SessionEnd", "session-end", 5],
@@ -1902,6 +1907,19 @@ function extractFirstStringLikeValue(payload, keys) {
   return "";
 }
 
+function extractHookToolName(payload) {
+  const raw = extractFirstStringLikeValue(payload, [
+    "tool_name",
+    "toolName",
+    "tool",
+    "name",
+  ]);
+  if (!raw) return "";
+  const sanitized = sanitizeForTerminal(raw);
+  if (sanitized.length <= HOOK_TOOL_LABEL_MAX) return sanitized;
+  return `${sanitized.slice(0, HOOK_TOOL_LABEL_MAX - 1)}…`;
+}
+
 function extractHookTurnId(eventName, payload) {
   const explicit = extractFirstStringLikeValue(payload, [
     "turn_id",
@@ -2076,6 +2094,34 @@ function buildHookActions(
           },
         },
       ];
+    case "pre-tool": {
+      const toolName = extractHookToolName(payload);
+      const value = toolName ? `Running ${toolName}` : "Running tool";
+      return [
+        log("info", toolName ? `${spec.label} running ${toolName}` : `${spec.label} running tool`),
+        {
+          method: "metadata.set_status",
+          params: addHookEventMetadata(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value,
+              color: "blue",
+            },
+            eventName,
+            payload,
+            hookEventOrder,
+          ),
+        },
+      ];
+    }
+    case "post-tool": {
+      const toolName = extractHookToolName(payload);
+      return [
+        log("info", toolName ? `${spec.label} finished ${toolName}` : `${spec.label} finished tool`),
+      ];
+    }
     case "stop":
       return [
         log("info", message || `${spec.label} stopped`),
@@ -2417,7 +2463,30 @@ async function handleHookEvent(context, args) {
     }
   }
 
-  process.stdout.write(HOOK_CONTINUE_JSON);
+  const response = buildHookResponse(agent, event, context.env);
+  process.stdout.write(`${JSON.stringify(response)}\n`);
+}
+
+function buildHookResponse(agent, eventName, env = process.env) {
+  if (agent === "claude" && eventName === "session-start") {
+    const workspaceId = trimEnv(env, "FORKTTY_WORKSPACE_ID") || "(none)";
+    const surfaceId = trimEnv(env, "FORKTTY_SURFACE_ID") || "(none)";
+    const socketPath = trimEnv(env, "FORKTTY_SOCKET_PATH") || "(default)";
+    return {
+      continue: true,
+      suppressOutput: false,
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext:
+          `Running inside the ForkTTY terminal. ` +
+          `workspace_id=${workspaceId} surface_id=${surfaceId} socket=${socketPath}. ` +
+          `ForkTTY hooks publish status, logs, and notifications to the app for SessionStart, ` +
+          `UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, and SessionEnd. ` +
+          `Inspect state via the \`forktty\` CLI (notifications, status, workspaces, surfaces, worktrees).`,
+      },
+    };
+  }
+  return HOOK_CONTINUE_RESPONSE;
 }
 
 function shouldSendHookActions(context) {
@@ -2768,8 +2837,10 @@ export {
   buildCreateWorkspaceParams,
   buildClearMetadataParams,
   buildHookActions,
+  buildHookResponse,
   buildHookShellCommand,
   buildHookTargetParams,
+  extractHookToolName,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,

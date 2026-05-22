@@ -10,8 +10,10 @@ import {
   buildClearMetadataParams,
   buildCreateWorkspaceParams,
   buildHookActions,
+  buildHookResponse,
   buildHookShellCommand,
   buildHookTargetParams,
+  extractHookToolName,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
@@ -809,6 +811,112 @@ describe("forktty CLI helpers", () => {
     ]);
   });
 
+  it("maps pre-tool events to a status with the tool name", () => {
+    const actions = buildHookActions(
+      "claude",
+      "pre-tool",
+      { tool_name: "Bash", tool_input: { command: "ls" } },
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+      77,
+    );
+
+    assert.deepEqual(actions, [
+      {
+        method: "metadata.log",
+        params: {
+          workspace_id: "ws-3",
+          level: "info",
+          message: "Claude running Bash",
+        },
+      },
+      {
+        method: "metadata.set_status",
+        params: {
+          workspace_id: "ws-3",
+          key: "agent:claude",
+          label: "Claude",
+          value: "Running Bash",
+          color: "blue",
+          hook_event_order: 77,
+          hook_event_clock: "monotonic-ns",
+          hook_event_name: "pre-tool",
+        },
+      },
+    ]);
+  });
+
+  it("falls back to a generic pre-tool status when no tool name is present", () => {
+    const actions = buildHookActions(
+      "claude",
+      "pre-tool",
+      {},
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+    );
+
+    assert.equal(actions[1].params.value, "Running tool");
+    assert.equal(actions[0].params.message, "Claude running tool");
+  });
+
+  it("truncates very long tool names in the pre-tool status", () => {
+    const longName = "a".repeat(120);
+    const actions = buildHookActions(
+      "claude",
+      "pre-tool",
+      { tool_name: longName },
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+    );
+
+    assert.ok(actions[1].params.value.startsWith("Running "));
+    assert.ok(actions[1].params.value.length <= "Running ".length + 48);
+    assert.ok(actions[1].params.value.endsWith("…"));
+  });
+
+  it("sanitizes control characters in tool names before exposing them", () => {
+    const action = extractHookToolName({ tool_name: "Bash[31m" });
+    assert.equal(action, "Bash\\x1b[31m");
+  });
+
+  it("emits only a log on post-tool, leaving status untouched", () => {
+    const actions = buildHookActions(
+      "claude",
+      "post-tool",
+      { tool_name: "Edit" },
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+    );
+
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0].method, "metadata.log");
+    assert.equal(actions[0].params.message, "Claude finished Edit");
+  });
+
+  it("returns additionalContext for claude session-start responses", () => {
+    const response = buildHookResponse("claude", "session-start", {
+      FORKTTY_WORKSPACE_ID: "ws-4",
+      FORKTTY_SURFACE_ID: "surface-9",
+      FORKTTY_SOCKET_PATH: "/tmp/forktty.sock",
+    });
+
+    assert.equal(response.continue, true);
+    assert.equal(response.suppressOutput, false);
+    assert.equal(response.hookSpecificOutput.hookEventName, "SessionStart");
+    assert.match(response.hookSpecificOutput.additionalContext, /ForkTTY/);
+    assert.match(response.hookSpecificOutput.additionalContext, /ws-4/);
+    assert.match(response.hookSpecificOutput.additionalContext, /surface-9/);
+    assert.match(response.hookSpecificOutput.additionalContext, /forktty\.sock/);
+    assert.match(response.hookSpecificOutput.additionalContext, /PreToolUse/);
+  });
+
+  it("falls back to plain continue for non-session-start hook responses", () => {
+    assert.deepEqual(
+      buildHookResponse("claude", "prompt-submit", {}),
+      HOOK_CONTINUE_RESPONSE,
+    );
+    assert.deepEqual(
+      buildHookResponse("codex", "session-start", {}),
+      HOOK_CONTINUE_RESPONSE,
+    );
+  });
+
   it("warns and continues for unsupported hook events", async () => {
     const stdout = [];
     const stderr = [];
@@ -1567,6 +1675,31 @@ describe("hook installer", () => {
     const parsed = JSON.parse(written);
     assert.ok(parsed.hooks?.SessionStart?.length > 0, "SessionStart hook installed");
     assert.match(printed.join(""), /"changed":\s*true/);
+  });
+
+  it("installs PreToolUse and PostToolUse entries for claude", async () => {
+    const context = makeContext();
+    const swallow = () => true;
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = swallow;
+    try {
+      await handleHooksSetup(context, ["claude"]);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const written = JSON.parse(
+      await fs.readFile(
+        path.join(context.env.CLAUDE_CONFIG_DIR, "settings.json"),
+        "utf8",
+      ),
+    );
+    assert.ok(written.hooks?.PreToolUse?.length, "PreToolUse hook installed");
+    assert.ok(written.hooks?.PostToolUse?.length, "PostToolUse hook installed");
+    const preCommand = written.hooks.PreToolUse[0].hooks[0].command;
+    assert.match(preCommand, /hooks claude pre-tool/);
+    const postCommand = written.hooks.PostToolUse[0].hooks[0].command;
+    assert.match(postCommand, /hooks claude post-tool/);
   });
 
   it("deduplicates repeated hook setup agent names", async () => {
