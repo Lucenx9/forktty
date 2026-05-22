@@ -41,6 +41,11 @@
   --ft-success-soft: alpha(var(--success-color), 0.14);
   --ft-info: var(--accent-color);
   --ft-info-soft: alpha(var(--accent-color), 0.14);
+
+  /* Theme-aware shadow tint. shade-color is provided by libadwaita and reads
+   * darker in light themes, near-transparent in dark themes — safer than
+   * hardcoded black for box-shadows. */
+  --ft-shadow: var(--shade-color);
 }
 
 /* --------------------------------------------------------------------------
@@ -527,7 +532,7 @@ popover.ft-context-menu contents {
 /* Sidebar empty state */
 
 .sidebar-empty {
-  padding: 28px 18px;
+  padding: 32px 20px;
   color: var(--ft-text-muted);
   font-size: 0.88em;
 }
@@ -823,17 +828,13 @@ popover.ft-workspace-popover contents {
   background: alpha(var(--ft-error), 0.22);
 }
 
-.terminal-pane-action:focus-visible {
-  border-color: var(--ft-accent);
-}
-
 .single-pane-actions {
   margin: 8px 10px 0 0;
   padding: 4px;
   border: 1px solid var(--ft-border-subtle);
   border-radius: 6px;
   background: alpha(var(--ft-bg-2), 0.82);
-  box-shadow: 0 1px 4px alpha(black, 0.10);
+  box-shadow: 0 1px 4px alpha(var(--ft-shadow), 0.45);
   opacity: 0.5;
   transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
@@ -843,7 +844,7 @@ popover.ft-workspace-popover contents {
   opacity: 1;
   background: alpha(var(--ft-bg-2), 0.98);
   border-color: alpha(var(--ft-accent), 0.55);
-  box-shadow: 0 2px 8px alpha(black, 0.16);
+  box-shadow: 0 2px 8px alpha(var(--ft-shadow), 0.65);
 }
 
 .single-pane-actions .terminal-pane-action {
@@ -896,7 +897,7 @@ textview {
   border-radius: 8px;
   padding: 6px 8px;
   min-height: 30px;
-  box-shadow: inset 0 1px 2px alpha(black, 0.05), 0 0 0 0 transparent;
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.20), 0 0 0 0 transparent;
   transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
@@ -904,7 +905,7 @@ entry:hover,
 spinbutton:hover,
 combobox:hover button {
   border-color: var(--ft-border-strong);
-  box-shadow: inset 0 1px 2px alpha(black, 0.08), 0 0 0 0 transparent;
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.32), 0 0 0 0 transparent;
 }
 
 entry:focus,
@@ -915,7 +916,7 @@ textview:focus,
 textview:focus-within {
   border-color: var(--ft-accent);
   background: var(--ft-bg-2);
-  box-shadow: inset 0 1px 2px alpha(black, 0.05), 0 0 0 2px alpha(var(--ft-accent), 0.25);
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.20), 0 0 0 2px alpha(var(--ft-accent), 0.25);
 }
 
 entry:disabled,
@@ -963,7 +964,7 @@ button {
   color: var(--ft-text);
   background: var(--ft-bg-2);
   border: 1px solid var(--ft-border);
-  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(black, 0.05);
+  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(var(--ft-shadow), 0.20);
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out, box-shadow 90ms ease-out, transform 90ms ease-out;
 }
 
@@ -974,7 +975,7 @@ button:hover {
 
 button:active {
   background: var(--ft-bg-3);
-  box-shadow: inset 0 1px 2px alpha(black, 0.1);
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.40);
 }
 
 button:focus-visible {
@@ -999,12 +1000,8 @@ button.flat:hover {
 }
 
 button.flat:active {
-  background: alpha(black, 0.1);
+  background: alpha(var(--ft-shadow), 0.40);
   box-shadow: none;
-}
-
-button.flat:focus-visible {
-  border-color: var(--ft-accent);
 }
 
 button.suggested-action,
@@ -1024,7 +1021,7 @@ button.primary:hover {
 
 button.suggested-action:active,
 button.primary:active {
-  box-shadow: inset 0 2px 4px alpha(black, 0.2);
+  box-shadow: inset 0 2px 4px alpha(var(--ft-shadow), 0.55);
 }
 
 button.suggested-action:disabled,
@@ -1256,10 +1253,6 @@ window.ft-dialog,
   background: var(--ft-bg-3);
 }
 
-.command-list row:selected button.flat:focus-visible {
-  border-color: var(--ft-accent);
-}
-
 .command-item {
   padding: 8px 12px;
 }
@@ -1478,6 +1471,7 @@ scrollbar slider:hover,
 scrollbar slider:active {
   background-color: alpha(var(--window-fg-color), 0.35);
   min-width: 8px;
+  min-height: 8px;
 }
 
 scrollbar trough {
