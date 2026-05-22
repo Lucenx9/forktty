@@ -2579,30 +2579,245 @@ async function handleHookEvent(context, args) {
     }
   }
 
-  const response = buildHookResponse(agent, event, context.env);
+  const enrichments = await gatherHookEnrichments(agent, event, payload, context);
+  const tokenAction = buildTokenProgressAction(
+    agent,
+    enrichments.tokenUsage,
+    context.env,
+    hookEventOrder,
+    event,
+  );
+  if (tokenAction && shouldSendHookActions(context)) {
+    try {
+      hookDebug(context, summarizeHookAction(tokenAction));
+      await sendSocketRequest(
+        context.socketPath,
+        tokenAction.method,
+        tokenAction.params,
+        HOOK_STATUS_TIMEOUT_MS,
+      );
+    } catch (error) {
+      hookDebug(
+        context,
+        `token progress send failed: ${formatErrorForTerminal(error)}`,
+      );
+    }
+  }
+
+  const response = buildHookResponse(agent, event, context.env, enrichments);
   process.stdout.write(`${JSON.stringify(response)}\n`);
 }
 
-function buildHookResponse(agent, eventName, env = process.env) {
+const HOOK_TOKEN_CEILING_DEFAULT = 200_000;
+const HOOK_PENDING_NOTIFICATION_LIMIT = 10;
+
+function formatPendingNotificationLine(notification) {
+  const kind = typeof notification?.kind === "string" ? notification.kind : "info";
+  const title = typeof notification?.title === "string" ? notification.title : "(no title)";
+  const body = typeof notification?.body === "string" && notification.body.trim()
+    ? ` — ${notification.body.trim()}`
+    : "";
+  return `  [${kind}] ${title}${body}`;
+}
+
+function formatPendingNotificationsBlock(notifications) {
+  if (!Array.isArray(notifications) || notifications.length === 0) return "";
+  const lines = notifications
+    .slice(0, HOOK_PENDING_NOTIFICATION_LIMIT)
+    .map(formatPendingNotificationLine);
+  const more =
+    notifications.length > HOOK_PENDING_NOTIFICATION_LIMIT
+      ? `  ...and ${notifications.length - HOOK_PENDING_NOTIFICATION_LIMIT} more (use \`forktty notifications\`).`
+      : "";
+  const tail = more ? [more] : [];
+  return ["ForkTTY pending notifications:", ...lines, ...tail].join("\n");
+}
+
+function formatThousands(n) {
+  return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function formatTokenUsageBlock(usage) {
+  if (!usage || typeof usage !== "object") return "";
+  const input = Number(usage.input) || 0;
+  const cacheRead = Number(usage.cacheRead) || 0;
+  const cacheCreation = Number(usage.cacheCreation) || 0;
+  const output = Number(usage.output) || 0;
+  const total = input + cacheRead + cacheCreation;
+  return (
+    `ForkTTY token estimate (latest assistant turn): ~${formatThousands(total)} input tokens ` +
+    `(input=${input}, cache_read=${cacheRead}, cache_creation=${cacheCreation}, output=${output}).`
+  );
+}
+
+function buildHookResponse(agent, eventName, env = process.env, extras = {}) {
+  const pending = Array.isArray(extras.pendingNotifications)
+    ? extras.pendingNotifications
+    : [];
+  const usage = extras.tokenUsage || null;
+
   if (agent === "claude" && eventName === "session-start") {
     const workspaceId = trimEnv(env, "FORKTTY_WORKSPACE_ID") || "(none)";
     const surfaceId = trimEnv(env, "FORKTTY_SURFACE_ID") || "(none)";
     const socketPath = trimEnv(env, "FORKTTY_SOCKET_PATH") || "(default)";
+    const sections = [
+      `Running inside the ForkTTY terminal. ` +
+        `workspace_id=${workspaceId} surface_id=${surfaceId} socket=${socketPath}. ` +
+        `ForkTTY hooks publish status, logs, and notifications to the app for SessionStart, ` +
+        `UserPromptSubmit, PreToolUse, PostToolUse, SubagentStop, PreCompact, Stop, Notification, and SessionEnd. ` +
+        `Inspect state via the \`forktty\` CLI (notifications, status, workspaces, surfaces, worktrees).`,
+    ];
+    const pendingBlock = formatPendingNotificationsBlock(pending);
+    if (pendingBlock) sections.push(pendingBlock);
     return {
       continue: true,
       suppressOutput: false,
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext:
-          `Running inside the ForkTTY terminal. ` +
-          `workspace_id=${workspaceId} surface_id=${surfaceId} socket=${socketPath}. ` +
-          `ForkTTY hooks publish status, logs, and notifications to the app for SessionStart, ` +
-          `UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, and SessionEnd. ` +
-          `Inspect state via the \`forktty\` CLI (notifications, status, workspaces, surfaces, worktrees).`,
+        additionalContext: sections.join("\n\n"),
       },
     };
   }
+
+  if (agent === "claude" && eventName === "prompt-submit") {
+    const sections = [];
+    const pendingBlock = formatPendingNotificationsBlock(pending);
+    if (pendingBlock) sections.push(pendingBlock);
+    const usageBlock = formatTokenUsageBlock(usage);
+    if (usageBlock) sections.push(usageBlock);
+    if (sections.length === 0) return HOOK_CONTINUE_RESPONSE;
+    return {
+      continue: true,
+      suppressOutput: false,
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: sections.join("\n\n"),
+      },
+    };
+  }
+
   return HOOK_CONTINUE_RESPONSE;
+}
+
+function filterPendingNotificationsForTarget(list, env = process.env) {
+  if (!Array.isArray(list)) return [];
+  const workspaceId = trimEnv(env, "FORKTTY_WORKSPACE_ID");
+  return list.filter((notification) => {
+    if (!notification || typeof notification !== "object") return false;
+    if (notification.read === true) return false;
+    if (workspaceId && typeof notification.workspace_id === "string" && notification.workspace_id) {
+      if (notification.workspace_id !== workspaceId) return false;
+    }
+    return true;
+  });
+}
+
+async function readTokenUsageFromTranscript(filePath) {
+  if (typeof filePath !== "string" || !filePath.trim()) return null;
+  let fileHandle;
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) return null;
+    const size = stat.size;
+    if (size === 0) return null;
+    const chunkSize = Math.min(size, 64 * 1024);
+    const offset = size - chunkSize;
+    const buffer = Buffer.alloc(chunkSize);
+    fileHandle = await fs.open(filePath, "r");
+    await fileHandle.read(buffer, 0, chunkSize, offset);
+    const text = buffer.toString("utf8");
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const raw = lines[i].trim();
+      if (!raw) continue;
+      let entry;
+      try {
+        entry = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const usage = entry?.message?.usage || entry?.usage;
+      if (usage && typeof usage === "object") {
+        return {
+          input: Number(usage.input_tokens) || 0,
+          output: Number(usage.output_tokens) || 0,
+          cacheRead: Number(usage.cache_read_input_tokens) || 0,
+          cacheCreation: Number(usage.cache_creation_input_tokens) || 0,
+        };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fileHandle) {
+      try {
+        await fileHandle.close();
+      } catch {
+        // ignore close errors — best effort
+      }
+    }
+  }
+}
+
+function buildTokenProgressAction(agent, usage, env, hookEventOrder, eventName) {
+  if (!usage) return null;
+  const spec = AGENT_SPECS[agent];
+  if (!spec) return null;
+  const total = (Number(usage.input) || 0) +
+    (Number(usage.cacheRead) || 0) +
+    (Number(usage.cacheCreation) || 0);
+  if (total <= 0) return null;
+  return {
+    method: "metadata.set_progress",
+    params: addHookEventMetadata(
+      {
+        ...buildHookTargetParams(env),
+        key: `agent:${agent}:tokens`,
+        label: `${spec.label} input tokens`,
+        value: total,
+        total: HOOK_TOKEN_CEILING_DEFAULT,
+      },
+      eventName,
+      null,
+      hookEventOrder,
+    ),
+  };
+}
+
+async function gatherHookEnrichments(agent, eventName, payload, context) {
+  const enrichments = { pendingNotifications: [], tokenUsage: null };
+  if (agent !== "claude") return enrichments;
+
+  const wantsPending = eventName === "session-start" || eventName === "prompt-submit";
+  if (wantsPending && shouldSendHookActions(context)) {
+    try {
+      const list = await sendSocketRequest(
+        context.socketPath,
+        "notification.list",
+        {},
+        HOOK_STATUS_TIMEOUT_MS,
+      );
+      enrichments.pendingNotifications = filterPendingNotificationsForTarget(list, context.env);
+    } catch (error) {
+      hookDebug(
+        context,
+        `notification.list failed: ${formatErrorForTerminal(error)}`,
+      );
+    }
+  }
+
+  if (eventName === "prompt-submit") {
+    const transcriptPath = extractFirstStringLikeValue(payload, [
+      "transcript_path",
+      "transcriptPath",
+    ]);
+    if (transcriptPath) {
+      enrichments.tokenUsage = await readTokenUsageFromTranscript(transcriptPath);
+    }
+  }
+
+  return enrichments;
 }
 
 function shouldSendHookActions(context) {
@@ -2956,10 +3171,15 @@ export {
   buildHookResponse,
   buildHookShellCommand,
   buildHookTargetParams,
+  buildTokenProgressAction,
   extractHookCompactTrigger,
   extractHookSource,
   extractHookToolError,
   extractHookToolName,
+  filterPendingNotificationsForTarget,
+  formatPendingNotificationsBlock,
+  formatTokenUsageBlock,
+  readTokenUsageFromTranscript,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,

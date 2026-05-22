@@ -13,10 +13,15 @@ import {
   buildHookResponse,
   buildHookShellCommand,
   buildHookTargetParams,
+  buildTokenProgressAction,
   extractHookCompactTrigger,
   extractHookSource,
   extractHookToolError,
   extractHookToolName,
+  filterPendingNotificationsForTarget,
+  formatPendingNotificationsBlock,
+  formatTokenUsageBlock,
+  readTokenUsageFromTranscript,
   buildLogParams,
   buildNotificationParams,
   buildProgressParams,
@@ -971,6 +976,183 @@ describe("forktty CLI helpers", () => {
     assert.equal(extractHookCompactTrigger({ compactTrigger: "manual" }), "manual");
     assert.equal(extractHookCompactTrigger({ reason: "context" }), "context");
     assert.equal(extractHookCompactTrigger({}), "");
+  });
+
+  it("filters pending notifications by workspace and read state", () => {
+    const list = [
+      { id: "1", read: false, workspace_id: "ws-A", title: "a" },
+      { id: "2", read: true, workspace_id: "ws-A", title: "b" },
+      { id: "3", read: false, workspace_id: "ws-B", title: "c" },
+      { id: "4", read: false, workspace_id: "", title: "d" },
+    ];
+    const filtered = filterPendingNotificationsForTarget(list, {
+      FORKTTY_WORKSPACE_ID: "ws-A",
+    });
+    assert.deepEqual(
+      filtered.map((entry) => entry.id),
+      ["1", "4"],
+    );
+
+    const noFilter = filterPendingNotificationsForTarget(list, {});
+    assert.deepEqual(
+      noFilter.map((entry) => entry.id),
+      ["1", "3", "4"],
+    );
+
+    assert.deepEqual(filterPendingNotificationsForTarget(null, {}), []);
+  });
+
+  it("formats pending notification blocks with a trailing more line when truncated", () => {
+    const block = formatPendingNotificationsBlock([
+      { kind: "error", title: "Build broke", body: "exit 1" },
+      { kind: "info", title: "Heads up", body: "" },
+    ]);
+    assert.match(block, /ForkTTY pending notifications:/);
+    assert.match(block, /\[error\] Build broke — exit 1/);
+    assert.match(block, /\[info\] Heads up$/m);
+
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      kind: "info",
+      title: `n${i}`,
+      body: "",
+    }));
+    const truncated = formatPendingNotificationsBlock(many);
+    assert.match(truncated, /\.\.\.and 2 more/);
+
+    assert.equal(formatPendingNotificationsBlock([]), "");
+    assert.equal(formatPendingNotificationsBlock(null), "");
+  });
+
+  it("formats token usage with totals derived from cache and input counts", () => {
+    const block = formatTokenUsageBlock({
+      input: 1000,
+      cacheRead: 4000,
+      cacheCreation: 500,
+      output: 250,
+    });
+    assert.match(block, /5,500 input tokens/);
+    assert.match(block, /cache_read=4000/);
+    assert.match(block, /output=250/);
+    assert.equal(formatTokenUsageBlock(null), "");
+  });
+
+  it("builds a token progress action only when usage totals are positive", () => {
+    const action = buildTokenProgressAction(
+      "claude",
+      { input: 100, cacheRead: 200, cacheCreation: 50, output: 10 },
+      { FORKTTY_WORKSPACE_ID: "ws-A" },
+      77,
+      "prompt-submit",
+    );
+    assert.equal(action.method, "metadata.set_progress");
+    assert.equal(action.params.key, "agent:claude:tokens");
+    assert.equal(action.params.label, "Claude input tokens");
+    assert.equal(action.params.value, 350);
+    assert.equal(action.params.total, 200_000);
+    assert.equal(action.params.workspace_id, "ws-A");
+    assert.equal(action.params.hook_event_order, 77);
+    assert.equal(action.params.hook_event_name, "prompt-submit");
+
+    assert.equal(
+      buildTokenProgressAction("claude", null, {}, 1, "prompt-submit"),
+      null,
+    );
+    assert.equal(
+      buildTokenProgressAction(
+        "claude",
+        { input: 0, cacheRead: 0, cacheCreation: 0, output: 0 },
+        {},
+        1,
+        "prompt-submit",
+      ),
+      null,
+    );
+  });
+
+  it("reads the latest usage object from a transcript jsonl file", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "forktty-tx-"));
+    const file = path.join(tmp, "transcript.jsonl");
+    const lines = [
+      JSON.stringify({ type: "user", message: { content: "hi" } }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 1200,
+            output_tokens: 80,
+            cache_read_input_tokens: 4500,
+            cache_creation_input_tokens: 300,
+          },
+        },
+      }),
+      JSON.stringify({ type: "tool_use" }),
+    ];
+    await fs.writeFile(file, `${lines.join("\n")}\n`);
+    try {
+      const usage = await readTokenUsageFromTranscript(file);
+      assert.deepEqual(usage, {
+        input: 1200,
+        output: 80,
+        cacheRead: 4500,
+        cacheCreation: 300,
+      });
+
+      const missing = await readTokenUsageFromTranscript(
+        path.join(tmp, "does-not-exist.jsonl"),
+      );
+      assert.equal(missing, null);
+      assert.equal(await readTokenUsageFromTranscript(""), null);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("includes pending notifications and token usage in prompt-submit responses", () => {
+    const response = buildHookResponse(
+      "claude",
+      "prompt-submit",
+      { FORKTTY_WORKSPACE_ID: "ws-A" },
+      {
+        pendingNotifications: [
+          { kind: "error", title: "Build broke", body: "exit 1" },
+        ],
+        tokenUsage: {
+          input: 500,
+          cacheRead: 1000,
+          cacheCreation: 0,
+          output: 50,
+        },
+      },
+    );
+    assert.equal(response.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+    const ctx = response.hookSpecificOutput.additionalContext;
+    assert.match(ctx, /Build broke/);
+    assert.match(ctx, /1,500 input tokens/);
+  });
+
+  it("returns plain continue for prompt-submit when no extras present", () => {
+    assert.deepEqual(
+      buildHookResponse("claude", "prompt-submit", {}, {}),
+      HOOK_CONTINUE_RESPONSE,
+    );
+    assert.deepEqual(
+      buildHookResponse("codex", "prompt-submit", {}, {
+        pendingNotifications: [{ kind: "info", title: "x" }],
+      }),
+      HOOK_CONTINUE_RESPONSE,
+    );
+  });
+
+  it("session-start response appends pending notifications block when present", () => {
+    const response = buildHookResponse(
+      "claude",
+      "session-start",
+      {},
+      {
+        pendingNotifications: [{ kind: "info", title: "Hello" }],
+      },
+    );
+    assert.match(response.hookSpecificOutput.additionalContext, /Hello/);
   });
 
   it("returns additionalContext for claude session-start responses", () => {
