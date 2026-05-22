@@ -1857,6 +1857,7 @@ async function handleHookEvent(context, args) {
   const [agentName, eventName] = args;
   const agent = typeof agentName === "string" ? agentName.toLowerCase() : "";
   const event = typeof eventName === "string" ? eventName.toLowerCase() : "";
+  const extraArgs = args.slice(2);
 
   if (!AGENT_SPECS[agent]) {
     process.stderr.write(`Unsupported hook agent: ${agentName}\n`);
@@ -1866,6 +1867,13 @@ async function handleHookEvent(context, args) {
   if (!SUPPORTED_HOOK_EVENTS.has(event)) {
     const label = eventName === undefined ? "(missing)" : eventName;
     process.stderr.write(`Unsupported hook event for ${agent}: ${label}\n`);
+    process.stdout.write(HOOK_CONTINUE_JSON);
+    return;
+  }
+  if (extraArgs.length > 0) {
+    process.stderr.write(
+      `Unexpected hook argument for ${agent} ${event}: ${extraArgs[0]}\n`,
+    );
     process.stdout.write(HOOK_CONTINUE_JSON);
     return;
   }

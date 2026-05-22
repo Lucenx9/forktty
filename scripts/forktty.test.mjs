@@ -609,6 +609,30 @@ describe("forktty CLI helpers", () => {
     assert.match(stderr.join(""), /Unsupported hook event for codex: sesion-start/);
   });
 
+  it("warns and continues for extra hook event arguments", async () => {
+    const stdout = [];
+    const stderr = [];
+    const originalStdout = process.stdout.write.bind(process.stdout);
+    const originalStderr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = (chunk) => {
+      stdout.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    process.stderr.write = (chunk) => {
+      stderr.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await main(["hooks", "codex", "session-start", "extra"], {});
+    } finally {
+      process.stdout.write = originalStdout;
+      process.stderr.write = originalStderr;
+    }
+
+    assert.deepEqual(JSON.parse(stdout.join("")), HOOK_CONTINUE_RESPONSE);
+    assert.match(stderr.join(""), /Unexpected hook argument for codex session-start: extra/);
+  });
+
   it("builds progress metadata params with workspace targeting", () => {
     assert.deepEqual(
       buildProgressParams(
