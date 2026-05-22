@@ -38,6 +38,12 @@ forktty hooks test codex       # round-trip a status update and a log over the s
 single transient `agent:<name>:hook-test` status entry through the socket so
 you can confirm the daemon is reachable.
 
+`hooks doctor` also compares the launcher path baked into the agent config
+against the current `forktty` executable and reports `launcherCheck.status`
+(`ok`, `stale`, `not_installed`, or `current_launcher_unknown`). A `stale`
+status means the AppImage or installed binary has moved since the last
+`hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
+
 ## Manual editing
 
 Files in this directory are canonical examples for review or manual repair:

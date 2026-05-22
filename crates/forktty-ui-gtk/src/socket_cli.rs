@@ -2259,8 +2259,11 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
     let (spec, rest) = single_agent_command(args, "hooks doctor")?;
     require_no_args(&rest, &format!("hooks doctor {}", spec.key))?;
     let socket_info = inspect_path(&context.socket_path);
-    let launcher_info = stable_hook_launcher_path().map(|path| inspect_path(&path));
-    let config_info = inspect_path(&(spec.config_path)());
+    let current_launcher = stable_hook_launcher_path();
+    let launcher_info = current_launcher.as_ref().map(|path| inspect_path(path));
+    let config_path = (spec.config_path)();
+    let config_info = inspect_path(&config_path);
+    let launcher_check = describe_launcher_check(spec, &config_path, current_launcher.as_deref());
     let report = json!({
         "agent": spec.key,
         "socket": {
@@ -2273,12 +2276,14 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
             "FORKTTY_WORKSPACE_ID": trimmed_env("FORKTTY_WORKSPACE_ID"),
             "FORKTTY_SURFACE_ID": trimmed_env("FORKTTY_SURFACE_ID"),
             "CODEX_HOME": trimmed_env("CODEX_HOME"),
+            "CLAUDE_CONFIG_DIR": trimmed_env("CLAUDE_CONFIG_DIR"),
             "HOME": trimmed_env("HOME"),
         },
         "executable": {
             "forktty": launcher_info,
         },
         "hookConfig": config_info,
+        "launcherCheck": launcher_check,
     });
     if context.json {
         return print_json(&report);
@@ -2308,7 +2313,110 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         "{}",
         format_doctor_path(&format!("{} hook config", spec.key), &report["hookConfig"])
     );
+    if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
+        eprintln!("{line}");
+    }
     Ok(())
+}
+
+fn describe_launcher_check(
+    spec: &AgentSpec,
+    config_path: &Path,
+    current_launcher: Option<&Path>,
+) -> Value {
+    let installed = match read_json_file(config_path) {
+        Ok(value) => extract_managed_launcher_from_config(spec, &value),
+        Err(_) => None,
+    };
+    let current = current_launcher.map(|path| path.display().to_string());
+    let status = match (&installed, &current) {
+        (Some(installed_path), Some(current_path)) if installed_path == current_path => "ok",
+        (Some(_), Some(_)) => "stale",
+        (Some(_), None) => "current_launcher_unknown",
+        (None, _) => "not_installed",
+    };
+    json!({
+        "status": status,
+        "installedLauncher": installed,
+        "currentLauncher": current,
+    })
+}
+
+fn format_launcher_check(check: &Value) -> Option<String> {
+    let status = check.get("status").and_then(Value::as_str)?;
+    match status {
+        "stale" => {
+            let installed = check
+                .get("installedLauncher")
+                .and_then(Value::as_str)
+                .unwrap_or("(unknown)");
+            let current = check
+                .get("currentLauncher")
+                .and_then(Value::as_str)
+                .unwrap_or("(unknown)");
+            Some(format!(
+                "launcher mismatch: hook config points at {installed} but the current forktty launcher is {current}. Re-run `forktty hooks setup` to refresh the hook commands."
+            ))
+        }
+        "current_launcher_unknown" => Some(
+            "launcher mismatch: could not resolve the current forktty executable; hook commands may be stale."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn extract_managed_launcher_from_config(spec: &AgentSpec, config: &Value) -> Option<String> {
+    let hooks = config.get("hooks")?.as_object()?;
+    for events in hooks.values() {
+        let Some(entries) = events.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            if !is_forktty_managed_entry(entry) {
+                continue;
+            }
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for hook in commands {
+                let Some(command) = hook.get("command").and_then(Value::as_str) else {
+                    continue;
+                };
+                if let Some(launcher) = parse_launcher_from_managed_command(command, spec) {
+                    return Some(launcher);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_launcher_from_managed_command(command: &str, spec: &AgentSpec) -> Option<String> {
+    let marker = "&& '";
+    let start = command.find(marker)? + marker.len();
+    let rest = &command[start..];
+    let mut launcher = String::new();
+    let mut chars = rest.char_indices();
+    while let Some((idx, ch)) = chars.next() {
+        if ch != '\'' {
+            launcher.push(ch);
+            continue;
+        }
+        if rest[idx..].starts_with("'\"'\"'") {
+            launcher.push('\'');
+            for _ in 0..4 {
+                chars.next();
+            }
+            continue;
+        }
+        let suffix = format!("' hooks {} ", spec.key);
+        if rest[idx..].starts_with(suffix.as_str()) {
+            return Some(launcher);
+        }
+        return None;
+    }
+    None
 }
 
 fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -4235,6 +4343,114 @@ mod tests {
             ),
             Some(PathBuf::from("/usr/bin/forktty"))
         );
+    }
+
+    #[test]
+    fn parse_launcher_extracts_path_from_managed_command() {
+        let spec = agent_spec("claude").unwrap();
+        let command = build_hook_shell_command(
+            Path::new("/home/me/ForkTTY/forktty.AppImage"),
+            spec,
+            "session-start",
+        );
+        assert_eq!(
+            parse_launcher_from_managed_command(&command, spec).as_deref(),
+            Some("/home/me/ForkTTY/forktty.AppImage")
+        );
+    }
+
+    #[test]
+    fn parse_launcher_handles_apostrophe_in_path() {
+        let spec = agent_spec("codex").unwrap();
+        let command =
+            build_hook_shell_command(Path::new("/home/o'connor/forktty"), spec, "session-start");
+        assert_eq!(
+            parse_launcher_from_managed_command(&command, spec).as_deref(),
+            Some("/home/o'connor/forktty")
+        );
+    }
+
+    #[test]
+    fn parse_launcher_rejects_unrelated_commands() {
+        let spec = agent_spec("codex").unwrap();
+        assert_eq!(parse_launcher_from_managed_command("echo hi", spec), None);
+        assert_eq!(
+            parse_launcher_from_managed_command(
+                "[ x ] && '/usr/bin/forktty' hooks claude session-start || true",
+                spec,
+            ),
+            None,
+            "wrong agent key must not match"
+        );
+    }
+
+    #[test]
+    fn extract_managed_launcher_returns_first_forktty_entry() {
+        let spec = agent_spec("claude").unwrap();
+        let (_, config) =
+            merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
+        assert_eq!(
+            extract_managed_launcher_from_config(spec, &config).as_deref(),
+            Some("/usr/bin/forktty")
+        );
+    }
+
+    #[test]
+    fn extract_managed_launcher_skips_unmanaged_entries() {
+        let spec = agent_spec("codex").unwrap();
+        let config = json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo unrelated",
+                    }]
+                }]
+            }
+        });
+        assert_eq!(extract_managed_launcher_from_config(spec, &config), None);
+    }
+
+    #[test]
+    fn describe_launcher_check_flags_stale_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("claude").unwrap();
+        let config_path = dir.path().join("settings.json");
+        let (_, config) = merge_hook_config(&json!({}), spec, Path::new("/old/forktty")).unwrap();
+        fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
+        let check = describe_launcher_check(spec, &config_path, Some(Path::new("/new/forktty")));
+        assert_eq!(check["status"], Value::String("stale".to_string()));
+        assert_eq!(
+            check["installedLauncher"],
+            Value::String("/old/forktty".to_string())
+        );
+        assert_eq!(
+            check["currentLauncher"],
+            Value::String("/new/forktty".to_string())
+        );
+    }
+
+    #[test]
+    fn describe_launcher_check_marks_matching_path_as_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("codex").unwrap();
+        let config_path = dir.path().join("hooks.json");
+        let (_, config) =
+            merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
+        fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
+        let check =
+            describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
+        assert_eq!(check["status"], Value::String("ok".to_string()));
+    }
+
+    #[test]
+    fn describe_launcher_check_marks_missing_config_as_not_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = agent_spec("gemini").unwrap();
+        let config_path = dir.path().join("settings.json");
+        let check =
+            describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
+        assert_eq!(check["status"], Value::String("not_installed".to_string()));
     }
 
     #[test]
