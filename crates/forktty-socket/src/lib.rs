@@ -1131,15 +1131,18 @@ fn required_trimmed_string<'a>(
 }
 
 fn required_surface_id(params: &Value) -> Result<&str, DispatchError> {
-    if params.get("surface_id").is_some() {
-        return optional_non_blank_string_param(params, "surface_id")?
-            .ok_or(DispatchError::MissingParam("surface_id"));
+    let surface_ids = surface_id_params(params)?;
+    if surface_ids.is_empty() {
+        return Err(DispatchError::MissingParam("surface_id"));
     }
-    if params.get("surfaceId").is_some() {
-        return optional_non_blank_string_param(params, "surfaceId")?
-            .ok_or(DispatchError::MissingParam("surface_id"));
+    if surface_ids.len() > 1 {
+        return Err(format!(
+            "Ambiguous surface selector: cannot combine {}",
+            format_param_names(surface_ids.iter().map(|param| param.key))
+        )
+        .into());
     }
-    Err(DispatchError::MissingParam("surface_id"))
+    Ok(surface_ids[0].value)
 }
 
 fn required_string_param<'a>(
@@ -1248,10 +1251,30 @@ fn optional_non_blank_string_param<'a>(
 }
 
 fn optional_surface_id_param(params: &Value) -> Result<Option<&str>, DispatchError> {
-    if params.get("surface_id").is_some() {
-        return optional_non_blank_string_param(params, "surface_id");
+    let surface_ids = surface_id_params(params)?;
+    if surface_ids.len() > 1 {
+        return Err(format!(
+            "Ambiguous surface selector: cannot combine {}",
+            format_param_names(surface_ids.iter().map(|param| param.key))
+        )
+        .into());
     }
-    optional_non_blank_string_param(params, "surfaceId")
+    Ok(surface_ids.first().map(|param| param.value))
+}
+
+struct SurfaceIdParam<'a> {
+    key: &'static str,
+    value: &'a str,
+}
+
+fn surface_id_params<'a>(params: &'a Value) -> Result<Vec<SurfaceIdParam<'a>>, DispatchError> {
+    let mut surface_ids = Vec::new();
+    for key in ["surface_id", "surfaceId"] {
+        if let Some(value) = optional_non_blank_string_param(params, key)? {
+            surface_ids.push(SurfaceIdParam { key, value });
+        }
+    }
+    Ok(surface_ids)
 }
 
 fn ensure_model_surface_exists(
@@ -3628,6 +3651,22 @@ mod tests {
             assert_eq!(err.code(), "error");
             assert!(err.to_string().contains(message));
         }
+
+        let err = dispatch(
+            &state,
+            "surface.send_text",
+            json!({
+                "surface_id": surface_id,
+                "surfaceId": surface_id,
+                "text": "echo bad\n"
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "error");
+        assert!(err
+            .to_string()
+            .contains("Ambiguous surface selector: cannot combine surface_id and surfaceId"));
     }
 
     #[tokio::test]
