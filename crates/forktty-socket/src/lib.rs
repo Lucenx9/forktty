@@ -1343,32 +1343,72 @@ fn resolve_workspace_id_for_metadata(
         .ok_or(DispatchError::NotFound("workspace"))
 }
 
+#[derive(Clone, Copy)]
+enum WorkspaceSelectorKind {
+    Id,
+    Name,
+    WorktreeName,
+}
+
+struct WorkspaceSelectorParam<'a> {
+    key: &'static str,
+    kind: WorkspaceSelectorKind,
+    value: &'a str,
+}
+
 fn workspace_selector_from_params(params: &Value) -> Result<WorkspaceSelector<'_>, DispatchError> {
-    if let Some(id) = optional_non_blank_string_param(params, "id")? {
-        return Ok(WorkspaceSelector::Id(id));
+    let selectors = workspace_selector_params(params)?;
+    if selectors.is_empty() {
+        return Err(DispatchError::MissingParam("workspace selector"));
     }
-    if let Some(id) = optional_non_blank_string_param(params, "workspace_id")? {
-        return Ok(WorkspaceSelector::Id(id));
+    if selectors.len() > 1 {
+        return Err(format!(
+            "Ambiguous workspace selector: cannot combine {}",
+            format_param_names(selectors.iter().map(|selector| selector.key))
+        )
+        .into());
     }
-    if let Some(id) = optional_non_blank_string_param(params, "workspaceId")? {
-        return Ok(WorkspaceSelector::Id(id));
+    let selector = &selectors[0];
+    match selector.kind {
+        WorkspaceSelectorKind::Id => Ok(WorkspaceSelector::Id(selector.value)),
+        WorkspaceSelectorKind::Name => Ok(WorkspaceSelector::Name(selector.value)),
+        WorkspaceSelectorKind::WorktreeName => Ok(WorkspaceSelector::WorktreeName(selector.value)),
     }
-    if let Some(name) = optional_non_blank_string_param(params, "name")? {
-        return Ok(WorkspaceSelector::Name(name));
+}
+
+fn workspace_selector_params<'a>(
+    params: &'a Value,
+) -> Result<Vec<WorkspaceSelectorParam<'a>>, DispatchError> {
+    let mut selectors = Vec::new();
+    for (key, kind) in [
+        ("id", WorkspaceSelectorKind::Id),
+        ("workspace_id", WorkspaceSelectorKind::Id),
+        ("workspaceId", WorkspaceSelectorKind::Id),
+        ("name", WorkspaceSelectorKind::Name),
+        ("workspace_name", WorkspaceSelectorKind::Name),
+        ("workspaceName", WorkspaceSelectorKind::Name),
+        ("worktreeName", WorkspaceSelectorKind::WorktreeName),
+        ("worktree_name", WorkspaceSelectorKind::WorktreeName),
+    ] {
+        if let Some(value) = optional_non_blank_string_param(params, key)? {
+            selectors.push(WorkspaceSelectorParam { key, kind, value });
+        }
     }
-    if let Some(name) = optional_non_blank_string_param(params, "workspace_name")? {
-        return Ok(WorkspaceSelector::Name(name));
+    Ok(selectors)
+}
+
+fn format_param_names<'a>(names: impl Iterator<Item = &'a str>) -> String {
+    let names = names.collect::<Vec<_>>();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [first, second] => format!("{first} and {second}"),
+        _ => format!(
+            "{}, and {}",
+            names[..names.len() - 1].join(", "),
+            names[names.len() - 1]
+        ),
     }
-    if let Some(name) = optional_non_blank_string_param(params, "workspaceName")? {
-        return Ok(WorkspaceSelector::Name(name));
-    }
-    if let Some(worktree_name) = optional_non_blank_string_param(params, "worktreeName")? {
-        return Ok(WorkspaceSelector::WorktreeName(worktree_name));
-    }
-    if let Some(worktree_name) = optional_non_blank_string_param(params, "worktree_name")? {
-        return Ok(WorkspaceSelector::WorktreeName(worktree_name));
-    }
-    Err(DispatchError::MissingParam("workspace selector"))
 }
 
 pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Result<(), String> {
@@ -3479,6 +3519,18 @@ mod tests {
             assert_eq!(err.code(), "error");
             assert!(err.to_string().contains("Invalid parameter workspace_id"));
         }
+
+        let err = dispatch(
+            &state,
+            "workspace.select",
+            json!({"workspace_id": "workspace-1", "workspace_name": "main"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "error");
+        assert!(err.to_string().contains(
+            "Ambiguous workspace selector: cannot combine workspace_id and workspace_name"
+        ));
     }
 
     #[tokio::test]

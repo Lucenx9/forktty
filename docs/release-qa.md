@@ -82,6 +82,7 @@ rebuilding.
 - `FORKTTY_WORKSPACE_ID=workspace-1 forktty set-status --workspace-id= --key qa --value ok` — exits with `--workspace-id requires a value` instead of falling back to the inherited id.
 - `forktty set-status --workspace-id workspace-1 --workspace-name main --key qa --value ok` — exits with `set-status: cannot combine --workspace-id and --workspace-name` instead of silently picking one target.
 - `printf '{"id":"x","method":"surface.list","params":{"workspace_name":" main "}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — trims the raw socket selector and returns the `main` workspace surfaces.
+- `printf '{"id":"x","method":"surface.list","params":{"workspace_id":"workspace-1","workspace_name":"main"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an ambiguous workspace selector instead of silently picking one target.
 - `printf '{"id":"x","method":"workspace.create","params":{"name":"","workingDir":"/tmp"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `name`; no default-named workspace is created.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"","key":"qa","label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `workspace_id`; the status is not added to the active workspace.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"key":42,"label":"QA","value":"ok"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key` instead of treating it as missing.
