@@ -57,10 +57,25 @@ pub fn normalize_agent_status(raw: &str) -> AgentStatus {
     if lower.is_empty() {
         return AgentStatus::Unknown;
     }
+    if lower.contains("fail") || lower.contains("error") {
+        return AgentStatus::Failed;
+    }
+    if lower.contains("cancel") || lower.contains("interrupt") {
+        return AgentStatus::Cancelled;
+    }
+    if lower.contains("done") || lower.contains("complete") || lower.contains("success") {
+        return AgentStatus::Done;
+    }
     if lower.contains("permission") || lower.contains("approval") {
         return AgentStatus::PermissionRequest;
     }
-    if lower.contains("needs input") || lower.contains("prompt") || lower.contains("waiting") {
+    if lower.contains("needs input")
+        || lower.contains("input needed")
+        || lower.contains("user input")
+        || lower.contains("waiting for user")
+        || lower.contains("waiting on user")
+        || lower.contains("prompt")
+    {
         return AgentStatus::NeedsInput;
     }
     if lower.contains("test") {
@@ -71,15 +86,6 @@ pub fn normalize_agent_status(raw: &str) -> AgentStatus {
     }
     if lower.contains("running") || lower.contains("working") || lower.contains("in progress") {
         return AgentStatus::Running;
-    }
-    if lower.contains("done") || lower.contains("complete") || lower.contains("success") {
-        return AgentStatus::Done;
-    }
-    if lower.contains("cancel") || lower.contains("interrupt") {
-        return AgentStatus::Cancelled;
-    }
-    if lower.contains("fail") || lower.contains("error") {
-        return AgentStatus::Failed;
     }
     if lower == "idle" || lower == "ready" {
         return AgentStatus::Idle;
@@ -113,5 +119,30 @@ mod tests {
         assert_eq!(normalize_agent_status("completed"), AgentStatus::Done);
         assert_eq!(normalize_agent_status("failed"), AgentStatus::Failed);
         assert_eq!(normalize_agent_status("cancelled"), AgentStatus::Cancelled);
+        assert_eq!(normalize_agent_status(""), AgentStatus::Unknown);
+        assert_eq!(
+            normalize_agent_status("provider-specific queued"),
+            AgentStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn terminal_states_take_priority_over_activity_words() {
+        assert_eq!(normalize_agent_status("tests failed"), AgentStatus::Failed);
+        assert_eq!(normalize_agent_status("tool error"), AgentStatus::Failed);
+        assert_eq!(normalize_agent_status("tests completed"), AgentStatus::Done);
+        assert_eq!(
+            normalize_agent_status("tool cancelled"),
+            AgentStatus::Cancelled
+        );
+        assert_eq!(
+            normalize_agent_status("waiting for user input"),
+            AgentStatus::NeedsInput
+        );
+        assert_eq!(
+            normalize_agent_status("waiting for tests"),
+            AgentStatus::TestsRunning
+        );
+        assert_eq!(normalize_agent_status("waiting"), AgentStatus::Unknown);
     }
 }
