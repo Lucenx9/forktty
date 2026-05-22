@@ -1910,6 +1910,12 @@ fn focus_workspace(state: &SocketAppState, workspace_id: &str) {
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to spawn workspace terminal: {err}");
+        create_global_notification(
+            state,
+            "Workspace Switch Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
     }
 }
 
@@ -7924,6 +7930,43 @@ mod tests {
         assert!(model.list_notifications().iter().any(|notification| {
             notification.title == "Close Pane Failed" && notification.body.contains("spawn failed")
         }));
+    }
+
+    #[test]
+    fn focus_workspace_reports_spawn_failure_from_popover_path() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(SecondSpawnFailsBackend::default());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (first_workspace_id, second_surface_id) = {
+            let mut model = model.lock().unwrap();
+            let first = model.create_workspace("first", &project_cwd);
+            let second = model.create_workspace("second", &project_cwd);
+            (first.id, second.focused_surface_id)
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        focus_workspace(&state, &first_workspace_id);
+
+        let model = model.lock().unwrap();
+        assert_eq!(
+            model.active_workspace_id().as_deref(),
+            Some(first_workspace_id.as_str())
+        );
+        assert!(model.list_notifications().iter().any(|notification| {
+            notification.title == "Workspace Switch Failed"
+                && notification.body.contains("spawn failed")
+        }));
+        let backend_surfaces = terminal.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, second_surface_id);
     }
 
     #[test]
