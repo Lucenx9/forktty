@@ -1055,7 +1055,19 @@ function worktreeParams(
   if (positionals.length > 0 && !positionalName) {
     throw new Error("worktree command requires a branch or worktree name");
   }
-  const name = positionalName || options.name || options.branch;
+  const optionName = typeof options.name === "string" && options.name.trim()
+    ? options.name.trim()
+    : "";
+  const optionBranch = typeof options.branch === "string" && options.branch.trim()
+    ? options.branch.trim()
+    : "";
+  if (positionalName && (optionName || optionBranch)) {
+    throw new Error(`${commandName}: cannot combine a positional name with --name or --branch`);
+  }
+  if (optionName && optionBranch) {
+    throw new Error(`${commandName}: cannot combine --name and --branch`);
+  }
+  const name = positionalName || optionName || optionBranch;
   if (requireName && (!name || typeof name !== "string")) {
     throw new Error("worktree command requires a branch or worktree name");
   }

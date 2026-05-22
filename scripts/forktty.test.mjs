@@ -993,6 +993,30 @@ describe("forktty CLI helpers", () => {
       /--branch requires a value/,
     );
     assert.throws(
+      () =>
+        worktreeParams(
+          { branch: "feature/y" },
+          ["feature/x"],
+          true,
+          { PWD: "/repo/current" },
+          process.cwd(),
+          "worktree-create",
+        ),
+      /worktree-create: cannot combine a positional name with --name or --branch/,
+    );
+    assert.throws(
+      () =>
+        worktreeParams(
+          { name: "feature/x", branch: "feature/y" },
+          [],
+          true,
+          { PWD: "/repo/current" },
+          process.cwd(),
+          "worktree-create",
+        ),
+      /worktree-create: cannot combine --name and --branch/,
+    );
+    assert.throws(
       () => worktreeParams({ cw: "/repo/current" }, ["feature/x"], true, {}),
       /worktree command: unknown option --cw/,
     );
