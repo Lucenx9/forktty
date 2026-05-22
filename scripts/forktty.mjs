@@ -1493,6 +1493,12 @@ function isForkttyManagedEntry(entry) {
   return isObject(entry) && entry.forkttySource === FORKTTY_HOOK_TAG;
 }
 
+function isLegacyForkttyHookCommand(command, scriptPath, agent, event) {
+  if (typeof command !== "string") return false;
+  const scriptRef = shellQuote(scriptPath);
+  return command.includes(` ${scriptRef} hooks ${agent} ${event}`);
+}
+
 function deepCloneJson(value) {
   return value === undefined ? {} : JSON.parse(JSON.stringify(value));
 }
@@ -1519,12 +1525,17 @@ function mergeHookConfig(existingConfig, agent, scriptPath, nodePath = process.e
     // about to write (legacy untagged installs).
     const filtered = existingEntries.filter((entry) => {
       if (isForkttyManagedEntry(entry)) return false;
-      if (
-        isObject(entry) &&
-        Array.isArray(entry.hooks) &&
-        entry.hooks.some((hook) => hook?.type === "command" && hook.command === command)
-      ) {
-        return false;
+      if (isObject(entry) && Array.isArray(entry.hooks)) {
+        const hasMatchingCommand = entry.hooks.some((hook) => {
+          if (hook?.type !== "command") return false;
+          return (
+            hook.command === command ||
+            isLegacyForkttyHookCommand(hook.command, scriptPath, agent, hookEventName)
+          );
+        });
+        if (hasMatchingCommand) {
+          return false;
+        }
       }
       return true;
     });
