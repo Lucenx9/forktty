@@ -13,6 +13,7 @@ const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SPAWN_RETRIES: usize = 5;
 const HOOK_SPAWN_RETRY_DELAY: Duration = Duration::from_millis(25);
 const WORKTREE_HEAD_MAX_BYTES: u64 = 4096;
+const MAX_EXCLUDE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Error, Debug)]
 pub enum WorktreeError {
@@ -671,16 +672,40 @@ fn ensure_local_exclude_for_worktree_path(
     }
 
     let exclude_path = repo.path().join("info").join("exclude");
-    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
-    if existing
-        .lines()
-        .map(str::trim)
-        .any(|line| line == ".worktrees/" || line == "/.worktrees/")
-    {
-        return Ok(());
-    }
     if let Some(parent) = exclude_path.parent() {
         std::fs::create_dir_all(parent)?;
+    }
+    let mut existing = String::new();
+    if exclude_path.exists() {
+        let metadata = std::fs::symlink_metadata(&exclude_path)?;
+        if !metadata.file_type().is_file() {
+            return Err(WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ".git/info/exclude must be a regular file",
+            )));
+        }
+        if metadata.len() > MAX_EXCLUDE_BYTES {
+            return Err(WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ".git/info/exclude is too large",
+            )));
+        }
+        File::open(&exclude_path)?
+            .take(MAX_EXCLUDE_BYTES + 1)
+            .read_to_string(&mut existing)?;
+        if existing.len() as u64 > MAX_EXCLUDE_BYTES {
+            return Err(WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ".git/info/exclude is too large",
+            )));
+        }
+        if existing
+            .lines()
+            .map(str::trim)
+            .any(|line| line == ".worktrees/" || line == "/.worktrees/")
+        {
+            return Ok(());
+        }
     }
     let mut file = OpenOptions::new()
         .create(true)
@@ -927,6 +952,50 @@ mod tests {
         symlink(&target, &head_path).unwrap();
 
         assert_eq!(read_registered_head_ref(&head_path), None);
+    }
+
+    #[test]
+    fn local_exclude_rejects_oversized_file() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        fs::write(&exclude_path, "x".repeat(MAX_EXCLUDE_BYTES as usize + 1)).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_exclude_rejects_symlink() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        let outside = dir.path().join("outside-exclude");
+        fs::write(&outside, "# outside\n").unwrap();
+        fs::remove_file(&exclude_path).unwrap();
+        symlink(&outside, &exclude_path).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
     }
 
     #[test]
