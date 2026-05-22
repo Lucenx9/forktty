@@ -63,6 +63,7 @@ rebuilding.
 - `./scripts/forktty.mjs ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
 - `./scripts/forktty.mjs clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
+- `forktty create-workspace --workingdir /tmp` — exits with `create-workspace: unknown option --workingdir` instead of opening a workspace in the default directory.
 - `forktty surfaces --workspace-name main` — returns only surfaces for the `main` workspace.
 - `./scripts/forktty.mjs focus " "` — exits with `workspace selector requires a value` before contacting the socket.
 - `forktty notify --title "hi" --body "test"` — notification appears in the sidebar.

@@ -354,6 +354,10 @@ describe("forktty CLI helpers", () => {
       () => buildCreateWorkspaceParams({ "working-dir": true }),
       /--working-dir requires a value/,
     );
+    assert.throws(
+      () => buildCreateWorkspaceParams({ workingdir: "/repo/feature" }),
+      /create-workspace: unknown option --workingdir/,
+    );
   });
 
   it("honors -- as the end of command options", () => {

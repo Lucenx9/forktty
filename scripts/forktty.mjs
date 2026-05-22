@@ -49,6 +49,10 @@ const CLEAR_METADATA_OPTION_NAMES = new Set([
   ...TARGET_SELECTOR_OPTION_NAMES,
   "key",
 ]);
+const CREATE_WORKSPACE_OPTION_NAMES = new Set([
+  "name",
+  "working-dir",
+]);
 let fileNonceCounter = 0;
 
 const AGENT_SPECS = {
@@ -644,6 +648,7 @@ function countPaneLeaves(node) {
 }
 
 function buildCreateWorkspaceParams(options) {
+  rejectUnknownOptions(options, CREATE_WORKSPACE_OPTION_NAMES, "create-workspace");
   requireNonBlankStringOption(options, "name");
   requireNonBlankStringOption(options, "working-dir");
   const params = {};
