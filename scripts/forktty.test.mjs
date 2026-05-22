@@ -13,6 +13,9 @@ import {
   buildHookResponse,
   buildHookShellCommand,
   buildHookTargetParams,
+  extractHookCompactTrigger,
+  extractHookSource,
+  extractHookToolError,
   extractHookToolName,
   buildLogParams,
   buildNotificationParams,
@@ -889,6 +892,87 @@ describe("forktty CLI helpers", () => {
     assert.equal(actions[0].params.message, "Claude finished Edit");
   });
 
+  it("creates an error notification when a post-tool payload reports failure", () => {
+    const actions = buildHookActions(
+      "claude",
+      "post-tool",
+      { tool_name: "Bash", tool_response: { is_error: true, output: "boom" } },
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+    );
+
+    assert.equal(actions.length, 2);
+    assert.equal(actions[0].params.level, "error");
+    assert.match(actions[0].params.message, /Bash reported an error/);
+    assert.equal(actions[1].method, "notification.create");
+    assert.equal(actions[1].params.kind, "error");
+    assert.equal(actions[1].params.title, "Claude tool error");
+    assert.match(actions[1].params.body, /Bash/);
+  });
+
+  it("detects tool errors at any payload depth", () => {
+    assert.equal(extractHookToolError({ tool_response: { is_error: true } }), true);
+    assert.equal(extractHookToolError({ result: { error: { message: "bad" } } }), true);
+    assert.equal(extractHookToolError({ tool_response: { is_error: false } }), false);
+    assert.equal(extractHookToolError({}), false);
+    assert.equal(extractHookToolError(null), false);
+  });
+
+  it("resets status to Running when a subagent stops", () => {
+    const actions = buildHookActions(
+      "claude",
+      "subagent-stop",
+      null,
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+      42,
+    );
+
+    assert.equal(actions.length, 2);
+    assert.equal(actions[0].method, "metadata.log");
+    assert.equal(actions[0].params.message, "Claude subagent finished");
+    assert.equal(actions[1].method, "metadata.set_status");
+    assert.equal(actions[1].params.value, "Running");
+    assert.equal(actions[1].params.color, "blue");
+  });
+
+  it("marks Compacting status and creates an info notification on pre-compact", () => {
+    const actions = buildHookActions(
+      "claude",
+      "pre-compact",
+      { trigger: "auto" },
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+      55,
+    );
+
+    assert.equal(actions.length, 3);
+    assert.equal(actions[0].params.level, "warn");
+    assert.match(actions[0].params.message, /context compacting \(auto\)/);
+    assert.equal(actions[1].params.value, "Compacting");
+    assert.equal(actions[1].params.color, "yellow");
+    assert.equal(actions[2].method, "notification.create");
+    assert.equal(actions[2].params.kind, "info");
+    assert.match(actions[2].params.body, /auto/);
+  });
+
+  it("tags session-start log with the source variant", () => {
+    const actions = buildHookActions(
+      "claude",
+      "session-start",
+      { source: "resume" },
+      { FORKTTY_WORKSPACE_ID: "ws-3" },
+    );
+
+    assert.equal(actions[0].params.message, "Claude session started (resume)");
+    assert.equal(extractHookSource({ source: "compact" }), "compact");
+    assert.equal(extractHookSource({}), "");
+  });
+
+  it("extracts compact triggers from common payload shapes", () => {
+    assert.equal(extractHookCompactTrigger({ trigger: "auto" }), "auto");
+    assert.equal(extractHookCompactTrigger({ compactTrigger: "manual" }), "manual");
+    assert.equal(extractHookCompactTrigger({ reason: "context" }), "context");
+    assert.equal(extractHookCompactTrigger({}), "");
+  });
+
   it("returns additionalContext for claude session-start responses", () => {
     const response = buildHookResponse("claude", "session-start", {
       FORKTTY_WORKSPACE_ID: "ws-4",
@@ -1696,10 +1780,16 @@ describe("hook installer", () => {
     );
     assert.ok(written.hooks?.PreToolUse?.length, "PreToolUse hook installed");
     assert.ok(written.hooks?.PostToolUse?.length, "PostToolUse hook installed");
+    assert.ok(written.hooks?.SubagentStop?.length, "SubagentStop hook installed");
+    assert.ok(written.hooks?.PreCompact?.length, "PreCompact hook installed");
     const preCommand = written.hooks.PreToolUse[0].hooks[0].command;
     assert.match(preCommand, /hooks claude pre-tool/);
     const postCommand = written.hooks.PostToolUse[0].hooks[0].command;
     assert.match(postCommand, /hooks claude post-tool/);
+    const subagentCommand = written.hooks.SubagentStop[0].hooks[0].command;
+    assert.match(subagentCommand, /hooks claude subagent-stop/);
+    const compactCommand = written.hooks.PreCompact[0].hooks[0].command;
+    assert.match(compactCommand, /hooks claude pre-compact/);
   });
 
   it("deduplicates repeated hook setup agent names", async () => {

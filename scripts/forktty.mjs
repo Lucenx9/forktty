@@ -19,12 +19,14 @@ const HOOK_TEST_STATUS_KEY_SUFFIX = "hook-test";
 const SUPPORTED_HOOK_EVENTS = new Set([
   "notification",
   "post-tool",
+  "pre-compact",
   "pre-tool",
   "prompt-submit",
   "session-end",
   "session-start",
   "stop",
   "stop-failure",
+  "subagent-stop",
 ]);
 const HOOK_TOOL_LABEL_MAX = 48;
 const VALID_NOTIFICATION_KINDS = new Set(["prompt", "error", "info", "custom"]);
@@ -120,6 +122,8 @@ const AGENT_SPECS = {
       ["UserPromptSubmit", "prompt-submit", 5],
       ["PreToolUse", "pre-tool", 5],
       ["PostToolUse", "post-tool", 5],
+      ["SubagentStop", "subagent-stop", 5],
+      ["PreCompact", "pre-compact", 5],
       ["Stop", "stop", 5],
       ["Notification", "notification", 5],
       ["SessionEnd", "session-end", 5],
@@ -1907,6 +1911,44 @@ function extractFirstStringLikeValue(payload, keys) {
   return "";
 }
 
+function extractHookSource(payload) {
+  const raw = extractFirstStringLikeValue(payload, ["source", "trigger", "reason"]);
+  if (!raw) return "";
+  return sanitizeForTerminal(raw).slice(0, 32);
+}
+
+function extractHookCompactTrigger(payload) {
+  const raw = extractFirstStringLikeValue(payload, [
+    "trigger",
+    "compact_trigger",
+    "compactTrigger",
+    "reason",
+  ]);
+  if (!raw) return "";
+  return sanitizeForTerminal(raw).slice(0, 32);
+}
+
+function extractHookToolError(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const queue = [payload];
+  const seen = new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    for (const key of ["is_error", "isError", "error"]) {
+      const value = current[key];
+      if (value === true) return true;
+      if (typeof value === "string" && value.trim().length > 0) return true;
+      if (isObject(value) && (value.message || value.type || value.code)) return true;
+    }
+    for (const value of Object.values(current)) {
+      if (isObject(value)) queue.push(value);
+    }
+  }
+  return false;
+}
+
 function extractHookToolName(payload) {
   const raw = extractFirstStringLikeValue(payload, [
     "tool_name",
@@ -2000,9 +2042,11 @@ function buildHookActions(
   });
 
   switch (eventName) {
-    case "session-start":
+    case "session-start": {
+      const source = extractHookSource(payload);
+      const sourceMsg = source ? ` (${source})` : "";
       return [
-        log("info", `${spec.label} session started`),
+        log("info", `${spec.label} session started${sourceMsg}`),
         {
           method: "metadata.set_status",
           params: addHookEventMetadata(
@@ -2019,6 +2063,7 @@ function buildHookActions(
           ),
         },
       ];
+    }
     case "prompt-submit":
       return [
         log("info", `${spec.label} prompt submitted`),
@@ -2118,8 +2163,79 @@ function buildHookActions(
     }
     case "post-tool": {
       const toolName = extractHookToolName(payload);
+      const isError = extractHookToolError(payload);
+      const labelText = toolName || "tool";
+      const actions = [
+        log(
+          isError ? "error" : "info",
+          isError
+            ? `${spec.label} ${labelText} reported an error`
+            : `${spec.label} finished ${labelText}`,
+        ),
+      ];
+      if (isError) {
+        actions.push({
+          method: "notification.create",
+          params: {
+            ...target,
+            title: `${spec.label} tool error`,
+            body: `${labelText} returned an error response.`,
+            kind: "error",
+          },
+        });
+      }
+      return actions;
+    }
+    case "subagent-stop":
       return [
-        log("info", toolName ? `${spec.label} finished ${toolName}` : `${spec.label} finished tool`),
+        log("info", message || `${spec.label} subagent finished`),
+        {
+          method: "metadata.set_status",
+          params: addHookEventMetadata(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Running",
+              color: "blue",
+            },
+            eventName,
+            payload,
+            hookEventOrder,
+          ),
+        },
+      ];
+    case "pre-compact": {
+      const trigger = extractHookCompactTrigger(payload);
+      const triggerMsg = trigger ? ` (${trigger})` : "";
+      return [
+        log("warn", `${spec.label} context compacting${triggerMsg}`),
+        {
+          method: "metadata.set_status",
+          params: addHookEventMetadata(
+            {
+              ...target,
+              key,
+              label: spec.label,
+              value: "Compacting",
+              color: "yellow",
+            },
+            eventName,
+            payload,
+            hookEventOrder,
+          ),
+        },
+        {
+          method: "notification.create",
+          params: {
+            ...target,
+            title: `${spec.label} compacting context`,
+            body: trigger
+              ? `Context compaction triggered: ${trigger}.`
+              : "Context compaction in progress.",
+            kind: "info",
+          },
+        },
       ];
     }
     case "stop":
@@ -2840,6 +2956,9 @@ export {
   buildHookResponse,
   buildHookShellCommand,
   buildHookTargetParams,
+  extractHookCompactTrigger,
+  extractHookSource,
+  extractHookToolError,
   extractHookToolName,
   buildLogParams,
   buildNotificationParams,
