@@ -265,39 +265,88 @@ impl WorkspaceModel {
 
     pub fn repair_session_invariants(&mut self) -> bool {
         let mut changed = false;
-        let mut valid_surface_ids = BTreeSet::new();
+        let mut valid_surface_ids: BTreeSet<SurfaceId> = BTreeSet::new();
         let workspace_ids = self.workspace_order.clone();
 
-        for workspace_id in workspace_ids {
-            let Some(workspace) = self.workspaces.get_mut(&workspace_id) else {
-                continue;
-            };
-            self.next_workspace = self.next_workspace.max(numeric_suffix(&workspace.id));
-            let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
-            for surface_id in &leaf_ids {
-                valid_surface_ids.insert(surface_id.clone());
-                self.next_surface = self.next_surface.max(numeric_suffix(surface_id));
-            }
-            if !leaf_ids.contains(&workspace.focused_surface_id) {
-                if let Some(first_leaf) = leaf_ids.first() {
-                    workspace.focused_surface_id = first_leaf.clone();
-                    changed = true;
+        // First pass: bump monotonic counters past every id present in the
+        // model, so subsequent rename allocations in the second pass cannot
+        // collide with a yet-unvisited workspace.
+        for workspace_id in &workspace_ids {
+            if let Some(workspace) = self.workspaces.get(workspace_id) {
+                self.next_workspace = self.next_workspace.max(numeric_suffix(&workspace.id));
+                for surface_id in leaf_surface_ids(&workspace.pane_tree) {
+                    self.next_surface = self.next_surface.max(numeric_suffix(&surface_id));
                 }
             }
+        }
+
+        for workspace_id in workspace_ids {
+            if !self.workspaces.contains_key(&workspace_id) {
+                continue;
+            }
+            let leaf_ids = leaf_surface_ids(&self.workspaces[&workspace_id].pane_tree);
+            // Detect duplicate leaf ids that already appear in an earlier
+            // workspace and assign fresh ids before they collide in the
+            // surface map.
+            let mut renames: Vec<(SurfaceId, SurfaceId)> = Vec::new();
+            let mut canonical_leaf_ids: Vec<SurfaceId> = Vec::with_capacity(leaf_ids.len());
             for surface_id in leaf_ids {
-                if !self.surfaces.contains_key(&surface_id) {
-                    self.surfaces.insert(
-                        surface_id.clone(),
-                        Surface {
-                            id: surface_id,
-                            workspace_id: workspace.id.clone(),
-                            cwd: workspace.working_dir.clone(),
-                            title: String::from("shell"),
-                            unread: false,
-                            needs_attention: false,
-                        },
-                    );
+                if valid_surface_ids.contains(&surface_id) {
+                    let new_id = self.next_surface_id();
+                    renames.push((surface_id.clone(), new_id.clone()));
+                    canonical_leaf_ids.push(new_id);
                     changed = true;
+                } else {
+                    canonical_leaf_ids.push(surface_id);
+                }
+            }
+
+            {
+                let workspace = self
+                    .workspaces
+                    .get_mut(&workspace_id)
+                    .expect("workspace presence verified above");
+                for (old_id, new_id) in &renames {
+                    rename_leaf(&mut workspace.pane_tree, old_id, new_id);
+                    if workspace.focused_surface_id == *old_id {
+                        workspace.focused_surface_id = new_id.clone();
+                    }
+                }
+                if !canonical_leaf_ids.contains(&workspace.focused_surface_id) {
+                    if let Some(first_leaf) = canonical_leaf_ids.first() {
+                        workspace.focused_surface_id = first_leaf.clone();
+                        changed = true;
+                    }
+                }
+            }
+
+            let (workspace_id_owned, working_dir) = {
+                let workspace = &self.workspaces[&workspace_id];
+                (workspace.id.clone(), workspace.working_dir.clone())
+            };
+            for surface_id in &canonical_leaf_ids {
+                valid_surface_ids.insert(surface_id.clone());
+                match self.surfaces.get_mut(surface_id) {
+                    Some(existing) => {
+                        if existing.workspace_id != workspace_id_owned {
+                            existing.workspace_id = workspace_id_owned.clone();
+                            changed = true;
+                        }
+                    }
+                    None => {
+                        self.surfaces.insert(
+                            surface_id.clone(),
+                            Surface {
+                                id: surface_id.clone(),
+                                workspace_id: workspace_id_owned.clone(),
+                                cwd: working_dir.clone(),
+                                title: String::from("shell"),
+                                unread: false,
+                                needs_attention: false,
+                            },
+                        );
+                        changed = true;
+                    }
                 }
             }
         }
@@ -1029,6 +1078,24 @@ fn apply_partition_ratio(sizes: &mut [f64], split_at: usize, ratio: f64) {
             } else {
                 scale_right
             };
+        }
+    }
+}
+
+fn rename_leaf(node: &mut PaneNode, old_id: &str, new_id: &str) -> bool {
+    match node {
+        PaneNode::Leaf { surface_id } if surface_id == old_id => {
+            *surface_id = new_id.to_string();
+            true
+        }
+        PaneNode::Leaf { .. } => false,
+        PaneNode::Split { children, .. } => {
+            for child in children {
+                if rename_leaf(child, old_id, new_id) {
+                    return true;
+                }
+            }
+            false
         }
     }
 }
@@ -1875,6 +1942,58 @@ mod tests {
             model.workspace_id_for(WorkspaceSelector::WorktreeName("missing")),
             None
         );
+    }
+
+    #[test]
+    fn repair_session_invariants_renames_duplicate_leaf_ids_across_workspaces() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("first", "/tmp/a");
+        let second = model.create_workspace("second", "/tmp/b");
+        // Force both workspaces to reference the same leaf surface id.
+        let shared_id = first.focused_surface_id.clone();
+        {
+            let workspace = model.workspaces.get_mut(&second.id).unwrap();
+            workspace.pane_tree = PaneNode::Leaf {
+                surface_id: shared_id.clone(),
+            };
+            workspace.focused_surface_id = shared_id.clone();
+        }
+        model.surfaces.insert(
+            shared_id.clone(),
+            Surface {
+                id: shared_id.clone(),
+                workspace_id: second.id.clone(),
+                cwd: PathBuf::from("/tmp/b"),
+                title: String::from("shell"),
+                unread: false,
+                needs_attention: false,
+            },
+        );
+
+        assert!(model.repair_session_invariants());
+
+        let first_after = model.workspaces.get(&first.id).unwrap().clone();
+        let second_after = model.workspaces.get(&second.id).unwrap().clone();
+        let first_leaves = leaf_surface_ids(&first_after.pane_tree);
+        let second_leaves = leaf_surface_ids(&second_after.pane_tree);
+        assert_eq!(first_leaves.len(), 1);
+        assert_eq!(second_leaves.len(), 1);
+        assert_ne!(
+            first_leaves[0], second_leaves[0],
+            "duplicate leaf ids must be split between workspaces"
+        );
+        assert_eq!(first_after.focused_surface_id, first_leaves[0]);
+        assert_eq!(second_after.focused_surface_id, second_leaves[0]);
+        // Both surfaces should now resolve back to their owning workspace.
+        assert_eq!(
+            model.surface(&first_leaves[0]).unwrap().workspace_id,
+            first.id
+        );
+        assert_eq!(
+            model.surface(&second_leaves[0]).unwrap().workspace_id,
+            second.id
+        );
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]
