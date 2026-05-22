@@ -6015,33 +6015,83 @@ fn close_workspace_by_worktree_name(
     worktree_name: &str,
     fallback_path: PathBuf,
 ) -> Result<(), TerminalError> {
-    let (workspace_id, surface_ids) = {
+    let (workspace, surface_ids, is_last_workspace) = {
         let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return Err(TerminalError::LockPoisoned),
         };
-        let workspace_id = model
+        let workspace = model
             .list_workspaces()
             .into_iter()
-            .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name))
-            .map(|workspace| workspace.id);
-        let Some(workspace_id) = workspace_id else {
+            .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name));
+        let Some(workspace) = workspace else {
             return Ok(());
         };
         let surface_ids = model
-            .list_surfaces(Some(&workspace_id))
+            .list_surfaces(Some(&workspace.id))
             .into_iter()
             .map(|surface| surface.id)
             .collect::<Vec<_>>();
-        (workspace_id, surface_ids)
+        let is_last_workspace = model.list_workspaces().len() == 1;
+        (workspace, surface_ids, is_last_workspace)
     };
+    if is_last_workspace {
+        let (replacement, previous_active_id) = {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return Err(TerminalError::LockPoisoned),
+            };
+            let previous_active_id = model.active_workspace_id();
+            (
+                model.create_workspace("main", fallback_path.clone()),
+                previous_active_id,
+            )
+        };
+        if let Err(err) = spawn_workspace_terminal_gtk(state, &replacement) {
+            let mut err = err;
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                err = TerminalError::Backend(format!(
+                    "{err}; workspace rollback failed: {rollback_err}"
+                ));
+            }
+            return Err(err);
+        }
+        if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
+            let mut err = err;
+            if let Err(cleanup_err) =
+                forget_terminal_surface_gtk(state, &replacement.focused_surface_id)
+            {
+                err = TerminalError::Backend(format!(
+                    "{err}; replacement cleanup failed: {cleanup_err}"
+                ));
+            }
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                err = TerminalError::Backend(format!(
+                    "{err}; workspace rollback failed: {rollback_err}"
+                ));
+            }
+            return Err(err);
+        }
+        {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return Err(TerminalError::LockPoisoned),
+            };
+            let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+        }
+        return Ok(());
+    }
     close_terminal_surfaces(state, &surface_ids)?;
     {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return Err(TerminalError::LockPoisoned),
         };
-        let _ = model.close_workspace(WorkspaceSelector::Id(&workspace_id));
+        let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
         if model.list_workspaces().is_empty() {
             model.create_workspace("main", fallback_path);
         }
@@ -7926,6 +7976,55 @@ mod tests {
             .unwrap()
             .iter()
             .any(|surface| surface.surface_id == surface_id));
+    }
+
+    #[test]
+    fn close_last_worktree_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("feature/gtk-remove-spawn-{}", std::process::id());
+        let info =
+            worktree::create(repo_dir.path().to_str().unwrap(), &branch_name, "nested").unwrap();
+        let worktree_cwd = PathBuf::from(&info.path);
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(SecondSpawnFailsBackend::default());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_worktree_workspace(
+                &info.branch,
+                &worktree_cwd,
+                &info.branch,
+                &info.worktree_name,
+            );
+            (workspace.id, workspace.focused_surface_id)
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        worktree::remove(repo_dir.path().to_str().unwrap(), &branch_name, false).unwrap();
+        let error =
+            close_workspace_by_worktree_name(&state, &info.worktree_name, repo_dir.path().into())
+                .unwrap_err()
+                .to_string();
+
+        assert!(error.contains("spawn failed"), "{error}");
+        let model = model.lock().unwrap();
+        let workspaces = model.list_workspaces();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].id, workspace_id);
+        assert!(workspaces[0].active);
+        assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+        let backend_surfaces = terminal.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, surface_id);
+        assert!(worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
