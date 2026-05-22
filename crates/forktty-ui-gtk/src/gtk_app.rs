@@ -3061,8 +3061,15 @@ fn build_ui(app: &adw::Application) {
     brand_logo.add_css_class("app-brand-logo");
     let brand_name = gtk::Label::builder().label("forktty").xalign(0.0).build();
     brand_name.add_css_class("app-brand-name");
+    let brand_alpha = gtk::Label::builder()
+        .label("\u{2022} ALPHA")
+        .valign(gtk::Align::Center)
+        .build();
+    brand_alpha.add_css_class("app-brand-tag");
+    brand_alpha.set_tooltip_text(Some("Pre-release build"));
     brand.append(&brand_logo);
     brand.append(&brand_name);
+    brand.append(&brand_alpha);
     let brand_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     brand_separator.add_css_class("header-action-separator");
     header.pack_start(&brand);

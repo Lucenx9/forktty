@@ -109,6 +109,21 @@ window {
   font-weight: 700;
 }
 
+/* Pre-release tag chip beside the brand name. Dot + ALPHA in a compact
+ * pill so it reads as a build marker, not a noisy accent. */
+.app-brand-tag {
+  margin-left: 6px;
+  padding: 0 8px;
+  min-height: 18px;
+  border-radius: 999px;
+  background: alpha(var(--window-fg-color), 0.08);
+  color: var(--ft-text-muted);
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .app-header-title-spacer {
   min-width: 1px;
 }
