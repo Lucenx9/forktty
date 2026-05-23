@@ -1765,19 +1765,41 @@ fn inspect_existing_socket(path: &Path) -> ExistingSocketOccupant {
     }
 }
 
+// Cap how much the probe will buffer from a foreign socket while waiting for
+// a newline. A genuine ForkTTY pong response is ~50 bytes; anything dramatically
+// larger almost certainly comes from an unrelated peer that bound to our path,
+// and we don't want to grow the response buffer indefinitely while the timeout
+// drains.
+const PROBE_RESPONSE_MAX_BYTES: usize = 4096;
+
 fn probe_forktty_socket(mut stream: StdUnixStream) -> io::Result<bool> {
-    use std::io::{BufRead, BufReader as StdBufReader, Write};
+    use std::io::{Read, Write};
     stream.set_read_timeout(Some(SOCKET_PROBE_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_PROBE_TIMEOUT))?;
     stream.write_all(br#"{"id":"probe","method":"system.ping","params":{}}"#)?;
     stream.write_all(b"\n")?;
     stream.flush()?;
-    let mut reader = StdBufReader::new(stream);
-    let mut response = String::new();
-    if reader.read_line(&mut response)? == 0 {
+    let mut response = Vec::with_capacity(256);
+    let mut buf = [0u8; 256];
+    loop {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        let chunk = &buf[..n];
+        if let Some(pos) = chunk.iter().position(|&b| b == b'\n') {
+            response.extend_from_slice(&chunk[..pos]);
+            break;
+        }
+        if response.len().saturating_add(n) > PROBE_RESPONSE_MAX_BYTES {
+            return Ok(false);
+        }
+        response.extend_from_slice(chunk);
+    }
+    if response.is_empty() {
         return Ok(false);
     }
-    let value: Value = serde_json::from_str(response.trim_end())
+    let value: Value = serde_json::from_slice(&response)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     Ok(value.get("id").and_then(Value::as_str) == Some("probe")
         && value.get("ok").and_then(Value::as_bool) == Some(true)
@@ -2224,6 +2246,26 @@ mod tests {
         assert!(!probe_socket_with_response(
             r#"{"id":"other","ok":true,"result":"pong"}"#
         ));
+    }
+
+    #[test]
+    fn probe_rejects_oversized_response_without_newline() {
+        use std::io::{BufRead as _, Write as _};
+
+        let (client, server) = StdUnixStream::pair().unwrap();
+        let server_thread = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(server);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            let mut server = reader.into_inner();
+            let payload = vec![b'x'; PROBE_RESPONSE_MAX_BYTES * 2];
+            let _ = server.write_all(&payload);
+            let _ = server.flush();
+        });
+
+        let result = probe_forktty_socket(client).unwrap();
+        let _ = server_thread.join();
+        assert!(!result);
     }
 
     #[test]
