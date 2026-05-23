@@ -481,6 +481,30 @@ fn read_registered_head_ref(head_path: &Path) -> Option<String> {
     Some(head)
 }
 
+fn read_linked_worktree_git_file(path: &Path) -> std::io::Result<String> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "linked .git pointer is not a regular file",
+        ));
+    }
+    if metadata.len() > WORKTREE_HEAD_MAX_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "linked .git pointer is {} bytes, exceeds {WORKTREE_HEAD_MAX_BYTES} byte limit",
+                metadata.len()
+            ),
+        ));
+    }
+    let mut contents = String::new();
+    File::open(path)?
+        .take(WORKTREE_HEAD_MAX_BYTES)
+        .read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
 fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
     if repo.find_worktree(selector).is_ok() {
         return Ok(selector.to_string());
@@ -536,7 +560,7 @@ fn verify_linked_worktree_path(
         }
     })?;
     let git_file = canonical_worktree.join(".git");
-    let git_file_contents = std::fs::read_to_string(&git_file).map_err(|err| {
+    let git_file_contents = read_linked_worktree_git_file(&git_file).map_err(|err| {
         WorktreeError::LinkedMetadataUnreadable {
             name: worktree_name.to_string(),
             source: err,
@@ -1143,6 +1167,26 @@ mod tests {
         assert!(matches!(
             result,
             Err(WorktreeError::WorktreeMetadataMismatch { .. })
+        ));
+        assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn remove_rejects_oversize_linked_git_pointer() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "oversize-git", "nested").unwrap();
+        // Overwrite the linked .git pointer with more bytes than the bounded
+        // reader will accept. The remove path must surface that as an
+        // unreadable-metadata error rather than buffering the file in full.
+        let huge = "gitdir: /tmp\n".repeat((WORKTREE_HEAD_MAX_BYTES as usize / 13) + 16);
+        assert!(huge.len() as u64 > WORKTREE_HEAD_MAX_BYTES);
+        fs::write(Path::new(&info.path).join(".git"), &huge).unwrap();
+
+        let result = remove(dir.path().to_str().unwrap(), "oversize-git", true);
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::LinkedMetadataUnreadable { .. })
         ));
         assert!(Path::new(&info.path).exists());
     }
