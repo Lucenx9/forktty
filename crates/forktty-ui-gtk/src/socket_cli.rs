@@ -19,6 +19,7 @@ const HOOK_TOOL_LABEL_MAX: usize = 48;
 const HOOK_TOKEN_CEILING_DEFAULT: u64 = 200_000;
 const FORKTTY_HOOK_TAG: &str = "forktty";
 const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+const MAX_STDIN_TEXT_BYTES: usize = 1_048_576;
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -699,9 +700,23 @@ fn read_stdin_text() -> CliResult<String> {
     if stdin.is_terminal() {
         return Ok(String::new());
     }
-    let mut text = String::new();
-    stdin.read_to_string(&mut text)?;
-    Ok(text)
+    read_text_from_reader(&mut stdin, MAX_STDIN_TEXT_BYTES, "stdin")
+}
+
+fn read_text_from_reader(
+    reader: &mut impl Read,
+    max_bytes: usize,
+    source: &str,
+) -> CliResult<String> {
+    let mut bytes = Vec::new();
+    let mut limited = reader.take(max_bytes as u64 + 1);
+    limited.read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(CliError::new(format!(
+            "{source} exceeds {max_bytes} byte limit"
+        )));
+    }
+    String::from_utf8(bytes).map_err(|err| CliError::new(err.to_string()))
 }
 
 fn read_optional_stdin_json() -> CliResult<Value> {
@@ -2639,7 +2654,19 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         return Ok(());
     }
 
-    let payload = read_optional_stdin_json().unwrap_or(Value::Null);
+    let payload = match read_optional_stdin_json() {
+        Ok(payload) => payload,
+        Err(err) => {
+            eprintln!(
+                "{}",
+                sanitize_for_terminal(&format!(
+                    "ForkTTY hook warning: failed to read hook stdin: {}",
+                    err.message
+                ))
+            );
+            Value::Null
+        }
+    };
     let order = next_hook_event_order();
     let actions = build_hook_actions(spec, &event, &payload, &order);
     hook_debug(
@@ -3926,6 +3953,21 @@ mod tests {
         assert_err_contains(
             build_target_params(&selectors, "set-progress"),
             "set-progress: cannot combine --workspace-id and --workspace-name",
+        );
+    }
+
+    #[test]
+    fn stdin_reader_rejects_oversized_text() {
+        let mut accepted = std::io::Cursor::new(b"abc".to_vec());
+        assert_eq!(
+            read_text_from_reader(&mut accepted, 3, "stdin").unwrap(),
+            "abc"
+        );
+
+        let mut oversized = std::io::Cursor::new(b"abcd".to_vec());
+        assert_err_contains(
+            read_text_from_reader(&mut oversized, 3, "stdin"),
+            "stdin exceeds 3 byte limit",
         );
     }
 
