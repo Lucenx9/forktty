@@ -28,7 +28,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -3465,6 +3467,19 @@ fn build_ui(app: &adw::Application) {
         refresh_listening_ports(&controller_for_ports);
         glib::ControlFlow::Continue
     });
+    let pr_model = state.model.clone();
+    let pr_in_flight = Arc::new(AtomicBool::new(false));
+    let alive_for_pr_timer = ui_alive.clone();
+    // Resolve PRs once at startup, then poll on a slow cadence; each run is
+    // guarded so a slow `gh` call cannot pile up overlapping threads.
+    spawn_pr_refresh(pr_model.clone(), pr_in_flight.clone());
+    glib::timeout_add_local(Duration::from_secs(30), move || {
+        if !alive_for_pr_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        spawn_pr_refresh(pr_model.clone(), pr_in_flight.clone());
+        glib::ControlFlow::Continue
+    });
     install_session_autosave(&state);
 
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
@@ -3757,6 +3772,53 @@ fn refresh_listening_ports(controller: &Rc<RefCell<VteController>>) {
         };
         model.set_listening_ports(&workspace.id, ports);
     }
+}
+
+/// Kick off a background PR refresh unless one is already running.
+fn spawn_pr_refresh(model: Arc<Mutex<WorkspaceModel>>, in_flight: Arc<AtomicBool>) {
+    if in_flight.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        refresh_pull_requests(model);
+        in_flight.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Resolve each workspace's linked PR via `gh`, writing results into the shared
+/// model. `gh` makes a network call, so this runs on a worker thread, never the
+/// GTK main loop.
+fn refresh_pull_requests(model: Arc<Mutex<WorkspaceModel>>) {
+    let targets: Vec<(String, PathBuf)> = match model.lock() {
+        Ok(model) => model
+            .list_workspaces()
+            .into_iter()
+            .map(|workspace| (workspace.id, workspace.working_dir))
+            .collect(),
+        Err(_) => return,
+    };
+    for (workspace_id, working_dir) in targets {
+        let pr = resolve_pr(&working_dir);
+        if let Ok(mut model) = model.lock() {
+            model.set_pr(&workspace_id, pr);
+        }
+    }
+}
+
+/// Run `gh pr view` in `dir` and parse the result. Returns `None` when there is
+/// no PR for the checked-out branch, `gh` is absent, or `dir` is not a GitHub
+/// checkout.
+fn resolve_pr(dir: &Path) -> Option<forktty_core::pr::PrInfo> {
+    let output = Command::new("gh")
+        .args(["pr", "view", "--json", "number,state,isDraft,url"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    forktty_core::pr::parse_pr_view(&stdout)
 }
 
 fn install_session_autosave(state: &SocketAppState) {
@@ -4559,6 +4621,9 @@ fn workspace_meta_line(workspace: &forktty_core::Workspace) -> String {
         if !worktree.trim().is_empty() {
             parts.push(format!("wt:{worktree}"));
         }
+    }
+    if let Some(pr) = workspace.pr.as_ref() {
+        parts.push(pr.summary());
     }
     parts.push(compact_path(&workspace.working_dir));
     if !workspace.listening_ports.is_empty() {

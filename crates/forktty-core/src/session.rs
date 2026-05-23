@@ -278,6 +278,7 @@ fn migrate_legacy_session(legacy: LegacySessionData) -> Result<SessionData, Sess
             focused_surface_id,
             needs_attention: false,
             listening_ports: Vec::new(),
+            pr: None,
         });
     }
 

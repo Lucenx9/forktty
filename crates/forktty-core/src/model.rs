@@ -29,6 +29,10 @@ pub struct Workspace {
     /// Runtime-only: recomputed each refresh, never persisted to a session.
     #[serde(default, skip_serializing)]
     pub listening_ports: Vec<u16>,
+    /// Pull request linked to this workspace's branch, resolved via `gh`.
+    /// Runtime-only: refreshed in the background, never persisted to a session.
+    #[serde(default, skip_serializing)]
+    pub pr: Option<crate::pr::PrInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -198,6 +202,7 @@ impl WorkspaceModel {
             focused_surface_id: surface_id,
             needs_attention: false,
             listening_ports: Vec::new(),
+            pr: None,
         };
         self.surfaces.insert(surface.id.clone(), surface);
         self.workspace_order.push(id.clone());
@@ -671,6 +676,19 @@ impl WorkspaceModel {
             return false;
         }
         workspace.listening_ports = ports;
+        true
+    }
+
+    /// Replace a workspace's linked-PR hint. Returns `true` when it changed, so
+    /// callers can skip redundant UI refreshes.
+    pub fn set_pr(&mut self, workspace_id: &str, pr: Option<crate::pr::PrInfo>) -> bool {
+        let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+            return false;
+        };
+        if workspace.pr == pr {
+            return false;
+        }
+        workspace.pr = pr;
         true
     }
 
@@ -1457,6 +1475,22 @@ mod tests {
     }
 
     #[test]
+    fn set_pr_reports_change_only_on_difference() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let pr = crate::pr::PrInfo {
+            number: 42,
+            state: crate::pr::PrState::Open,
+            url: "u".to_string(),
+        };
+
+        assert!(model.set_pr(&workspace.id, Some(pr.clone())));
+        assert!(!model.set_pr(&workspace.id, Some(pr)));
+        assert!(model.set_pr(&workspace.id, None));
+        assert!(!model.set_pr("workspace-404", None));
+    }
+
+    #[test]
     fn split_surface_adds_second_surface_and_focuses_it() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -1548,6 +1582,7 @@ mod tests {
             focused_surface_id: "surface-1".to_string(),
             needs_attention: false,
             listening_ports: Vec::new(),
+            pr: None,
         };
         model.workspace_order.push(workspace.id.clone());
         model.workspaces.insert(workspace.id.clone(), workspace);

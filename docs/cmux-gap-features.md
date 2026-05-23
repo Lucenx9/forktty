@@ -16,7 +16,7 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 
 ## 1. Sidebar: PR status + listening ports
 
-- **Impact**: high · **Cost**: low · **Status**: listening ports **done**, PR status new
+- **Impact**: high · **Cost**: low · **Status**: **done** (listening ports + PR status)
 - cmux sidebar rows show git branch, **linked PR status/number**, working directory,
   **listening ports**, and latest notification text.
 - ForkTTY sidebar shows branch/worktree/unread/metadata only.

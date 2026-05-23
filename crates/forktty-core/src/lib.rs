@@ -4,6 +4,7 @@ pub mod config;
 pub mod model;
 pub mod notification;
 pub mod ports;
+pub mod pr;
 pub mod protocol;
 pub mod session;
 pub mod worktree;
