@@ -18,6 +18,7 @@ const HOOK_EVENT_ORDER_PARAM: &str = "hook_event_order";
 const HOOK_TOOL_LABEL_MAX: usize = 48;
 const HOOK_TOKEN_CEILING_DEFAULT: u64 = 200_000;
 const FORKTTY_HOOK_TAG: &str = "forktty";
+const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2175,9 +2176,9 @@ fn read_agent_config(spec: &AgentSpec, path: &Path) -> CliResult<Value> {
 }
 
 fn read_json_file(path: &Path) -> CliResult<Value> {
-    let stat = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => match fs::metadata(path) {
-            Ok(meta) => meta,
+    let file = match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => match File::open(path) {
+            Ok(file) => file,
             // Treat a broken symlink the same as a missing file: the
             // subsequent write replaces the dangling link with a real file.
             // Previously this aborted `hooks setup` with a confusing
@@ -2191,14 +2192,31 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
             }
             Err(err) => return Err(err.into()),
         },
-        Ok(meta) => meta,
+        Ok(_) => File::open(path)?,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
         Err(err) => return Err(err.into()),
     };
+    let stat = file.metadata()?;
     if !stat.is_file() {
         return Err(CliError::new("path exists but is not a regular file"));
     }
-    let text = fs::read_to_string(path)?;
+    if stat.len() > MAX_HOOK_CONFIG_SIZE_BYTES {
+        return Err(CliError::new(format!(
+            "hook config is too large ({} bytes; max {} bytes)",
+            stat.len(),
+            MAX_HOOK_CONFIG_SIZE_BYTES
+        )));
+    }
+    let mut text = String::new();
+    let mut limited = file.take(MAX_HOOK_CONFIG_SIZE_BYTES + 1);
+    limited.read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_HOOK_CONFIG_SIZE_BYTES {
+        return Err(CliError::new(format!(
+            "hook config is too large ({} bytes; max {} bytes)",
+            text.len(),
+            MAX_HOOK_CONFIG_SIZE_BYTES
+        )));
+    }
     if text.trim().is_empty() {
         Ok(json!({}))
     } else {
@@ -4630,6 +4648,17 @@ mod tests {
             "path exists but is not a regular file",
         );
         assert!(directory.is_dir());
+
+        let oversized = dir.path().join("oversized.json");
+        fs::write(
+            &oversized,
+            vec![b' '; MAX_HOOK_CONFIG_SIZE_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert_err_contains(
+            read_agent_config(spec, &oversized),
+            "hook config is too large",
+        );
 
         let broken = dir.path().join("broken.json");
         std::os::unix::fs::symlink(dir.path().join("missing.json"), &broken).unwrap();
