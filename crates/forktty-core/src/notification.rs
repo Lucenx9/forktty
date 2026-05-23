@@ -16,6 +16,7 @@ pub struct NotificationDispatchError {
 /// command per emission, with one OS thread per spawn.
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
+const DESKTOP_ENTRY_ID: &str = "dev.forktty.ForkTTY";
 
 type DedupeKey = (
     NotificationKind,
@@ -96,7 +97,7 @@ fn send_desktop_notification(title: &str, body: &str, play_sound: bool) -> Resul
         use notify_rust::Hint;
 
         notification
-            .hint(Hint::DesktopEntry("forktty".to_string()))
+            .hint(Hint::DesktopEntry(DESKTOP_ENTRY_ID.to_string()))
             .hint(Hint::Category("im.received".to_string()));
 
         if !play_sound {
@@ -167,6 +168,11 @@ fn notification_kind_name(notification: &NotificationItem) -> &'static str {
 mod tests {
     use super::*;
     use crate::{NotificationKind, WorkspaceModel};
+
+    #[test]
+    fn desktop_entry_hint_matches_packaged_desktop_id() {
+        assert_eq!(DESKTOP_ENTRY_ID, "dev.forktty.ForkTTY");
+    }
 
     #[test]
     fn empty_command_is_noop_when_desktop_is_disabled() {
