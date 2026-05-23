@@ -409,7 +409,7 @@ fn parse_global_args(argv: Vec<String>) -> CliResult<GlobalArgs> {
             if next.trim().is_empty() || next.starts_with("--") {
                 return Err(CliError::new("--socket requires a value"));
             }
-            parsed.socket_path = PathBuf::from(next.trim());
+            parsed.socket_path = socket_path_from_argument(next.trim())?;
             parsed.socket_explicit = true;
             index += 2;
             continue;
@@ -419,7 +419,7 @@ fn parse_global_args(argv: Vec<String>) -> CliResult<GlobalArgs> {
             if value.is_empty() {
                 return Err(CliError::new("--socket requires a value"));
             }
-            parsed.socket_path = PathBuf::from(value);
+            parsed.socket_path = socket_path_from_argument(value)?;
             parsed.socket_explicit = true;
             index += 1;
             continue;
@@ -440,6 +440,15 @@ fn parse_global_args(argv: Vec<String>) -> CliResult<GlobalArgs> {
         index += 1;
     }
     Ok(parsed)
+}
+
+fn socket_path_from_argument(value: &str) -> CliResult<PathBuf> {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(CliError::new("--socket requires an absolute path"))
+    }
 }
 
 fn parse_flags(args: Vec<String>, boolean_options: &[&str]) -> ParsedFlags {
@@ -3649,6 +3658,14 @@ mod tests {
                 assert_err_contains(
                     parse_global_args(strings(&["ping", "--socket", "--json"])),
                     "--socket requires a value",
+                );
+                assert_err_contains(
+                    parse_global_args(strings(&["ping", "--socket", "relative.sock"])),
+                    "--socket requires an absolute path",
+                );
+                assert_err_contains(
+                    parse_global_args(strings(&["ping", "--socket=relative.sock"])),
+                    "--socket requires an absolute path",
                 );
             },
         );
