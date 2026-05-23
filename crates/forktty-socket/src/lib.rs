@@ -1665,6 +1665,7 @@ async fn handle_connection(
                 write_response(&mut writer, &response).await?;
                 break;
             }
+            Some(Err(ReadLineError::Io(err))) => return Err(err.into()),
             Some(Ok(line)) => line,
         };
         let request = match serde_json::from_str::<JsonRpcRequest>(&line) {
@@ -1695,10 +1696,11 @@ async fn write_response(
     writer.flush().await
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 enum ReadLineError {
     TooLarge,
     InvalidUtf8,
+    Io(io::Error),
 }
 
 async fn read_limited_line(
@@ -1707,7 +1709,10 @@ async fn read_limited_line(
 ) -> Option<Result<String, ReadLineError>> {
     let mut buf = Vec::with_capacity(4096);
     loop {
-        let available = reader.fill_buf().await.ok()?;
+        let available = match reader.fill_buf().await {
+            Ok(available) => available,
+            Err(err) => return Some(Err(ReadLineError::Io(err))),
+        };
         if available.is_empty() {
             return if buf.is_empty() {
                 None
@@ -4524,10 +4529,47 @@ mod tests {
     async fn limited_line_rejects_oversize() {
         let data = b"abcdef\n";
         let mut reader = BufReader::new(std::io::Cursor::new(data.to_vec()));
-        assert_eq!(
+        assert!(matches!(
             read_limited_line(&mut reader, 3).await,
             Some(Err(ReadLineError::TooLarge))
-        );
+        ));
+    }
+
+    struct FailingAsyncBufRead;
+
+    impl tokio::io::AsyncRead for FailingAsyncBufRead {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            std::task::Poll::Ready(Err(io::Error::other("read failed")))
+        }
+    }
+
+    impl AsyncBufRead for FailingAsyncBufRead {
+        fn poll_fill_buf(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<&[u8]>> {
+            std::task::Poll::Ready(Err(io::Error::other("fill failed")))
+        }
+
+        fn consume(self: std::pin::Pin<&mut Self>, _amt: usize) {}
+    }
+
+    #[tokio::test]
+    async fn limited_line_surfaces_io_errors() {
+        let mut reader = FailingAsyncBufRead;
+        let result = read_limited_line(&mut reader, 3).await;
+
+        match result {
+            Some(Err(ReadLineError::Io(err))) => {
+                assert_eq!(err.kind(), io::ErrorKind::Other);
+                assert_eq!(err.to_string(), "fill failed");
+            }
+            other => panic!("expected read IO error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
