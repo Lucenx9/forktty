@@ -17,7 +17,6 @@ const HOOK_EVENT_CLOCK: &str = "monotonic-ns";
 const HOOK_EVENT_ORDER_PARAM: &str = "hook_event_order";
 const HOOK_TOOL_LABEL_MAX: usize = 48;
 const HOOK_TOKEN_CEILING_DEFAULT: u64 = 200_000;
-const HOOK_PENDING_NOTIFICATION_LIMIT: usize = 10;
 const FORKTTY_HOOK_TAG: &str = "forktty";
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -3006,7 +3005,6 @@ fn build_hook_actions(
 }
 
 struct HookEnrichments {
-    pending_notifications: Vec<Value>,
     token_usage: Option<TokenUsage>,
 }
 
@@ -3019,27 +3017,14 @@ struct TokenUsage {
 }
 
 fn gather_hook_enrichments(
-    context: &CliContext,
+    _context: &CliContext,
     spec: &AgentSpec,
     event: &str,
     payload: &Value,
 ) -> HookEnrichments {
-    let mut enrichments = HookEnrichments {
-        pending_notifications: Vec::new(),
-        token_usage: None,
-    };
+    let mut enrichments = HookEnrichments { token_usage: None };
     if spec.key != "claude" {
         return enrichments;
-    }
-    if matches!(event, "session-start" | "prompt-submit") && should_send_hook_actions(context) {
-        if let Ok(list) = send_socket_request_with_timeout(
-            &context.socket_path,
-            "notification.list",
-            json!({}),
-            HOOK_STATUS_TIMEOUT,
-        ) {
-            enrichments.pending_notifications = filter_pending_notifications(&list);
-        }
     }
     if event == "prompt-submit" {
         if let Some(path) =
@@ -3082,31 +3067,23 @@ fn build_hook_response(
     enrichments: &HookEnrichments,
 ) -> CliResult<Value> {
     if spec.key == "claude" && event == "session-start" {
-        let mut sections = vec![format!(
+        let additional_context = format!(
             "Running inside the ForkTTY terminal. workspace_id={} surface_id={} socket={}. ForkTTY hooks publish status, logs, and notifications to the app for SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SubagentStop, PreCompact, Stop, Notification, and SessionEnd. Inspect state via the `forktty` CLI (notifications, status, workspaces, surfaces, worktrees).",
             trimmed_env("FORKTTY_WORKSPACE_ID").unwrap_or_else(|| "(none)".to_string()),
             trimmed_env("FORKTTY_SURFACE_ID").unwrap_or_else(|| "(none)".to_string()),
             trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
-        )];
-        if let Some(block) = format_pending_notifications_block(&enrichments.pending_notifications)
-        {
-            sections.push(block);
-        }
+        );
         return Ok(json!({
             "continue": true,
             "suppressOutput": false,
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": sections.join("\n\n"),
+                "additionalContext": additional_context,
             }
         }));
     }
     if spec.key == "claude" && event == "prompt-submit" {
         let mut sections = Vec::new();
-        if let Some(block) = format_pending_notifications_block(&enrichments.pending_notifications)
-        {
-            sections.push(block);
-        }
         if let Some(usage) = enrichments.token_usage {
             sections.push(format_token_usage_block(usage));
         }
@@ -3308,64 +3285,6 @@ fn short_hash(value: &str) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
-}
-
-fn filter_pending_notifications(list: &Value) -> Vec<Value> {
-    let workspace_id = trimmed_env("FORKTTY_WORKSPACE_ID");
-    list.as_array()
-        .into_iter()
-        .flatten()
-        .filter(|notification| {
-            !notification
-                .get("read")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-                && !is_agent_self_feedback_notification(notification)
-                && workspace_id.as_ref().is_none_or(|workspace_id| {
-                    notification
-                        .get("workspace_id")
-                        .and_then(Value::as_str)
-                        .filter(|value| !value.is_empty())
-                        .is_none_or(|value| value == workspace_id)
-                })
-        })
-        .cloned()
-        .collect()
-}
-
-fn is_agent_self_feedback_notification(notification: &Value) -> bool {
-    notification.get("kind").and_then(Value::as_str) == Some("prompt")
-        && notification
-            .get("title")
-            .and_then(Value::as_str)
-            .is_some_and(|title| {
-                AGENTS
-                    .iter()
-                    .any(|spec| title.trim() == format!("{} needs input", spec.label))
-            })
-}
-
-fn format_pending_notifications_block(notifications: &[Value]) -> Option<String> {
-    if notifications.is_empty() {
-        return None;
-    }
-    let mut lines = vec!["ForkTTY pending notifications:".to_string()];
-    for notification in notifications.iter().take(HOOK_PENDING_NOTIFICATION_LIMIT) {
-        let kind = string_field(notification, "kind").unwrap_or("info");
-        let title = string_field(notification, "title").unwrap_or("(no title)");
-        let body = string_field(notification, "body")
-            .filter(|body| !body.trim().is_empty())
-            .map(|body| format!(" — {}", body.trim()))
-            .unwrap_or_default();
-        lines.push(format!("  [{kind}] {title}{body}"));
-    }
-    if notifications.len() > HOOK_PENDING_NOTIFICATION_LIMIT {
-        lines.push(format!(
-            "  ...and {} more (use `forktty notifications`).",
-            notifications.len() - HOOK_PENDING_NOTIFICATION_LIMIT
-        ));
-    }
-    Some(lines.join("\n"))
 }
 
 fn read_token_usage_from_transcript(path: &Path) -> Option<TokenUsage> {
@@ -4088,31 +4007,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_notifications_and_token_usage_feed_claude_context() {
-        let list = json!([
-            { "id": "self", "kind": "prompt", "title": "Claude needs input", "read": false, "workspace_id": "ws-A" },
-            { "id": "user", "kind": "info", "title": "Build broke", "body": "exit 1", "read": false, "workspace_id": "ws-A" },
-            { "id": "other", "kind": "info", "title": "Other", "read": false, "workspace_id": "ws-B" },
-            { "id": "read", "kind": "info", "title": "Read", "read": true, "workspace_id": "ws-A" }
-        ]);
-        let filtered = with_env(&[("FORKTTY_WORKSPACE_ID", Some("ws-A"))], || {
-            filter_pending_notifications(&list)
-        });
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0]["id"], "user");
-
-        let block = format_pending_notifications_block(&filtered).unwrap();
-        assert!(block.contains("ForkTTY pending notifications:"));
-        assert!(block.contains("[info] Build broke"));
-        assert!(block.contains("exit 1"));
-        assert!(format_pending_notifications_block(&[]).is_none());
-
-        let many = (0..12)
-            .map(|index| json!({ "kind": "info", "title": format!("n{index}") }))
-            .collect::<Vec<_>>();
-        let truncated = format_pending_notifications_block(&many).unwrap();
-        assert!(truncated.contains("...and 2 more"));
-
+    fn token_usage_feeds_claude_context_without_notification_text() {
         let usage = TokenUsage {
             input: 1_000,
             cache_read: 4_000,
@@ -4146,7 +4041,6 @@ mod tests {
                 build_token_progress_action(
                     agent_spec("claude").unwrap(),
                     &HookEnrichments {
-                        pending_notifications: Vec::new(),
                         token_usage: Some(TokenUsage {
                             input: 100,
                             cache_read: 200,
@@ -4179,10 +4073,7 @@ mod tests {
                 build_hook_response(
                     agent_spec("claude").unwrap(),
                     "session-start",
-                    &HookEnrichments {
-                        pending_notifications: vec![json!({ "kind": "info", "title": "Hello" })],
-                        token_usage: None,
-                    },
+                    &HookEnrichments { token_usage: None },
                 )
                 .unwrap()
             },
@@ -4199,13 +4090,12 @@ mod tests {
         assert!(context.contains("ws-4"));
         assert!(context.contains("surface-9"));
         assert!(context.contains("forktty.sock"));
-        assert!(context.contains("Hello"));
+        assert!(!context.contains("ForkTTY pending notifications:"));
 
         let response = build_hook_response(
             agent_spec("claude").unwrap(),
             "prompt-submit",
             &HookEnrichments {
-                pending_notifications: vec![json!({ "kind": "error", "title": "Build broke" })],
                 token_usage: Some(TokenUsage {
                     input: 500,
                     cache_read: 1_000,
@@ -4222,16 +4112,13 @@ mod tests {
         let context = response["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(context.contains("Build broke"));
+        assert!(!context.contains("ForkTTY pending notifications:"));
         assert!(context.contains("1,500 / 200,000 input tokens"));
 
         let plain = build_hook_response(
             agent_spec("claude").unwrap(),
             "prompt-submit",
-            &HookEnrichments {
-                pending_notifications: Vec::new(),
-                token_usage: None,
-            },
+            &HookEnrichments { token_usage: None },
         )
         .unwrap();
         assert_eq!(
@@ -4241,10 +4128,7 @@ mod tests {
         let codex = build_hook_response(
             agent_spec("codex").unwrap(),
             "session-start",
-            &HookEnrichments {
-                pending_notifications: vec![json!({ "title": "ignored" })],
-                token_usage: None,
-            },
+            &HookEnrichments { token_usage: None },
         )
         .unwrap();
         assert_eq!(codex, plain);
