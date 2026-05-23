@@ -2,7 +2,7 @@ use crate::model::{PaneNode, SplitAxis, Workspace};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -155,25 +155,26 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    let metadata = if link_metadata.file_type().is_symlink() {
-        match fs::metadata(path) {
-            Ok(metadata) => metadata,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if link_metadata.file_type().is_symlink() {
                 log_quarantine_reason(path, "session path is a broken symlink");
                 quarantine_corrupt_session(path)?;
-                return Ok(None);
             }
-            Err(err) => return Err(err.into()),
+            return Ok(None);
         }
-    } else {
-        link_metadata
+        Err(err) => return Err(err.into()),
     };
+    let metadata = file.metadata()?;
     if !metadata.file_type().is_file() {
+        drop(file);
         log_quarantine_reason(path, "session path is not a regular file");
         quarantine_corrupt_session(path)?;
         return Ok(None);
     }
     if metadata.len() > MAX_SESSION_SIZE_BYTES {
+        drop(file);
         log_quarantine_reason(
             path,
             &format!(
@@ -185,7 +186,17 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
         quarantine_corrupt_session(path)?;
         return Ok(None);
     }
-    let content = fs::read_to_string(path)?;
+    let mut content = String::new();
+    (&mut file)
+        .take(MAX_SESSION_SIZE_BYTES + 1)
+        .read_to_string(&mut content)?;
+    if content.len() as u64 > MAX_SESSION_SIZE_BYTES {
+        drop(file);
+        log_quarantine_reason(path, "session file grew past size limit during read");
+        quarantine_corrupt_session(path)?;
+        return Ok(None);
+    }
+    drop(file);
     match parse_session_content(&content) {
         Ok(data) => match validate_session_data(&data) {
             Ok(()) => Ok(Some(data)),
