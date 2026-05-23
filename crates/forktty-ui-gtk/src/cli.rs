@@ -543,7 +543,14 @@ fn directory_contains_library(dir: &Path, lib_prefix: &str) -> bool {
         {
             return true;
         }
-        if path.is_dir() && directory_contains_library(&path, lib_prefix) {
+        // Use DirEntry::file_type so a symlinked subdirectory (or a symlink
+        // loop in a tampered AppDir) does not trigger an unbounded recursion.
+        // Library entries that match by name above are still detected even if
+        // they are symlinks because the name check does not follow links.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() && directory_contains_library(&path, lib_prefix) {
             return true;
         }
     }
@@ -1246,6 +1253,31 @@ mod tests {
         );
 
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn doctor_lib_scan_terminates_with_symlink_loop_in_appdir() {
+        use std::os::unix::fs::symlink;
+
+        let appdir = tempfile::tempdir().unwrap();
+        let libdir = appdir.path().join("usr/lib");
+        fs::create_dir_all(&libdir).unwrap();
+        // libloop -> usr/lib so a naive recursive walk that follows symlinks
+        // would loop indefinitely. The scan must terminate and report the
+        // libraries as missing rather than stack-overflowing.
+        symlink(&libdir, libdir.join("libloop")).unwrap();
+        let mut warnings = Vec::new();
+
+        append_appimage_runtime_warnings(
+            &mut warnings,
+            true,
+            Some(OsString::from("/tmp/ForkTTY.AppImage")),
+            Some(appdir.path().as_os_str().to_os_string()),
+        );
+
+        assert!(warnings
+            .iter()
+            .any(|warning| { warning.contains("does not bundle GTK/VTE runtime libraries") }));
     }
 
     #[test]
