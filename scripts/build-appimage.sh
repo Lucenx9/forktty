@@ -57,6 +57,14 @@ should_skip_appimage_lib() {
       libresolv.so.* | libanl.so.* | libnsl.so.* | libutil.so.* | libnss_*.so.*)
       return 0
       ;;
+    libEGL.so.* | libGL.so.* | libGLES*.so.* | libGLX.so.* | libOpenGL.so.* | \
+      libGLdispatch.so.* | libglapi.so.* | libgbm.so.* | libdrm.so.* | \
+      libdrm_*.so.* | libvulkan.so.* | libvulkan_*.so.*)
+      # Keep the GPU/display-driver stack on the host side. Bundling Mesa/GL
+      # dispatch libraries without the matching host driver modules is a common
+      # source of broken GTK4 rendering in AppImages.
+      return 0
+      ;;
     *)
       return 1
       ;;
@@ -150,6 +158,11 @@ set -eu
 HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
 export PATH="$HERE/usr/bin:$PATH"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ -n "${XDG_DATA_DIRS:-}" ]; then
+  export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"
+else
+  export XDG_DATA_DIRS="$HERE/usr/share:/usr/local/share:/usr/share"
+fi
 exec "$HERE/usr/bin/forktty" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"

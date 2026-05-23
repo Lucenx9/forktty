@@ -56,11 +56,19 @@ chmod +x forktty-0.2.0-alpha.5-x86_64.AppImage
 
 The AppImage bundles the GTK4, libadwaita, and VTE shared libraries it
 links against, but it still depends on the host system for glibc, the
-GSettings/GIO data tree, Wayland/X11 session services, fontconfig, and
-desktop notification services. Treat the AppImage as a smoke-test
-artifact: it works on most modern distros that ship VTE 0.76+ and a
-recent glibc, but it is not as portable as a typical Linux binary and
-should be tested on the target distro before being relied on.
+GSettings/GIO data tree, Wayland/X11 session services, fontconfig, the
+OpenGL/Vulkan/Mesa driver stack, and desktop notification services.
+Treat the AppImage as a smoke-test artifact: it works on most modern
+distros that ship VTE 0.76+ and a recent glibc, but it is not as
+portable as a typical Linux binary and should be tested on the target
+distro before being relied on.
+
+If the AppImage launches but the GTK interface renders incorrectly, try
+an explicit GTK renderer from a terminal:
+
+```bash
+GSK_RENDERER=ngl ./forktty-0.2.0-alpha.5-x86_64.AppImage
+```
 
 ### Debian / Ubuntu (.deb)
 
@@ -317,7 +325,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 - Linux only. There are no supported macOS or Windows builds.
 - VTE 0.76+ and libadwaita 1.4+ are required by the native terminal integration.
-- The AppImage bundles GTK4/libadwaita/VTE but still relies on the host's glibc, GSettings/GIO data, fontconfig, and desktop session services. Treat it as experimental and smoke-test it on the target distro; prefer the `.deb` on Debian/Ubuntu when possible.
+- The AppImage bundles GTK4/libadwaita/VTE but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Treat it as experimental and smoke-test it on the target distro; prefer the `.deb` on Debian/Ubuntu when possible.
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
