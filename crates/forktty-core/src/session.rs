@@ -277,6 +277,7 @@ fn migrate_legacy_session(legacy: LegacySessionData) -> Result<SessionData, Sess
             pane_tree,
             focused_surface_id,
             needs_attention: false,
+            listening_ports: Vec::new(),
         });
     }
 

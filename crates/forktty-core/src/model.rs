@@ -25,6 +25,10 @@ pub struct Workspace {
     pub focused_surface_id: SurfaceId,
     #[serde(default)]
     pub needs_attention: bool,
+    /// Listening TCP ports of this workspace's terminal child processes.
+    /// Runtime-only: recomputed each refresh, never persisted to a session.
+    #[serde(default, skip_serializing)]
+    pub listening_ports: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -193,6 +197,7 @@ impl WorkspaceModel {
             },
             focused_surface_id: surface_id,
             needs_attention: false,
+            listening_ports: Vec::new(),
         };
         self.surfaces.insert(surface.id.clone(), surface);
         self.workspace_order.push(id.clone());
@@ -651,6 +656,21 @@ impl WorkspaceModel {
             return false;
         };
         surface.title = title.into();
+        true
+    }
+
+    /// Replace a workspace's listening-port hint. Returns `true` when the set of
+    /// ports actually changed, so callers can skip redundant UI refreshes.
+    pub fn set_listening_ports(&mut self, workspace_id: &str, mut ports: Vec<u16>) -> bool {
+        let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+            return false;
+        };
+        ports.sort_unstable();
+        ports.dedup();
+        if workspace.listening_ports == ports {
+            return false;
+        }
+        workspace.listening_ports = ports;
         true
     }
 
@@ -1421,6 +1441,22 @@ mod tests {
     }
 
     #[test]
+    fn set_listening_ports_sorts_dedupes_and_reports_change() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        assert!(model.set_listening_ports(&workspace.id, vec![8080, 3000, 3000]));
+        assert_eq!(
+            model.workspaces[&workspace.id].listening_ports,
+            vec![3000, 8080]
+        );
+        // Same set in a different order is not a change.
+        assert!(!model.set_listening_ports(&workspace.id, vec![8080, 3000]));
+        // Unknown workspace is a no-op.
+        assert!(!model.set_listening_ports("workspace-404", vec![1234]));
+    }
+
+    #[test]
     fn split_surface_adds_second_surface_and_focuses_it() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -1511,6 +1547,7 @@ mod tests {
             },
             focused_surface_id: "surface-1".to_string(),
             needs_attention: false,
+            listening_ports: Vec::new(),
         };
         model.workspace_order.push(workspace.id.clone());
         model.workspaces.insert(workspace.id.clone(), workspace);

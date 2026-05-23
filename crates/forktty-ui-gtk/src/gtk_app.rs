@@ -317,6 +317,8 @@ struct VteController {
     pending_spawns: BTreeSet<String>,
     last_layout_signature: Option<String>,
     maximized_pane: bool,
+    /// Spawned child PID per surface, used to discover listening ports.
+    surface_pids: Rc<RefCell<BTreeMap<String, i32>>>,
 }
 
 impl VteController {
@@ -335,6 +337,7 @@ impl VteController {
             pending_spawns: BTreeSet::new(),
             last_layout_signature: None,
             maximized_pane: false,
+            surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
         }
     }
 
@@ -366,6 +369,7 @@ impl VteController {
                     detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
                 }
                 self.widgets.remove(&surface_id);
+                self.surface_pids.borrow_mut().remove(&surface_id);
                 self.rebuild_layout();
             }
         }
@@ -382,8 +386,13 @@ impl VteController {
         let spawn_state_for_error = self.state.clone();
         let spawn_state_for_ready = self.state.clone();
         let spawn_model_for_error = spawn_model.clone();
+        let spawn_pids = self.surface_pids.clone();
+        let spawn_pid_surface_id = request.surface_id.clone();
         match spawn_vte_terminal_with_callback(&request, move |result| match result {
-            Ok(_) => {
+            Ok(pid) => {
+                spawn_pids
+                    .borrow_mut()
+                    .insert(spawn_pid_surface_id.clone(), pid.0);
                 if let Some(state) = &spawn_state_for_ready {
                     if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
                         eprintln!(
@@ -3447,6 +3456,15 @@ fn build_ui(app: &adw::Application) {
         refresh_notification_indicator(&notifications_for_timer, &state_for_notifications_timer);
         glib::ControlFlow::Continue
     });
+    let controller_for_ports = controller.clone();
+    let alive_for_ports_timer = ui_alive.clone();
+    glib::timeout_add_local(Duration::from_secs(3), move || {
+        if !alive_for_ports_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        refresh_listening_ports(&controller_for_ports);
+        glib::ControlFlow::Continue
+    });
     install_session_autosave(&state);
 
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
@@ -3705,6 +3723,39 @@ fn save_session_from_state(state: &SocketAppState) {
     };
     if let Err(err) = session::save_session(&data) {
         eprintln!("Failed to save GTK session: {err}");
+    }
+}
+
+/// Recompute each workspace's listening-port hint from its surfaces' child PIDs.
+/// Runs on a slow cadence; the sidebar refresh timer renders the updated model.
+fn refresh_listening_ports(controller: &Rc<RefCell<VteController>>) {
+    let (model, surface_pids) = {
+        let controller = controller.borrow();
+        let model = controller.model.clone();
+        let surface_pids = controller.surface_pids.borrow().clone();
+        (model, surface_pids)
+    };
+    if surface_pids.is_empty() {
+        return;
+    }
+    let proc_root = Path::new("/proc");
+    let Ok(mut model) = model.lock() else {
+        return;
+    };
+    for workspace in model.list_workspaces() {
+        let roots: Vec<i32> = model
+            .list_surfaces(Some(&workspace.id))
+            .iter()
+            .filter_map(|surface| surface_pids.get(&surface.id).copied())
+            .collect();
+        let ports = if roots.is_empty() {
+            Vec::new()
+        } else {
+            forktty_core::ports::listening_ports(&roots, proc_root)
+                .into_iter()
+                .collect()
+        };
+        model.set_listening_ports(&workspace.id, ports);
     }
 }
 
@@ -4510,6 +4561,15 @@ fn workspace_meta_line(workspace: &forktty_core::Workspace) -> String {
         }
     }
     parts.push(compact_path(&workspace.working_dir));
+    if !workspace.listening_ports.is_empty() {
+        let ports = workspace
+            .listening_ports
+            .iter()
+            .map(|port| format!(":{port}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(ports);
+    }
     parts.join(" · ")
 }
 
