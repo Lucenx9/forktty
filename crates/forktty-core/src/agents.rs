@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub enum AgentKind {
     ClaudeCode,
     Codex,
+    #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
     Gemini,
     Custom,
@@ -95,7 +96,23 @@ pub fn normalize_agent_status(raw: &str) -> AgentStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_agent_status, AgentStatus};
+    use super::{normalize_agent_status, AgentKind, AgentStatus};
+
+    #[test]
+    fn opencode_provider_key_matches_documented_spelling() {
+        assert_eq!(
+            serde_json::to_string(&AgentKind::OpenCode).unwrap(),
+            "\"opencode\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"opencode\"").unwrap(),
+            AgentKind::OpenCode
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"open_code\"").unwrap(),
+            AgentKind::OpenCode
+        );
+    }
 
     #[test]
     fn normalizes_provider_status_strings() {
