@@ -98,7 +98,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            curl
+            appimagetool
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -110,25 +110,6 @@ jobs:
 
       - name: Build Debian package
         run: bash scripts/build-deb.sh
-
-      - name: Install AppImage packaging tool
-        run: |
-          set -euo pipefail
-          arch="$(uname -m)"
-          case "$arch" in
-            x86_64 | aarch64) ;;
-            *)
-              echo "Unsupported AppImage tool architecture: $arch" >&2
-              exit 1
-              ;;
-          esac
-
-          mkdir -p target/packaging/tools
-          curl -fsSL \
-            -o target/packaging/tools/appimagetool \
-            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${arch}.AppImage"
-          chmod +x target/packaging/tools/appimagetool
-          echo "$PWD/target/packaging/tools" >> "$GITHUB_PATH"
 
       - name: Build experimental AppImage
         run: bash scripts/build-appimage.sh
