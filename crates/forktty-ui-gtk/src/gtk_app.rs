@@ -862,6 +862,23 @@ impl VteController {
         widget
     }
 
+    #[cfg(feature = "browser")]
+    fn browser_pane(&self, surface_id: &str) -> Option<Rc<crate::browser_pane::BrowserPaneWidget>> {
+        if let Some(pane) = self.browser_panes.borrow().get(surface_id).cloned() {
+            return Some(pane);
+        }
+        let url = self.model.lock().ok().and_then(|model| {
+            model
+                .surface(surface_id)
+                .and_then(|surface| match &surface.kind {
+                    forktty_core::SurfaceKind::Browser { url } => Some(url.clone()),
+                    _ => None,
+                })
+        })?;
+        let _ = self.browser_pane_widget(surface_id, &url);
+        self.browser_panes.borrow().get(surface_id).cloned()
+    }
+
     fn terminal_pane_widget(&self, surface_id: &str) -> gtk::Widget {
         let Some(chrome) = self.chromes.get(surface_id) else {
             return missing_surface_placeholder(surface_id, self.state.as_ref(), Some(&self.model))
@@ -3358,7 +3375,12 @@ fn build_ui(app: &adw::Application) {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let (terminal_tx, terminal_rx) = mpsc::channel();
     let backend = Arc::new(GtkVteBackend::new(terminal_tx));
+    #[cfg(feature = "browser")]
+    let (browser_cmd_tx, browser_cmd_rx) =
+        async_channel::unbounded::<forktty_core::BrowserCommand>();
     let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path);
+    #[cfg(feature = "browser")]
+    let state = state.with_browser_cmd(browser_cmd_tx);
     if let Some(message) = config_load_warning.as_deref() {
         create_global_notification(&state, "Config Issue", message, NotificationKind::Error);
     }
@@ -3596,6 +3618,17 @@ fn build_ui(app: &adw::Application) {
         model.clone(),
     )));
     controller.borrow_mut().attach_state(state.clone());
+
+    #[cfg(feature = "browser")]
+    {
+        let controller_for_browser = controller.clone();
+        let rx = browser_cmd_rx;
+        glib::spawn_future_local(async move {
+            while let Ok(cmd) = rx.recv().await {
+                handle_browser_command(&controller_for_browser, cmd);
+            }
+        });
+    }
 
     {
         let state_for_click = state.clone();
@@ -8457,6 +8490,74 @@ fn start_socket_server(state: SocketAppState) {
             );
         }
     });
+}
+
+#[cfg(feature = "browser")]
+fn handle_browser_command(
+    controller: &Rc<RefCell<VteController>>,
+    cmd: forktty_core::BrowserCommand,
+) {
+    use crate::browser_pane::{click_js, fill_js};
+    use forktty_core::{BrowserCmdError, BrowserOp, CmdResult};
+
+    let pane = controller.borrow().browser_pane(&cmd.surface_id);
+    let Some(pane) = pane else {
+        let _ = cmd.reply.send(CmdResult::Err(BrowserCmdError::NoWebView));
+        return;
+    };
+    let reply = cmd.reply;
+    match cmd.op {
+        BrowserOp::Snapshot => {
+            pane.run_js("window.__forktty.snapshot()", move |r| {
+                let _ = reply.send(into_cmd_result(r));
+            });
+        }
+        BrowserOp::Click { reference } => {
+            pane.run_js(&click_js(&reference), move |r| {
+                let _ = reply.send(into_ok_cmd_result(r));
+            });
+        }
+        BrowserOp::Fill { reference, value } => {
+            pane.run_js(&fill_js(&reference, &value), move |r| {
+                let _ = reply.send(into_ok_cmd_result(r));
+            });
+        }
+        BrowserOp::Eval { script } => {
+            pane.run_js(&script, move |r| {
+                let _ = reply.send(into_cmd_result(r));
+            });
+        }
+        // Nav ops are fire-and-forget: Ok means "navigation initiated", not
+        // "page loaded". Callers issue a follow-up snapshot to see the result.
+        BrowserOp::Back => {
+            pane.go_back();
+            let _ = reply.send(CmdResult::Ok);
+        }
+        BrowserOp::Forward => {
+            pane.go_forward();
+            let _ = reply.send(CmdResult::Ok);
+        }
+        BrowserOp::Reload => {
+            pane.reload();
+            let _ = reply.send(CmdResult::Ok);
+        }
+    }
+}
+
+#[cfg(feature = "browser")]
+fn into_cmd_result(r: Result<String, forktty_core::BrowserCmdError>) -> forktty_core::CmdResult {
+    match r {
+        Ok(json) => forktty_core::CmdResult::Json(json),
+        Err(e) => forktty_core::CmdResult::Err(e),
+    }
+}
+
+#[cfg(feature = "browser")]
+fn into_ok_cmd_result(r: Result<String, forktty_core::BrowserCmdError>) -> forktty_core::CmdResult {
+    match r {
+        Ok(_) => forktty_core::CmdResult::Ok,
+        Err(e) => forktty_core::CmdResult::Err(e),
+    }
 }
 
 #[cfg(test)]
