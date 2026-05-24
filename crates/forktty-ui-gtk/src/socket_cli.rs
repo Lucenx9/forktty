@@ -68,7 +68,7 @@ Usage:
   forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
   forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
   forktty browser fill <surface-id> <ref> <value>  Set an input's value by snapshot ref
-  forktty browser eval <surface-id> <script>       Run JavaScript, print the JSON result
+  forktty browser eval <surface-id> <script>       Run JavaScript (use --json for the result)
   forktty browser back <surface-id>                Navigate back in history
   forktty browser forward <surface-id>             Navigate forward in history
   forktty browser reload <surface-id>              Reload the current page
@@ -1377,13 +1377,31 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     match sub.as_str() {
         "open" => browser_open(context, rest),
         "navigate" => browser_navigate(context, rest),
-        "snapshot" => browser_surface_cmd(context, rest, "browser.snapshot", "snapshot"),
+        "snapshot" => browser_surface_cmd(context, rest, "browser.snapshot", "snapshot", None),
         "click" => browser_click(context, rest),
         "fill" => browser_fill(context, rest),
         "eval" => browser_eval(context, rest),
-        "back" => browser_surface_cmd(context, rest, "browser.back", "back"),
-        "forward" => browser_surface_cmd(context, rest, "browser.forward", "forward"),
-        "reload" => browser_surface_cmd(context, rest, "browser.reload", "reload"),
+        "back" => browser_surface_cmd(
+            context,
+            rest,
+            "browser.back",
+            "back",
+            Some("Navigated back"),
+        ),
+        "forward" => browser_surface_cmd(
+            context,
+            rest,
+            "browser.forward",
+            "forward",
+            Some("Navigated forward"),
+        ),
+        "reload" => browser_surface_cmd(
+            context,
+            rest,
+            "browser.reload",
+            "reload",
+            Some("Reloaded"),
+        ),
         "" => Err(CliError::new(
             "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload",
         )),
@@ -1485,7 +1503,7 @@ fn browser_click(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "browser.click",
         json!({"surface_id": surface_id, "ref": reference}),
     )?;
-    print_json(&result)
+    print_result_or_json(context, "Clicked", result)
 }
 
 fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -1509,7 +1527,7 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "browser.fill",
         json!({"surface_id": surface_id, "ref": reference, "value": value}),
     )?;
-    print_json(&result)
+    print_result_or_json(context, "Filled", result)
 }
 
 fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -1529,7 +1547,7 @@ fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "browser.eval",
         json!({"surface_id": surface_id, "script": script}),
     )?;
-    print_json(&result)
+    print_result_or_json(context, "Evaluated", result)
 }
 
 fn browser_surface_cmd(
@@ -1537,6 +1555,7 @@ fn browser_surface_cmd(
     args: Vec<String>,
     method: &str,
     label: &str,
+    human_message: Option<&str>,
 ) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], &format!("browser {label}"))?;
@@ -1547,7 +1566,7 @@ fn browser_surface_cmd(
         .clone();
     if parsed.positionals.len() > 1 {
         return Err(CliError::new(format!(
-            "browser {label}: unexpected argument {}",
+            "browser {label}: unexpected argument '{}'",
             parsed.positionals[1]
         )));
     }
@@ -1556,7 +1575,10 @@ fn browser_surface_cmd(
         method,
         json!({"surface_id": surface_id}),
     )?;
-    print_json(&result)
+    match human_message {
+        Some(message) => print_result_or_json(context, message, result),
+        None => print_json(&result),
+    }
 }
 
 fn handle_worktree_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {

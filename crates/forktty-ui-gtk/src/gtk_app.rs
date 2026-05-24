@@ -856,6 +856,18 @@ impl VteController {
 
     #[cfg(feature = "browser")]
     fn browser_pane(&self, surface_id: &str) -> Option<Rc<crate::browser_pane::BrowserPaneWidget>> {
+        if let Some(pane) = self.browser_panes.borrow().get(surface_id).cloned() {
+            return Some(pane);
+        }
+        let url = self.model.lock().ok().and_then(|model| {
+            model
+                .surface(surface_id)
+                .and_then(|surface| match &surface.kind {
+                    forktty_core::SurfaceKind::Browser { url } => Some(url.clone()),
+                    _ => None,
+                })
+        })?;
+        let _ = self.browser_pane_widget(surface_id, &url);
         self.browser_panes.borrow().get(surface_id).cloned()
     }
 
@@ -8443,12 +8455,12 @@ fn handle_browser_command(
         }
         BrowserOp::Click { reference } => {
             pane.run_js(&click_js(&reference), move |r| {
-                let _ = reply.send(into_cmd_result(r));
+                let _ = reply.send(into_ok_cmd_result(r));
             });
         }
         BrowserOp::Fill { reference, value } => {
             pane.run_js(&fill_js(&reference, &value), move |r| {
-                let _ = reply.send(into_cmd_result(r));
+                let _ = reply.send(into_ok_cmd_result(r));
             });
         }
         BrowserOp::Eval { script } => {
@@ -8477,6 +8489,14 @@ fn handle_browser_command(
 fn into_cmd_result(r: Result<String, forktty_core::BrowserCmdError>) -> forktty_core::CmdResult {
     match r {
         Ok(json) => forktty_core::CmdResult::Json(json),
+        Err(e) => forktty_core::CmdResult::Err(e),
+    }
+}
+
+#[cfg(feature = "browser")]
+fn into_ok_cmd_result(r: Result<String, forktty_core::BrowserCmdError>) -> forktty_core::CmdResult {
+    match r {
+        Ok(_) => forktty_core::CmdResult::Ok,
         Err(e) => forktty_core::CmdResult::Err(e),
     }
 }

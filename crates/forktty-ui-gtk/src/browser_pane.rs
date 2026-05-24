@@ -213,6 +213,9 @@ mod tests {
     fn driver_script_is_present() {
         assert!(DRIVER_JS.contains("window.__forktty"));
         assert!(DRIVER_JS.contains("snapshot"));
+        assert!(DRIVER_JS.contains("return root;"));
+        assert!(!DRIVER_JS.contains("JSON.stringify(root)"));
+        assert!(DRIVER_JS.contains("ref-stale-or-not-fillable"));
     }
 
     #[test]

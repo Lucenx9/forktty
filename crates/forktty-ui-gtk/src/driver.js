@@ -51,6 +51,30 @@
     return roleOf(el) !== "";
   }
 
+  function isTextInput(el) {
+    if (!(el instanceof HTMLInputElement)) return false;
+    var t = (el.getAttribute("type") || "text").toLowerCase();
+    return ![
+      "button", "checkbox", "file", "hidden", "image", "radio", "reset", "submit"
+    ].includes(t);
+  }
+
+  function isReadOnly(el) {
+    return !!(
+      el.readOnly ||
+      (el.getAttribute && el.getAttribute("aria-readonly") === "true")
+    );
+  }
+
+  function isFillable(el) {
+    if (!el || !el.isConnected || !document.contains(el)) return false;
+    if (el.disabled || isReadOnly(el)) return false;
+    return isTextInput(el) ||
+      el instanceof HTMLTextAreaElement ||
+      el instanceof HTMLSelectElement ||
+      el.isContentEditable;
+  }
+
   function nodeFor(el) {
     var ref = "e" + (++counter);
     refMap.set(ref, el);
@@ -85,7 +109,7 @@
       counter = 0;
       var children = document.body ? walkChildren(document.body) : [];
       var root = { role: "document", name: "", value: "", children: children };
-      return JSON.stringify(root);
+      return root;
     },
     click: function (ref) {
       var el = refMap.get(ref);
@@ -94,13 +118,16 @@
       el.click();
       return true;
     },
-    // Note: sets .value + input/change events; does not handle contenteditable
-    // rich-text editors (SP2 pragmatic scope).
     fill: function (ref, value) {
       var el = refMap.get(ref);
       if (!el) throw new Error("ref-not-found");
+      if (!isFillable(el)) throw new Error("ref-stale-or-not-fillable");
       el.focus();
-      el.value = value;
+      if (el.isContentEditable) {
+        el.textContent = value;
+      } else {
+        el.value = value;
+      }
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
