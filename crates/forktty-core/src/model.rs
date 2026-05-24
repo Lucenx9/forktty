@@ -286,6 +286,8 @@ impl WorkspaceModel {
         let mut workspaces = self.list_workspaces();
         for workspace in &mut workspaces {
             normalize_workspace_focus(workspace);
+            workspace.listening_ports.clear();
+            workspace.pr = None;
         }
         SessionData {
             version: SESSION_FORMAT_VERSION,
@@ -1488,6 +1490,29 @@ mod tests {
         assert!(!model.set_pr(&workspace.id, Some(pr)));
         assert!(model.set_pr(&workspace.id, None));
         assert!(!model.set_pr("workspace-404", None));
+    }
+
+    #[test]
+    fn session_data_drops_runtime_sidebar_hints() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.set_listening_ports(&workspace.id, vec![8080]);
+        model.set_pr(
+            &workspace.id,
+            Some(crate::pr::PrInfo {
+                number: 42,
+                state: crate::pr::PrState::Open,
+                url: "https://github.com/o/r/pull/42".to_string(),
+            }),
+        );
+
+        let data = model.to_session_data();
+
+        assert!(data.workspaces[0].listening_ports.is_empty());
+        assert!(data.workspaces[0].pr.is_none());
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(!json.contains("listening_ports"));
+        assert!(!json.contains("\"pr\""));
     }
 
     #[test]

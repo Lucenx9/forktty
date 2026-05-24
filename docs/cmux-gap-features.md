@@ -19,11 +19,13 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 - **Impact**: high · **Cost**: low · **Status**: **done** (listening ports + PR status)
 - cmux sidebar rows show git branch, **linked PR status/number**, working directory,
   **listening ports**, and latest notification text.
-- ForkTTY sidebar shows branch/worktree/unread/metadata only.
+- ForkTTY sidebar rows show git branch/worktree, linked PR status/number when enabled, working
+  directory, listening ports, unread state, and latest metadata/notification text.
 - Scope:
   - Listening ports: enumerate per-pane child process listeners (e.g. parse `/proc/net/tcp*`
     against the pane child PID tree) and render as sidebar chips.
-  - PR status: resolve branch -> PR via `gh` CLI if present, or skip when absent. Cache + bound.
+  - PR status: when enabled, resolve branch -> PR via `gh` CLI if present, or skip when absent.
+    Cache + bound.
 - No new heavy dependency. Pure Rust + existing sidebar model.
 
 ## 2. Socket: `events` stream + `capabilities`
@@ -89,6 +91,7 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 
 - macOS/Windows builds (ForkTTY is Linux-only by design).
 - Cloud VM backend + account/auth + vault (cmux `vm`/`cloud`/`auth`/`vault`): conflicts with
-  ForkTTY's local-first, no-network, no-telemetry posture.
+  ForkTTY's local-first posture and no telemetry/update-checks by default.
+- Optional user-enabled tools, such as PR resolution through `gh`, may contact external services.
 - libghostty GPU renderer (ForkTTY uses VTE intentionally).
 - Sparkle auto-update (ForkTTY ships no update-check by design; AppImage/.deb handle distribution).
