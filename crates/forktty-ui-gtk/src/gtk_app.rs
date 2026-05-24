@@ -8540,7 +8540,8 @@ fn browser_import_dialog_params(
     let sources: Vec<Value> = checks
         .borrow()
         .iter()
-        .filter_map(|(id, check)| check.is_active().then(|| Value::String(id.clone())))
+        .filter(|(_, check)| check.is_active())
+        .map(|(id, _)| Value::String(id.clone()))
         .collect();
     if sources.is_empty() {
         return None;
