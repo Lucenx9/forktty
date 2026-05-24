@@ -23,7 +23,7 @@ pub use browser_cmd::{
 };
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
 
-pub use browser_history::{HistoryError, HistoryStore, Visit};
+pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig};
 pub use model::{
     has_uri_scheme, LogEntry, LogLevel, NotificationItem, NotificationKind, PaneNode,

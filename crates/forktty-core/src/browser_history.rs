@@ -177,6 +177,105 @@ impl HistoryStore {
     }
 }
 
+/// A saved bookmark.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub url: String,
+    pub title: String,
+    /// Unix seconds when added.
+    pub added_at: i64,
+}
+
+/// Per-profile bookmarks backed by a JSON array file. Loaded fully into memory;
+/// every mutation rewrites the file atomically (temp + rename).
+pub struct BookmarkStore {
+    path: PathBuf,
+    items: Vec<Bookmark>,
+}
+
+impl BookmarkStore {
+    /// Open `bookmarks.json` at `path`. A missing file yields an empty store. A file
+    /// that fails to parse is backed up to `<path>.bak` and the store starts empty
+    /// (navigation must never break on corrupt bookmarks).
+    pub fn open(path: &Path) -> Result<Self, HistoryError> {
+        let items = match std::fs::read(path) {
+            Ok(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    let bak = path.with_extension("json.bak");
+                    let _ = std::fs::write(&bak, &bytes);
+                    Vec::new()
+                }
+            },
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(HistoryError::Io(e.to_string())),
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            items,
+        })
+    }
+
+    /// Open the bookmark store for `profile` at its default path.
+    pub fn for_profile(profile: ProfileId) -> Result<Self, HistoryError> {
+        let path = bookmarks_path(profile)
+            .ok_or_else(|| HistoryError::Io("no data directory on this platform".to_string()))?;
+        Self::open(&path)
+    }
+
+    pub fn list(&self) -> &[Bookmark] {
+        &self.items
+    }
+
+    /// Add a bookmark, or update the title if the url already exists. Persists.
+    pub fn add(&mut self, url: &str, title: &str) -> Result<(), HistoryError> {
+        if let Some(existing) = self.items.iter_mut().find(|b| b.url == url) {
+            existing.title = title.to_string();
+        } else {
+            self.items.push(Bookmark {
+                url: url.to_string(),
+                title: title.to_string(),
+                added_at: now_us() / 1_000_000,
+            });
+        }
+        self.save()
+    }
+
+    /// Remove the bookmark with `url`. Returns whether one was removed. Persists.
+    pub fn remove(&mut self, url: &str) -> Result<bool, HistoryError> {
+        let before = self.items.len();
+        self.items.retain(|b| b.url != url);
+        let removed = self.items.len() != before;
+        if removed {
+            self.save()?;
+        }
+        Ok(removed)
+    }
+
+    fn save(&self) -> Result<(), HistoryError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| HistoryError::Io(e.to_string()))?;
+        }
+        let bytes =
+            serde_json::to_vec_pretty(&self.items).map_err(|e| HistoryError::Io(e.to_string()))?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp = self
+            .path
+            .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+        let result = (|| -> Result<(), HistoryError> {
+            std::fs::write(&tmp, &bytes).map_err(|e| HistoryError::Io(e.to_string()))?;
+            std::fs::rename(&tmp, &self.path).map_err(|e| HistoryError::Io(e.to_string()))
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +369,64 @@ mod tests {
         // A backslash in the query must not blow up the LIKE pattern.
         assert!(h.search("a\\b", 10).unwrap().is_empty());
         assert_eq!(h.search("a.test", 10).unwrap().len(), 1);
+    }
+
+    fn bm_store() -> (tempfile::TempDir, BookmarkStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        (dir, BookmarkStore::open(&path).unwrap())
+    }
+
+    #[test]
+    fn bookmark_add_then_list() {
+        let (_d, mut b) = bm_store();
+        b.add("https://a.test/", "A").unwrap();
+        let all = b.list();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].url, "https://a.test/");
+        assert_eq!(all[0].title, "A");
+    }
+
+    #[test]
+    fn bookmark_add_dedupes_by_url_updating_title() {
+        let (_d, mut b) = bm_store();
+        b.add("https://a.test/", "Old").unwrap();
+        b.add("https://a.test/", "New").unwrap();
+        assert_eq!(b.list().len(), 1);
+        assert_eq!(b.list()[0].title, "New");
+    }
+
+    #[test]
+    fn bookmark_remove() {
+        let (_d, mut b) = bm_store();
+        b.add("https://a.test/", "A").unwrap();
+        assert!(b.remove("https://a.test/").unwrap());
+        assert!(b.list().is_empty());
+        // Removing a missing url returns false, not an error.
+        assert!(!b.remove("https://nope.test/").unwrap());
+    }
+
+    #[test]
+    fn bookmark_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        {
+            let mut b = BookmarkStore::open(&path).unwrap();
+            b.add("https://persist.test/", "P").unwrap();
+        }
+        let b2 = BookmarkStore::open(&path).unwrap();
+        assert_eq!(b2.list().len(), 1);
+    }
+
+    #[test]
+    fn bookmark_malformed_file_starts_fresh_and_backs_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        std::fs::write(&path, b"{ this is not valid json").unwrap();
+        let b = BookmarkStore::open(&path).unwrap();
+        assert!(b.list().is_empty());
+        // Original bytes preserved alongside as a .bak.
+        let bak = path.with_extension("json.bak");
+        assert!(bak.exists());
     }
 }
