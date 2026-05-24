@@ -1,4 +1,4 @@
-use forktty_core::{JsonRpcRequest, JsonRpcResponse};
+use forktty_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsString;
@@ -61,6 +61,8 @@ Usage:
   forktty hooks <agent> <event>
   forktty doctor
   forktty ping
+  forktty capabilities [--json]
+  forktty events [--no-replay]
 ";
 
 #[derive(Debug)]
@@ -370,6 +372,8 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "hooks" => handle_hooks(&context, args),
         "doctor" => handle_socket_doctor(&context, args),
         "ping" => handle_ping(&context, args),
+        "capabilities" => handle_capabilities(&context, args),
+        "events" => handle_events(&context, args),
         "help" => {
             print!("{HELP_TEXT}");
             Ok(())
@@ -755,6 +759,95 @@ fn handle_ping(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         println!("{}", result.as_str().unwrap_or("pong"));
         Ok(())
     }
+}
+
+fn handle_capabilities(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    require_no_args(&args, "capabilities")?;
+    let result = send_socket_request(&context.socket_path, "system.capabilities", json!({}))?;
+    if context.json {
+        return print_json(&result);
+    }
+    if let Some(version) = string_field(&result, "version") {
+        println!("version {version}");
+    }
+    if let Some(methods) = result.get("methods").and_then(Value::as_array) {
+        for method in methods {
+            if let Some(name) = method.as_str() {
+                println!("{name}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_events(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut replay = true;
+    for arg in &args {
+        match arg.as_str() {
+            "--no-replay" => replay = false,
+            other => {
+                return Err(CliError::new(format!(
+                    "events: unexpected argument: {other}"
+                )));
+            }
+        }
+    }
+    stream_events(&context.socket_path, replay)
+}
+
+/// Open the events stream and copy each NDJSON line to stdout until the socket
+/// closes or stdout does (e.g. when piped to `head`). Reconnection is the
+/// caller's job: re-run the command.
+fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
+    let request = JsonRpcRequest {
+        id: Value::String(next_request_id()),
+        method: "events.subscribe".to_string(),
+        params: json!({ "replay": replay }),
+    };
+    let mut stream = UnixStream::connect(socket_path)
+        .map_err(|err| format_socket_connect_error(err, socket_path))?;
+    let request_json = serde_json::to_string(&request)?;
+    stream.write_all(request_json.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(stream);
+    // The server either rejects the request with a JSON-RPC error line (e.g.
+    // server_busy) before closing, or accepts it with a `{"event":"subscribed"}`
+    // handshake followed by the NDJSON stream. Surface the former as an error
+    // rather than printing it as an event.
+    let mut first = String::new();
+    if reader.read_line(&mut first)? == 0 {
+        return Err(CliError::new(format!(
+            "Socket closed without response for events.subscribe at {}",
+            socket_path.display()
+        )));
+    }
+    if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(first.trim()) {
+        if !response.ok {
+            let error = response.error.unwrap_or_else(|| JsonRpcError {
+                code: "error".to_string(),
+                message: "events.subscribe failed".to_string(),
+            });
+            return Err(CliError::code(
+                format!("events.subscribe failed: {}: {}", error.code, error.message),
+                error.code,
+            ));
+        }
+    }
+
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    if writeln!(handle, "{}", first.trim_end()).is_err() {
+        return Ok(());
+    }
+    for line in reader.lines() {
+        let line = line?;
+        if writeln!(handle, "{line}").is_err() {
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn handle_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -5066,6 +5159,97 @@ mod tests {
         assert_eq!(
             surface_id_from_workspace_list(&workspaces),
             Some("surface-b".to_string())
+        );
+    }
+
+    fn ctx_for(socket_path: &Path) -> CliContext {
+        CliContext {
+            json: false,
+            socket_path: socket_path.to_path_buf(),
+            socket_explicit: true,
+            verbose: false,
+        }
+    }
+
+    #[test]
+    fn capabilities_requests_system_capabilities() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": { "version": "9.9.9", "methods": ["system.ping"] },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_capabilities(&ctx_for(socket_path), vec![]).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "system.capabilities");
+    }
+
+    #[test]
+    fn events_defaults_to_replay_true() {
+        let request = with_socket_response(
+            |_req| r#"{"event":"subscribed"}"#.to_string(),
+            |socket_path| {
+                handle_events(&ctx_for(socket_path), vec![]).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "events.subscribe");
+        assert_eq!(request["params"]["replay"], json!(true));
+    }
+
+    #[test]
+    fn events_no_replay_flag_disables_replay() {
+        let request = with_socket_response(
+            |_req| r#"{"event":"subscribed"}"#.to_string(),
+            |socket_path| {
+                handle_events(&ctx_for(socket_path), strings(&["--no-replay"])).unwrap();
+            },
+        );
+        assert_eq!(request["params"]["replay"], json!(false));
+    }
+
+    #[test]
+    fn events_rejects_unknown_arg() {
+        assert_err_contains(
+            handle_events(&test_context(), strings(&["--bogus"])),
+            "unexpected argument",
+        );
+    }
+
+    #[test]
+    fn events_surfaces_jsonrpc_error_handshake() {
+        // An over-capacity (or otherwise rejecting) server replies with a
+        // JSON-RPC error line then closes; the CLI must report it, not print it
+        // as an event.
+        with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": false,
+                    "error": { "code": "server_busy", "message": "Too many connections" },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                assert_err_contains(handle_events(&ctx_for(socket_path), vec![]), "server_busy");
+            },
+        );
+    }
+
+    #[test]
+    fn events_errors_when_socket_closes_before_handshake() {
+        with_socket_response(
+            |_req| String::new(),
+            |socket_path| {
+                assert_err_contains(
+                    handle_events(&ctx_for(socket_path), vec![]),
+                    "Socket closed without response for events.subscribe",
+                );
+            },
         );
     }
 }

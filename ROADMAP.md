@@ -11,6 +11,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] VTE terminal panes with configured shell, font, colors, send-text, resize, close, bell, and child-exit handling.
 - [x] Direct Unix socket JSON-RPC dispatch without a frontend bridge.
 - [x] Native socket CLI and agent hook installer in the `forktty` binary over the socket API.
+- [x] `events.subscribe` NDJSON change stream and `system.capabilities` discovery, with `forktty events`/`forktty capabilities` CLI.
 
 ### Workspaces and Panes
 
