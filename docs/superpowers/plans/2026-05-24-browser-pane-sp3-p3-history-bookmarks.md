@@ -2,11 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Current status on `main`:** Tasks 1-4 are implemented
-(`browser_history.rs`, `HistoryStore`, `BookmarkStore`, and
-`browser.history.*` / `browser.bookmark.*` socket verbs, plus
-`forktty browser history|bookmark` CLI mirrors). Task 5 GTK visit
-recording/address completion remains pending.
+**Current status:** All 5 tasks implemented — `browser_history.rs`
+(`HistoryStore`, `BookmarkStore`), `browser.history.*` /
+`browser.bookmark.*` socket verbs, `forktty browser history|bookmark`
+CLI mirrors, and Task 5 GTK visit recording + address-bar completion.
 
 **Goal:** Per-profile visited-URL history and bookmarks, queryable over the socket/CLI and surfaced as browser-pane address-bar completion.
 

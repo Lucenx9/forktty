@@ -25,6 +25,10 @@ pub struct SpawnRequest {
     pub surface_id: SurfaceId,
     pub workspace_id: WorkspaceId,
     pub shell: String,
+    /// Extra arguments appended after `shell` when building the argv.
+    /// Empty for a normal interactive shell; `["user@host"]` for SSH.
+    #[serde(default)]
+    pub args: Vec<String>,
     pub cwd: PathBuf,
     pub socket_path: PathBuf,
     #[serde(default)]
@@ -41,6 +45,7 @@ impl SpawnRequest {
             surface_id: workspace.focused_surface_id.clone(),
             workspace_id: workspace.id.clone(),
             shell: shell.into(),
+            args: Vec::new(),
             cwd: workspace.working_dir.clone(),
             socket_path: socket_path.into(),
             extra_env: Vec::new(),
@@ -56,10 +61,25 @@ impl SpawnRequest {
             surface_id: surface.id.clone(),
             workspace_id: surface.workspace_id.clone(),
             shell: shell.into(),
+            args: Vec::new(),
             cwd: surface.cwd.clone(),
             socket_path: socket_path.into(),
             extra_env: Vec::new(),
         }
+    }
+
+    /// Return a clone of this request with `args` set to `args`.
+    pub fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.args = args.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Resolve the full argv: `[shell, ...args]`.
+    pub fn argv(&self) -> Vec<&str> {
+        let mut argv = Vec::with_capacity(1 + self.args.len());
+        argv.push(self.shell.as_str());
+        argv.extend(self.args.iter().map(String::as_str));
+        argv
     }
 
     pub fn forktty_env(&self) -> Vec<(String, String)> {
@@ -130,6 +150,8 @@ pub struct HeadlessTerminalBackend {
 #[derive(Debug, Clone)]
 struct HeadlessSurface {
     state: TerminalSurfaceState,
+    /// The `args` from the original [`SpawnRequest`].
+    args: Vec<String>,
     sent_text: Vec<String>,
     env: Vec<(String, String)>,
 }
@@ -160,6 +182,30 @@ impl HeadlessTerminalBackend {
             .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
         Ok(surface.env.clone())
     }
+
+    /// Return the `args` recorded when this surface was spawned.
+    pub fn spawn_args(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
+        let surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(surface.args.clone())
+    }
+
+    /// Return the `shell` recorded when this surface was spawned.
+    pub fn spawn_shell(&self, surface_id: &str) -> Result<String, TerminalError> {
+        let surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(surface.state.shell.clone())
+    }
 }
 
 impl TerminalBackend for HeadlessTerminalBackend {
@@ -180,6 +226,7 @@ impl TerminalBackend for HeadlessTerminalBackend {
                     cols: 80,
                     rows: 24,
                 },
+                args: request.args,
                 sent_text: Vec::new(),
                 env,
             },
@@ -246,6 +293,7 @@ mod tests {
             surface_id: "surface-1".to_string(),
             workspace_id: "workspace-1".to_string(),
             shell: "/bin/sh".to_string(),
+            args: Vec::new(),
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: vec![
@@ -300,11 +348,70 @@ mod tests {
         assert_eq!(workspace_request.workspace_id, workspace.id);
         assert_eq!(workspace_request.cwd, PathBuf::from("/tmp/main"));
         assert_eq!(workspace_request.extra_env, Vec::<(String, String)>::new());
+        assert_eq!(workspace_request.args, Vec::<String>::new());
 
         let surface_request = SpawnRequest::for_surface(surface, "/bin/zsh", "/tmp/other.sock");
         assert_eq!(surface_request.surface_id, surface.id);
         assert_eq!(surface_request.workspace_id, surface.workspace_id);
         assert_eq!(surface_request.cwd, surface.cwd);
         assert_eq!(surface_request.shell, "/bin/zsh");
+    }
+
+    #[test]
+    fn spawn_request_argv_assembles_shell_plus_args() {
+        let request = SpawnRequest {
+            surface_id: "s1".to_string(),
+            workspace_id: "w1".to_string(),
+            shell: "/usr/bin/ssh".to_string(),
+            args: vec!["user@example.com".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        assert_eq!(request.argv(), vec!["/usr/bin/ssh", "user@example.com"]);
+    }
+
+    #[test]
+    fn spawn_request_argv_with_no_args_is_just_shell() {
+        let request = SpawnRequest {
+            surface_id: "s1".to_string(),
+            workspace_id: "w1".to_string(),
+            shell: "/bin/zsh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        assert_eq!(request.argv(), vec!["/bin/zsh"]);
+    }
+
+    #[test]
+    fn with_args_sets_args_and_leaves_other_fields_intact() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp/main");
+        let request = SpawnRequest::for_workspace(&workspace, "/usr/bin/ssh", "/tmp/forktty.sock")
+            .with_args(["user@host"]);
+        assert_eq!(request.shell, "/usr/bin/ssh");
+        assert_eq!(request.args, vec!["user@host"]);
+    }
+
+    #[test]
+    fn headless_backend_records_args_on_spawn() {
+        let backend = HeadlessTerminalBackend::new();
+        let request = SpawnRequest {
+            surface_id: "surface-ssh".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/usr/bin/ssh".to_string(),
+            args: vec!["user@example.com".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        backend.spawn(request).unwrap();
+        assert_eq!(
+            backend.spawn_args("surface-ssh").unwrap(),
+            vec!["user@example.com"]
+        );
+        assert_eq!(backend.spawn_shell("surface-ssh").unwrap(), "/usr/bin/ssh");
     }
 }

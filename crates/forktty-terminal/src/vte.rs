@@ -91,7 +91,9 @@ fn child_environment(request: &SpawnRequest) -> Vec<String> {
 
 #[cfg(feature = "vte")]
 fn child_argv(request: &SpawnRequest) -> Vec<String> {
-    vec![request.shell.clone()]
+    std::iter::once(request.shell.clone())
+        .chain(request.args.iter().cloned())
+        .collect()
 }
 
 #[cfg(feature = "vte")]
@@ -110,6 +112,7 @@ mod tests {
             surface_id: "surface-1".to_string(),
             workspace_id: "workspace-1".to_string(),
             shell: "/bin/sh".to_string(),
+            args: Vec::new(),
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: vec![
@@ -144,12 +147,29 @@ mod tests {
             surface_id: "surface-1".to_string(),
             workspace_id: "workspace-1".to_string(),
             shell: "/bin/zsh".to_string(),
+            args: Vec::new(),
             cwd: PathBuf::from("/tmp/project"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
         };
 
         assert_eq!(child_argv(&request), vec!["/bin/zsh"]);
+        assert_eq!(child_cwd(&request), "/tmp/project");
+    }
+
+    #[test]
+    fn child_process_appends_spawn_args() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "ssh".to_string(),
+            args: vec!["user@example.test".to_string()],
+            cwd: PathBuf::from("/tmp/project"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        assert_eq!(child_argv(&request), vec!["ssh", "user@example.test"]);
         assert_eq!(child_cwd(&request), "/tmp/project");
     }
 }

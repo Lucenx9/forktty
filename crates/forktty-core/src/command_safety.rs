@@ -51,6 +51,31 @@ pub fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+/// Returns `true` when `host` is an acceptable SSH target string.
+///
+/// Conservative but practical: allows normal `user@host`, bare hostnames,
+/// IPv6 literals `[::1]`, SSH config aliases (alphanumerics, `.`, `-`, `_`,
+/// `@`, `:`, `[`, `]`).  Rejects: empty strings, whitespace, control
+/// characters, and values starting with `-` (flag-injection guard).
+pub fn is_valid_ssh_host(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    // Guard: a leading `-` would be parsed as an ssh flag.
+    if host.starts_with('-') {
+        return false;
+    }
+    // Reject any whitespace or control characters.
+    if host.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    // Allow only characters that legitimately appear in an ssh target:
+    // alphanumerics, `.`, `-`, `_`, `@`, `:`, `[`, `]`, `%` (zone IDs).
+    host.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | ':' | '[' | ']' | '%')
+    })
+}
+
 /// Returns a trimmed, validated worktree/branch name suitable for passing to
 /// `git worktree add` and to filesystem APIs.
 ///
@@ -130,6 +155,34 @@ mod tests {
     #[test]
     fn validate_worktree_name_accepts_and_trims() {
         assert_eq!(validate_worktree_name(" feature/x ").unwrap(), "feature/x");
+    }
+
+    #[test]
+    fn is_valid_ssh_host_accepts_well_formed_targets() {
+        assert!(is_valid_ssh_host("user@host"));
+        assert!(is_valid_ssh_host("example.com"));
+        assert!(is_valid_ssh_host("host.example.com"));
+        assert!(is_valid_ssh_host("[::1]"));
+        assert!(is_valid_ssh_host("user@host.example.com"));
+        assert!(is_valid_ssh_host("my-server"));
+        assert!(is_valid_ssh_host("my_alias"));
+        assert!(is_valid_ssh_host("[fe80::1%eth0]"));
+    }
+
+    #[test]
+    fn is_valid_ssh_host_rejects_invalid_targets() {
+        // Empty
+        assert!(!is_valid_ssh_host(""));
+        // Leading dash (flag injection)
+        assert!(!is_valid_ssh_host("-oProxyCommand=x"));
+        assert!(!is_valid_ssh_host("-l user"));
+        // Whitespace
+        assert!(!is_valid_ssh_host("a b"));
+        assert!(!is_valid_ssh_host("host\targ"));
+        // Newline
+        assert!(!is_valid_ssh_host("host\narg"));
+        // Control character
+        assert!(!is_valid_ssh_host("host\x00"));
     }
 
     #[test]

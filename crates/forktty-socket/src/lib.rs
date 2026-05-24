@@ -1,9 +1,9 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
-    config, dispatch_notification, validate_worktree_name, worktree, BrowserCmdError,
-    BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
-    NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
-    MAX_BROWSER_SCRIPT_BYTES,
+    command_safety::is_valid_ssh_host, config, dispatch_notification, validate_worktree_name,
+    worktree, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest,
+    JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel,
+    WorkspaceSelector, MAX_BROWSER_SCRIPT_BYTES,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
@@ -76,6 +76,7 @@ pub const METHODS: &[&str] = &[
     "system.ping",
     "workspace.close",
     "workspace.create",
+    "workspace.create_ssh",
     "workspace.list",
     "workspace.select",
     "worktree.attach",
@@ -415,6 +416,27 @@ pub async fn dispatch(
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let previous_active_id = model.active_workspace_id();
                 (model.create_workspace(name, cwd), previous_active_id)
+            };
+            if let Err(err) = spawn_workspace_terminal(state, &workspace) {
+                rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
+                return Err(err.into());
+            }
+            Ok(json!(workspace))
+        }
+        "workspace.create_ssh" => {
+            let host = required_ssh_host_param(&params)?;
+            let name = workspace_create_name_from_params(&params)?;
+            let cwd = resolve_workspace_cwd_param(&params)?;
+            let (workspace, previous_active_id) = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let previous_active_id = model.active_workspace_id();
+                (
+                    model.create_ssh_workspace(name, cwd, host.to_string()),
+                    previous_active_id,
+                )
             };
             if let Err(err) = spawn_workspace_terminal(state, &workspace) {
                 rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
@@ -932,11 +954,7 @@ pub async fn dispatch(
         }
         "browser.history.list" => {
             let profile = resolve_profile_param(&params)?;
-            let limit = params
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(100);
+            let limit = history_limit_from_params(&params);
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -947,11 +965,7 @@ pub async fn dispatch(
         "browser.history.search" => {
             let query = required_string_param(&params, "query")?.to_string();
             let profile = resolve_profile_param(&params)?;
-            let limit = params
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(100);
+            let limit = history_limit_from_params(&params);
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -971,7 +985,9 @@ pub async fn dispatch(
         "browser.bookmark.add" => {
             let url = required_string_param(&params, "url")?.to_string();
             if url.trim().is_empty() {
-                return Err("Invalid parameter url: must not be empty".into());
+                return Err(DispatchError::InvalidParam(
+                    "url must not be empty".to_string(),
+                ));
             }
             let title = params
                 .get("title")
@@ -1332,28 +1348,93 @@ fn spawn_workspace_terminal(
     state: &SocketAppState,
     workspace: &forktty_core::Workspace,
 ) -> Result<(), String> {
-    state
-        .terminal
-        .spawn(SpawnRequest::for_workspace(
-            workspace,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    let Some(request) = spawn_request_for_workspace(state, workspace)? else {
+        return Ok(());
+    };
+    state.terminal.spawn(request).map_err(|err| err.to_string())
 }
 
 fn spawn_surface_terminal(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Result<(), String> {
-    state
-        .terminal
-        .spawn(SpawnRequest::for_surface(
-            surface,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    let Some(request) = spawn_request_for_surface(state, surface) else {
+        return Ok(());
+    };
+    state.terminal.spawn(request).map_err(|err| err.to_string())
+}
+
+/// Resolve the absolute path to the `ssh` binary, preferring known locations.
+fn resolve_ssh_binary() -> String {
+    for candidate in &["/usr/bin/ssh", "/bin/ssh"] {
+        if forktty_core::command_safety::is_executable_file(std::path::Path::new(candidate)) {
+            return candidate.to_string();
+        }
+    }
+    "ssh".to_string()
+}
+
+fn spawn_request_for_workspace(
+    state: &SocketAppState,
+    workspace: &forktty_core::Workspace,
+) -> Result<Option<SpawnRequest>, String> {
+    let surface = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .surface(&workspace.focused_surface_id)
+            .cloned()
+            .ok_or_else(|| "Surface not found".to_string())?
+    };
+    Ok(spawn_request_for_surface_kind(
+        SpawnRequest::for_workspace(workspace, state.shell.clone(), state.socket_path.clone()),
+        &surface.kind,
+    ))
+}
+
+fn spawn_request_for_surface(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+) -> Option<SpawnRequest> {
+    spawn_request_for_surface_kind(
+        SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone()),
+        &surface.kind,
+    )
+}
+
+fn spawn_request_for_surface_kind(
+    request: SpawnRequest,
+    kind: &forktty_core::SurfaceKind,
+) -> Option<SpawnRequest> {
+    match kind {
+        forktty_core::SurfaceKind::Terminal => Some(request),
+        forktty_core::SurfaceKind::Ssh { host } => {
+            let mut request = request;
+            request.shell = resolve_ssh_binary();
+            Some(request.with_args([host.clone()]))
+        }
+        forktty_core::SurfaceKind::Browser { .. } => None,
+    }
+}
+
+/// Validate the `host` parameter for SSH verbs.
+///
+/// Returns `Err(DispatchError::InvalidParam)` if the host is missing or invalid.
+fn required_ssh_host_param(params: &Value) -> Result<&str, DispatchError> {
+    let Some(value) = params.get("host") else {
+        return Err(DispatchError::MissingParam("host"));
+    };
+    let host = value.as_str().ok_or_else(|| {
+        DispatchError::InvalidParam("Invalid parameter host: expected string".to_string())
+    })?;
+    if !is_valid_ssh_host(host) {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter host: {host:?} is not a valid SSH target"
+        )));
+    }
+    Ok(host)
 }
 
 fn spawn_terminal_surfaces(
@@ -1443,14 +1524,7 @@ async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<
     {
         return Ok(());
     }
-    state
-        .terminal
-        .spawn(SpawnRequest::for_workspace(
-            &workspace,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    spawn_workspace_terminal(state, &workspace)
 }
 
 fn resolve_workspace_cwd_param(params: &Value) -> Result<PathBuf, String> {
@@ -1779,6 +1853,14 @@ fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, Disp
                 .ok_or(DispatchError::NotFound("profile".to_string()))
         }
     }
+}
+
+fn history_limit_from_params(params: &Value) -> usize {
+    params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(10_000) as usize)
+        .unwrap_or(100)
 }
 
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
@@ -2123,14 +2205,7 @@ pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Resu
             model.create_workspace("main", cwd)
         }
     };
-    state
-        .terminal
-        .spawn(SpawnRequest::for_workspace(
-            &workspace,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    spawn_workspace_terminal(state, &workspace)
 }
 
 async fn handle_connection(
@@ -5709,6 +5784,16 @@ mod tests {
 
     // --- SP3 P3 browser.history + browser.bookmark verbs ---------------------
 
+    #[test]
+    fn browser_history_limit_defaults_and_caps() {
+        assert_eq!(history_limit_from_params(&json!({})), 100);
+        assert_eq!(history_limit_from_params(&json!({"limit": 5})), 5);
+        assert_eq!(
+            history_limit_from_params(&json!({"limit": u64::MAX})),
+            10_000
+        );
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn browser_history_list_and_clear() {
@@ -5798,7 +5883,7 @@ mod tests {
         let err = dispatch(&state, "browser.bookmark.add", json!({"url": "   "}))
             .await
             .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
     }
 
     #[tokio::test]
@@ -5817,5 +5902,152 @@ mod tests {
         .await
         .unwrap();
         assert!(results.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn workspace_create_ssh_returns_workspace_and_spawns_ssh_process() {
+        let (state, backend) = test_state();
+        let result = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "user@example.com", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["name"], "workspace");
+        let surface_id = result["focused_surface_id"].as_str().unwrap();
+
+        // The spawned shell should be the ssh binary and args should be the host.
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert!(
+            shell.ends_with("/ssh") || shell == "ssh",
+            "expected ssh binary, got {shell}"
+        );
+        let args = backend.spawn_args(surface_id).unwrap();
+        assert_eq!(args, vec!["user@example.com"]);
+    }
+
+    #[tokio::test]
+    async fn workspace_select_respawns_ssh_workspace_with_ssh_process() {
+        let (state, backend) = test_state();
+        let result = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "user@example.com", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        let workspace_id = result["id"].as_str().unwrap();
+        let surface_id = result["focused_surface_id"].as_str().unwrap();
+        backend.close(surface_id).unwrap();
+
+        dispatch(&state, "workspace.select", json!({"id": workspace_id}))
+            .await
+            .unwrap();
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert!(
+            shell.ends_with("/ssh") || shell == "ssh",
+            "expected ssh binary, got {shell}"
+        );
+        assert_eq!(
+            backend.spawn_args(surface_id).unwrap(),
+            vec!["user@example.com"]
+        );
+    }
+
+    #[test]
+    fn bootstrap_default_workspace_respawns_existing_ssh_workspace_with_ssh_process() {
+        let (state, backend) = test_state();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let result = runtime
+            .block_on(dispatch(
+                &state,
+                "workspace.create_ssh",
+                json!({"host": "server.local", "workingDir": "/tmp"}),
+            ))
+            .unwrap();
+        let surface_id = result["focused_surface_id"].as_str().unwrap();
+        backend.close(surface_id).unwrap();
+
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert!(
+            shell.ends_with("/ssh") || shell == "ssh",
+            "expected ssh binary, got {shell}"
+        );
+        assert_eq!(
+            backend.spawn_args(surface_id).unwrap(),
+            vec!["server.local"]
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_create_ssh_with_custom_name() {
+        let (state, _backend) = test_state();
+        let result = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "server.local", "name": "my-server", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["name"], "my-server");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_ssh_rejects_empty_host() {
+        let (state, _backend) = test_state();
+        let err = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_ssh_rejects_missing_host() {
+        let (state, _backend) = test_state();
+        let err = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "missing_param");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_ssh_rejects_host_with_leading_dash() {
+        let (state, _backend) = test_state();
+        let err = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "-oProxyCommand=x", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_ssh_rejects_host_with_whitespace() {
+        let (state, _backend) = test_state();
+        let err = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "a b", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
     }
 }

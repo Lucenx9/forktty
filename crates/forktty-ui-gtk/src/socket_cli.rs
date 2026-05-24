@@ -75,6 +75,14 @@ Usage:
   forktty browser profile list                     List browser profiles
   forktty browser profile create <name>            Create a new browser profile with the given display name
   forktty browser profile delete <id>              Delete a browser profile by id
+  forktty browser history list [--profile <id|name>] [--limit <n>]
+  forktty browser history search <query> [--profile <id|name>] [--limit <n>]
+  forktty browser history clear [--profile <id|name>]
+  forktty browser bookmark add <url> [--title <t>] [--profile <id|name>]
+  forktty browser bookmark list [--profile <id|name>]
+  forktty browser bookmark remove <url> [--profile <id|name>]
+  forktty ssh <user@host>                          Open a new workspace running ssh <user@host>
+  forktty ssh <user@host> [--name <name>] [--cwd <path>]
 ";
 
 #[derive(Debug)]
@@ -387,6 +395,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "capabilities" => handle_capabilities(&context, args),
         "events" => handle_events(&context, args),
         "browser" => handle_browser(&context, args),
+        "ssh" => handle_ssh(&context, args),
         "help" => {
             print!("{HELP_TEXT}");
             Ok(())
@@ -998,6 +1007,54 @@ fn handle_create_workspace(context: &CliContext, args: Vec<String>) -> CliResult
             .map(|name| format!(" ({name})"))
             .unwrap_or_default();
         println!("Created workspace {id}{suffix}");
+        Ok(())
+    }
+}
+
+fn handle_ssh(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["name", "cwd"], "ssh")?;
+    if parsed.positionals.is_empty() {
+        return Err(CliError::new(
+            "ssh: missing required argument <user@host>. Usage: forktty ssh <user@host>",
+        ));
+    }
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "ssh: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let host = parsed.positionals[0].trim().to_string();
+    if host.is_empty() {
+        return Err(CliError::new("ssh: host must not be empty"));
+    }
+    let mut params = Map::new();
+    params.insert("host".to_string(), Value::String(host));
+    if let Some(name) = non_blank_string_option(&parsed.options, "name", "--name")? {
+        params.insert("name".to_string(), Value::String(name.trim().to_string()));
+    }
+    if let Some(cwd) = non_blank_string_option(&parsed.options, "cwd", "--cwd")? {
+        params.insert(
+            "workingDir".to_string(),
+            Value::String(cwd.trim().to_string()),
+        );
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workspace.create_ssh",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        let id = string_field(&result, "id").unwrap_or("(unknown)");
+        let suffix = result
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| format!(" ({name})"))
+            .unwrap_or_default();
+        println!("Created SSH workspace {id}{suffix}");
         Ok(())
     }
 }
@@ -5849,6 +5906,46 @@ mod tests {
     }
 
     #[test]
+    fn ssh_sends_workspace_create_ssh() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id":"w2","name":"prod"},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_ssh(
+                    &ctx,
+                    strings(&[
+                        "user@example.com",
+                        "--name",
+                        "prod",
+                        "--cwd",
+                        "/tmp/project",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workspace.create_ssh");
+        assert_eq!(request["params"]["host"], "user@example.com");
+        assert_eq!(request["params"]["name"], "prod");
+        assert_eq!(request["params"]["workingDir"], "/tmp/project");
+    }
+
+    #[test]
+    fn ssh_requires_host() {
+        assert_err_contains(
+            handle_ssh(&test_context(), Vec::new()),
+            "ssh: missing required argument <user@host>",
+        );
+    }
+
+    #[test]
     fn browser_open_sends_browser_open_with_url_and_workspace() {
         let request = with_socket_response(
             |req| {
@@ -6391,6 +6488,7 @@ mod tests {
             },
         );
         assert_eq!(request["method"], "browser.history.list");
+        assert_eq!(request["params"], json!({}));
     }
 
     #[test]
@@ -6478,6 +6576,43 @@ mod tests {
         assert_err_contains(
             handle_browser(&ctx, strings(&["history", "search"])),
             "browser history search requires a <query>",
+        );
+    }
+
+    #[test]
+    fn browser_history_search_limit_is_numeric() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&["history", "search", "hello", "--limit", "5"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.history.search");
+        assert_eq!(request["params"]["query"], "hello");
+        assert_eq!(request["params"]["limit"], json!(5));
+    }
+
+    #[test]
+    fn browser_history_search_invalid_limit_returns_error() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(
+                &ctx,
+                strings(&["history", "search", "hello", "--limit", "bad"]),
+            ),
+            "--limit must be a number",
         );
     }
 

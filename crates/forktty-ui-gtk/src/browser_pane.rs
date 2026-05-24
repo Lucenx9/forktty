@@ -3,11 +3,17 @@
 
 use gtk4 as gtk;
 
+use gtk::glib;
 use gtk::prelude::*;
 use webkit6::prelude::*;
 use webkit6::WebView;
 
 use forktty_core::BrowserCmdError;
+
+/// Return `true` only for `http://` and `https://` URLs — the ones worth recording in history.
+fn is_recordable_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
 
 /// The scripting driver injected into every page (SP2).
 pub const DRIVER_JS: &str = include_str!("driver.js");
@@ -95,6 +101,97 @@ impl BrowserPaneWidget {
         {
             let wv = web_view.clone();
             reload.connect_clicked(move |_| wv.reload());
+        }
+
+        // Parse profile_id → ProfileId for history/bookmark stores.
+        let profile = profile_id
+            .parse::<forktty_core::ProfileId>()
+            .unwrap_or_default();
+
+        // Address-bar completion: a ListStore with one text column, populated from
+        // history + bookmarks. Built before the load-changed connection so it can
+        // be refreshed from there.
+        let completion_model = gtk::ListStore::new(&[glib::Type::STRING]);
+        let completion = gtk::EntryCompletion::new();
+        completion.set_model(Some(&completion_model));
+        completion.set_text_column(0);
+        completion.set_inline_completion(true);
+        completion.set_popup_completion(true);
+        address.set_completion(Some(&completion));
+
+        // Populate the completion model from history + bookmarks.
+        let populate_completion = {
+            let model = completion_model.clone();
+            move |profile: forktty_core::ProfileId| {
+                model.clear();
+                // Collect URLs from history (most recent first) then bookmarks.
+                let mut urls: Vec<String> = Vec::new();
+                if let Ok(hist) = forktty_core::HistoryStore::for_profile(profile) {
+                    if let Ok(visits) = hist.list(200) {
+                        for v in visits {
+                            urls.push(v.url);
+                        }
+                    }
+                }
+                if let Ok(bm) = forktty_core::BookmarkStore::for_profile(profile) {
+                    for b in bm.list() {
+                        if !urls.contains(&b.url) {
+                            urls.push(b.url.clone());
+                        }
+                    }
+                }
+                for url in urls {
+                    let iter = model.append();
+                    model.set_value(&iter, 0, &url.to_value());
+                }
+            }
+        };
+        // Initial population.
+        populate_completion(profile);
+
+        // Connect load-changed: record visits on Committed and refresh completion.
+        {
+            let populate = populate_completion;
+            web_view.connect_load_changed(move |wv, event| {
+                if event == webkit6::LoadEvent::Committed {
+                    if let Some(uri) = wv.uri() {
+                        let u = uri.to_string();
+                        if is_recordable_url(&u) {
+                            let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
+                            if let Ok(store) = forktty_core::HistoryStore::for_profile(profile) {
+                                if let Err(e) = store.record_visit(&u, &title) {
+                                    eprintln!("forktty: history record_visit failed: {e}");
+                                }
+                            }
+                        }
+                    }
+                    // Refresh address-bar completion after each committed load.
+                    populate(profile);
+                }
+            });
+        }
+
+        // Title-notify handler: update the row once the page <title> is
+        // available. WebKit fires LoadEvent::Committed before the title is
+        // parsed, so the Committed handler above usually records an empty title.
+        // This keeps visit_count tied to committed navigations.
+        {
+            web_view.connect_title_notify(move |wv| {
+                if let Some(uri) = wv.uri() {
+                    let u = uri.to_string();
+                    if is_recordable_url(&u) {
+                        let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
+                        // Only bother if we actually have a title now.
+                        if !title.is_empty() {
+                            if let Ok(store) = forktty_core::HistoryStore::for_profile(profile) {
+                                if let Err(e) = store.update_title(&u, &title) {
+                                    eprintln!("forktty: history update_title failed: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         container.append(&bar);
@@ -222,6 +319,15 @@ impl BrowserPaneWidget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_http_urls_are_recordable() {
+        assert!(is_recordable_url("https://a.test/"));
+        assert!(is_recordable_url("http://a.test/"));
+        assert!(!is_recordable_url("about:blank"));
+        assert!(!is_recordable_url(""));
+        assert!(!is_recordable_url("data:text/html,x"));
+    }
 
     #[test]
     fn driver_script_is_present() {
