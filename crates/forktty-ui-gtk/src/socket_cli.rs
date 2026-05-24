@@ -75,6 +75,12 @@ Usage:
   forktty browser profile list                     List browser profiles
   forktty browser profile create <name>            Create a new browser profile with the given display name
   forktty browser profile delete <id>              Delete a browser profile by id
+  forktty browser history list [--profile <id|name>] [--limit <n>]
+  forktty browser history search <query> [--profile <id|name>] [--limit <n>]
+  forktty browser history clear [--profile <id|name>]
+  forktty browser bookmark add <url> [--title <t>] [--profile <id|name>]
+  forktty browser bookmark list [--profile <id|name>]
+  forktty browser bookmark remove <url> [--profile <id|name>]
 ";
 
 #[derive(Debug)]
@@ -6231,6 +6237,7 @@ mod tests {
             },
         );
         assert_eq!(request["method"], "browser.history.list");
+        assert_eq!(request["params"], json!({}));
     }
 
     #[test]
@@ -6259,6 +6266,43 @@ mod tests {
         assert_err_contains(
             handle_browser(&ctx, strings(&["history", "search"])),
             "browser history search requires a <query>",
+        );
+    }
+
+    #[test]
+    fn browser_history_search_limit_is_numeric() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&["history", "search", "hello", "--limit", "5"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.history.search");
+        assert_eq!(request["params"]["query"], "hello");
+        assert_eq!(request["params"]["limit"], json!(5));
+    }
+
+    #[test]
+    fn browser_history_search_invalid_limit_returns_error() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(
+                &ctx,
+                strings(&["history", "search", "hello", "--limit", "bad"]),
+            ),
+            "--limit must be a number",
         );
     }
 

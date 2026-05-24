@@ -914,11 +914,7 @@ pub async fn dispatch(
         }
         "browser.history.list" => {
             let profile = resolve_profile_param(&params)?;
-            let limit = params
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(100);
+            let limit = history_limit_from_params(&params);
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -929,11 +925,7 @@ pub async fn dispatch(
         "browser.history.search" => {
             let query = required_string_param(&params, "query")?.to_string();
             let profile = resolve_profile_param(&params)?;
-            let limit = params
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(100);
+            let limit = history_limit_from_params(&params);
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -953,7 +945,9 @@ pub async fn dispatch(
         "browser.bookmark.add" => {
             let url = required_string_param(&params, "url")?.to_string();
             if url.trim().is_empty() {
-                return Err("Invalid parameter url: must not be empty".into());
+                return Err(DispatchError::InvalidParam(
+                    "url must not be empty".to_string(),
+                ));
             }
             let title = params
                 .get("title")
@@ -1749,6 +1743,14 @@ fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, Disp
                 .ok_or(DispatchError::NotFound("profile".to_string()))
         }
     }
+}
+
+fn history_limit_from_params(params: &Value) -> usize {
+    params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(10_000) as usize)
+        .unwrap_or(100)
 }
 
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
@@ -5673,6 +5675,16 @@ mod tests {
 
     // --- SP3 P3 browser.history + browser.bookmark verbs ---------------------
 
+    #[test]
+    fn browser_history_limit_defaults_and_caps() {
+        assert_eq!(history_limit_from_params(&json!({})), 100);
+        assert_eq!(history_limit_from_params(&json!({"limit": 5})), 5);
+        assert_eq!(
+            history_limit_from_params(&json!({"limit": u64::MAX})),
+            10_000
+        );
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn browser_history_list_and_clear() {
@@ -5762,7 +5774,7 @@ mod tests {
         let err = dispatch(&state, "browser.bookmark.add", json!({"url": "   "}))
             .await
             .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
     }
 
     #[tokio::test]
