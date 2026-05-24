@@ -21,6 +21,7 @@ use tokio::sync::{broadcast, Semaphore};
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
+const MAX_BROWSER_URL_BYTES: usize = 8_192;
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
@@ -33,6 +34,8 @@ const EVENTS_TICK: Duration = Duration::from_millis(250);
 /// covered by a `dispatch` match arm; the `capabilities_lists_dispatchable`
 /// test guards against an entry here that has no handler.
 pub const METHODS: &[&str] = &[
+    "browser.navigate",
+    "browser.open",
     "events.subscribe",
     "metadata.clear_logs",
     "metadata.clear_progress",
@@ -708,6 +711,37 @@ pub async fn dispatch(
             }
             Ok(json!(surface))
         }
+        "browser.open" => {
+            let workspace_id = required_string_param(&params, "workspace_id")?.to_string();
+            let url = required_browser_url(&params)?;
+            let axis = split_axis_from_params(&params)?;
+            let surface = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model
+                    .open_browser(&workspace_id, &url, axis)
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
+            };
+            Ok(json!(surface))
+        }
+        "browser.navigate" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            let url = required_browser_url(&params)?;
+            let updated = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.set_surface_url(&surface_id, &url)
+            };
+            if updated {
+                Ok(json!({"navigated": true}))
+            } else {
+                Err(DispatchError::NotFound("surface".to_string()))
+            }
+        }
         "surface.focus" => {
             let surface_id = required_surface_id(&params)?;
             let focused = {
@@ -1360,6 +1394,25 @@ fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
         Some("vertical") => Ok(SplitAxis::Vertical),
         Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
         None => Err("Invalid parameter axis: expected string".into()),
+    }
+}
+
+fn required_browser_url(params: &Value) -> Result<String, DispatchError> {
+    let raw = required_string_param(params, "url")?.trim();
+    if raw.is_empty() {
+        return Err("Invalid parameter url: must not be empty".into());
+    }
+    if raw.len() > MAX_BROWSER_URL_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field: "url",
+            limit: MAX_BROWSER_URL_BYTES,
+            actual: raw.len(),
+        });
+    }
+    if raw.contains("://") {
+        Ok(raw.to_string())
+    } else {
+        Ok(format!("https://{raw}"))
     }
 }
 
@@ -4907,5 +4960,48 @@ mod tests {
             .expect("server did not exit on idle disconnect")
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_open_creates_browser_surface_and_navigate_updates_url() {
+        let (state, _backend) = test_state();
+        let created = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let ws_id = created["id"].as_str().unwrap().to_string();
+
+        let opened = dispatch(
+            &state,
+            "browser.open",
+            json!({"workspace_id": ws_id, "url": "example.com"}),
+        )
+        .await
+        .unwrap();
+        let surface_id = opened["id"].as_str().unwrap().to_string();
+        // Bare domain gets https:// prepended.
+        assert_eq!(
+            opened["kind"],
+            json!({"type": "browser", "url": "https://example.com"})
+        );
+
+        let navigated = dispatch(
+            &state,
+            "browser.navigate",
+            json!({"surface_id": surface_id, "url": "https://other.com"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(navigated["navigated"], json!(true));
+
+        // navigate on a non-browser surface errors.
+        let term = created["focused_surface_id"].as_str().unwrap();
+        let err = dispatch(
+            &state,
+            "browser.navigate",
+            json!({"surface_id": term, "url": "https://x.com"}),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, DispatchError::NotFound(_)));
     }
 }
