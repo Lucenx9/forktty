@@ -1,0 +1,274 @@
+//! Browser-pane history + bookmarks (SP3 P3). Pure (no GTK/webkit): both the GTK
+//! main thread (visit recording, address-bar completion) and the socket thread
+//! (history/bookmark verbs) use these stores against the same per-profile files.
+//! sqlite runs in WAL mode so a concurrent reader and writer do not block.
+
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+
+use crate::profile::ProfileId;
+
+/// One visited URL with its aggregate visit metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Visit {
+    pub url: String,
+    pub title: String,
+    pub visit_count: i64,
+    /// Unix microseconds of the most recent visit.
+    pub last_visit_us: i64,
+}
+
+/// Errors from the history/bookmark stores.
+#[derive(Debug)]
+pub enum HistoryError {
+    Io(String),
+    Db(String),
+}
+
+impl std::fmt::Display for HistoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HistoryError::Io(e) => write!(f, "history io error: {e}"),
+            HistoryError::Db(e) => write!(f, "history db error: {e}"),
+        }
+    }
+}
+impl std::error::Error for HistoryError {}
+
+impl From<rusqlite::Error> for HistoryError {
+    fn from(e: rusqlite::Error) -> Self {
+        HistoryError::Db(e.to_string())
+    }
+}
+
+fn now_us() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as i64)
+        .unwrap_or(0)
+}
+
+/// `~/.local/share/forktty/browser_profiles/<id>/history.sqlite` for the given profile.
+/// `None` if the platform has no data dir.
+pub fn history_path(profile: ProfileId) -> Option<PathBuf> {
+    Some(profile_dir(profile)?.join("history.sqlite"))
+}
+
+/// `~/.local/share/forktty/browser_profiles/<id>/bookmarks.json` for the given profile.
+pub fn bookmarks_path(profile: ProfileId) -> Option<PathBuf> {
+    Some(profile_dir(profile)?.join("bookmarks.json"))
+}
+
+fn profile_dir(profile: ProfileId) -> Option<PathBuf> {
+    dirs::data_local_dir().map(|d| {
+        d.join("forktty")
+            .join("browser_profiles")
+            .join(profile.to_string())
+    })
+}
+
+/// Per-profile visited-URL history backed by sqlite.
+pub struct HistoryStore {
+    conn: Connection,
+}
+
+impl HistoryStore {
+    /// Open (creating + migrating) `history.sqlite` at `path`, ensuring the parent dir.
+    pub fn open(path: &Path) -> Result<Self, HistoryError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| HistoryError::Io(e.to_string()))?;
+        }
+        let conn = Connection::open(path)?;
+        Self::init(conn)
+    }
+
+    /// Open the history store for `profile` at its default path.
+    pub fn for_profile(profile: ProfileId) -> Result<Self, HistoryError> {
+        let path = history_path(profile)
+            .ok_or_else(|| HistoryError::Io("no data directory on this platform".to_string()))?;
+        Self::open(&path)
+    }
+
+    /// In-memory store for tests.
+    pub fn open_in_memory() -> Result<Self, HistoryError> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Self, HistoryError> {
+        // WAL so a socket-side reader and a GTK-side writer coexist. Ignored for
+        // in-memory connections, which is fine.
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS visits (
+                 url            TEXT PRIMARY KEY,
+                 title          TEXT NOT NULL DEFAULT '',
+                 visit_count    INTEGER NOT NULL DEFAULT 0,
+                 last_visit_us  INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE INDEX IF NOT EXISTS idx_visits_last_visit
+                 ON visits(last_visit_us DESC);",
+        )?;
+        Ok(Self { conn })
+    }
+
+    /// Record a visit: insert new, or bump `visit_count` and `last_visit_us` for an
+    /// existing url. A non-empty `title` overwrites the stored one; an empty title
+    /// leaves the existing title intact.
+    pub fn record_visit(&self, url: &str, title: &str) -> Result<(), HistoryError> {
+        self.conn.execute(
+            "INSERT INTO visits (url, title, visit_count, last_visit_us)
+                 VALUES (?1, ?2, 1, ?3)
+             ON CONFLICT(url) DO UPDATE SET
+                 visit_count   = visit_count + 1,
+                 last_visit_us = ?3,
+                 title         = CASE WHEN ?2 <> '' THEN ?2 ELSE title END",
+            rusqlite::params![url, title, now_us()],
+        )?;
+        Ok(())
+    }
+
+    /// Most-recently-visited rows first, capped at `limit`.
+    pub fn list(&self, limit: usize) -> Result<Vec<Visit>, HistoryError> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT url, title, visit_count, last_visit_us
+                 FROM visits ORDER BY last_visit_us DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map([limit as i64], Self::row_to_visit)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Case-insensitive substring match on url or title, most recent first, capped.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Visit>, HistoryError> {
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let like = format!("%{escaped}%");
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT url, title, visit_count, last_visit_us
+                 FROM visits
+                 WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
+                 ORDER BY last_visit_us DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![like, limit as i64], Self::row_to_visit)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Delete all history rows.
+    pub fn clear(&self) -> Result<(), HistoryError> {
+        self.conn.execute("DELETE FROM visits", [])?;
+        Ok(())
+    }
+
+    fn row_to_visit(row: &rusqlite::Row<'_>) -> rusqlite::Result<Visit> {
+        Ok(Visit {
+            url: row.get(0)?,
+            title: row.get(1)?,
+            visit_count: row.get(2)?,
+            last_visit_us: row.get(3)?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store() -> HistoryStore {
+        // In-memory db keeps tests headless and fast.
+        HistoryStore::open_in_memory().expect("open in-memory history")
+    }
+
+    #[test]
+    fn record_visit_inserts_then_increments() {
+        let h = store();
+        h.record_visit("https://a.test/", "A").unwrap();
+        h.record_visit("https://a.test/", "A v2").unwrap();
+        let rows = h.list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].url, "https://a.test/");
+        assert_eq!(rows[0].visit_count, 2);
+        // Latest non-empty title wins.
+        assert_eq!(rows[0].title, "A v2");
+    }
+
+    #[test]
+    fn record_visit_keeps_existing_title_when_new_is_empty() {
+        let h = store();
+        h.record_visit("https://a.test/", "Real Title").unwrap();
+        h.record_visit("https://a.test/", "").unwrap();
+        let rows = h.list(10).unwrap();
+        assert_eq!(rows[0].title, "Real Title");
+        assert_eq!(rows[0].visit_count, 2);
+    }
+
+    #[test]
+    fn list_orders_by_last_visit_desc() {
+        let h = store();
+        h.record_visit("https://first.test/", "1").unwrap();
+        h.record_visit("https://second.test/", "2").unwrap();
+        h.record_visit("https://first.test/", "1").unwrap(); // bump first
+        let rows = h.list(10).unwrap();
+        assert_eq!(rows[0].url, "https://first.test/");
+        assert_eq!(rows[1].url, "https://second.test/");
+    }
+
+    #[test]
+    fn list_respects_limit() {
+        let h = store();
+        for i in 0..5 {
+            h.record_visit(&format!("https://x.test/{i}"), "x").unwrap();
+        }
+        assert_eq!(h.list(3).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn search_matches_url_or_title_substring_case_insensitive() {
+        let h = store();
+        h.record_visit("https://github.com/rust", "Rust Lang")
+            .unwrap();
+        h.record_visit("https://example.com/", "Example").unwrap();
+        let by_url = h.search("GITHUB", 10).unwrap();
+        assert_eq!(by_url.len(), 1);
+        assert_eq!(by_url[0].url, "https://github.com/rust");
+        let by_title = h.search("exampl", 10).unwrap();
+        assert_eq!(by_title.len(), 1);
+        assert_eq!(by_title[0].url, "https://example.com/");
+    }
+
+    #[test]
+    fn clear_removes_all_rows() {
+        let h = store();
+        h.record_visit("https://a.test/", "A").unwrap();
+        h.clear().unwrap();
+        assert!(h.list(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn open_creates_file_and_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        {
+            let h = HistoryStore::open(&path).unwrap();
+            h.record_visit("https://persist.test/", "P").unwrap();
+        }
+        let h2 = HistoryStore::open(&path).unwrap();
+        assert_eq!(h2.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn search_handles_backslash_query_without_error() {
+        let h = store();
+        h.record_visit("https://a.test/path", "Title").unwrap();
+        // A backslash in the query must not blow up the LIKE pattern.
+        assert!(h.search("a\\b", 10).unwrap().is_empty());
+        assert_eq!(h.search("a.test", 10).unwrap().len(), 1);
+    }
+}

@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod browser_cmd;
+pub mod browser_history;
 pub mod command_safety;
 pub mod config;
 pub mod events;
@@ -22,6 +23,7 @@ pub use browser_cmd::{
 };
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
 
+pub use browser_history::{HistoryError, HistoryStore, Visit};
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig};
 pub use model::{
     has_uri_scheme, LogEntry, LogLevel, NotificationItem, NotificationKind, PaneNode,
