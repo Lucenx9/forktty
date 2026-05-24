@@ -1,3 +1,4 @@
+use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
     config, dispatch_notification, validate_worktree_name, worktree, JsonRpcRequest,
     JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel,
@@ -15,13 +16,54 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::Semaphore;
+use tokio::sync::{broadcast, Semaphore};
 
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+/// Buffered events per subscriber before a slow client gets a `Lagged` notice.
+const EVENTS_CHANNEL_CAPACITY: usize = 256;
+/// How often the background task snapshots the model and emits diffs.
+const EVENTS_TICK: Duration = Duration::from_millis(250);
+
+/// Methods advertised by `system.capabilities`. Every entry except
+/// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
+/// covered by a `dispatch` match arm; the `capabilities_lists_dispatchable`
+/// test guards against an entry here that has no handler.
+pub const METHODS: &[&str] = &[
+    "events.subscribe",
+    "metadata.clear_logs",
+    "metadata.clear_progress",
+    "metadata.clear_status",
+    "metadata.list_logs",
+    "metadata.list_progress",
+    "metadata.list_status",
+    "metadata.log",
+    "metadata.set_progress",
+    "metadata.set_status",
+    "notification.clear",
+    "notification.create",
+    "notification.list",
+    "surface.close",
+    "surface.focus",
+    "surface.list",
+    "surface.send_text",
+    "surface.split",
+    "system.capabilities",
+    "system.ping",
+    "workspace.close",
+    "workspace.create",
+    "workspace.list",
+    "workspace.select",
+    "worktree.attach",
+    "worktree.create",
+    "worktree.list",
+    "worktree.merge",
+    "worktree.remove",
+    "worktree.status",
+];
 
 #[derive(Error, Debug)]
 pub enum SocketError {
@@ -169,6 +211,9 @@ pub struct SocketAppState {
     pub shell: String,
     pub socket_path: PathBuf,
     pub notification_dispatch: bool,
+    /// Broadcast channel feeding `events.subscribe` connections. The background
+    /// tick task in [`serve`] is the sole producer.
+    pub events: broadcast::Sender<ModelEvent>,
 }
 
 impl SocketAppState {
@@ -178,12 +223,14 @@ impl SocketAppState {
         shell: impl Into<String>,
         socket_path: impl Into<PathBuf>,
     ) -> Self {
+        let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
         Self {
             model,
             terminal,
             shell: shell.into(),
             socket_path: socket_path.into(),
             notification_dispatch: true,
+            events,
         }
     }
 
@@ -247,6 +294,7 @@ pub fn bind_socket_listener(
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {
     let listener = UnixListener::from_std(listener)?;
+    spawn_event_tick(state.clone());
     let connection_limit = Arc::new(Semaphore::new(MAX_SOCKET_CONNECTIONS));
     loop {
         let (stream, _) = listener.accept().await?;
@@ -269,6 +317,31 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
     }
 }
 
+/// Background task: snapshot the model every [`EVENTS_TICK`], diff against the
+/// previous snapshot, and broadcast each resulting event. Send errors (no
+/// subscribers) are ignored. Ends when the server process exits.
+fn spawn_event_tick(state: SocketAppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(EVENTS_TICK);
+        let mut prev = current_snapshot(&state.model);
+        loop {
+            interval.tick().await;
+            let next = current_snapshot(&state.model);
+            for event in events::diff(&prev, &next) {
+                let _ = state.events.send(event);
+            }
+            prev = next;
+        }
+    });
+}
+
+fn current_snapshot(model: &Arc<Mutex<WorkspaceModel>>) -> Snapshot {
+    match model.lock() {
+        Ok(model) => events::snapshot(&model),
+        Err(_) => Snapshot::default(),
+    }
+}
+
 async fn reject_over_capacity_connection(stream: tokio::net::UnixStream) {
     let (_, mut writer) = stream.into_split();
     let response = JsonRpcResponse::error(
@@ -288,6 +361,10 @@ pub async fn dispatch(
 ) -> Result<Value, DispatchError> {
     match method {
         "system.ping" => Ok(json!("pong")),
+        "system.capabilities" => Ok(json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "methods": METHODS,
+        })),
         "workspace.list" => {
             let model = state
                 .model
@@ -1676,6 +1753,15 @@ async fn handle_connection(
                 continue;
             }
         };
+        if request.method == "events.subscribe" {
+            // Takes over the connection: stream events until the peer drops.
+            let replay = request
+                .params
+                .get("replay")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            return stream_events(&state, replay, &mut writer).await;
+        }
         let id = request.id.clone();
         let response = match dispatch(&state, &request.method, request.params).await {
             Ok(result) => JsonRpcResponse::ok(id, result),
@@ -1683,6 +1769,55 @@ async fn handle_connection(
         };
         write_response(&mut writer, &response).await?;
     }
+    Ok(())
+}
+
+/// Hold the connection open and stream model events as NDJSON until the peer
+/// disconnects (write error) or the broadcast channel closes.
+///
+/// Subscribes before snapshotting so changes that land during replay are
+/// buffered rather than lost; this can duplicate an event across the
+/// replay/live boundary, which clients tolerate because events are state
+/// assertions, not deltas.
+async fn stream_events(
+    state: &SocketAppState,
+    replay: bool,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<(), SocketError> {
+    let mut receiver = state.events.subscribe();
+    write_ndjson(writer, &json!({"event": "subscribed"})).await?;
+    if replay {
+        let snapshot = current_snapshot(&state.model);
+        for event in events::diff(&Snapshot::default(), &snapshot) {
+            write_ndjson(writer, &json!(event)).await?;
+        }
+    }
+    loop {
+        match receiver.recv().await {
+            Ok(event) => write_ndjson(writer, &json!(event)).await?,
+            Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                write_ndjson(writer, &lagged_notice(dropped)).await?;
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+    Ok(())
+}
+
+/// The NDJSON notice sent when a subscriber falls behind and the channel drops
+/// `dropped` buffered events. The client should resync by reconnecting.
+fn lagged_notice(dropped: u64) -> Value {
+    json!({"event": "lagged", "dropped": dropped})
+}
+
+async fn write_ndjson(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    value: &Value,
+) -> Result<(), SocketError> {
+    let mut bytes = serde_json::to_vec(value)?;
+    bytes.push(b'\n');
+    writer.write_all(&bytes).await?;
+    writer.flush().await?;
     Ok(())
 }
 
@@ -4635,5 +4770,89 @@ mod tests {
         assert_eq!(response.id, Value::Null);
         assert_eq!(response.error.unwrap().code, "request_too_large");
         server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn capabilities_lists_only_dispatchable_methods() {
+        let (state, _backend) = test_state();
+        let result = dispatch(&state, "system.capabilities", json!({}))
+            .await
+            .unwrap();
+        let methods = result["methods"].as_array().unwrap();
+        assert!(methods.iter().any(|m| m == "system.ping"));
+        assert!(methods.iter().any(|m| m == "events.subscribe"));
+        // Every advertised method except the connection-level events.subscribe
+        // must resolve to a dispatch arm (not MethodNotFound).
+        for method in METHODS {
+            if *method == "events.subscribe" {
+                continue;
+            }
+            if let Err(DispatchError::MethodNotFound(_)) =
+                dispatch(&state, method, json!({})).await
+            {
+                panic!("advertised method {method} has no dispatch handler");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn events_subscribe_replays_then_streams_live_events() {
+        let (state, _backend) = test_state();
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(server, state.clone()));
+        let (read_half, mut write_half) = client.into_split();
+        write_half
+            .write_all(br#"{"id":1,"method":"events.subscribe","params":{"replay":true}}"#)
+            .await
+            .unwrap();
+        write_half.write_all(b"\n").await.unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert!(line.contains("\"subscribed\""), "first line is handshake");
+
+        // Emit a distinctive live event the way the tick task would.
+        state
+            .events
+            .send(ModelEvent::WorkspaceSelected {
+                id: Some("LIVE".to_string()),
+            })
+            .unwrap();
+
+        // Collect lines until both the replayed workspace and the live event appear.
+        let mut saw_replay = false;
+        let mut saw_live = false;
+        for _ in 0..50 {
+            let mut buf = String::new();
+            let read =
+                tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut buf))
+                    .await
+                    .expect("stream did not stall")
+                    .unwrap();
+            assert!(read > 0, "stream closed unexpectedly");
+            if buf.contains("workspace_added") {
+                saw_replay = true;
+            }
+            if buf.contains("\"LIVE\"") {
+                saw_live = true;
+            }
+            if saw_replay && saw_live {
+                break;
+            }
+        }
+        assert!(saw_replay, "replay emitted the bootstrapped workspace");
+        assert!(saw_live, "live event reached the subscriber");
+
+        // The server blocks on recv() until its next write fails, so abort it
+        // rather than awaiting completion.
+        drop(write_half);
+        drop(reader);
+        server_task.abort();
+    }
+
+    #[test]
+    fn lagged_notice_reports_dropped_count() {
+        assert_eq!(lagged_notice(7), json!({"event": "lagged", "dropped": 7}));
     }
 }
