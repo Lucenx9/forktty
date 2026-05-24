@@ -1,4 +1,4 @@
-use crate::model::{PaneNode, SplitAxis, Workspace};
+use crate::model::{PaneNode, SplitAxis, Surface, Workspace};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -35,6 +35,11 @@ pub struct SessionData {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
+    /// Persisted per-surface state (currently the surface `kind`/url) keyed by
+    /// surface id. Empty on sessions written before browser panes existed, in
+    /// which case restore falls back to `SurfaceKind::Terminal` for every leaf.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surfaces: Vec<Surface>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +294,8 @@ fn migrate_legacy_session(legacy: LegacySessionData) -> Result<SessionData, Sess
         version: SESSION_FORMAT_VERSION,
         workspaces,
         active_workspace_id,
+        // Legacy sessions predate browser panes: every surface is a terminal.
+        surfaces: Vec::new(),
     })
 }
 
@@ -568,6 +575,7 @@ mod tests {
             version: SESSION_FORMAT_VERSION,
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
+            surfaces: Vec::new(),
         };
         validate_session_data(&data).unwrap();
     }
@@ -582,6 +590,7 @@ mod tests {
             version: SESSION_FORMAT_VERSION,
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
+            surfaces: Vec::new(),
         };
 
         save_session_to_path(&path, &data).unwrap();
@@ -615,6 +624,7 @@ mod tests {
             version: SESSION_FORMAT_VERSION,
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
+            surfaces: Vec::new(),
         };
         save_session_to_path(&target, &data).unwrap();
         symlink(&target, &path).unwrap();
@@ -666,6 +676,7 @@ mod tests {
             version: SESSION_FORMAT_VERSION,
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
+            surfaces: Vec::new(),
         };
 
         save_session_to_path(&path, &data).expect("save through broken symlink should succeed");

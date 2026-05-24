@@ -1409,7 +1409,7 @@ fn required_browser_url(params: &Value) -> Result<String, DispatchError> {
             actual: raw.len(),
         });
     }
-    if raw.contains("://") {
+    if forktty_core::has_uri_scheme(raw) {
         Ok(raw.to_string())
     } else {
         Ok(format!("https://{raw}"))

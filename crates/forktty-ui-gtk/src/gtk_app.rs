@@ -536,6 +536,13 @@ impl VteController {
         self.container.append(&widget);
         if let Some(widget) = self.widgets.get(&focused_surface_id) {
             queue_widget_focus(widget.clone().upcast());
+        } else {
+            // Browser panes are not in self.widgets; hand keyboard focus to the
+            // pane's focus target so keyboard-only nav reaches the browser.
+            #[cfg(feature = "browser")]
+            if let Some(pane) = self.browser_panes.borrow().get(&focused_surface_id) {
+                queue_widget_focus(pane.focus_target());
+            }
         }
         self.last_layout_signature = Some(signature);
     }
@@ -677,6 +684,12 @@ impl VteController {
                 .collect::<Vec<_>>()
         };
         for (surface, auto_spawn_blocked) in surfaces {
+            // Browser surfaces are rendered by browser_panes and never get a
+            // terminal backend; spawning a PTY for them would leak a hidden
+            // shell process and emit bogus terminal status/port/close events.
+            if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
+                continue;
+            }
             if auto_spawn_blocked {
                 continue;
             }
@@ -814,7 +827,7 @@ impl VteController {
         let id = surface_id.to_string();
         pane.connect_address_activate(move |text| {
             if let Ok(mut m) = model.lock() {
-                let normalized = if text.contains("://") {
+                let normalized = if forktty_core::has_uri_scheme(&text) {
                     text
                 } else {
                     format!("https://{text}")
@@ -822,6 +835,18 @@ impl VteController {
                 m.set_surface_url(&id, &normalized);
             }
         });
+        // Keep model focus in sync when the browser pane gains focus, mirroring
+        // the VTE has-focus handler, so focus-driven split/close target this pane.
+        {
+            let focus_model = self.model.clone();
+            let focus_id = surface_id.to_string();
+            pane.connect_focus_in(move || {
+                if let Ok(mut m) = focus_model.lock() {
+                    let _ = m.focus_surface(&focus_id);
+                    let _ = m.mark_surface_unread(&focus_id, false);
+                }
+            });
+        }
         let widget = pane.widget();
         self.browser_panes
             .borrow_mut()

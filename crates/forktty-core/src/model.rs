@@ -246,6 +246,13 @@ impl WorkspaceModel {
 
     pub fn restore_session(&mut self, data: SessionData) {
         *self = WorkspaceModel::new();
+        // Persisted per-surface state (kind/url). Surfaces absent here — e.g.
+        // every surface in a pre-browser session — default to Terminal below.
+        let mut persisted_surfaces: BTreeMap<SurfaceId, Surface> = data
+            .surfaces
+            .into_iter()
+            .map(|surface| (surface.id.clone(), surface))
+            .collect();
         let active_id = data
             .active_workspace_id
             .or_else(|| {
@@ -273,14 +280,25 @@ impl WorkspaceModel {
                 }
             }
             for surface_id in leaf_ids {
-                let surface = Surface {
-                    id: surface_id,
-                    workspace_id: workspace.id.clone(),
-                    cwd: workspace.working_dir.clone(),
-                    title: String::from("shell"),
-                    unread: false,
-                    needs_attention: false,
-                    kind: SurfaceKind::Terminal,
+                // Recover the persisted kind/title (e.g. a browser pane's url)
+                // when present; otherwise fall back to a default terminal so
+                // pre-browser sessions and missing entries keep working.
+                let surface = match persisted_surfaces.remove(&surface_id) {
+                    Some(mut persisted) => {
+                        persisted.workspace_id = workspace.id.clone();
+                        persisted.unread = false;
+                        persisted.needs_attention = false;
+                        persisted
+                    }
+                    None => Surface {
+                        id: surface_id,
+                        workspace_id: workspace.id.clone(),
+                        cwd: workspace.working_dir.clone(),
+                        title: String::from("shell"),
+                        unread: false,
+                        needs_attention: false,
+                        kind: SurfaceKind::Terminal,
+                    },
                 };
                 self.next_surface = self.next_surface.max(numeric_suffix(&surface.id));
                 self.surfaces.insert(surface.id.clone(), surface);
@@ -305,10 +323,20 @@ impl WorkspaceModel {
             workspace.listening_ports.clear();
             workspace.pr = None;
         }
+        // Only non-terminal surfaces need to be persisted explicitly: terminal
+        // surfaces are the default and are reconstructed from the pane tree.
+        // This keeps sessions written without browser panes byte-identical.
+        let surfaces = self
+            .surfaces
+            .values()
+            .filter(|surface| !matches!(surface.kind, SurfaceKind::Terminal))
+            .cloned()
+            .collect();
         SessionData {
             version: SESSION_FORMAT_VERSION,
             workspaces,
             active_workspace_id: self.active_workspace_id(),
+            surfaces,
         }
     }
 
@@ -1426,6 +1454,24 @@ fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
 }
 
 /// Derive a browser pane title from its URL host, falling back to "browser".
+/// Returns true if `s` begins with a valid URI scheme followed by `://`.
+///
+/// A scheme matches `^[a-zA-Z][a-zA-Z0-9+.-]*://` per RFC 3986. This deliberately
+/// only inspects the *leading* portion so a query/path containing `://`
+/// (e.g. `example.com/?next=https://x`) is not mistaken for an already-schemed
+/// URL.
+pub fn has_uri_scheme(s: &str) -> bool {
+    let Some(idx) = s.find("://") else {
+        return false;
+    };
+    let scheme = &s[..idx];
+    !scheme.is_empty()
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+}
+
 fn browser_title_for(url: &str) -> String {
     // Only http(s)-style URLs with an authority get a host-based title;
     // schemes like about:, data:, javascript: fall back.
@@ -2987,5 +3033,44 @@ mod tests {
         assert_eq!(browser_title_for("about:blank"), "browser");
         assert_eq!(browser_title_for("data:text/html,hi"), "browser");
         assert_eq!(browser_title_for("https://"), "browser");
+    }
+
+    #[test]
+    fn has_uri_scheme_detects_only_leading_scheme() {
+        assert!(!has_uri_scheme("example.com"));
+        assert!(has_uri_scheme("https://x"));
+        // A `://` inside the query must not be mistaken for a scheme.
+        assert!(!has_uri_scheme("example.com/?next=https://x"));
+        assert!(has_uri_scheme("ftp://h"));
+        assert!(has_uri_scheme("custom+scheme.1-2://h"));
+        // Empty scheme, non-alpha leading char, and no `://` are all rejected.
+        assert!(!has_uri_scheme("://x"));
+        assert!(!has_uri_scheme("1http://x"));
+        assert!(!has_uri_scheme("noscheme"));
+    }
+
+    #[test]
+    fn restore_session_preserves_browser_surface_kind() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("ws", "/tmp");
+        model.open_browser(&workspace.id, "https://example.com", SplitAxis::Vertical);
+        let browser_id = model
+            .list_surfaces(Some(&workspace.id))
+            .into_iter()
+            .find(|s| matches!(s.kind, SurfaceKind::Browser { .. }))
+            .map(|s| s.id)
+            .expect("browser surface present");
+
+        let data = model.to_session_data();
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let surface = restored.surface(&browser_id).expect("surface restored");
+        assert_eq!(
+            surface.kind,
+            SurfaceKind::Browser {
+                url: "https://example.com".to_string()
+            }
+        );
     }
 }

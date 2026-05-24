@@ -73,6 +73,30 @@ impl BrowserPaneWidget {
         self.container.clone().upcast()
     }
 
+    /// The widget keyboard focus should land on when this pane is focused.
+    /// The address entry is the natural keyboard entry point and is always
+    /// realized (the WebView may not have loaded yet).
+    pub fn focus_target(&self) -> gtk::Widget {
+        self.address.clone().upcast()
+    }
+
+    /// Connect a callback fired when focus enters this pane (the address bar
+    /// or the WebView). Used to keep `WorkspaceModel::focused_surface_id` in
+    /// sync so split/close commands target the pane the user is interacting
+    /// with, mirroring the VTE `has-focus` handler.
+    pub fn connect_focus_in<F: Fn() + 'static>(&self, f: F) {
+        let f = std::rc::Rc::new(f);
+        for target in [
+            self.web_view.clone().upcast::<gtk::Widget>(),
+            self.address.clone().upcast::<gtk::Widget>(),
+        ] {
+            let controller = gtk::EventControllerFocus::new();
+            let f = f.clone();
+            controller.connect_enter(move |_| f());
+            target.add_controller(controller);
+        }
+    }
+
     pub fn load_uri(&self, url: &str) {
         if self.last_requested.borrow().as_str() == url {
             return;
