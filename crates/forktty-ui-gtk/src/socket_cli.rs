@@ -63,7 +63,7 @@ Usage:
   forktty ping
   forktty capabilities [--json]
   forktty events [--no-replay]
-  forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] <url>
+  forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] [--profile <id|name>] <url>
   forktty browser navigate [<surface-id>] <url>
   forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
   forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
@@ -72,6 +72,9 @@ Usage:
   forktty browser back <surface-id>                Navigate back in history
   forktty browser forward <surface-id>             Navigate forward in history
   forktty browser reload <surface-id>              Reload the current page
+  forktty browser profile list                     List browser profiles
+  forktty browser profile create <name>            Create a new browser profile with the given display name
+  forktty browser profile delete <id>              Delete a browser profile by id
 ";
 
 #[derive(Debug)]
@@ -1402,8 +1405,9 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             "reload",
             Some("Reloaded"),
         ),
+        "profile" => browser_profile(context, rest),
         "" => Err(CliError::new(
-            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload",
+            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile",
         )),
         other => Err(CliError::new(format!(
             "browser: unknown subcommand {other}"
@@ -1413,7 +1417,11 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 
 fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &["workspace-id", "axis"], "browser open")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "axis", "profile"],
+        "browser open",
+    )?;
     let url = parsed
         .positionals
         .first()
@@ -1440,6 +1448,9 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             ));
         }
         params.insert("axis".to_string(), Value::String(axis.to_string()));
+    }
+    if let Some(profile) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+        params.insert("profile".to_string(), Value::String(profile.to_string()));
     }
     let result = send_socket_request(&context.socket_path, "browser.open", Value::Object(params))?;
     if context.json {
@@ -1578,6 +1589,71 @@ fn browser_surface_cmd(
     match human_message {
         Some(message) => print_result_or_json(context, message, result),
         None => print_json(&result),
+    }
+}
+
+fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut iter = args.into_iter();
+    let sub = iter.next().unwrap_or_default();
+    let rest: Vec<String> = iter.collect();
+    match sub.as_str() {
+        "list" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser profile list")?;
+            require_no_args(&parsed.positionals, "browser profile list")?;
+            let result =
+                send_socket_request(&context.socket_path, "browser.profile.list", json!({}))?;
+            print_json(&result)
+        }
+        "create" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser profile create")?;
+            let name = match parsed.positionals.as_slice() {
+                [] => return Err(CliError::new("browser profile create requires a <name>")),
+                [_, _, extra, ..] => {
+                    return Err(CliError::new(format!(
+                        "browser profile create: unexpected argument '{extra}'"
+                    )))
+                }
+                [_, extra] => {
+                    return Err(CliError::new(format!(
+                        "browser profile create: unexpected argument '{extra}'"
+                    )))
+                }
+                [name] => name.clone(),
+            };
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.profile.create",
+                json!({"display_name": name}),
+            )?;
+            print_json(&result)
+        }
+        "delete" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser profile delete")?;
+            let id = match parsed.positionals.as_slice() {
+                [] => return Err(CliError::new("browser profile delete requires an <id>")),
+                [_, extra, ..] => {
+                    return Err(CliError::new(format!(
+                        "browser profile delete: unexpected argument '{extra}'"
+                    )))
+                }
+                [id] => id.clone(),
+            };
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.profile.delete",
+                json!({"id": id}),
+            )?;
+            print_json(&result)
+        }
+        "" => Err(CliError::new(
+            "browser profile requires a subcommand: list | create | delete",
+        )),
+        other => Err(CliError::new(format!(
+            "browser profile: unknown subcommand {other}"
+        ))),
     }
 }
 
