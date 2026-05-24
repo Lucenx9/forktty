@@ -15,6 +15,10 @@ pub struct BrowserPaneWidget {
     container: gtk::Box,
     web_view: WebView,
     address: gtk::Entry,
+    /// The last url this widget was *asked* to load. The reload guard
+    /// edge-triggers on this, not on the WebView's committed `current_uri()`,
+    /// which diverges due to WebKit normalization, redirects, and user clicks.
+    last_requested: std::cell::RefCell<String>,
 }
 
 #[allow(dead_code)]
@@ -57,6 +61,9 @@ impl BrowserPaneWidget {
             container,
             web_view,
             address,
+            // Empty so the first load_uri(initial_url) below is not a no-op;
+            // that single call populates last_requested and avoids a double-load.
+            last_requested: std::cell::RefCell::new(String::new()),
         };
         widget.load_uri(initial_url);
         widget
@@ -67,7 +74,11 @@ impl BrowserPaneWidget {
     }
 
     pub fn load_uri(&self, url: &str) {
-        if self.address.text() != url {
+        if self.last_requested.borrow().as_str() == url {
+            return;
+        }
+        *self.last_requested.borrow_mut() = url.to_string();
+        if self.address.text().as_str() != url {
             self.address.set_text(url);
         }
         self.web_view.load_uri(url);
@@ -102,8 +113,16 @@ mod tests {
             return;
         }
         let pane = BrowserPaneWidget::new("https://example.com");
+        assert_eq!(pane.last_requested.borrow().as_str(), "https://example.com");
         pane.load_uri("https://other.com");
         assert_eq!(pane.address.text().as_str(), "https://other.com");
+        assert_eq!(pane.last_requested.borrow().as_str(), "https://other.com");
+        // Self-guard: re-requesting the same url is a no-op. We can't observe the
+        // WebView load count without a display, so assert it does not panic and
+        // the address text / last_requested stay stable.
+        pane.load_uri("https://other.com");
+        assert_eq!(pane.address.text().as_str(), "https://other.com");
+        assert_eq!(pane.last_requested.borrow().as_str(), "https://other.com");
         let _ = pane.widget();
     }
 }

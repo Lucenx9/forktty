@@ -729,11 +729,10 @@ impl VteController {
         self.browser_panes.borrow_mut().retain(|surface_id, pane| {
             match model.surface(surface_id).map(|s| &s.kind) {
                 Some(forktty_core::SurfaceKind::Browser { url }) => {
-                    // Only reload when the target url actually changed; this runs
-                    // every refresh tick and load_uri reloads unconditionally.
-                    if pane.current_uri().as_deref() != Some(url.as_str()) {
-                        pane.load_uri(url);
-                    }
+                    // Safe to call every tick: BrowserPaneWidget edge-triggers on the
+                    // last *requested* url, so an unchanged url is a no-op and user
+                    // navigations (which only move the committed uri) are not reset.
+                    pane.load_uri(url);
                     true
                 }
                 _ => false,
@@ -804,9 +803,9 @@ impl VteController {
     #[cfg(feature = "browser")]
     fn browser_pane_widget(&self, surface_id: &str, url: &str) -> gtk::Widget {
         if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
-            if pane.current_uri().as_deref() != Some(url) {
-                pane.load_uri(url);
-            }
+            // Widget self-guards on the last requested url; calling unconditionally
+            // is harmless and avoids the committed-uri divergence problem.
+            pane.load_uri(url);
             return pane.widget();
         }
         let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(url));
