@@ -13,6 +13,7 @@ description = "ForkTTY Unix socket JSON-RPC server"
 async-channel = { workspace = true }
 dirs.workspace = true
 forktty-core = { path = "../forktty-core" }
+forktty-import = { path = "../forktty-import" }
 forktty-terminal = { path = "../forktty-terminal" }
 git2.workspace = true
 libc.workspace = true
@@ -21,5 +22,6 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+rusqlite.workspace = true
 serial_test = "3"
 tempfile.workspace = true

@@ -81,6 +81,9 @@ Usage:
   forktty browser bookmark add <url> [--title <t>] [--profile <id|name>]
   forktty browser bookmark list [--profile <id|name>]
   forktty browser bookmark remove <url> [--profile <id|name>]
+  forktty browser import discover
+  forktty browser import preview [--all] [--history true|false] [--bookmarks true|false] [--cookies true|false] <source-id>...
+  forktty browser import run [--all] [--profile <id|name>|--new-profile <name>|--separate-profiles] [--history true|false] [--bookmarks true|false] [--cookies true|false] <source-id>...
   forktty ssh <user@host>                          Open a new workspace running ssh <user@host>
   forktty ssh <user@host> [--name <name>] [--cwd <path>]
 ";
@@ -1509,8 +1512,9 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "profile" => browser_profile(context, rest),
         "history" => browser_history(context, rest),
         "bookmark" => browser_bookmark(context, rest),
+        "import" => browser_import(context, rest),
         "" => Err(CliError::new(
-            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile | history | bookmark",
+            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile | history | bookmark | import",
         )),
         other => Err(CliError::new(format!(
             "browser: unknown subcommand {other}"
@@ -1960,6 +1964,141 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         )),
         other => Err(CliError::new(format!(
             "browser bookmark: unknown subcommand {other}"
+        ))),
+    }
+}
+
+fn browser_import(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut iter = args.into_iter();
+    let sub = iter.next().unwrap_or_default();
+    let rest: Vec<String> = iter.collect();
+    match sub.as_str() {
+        "discover" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser import discover")?;
+            require_no_args(&parsed.positionals, "browser import discover")?;
+            let result =
+                send_socket_request(&context.socket_path, "browser.import.discover", json!({}))?;
+            print_json(&result)
+        }
+        "preview" => {
+            let parsed = parse_flags(rest, &["all"]);
+            reject_unknown_options(
+                &parsed.options,
+                &["all", "history", "bookmarks", "cookies"],
+                "browser import preview",
+            )?;
+            let params = browser_import_params_from_args(&parsed, "browser import preview")?;
+            let result =
+                send_socket_request(&context.socket_path, "browser.import.preview", params)?;
+            print_json(&result)
+        }
+        "run" => {
+            let parsed = parse_flags(rest, &["all", "separate-profiles"]);
+            reject_unknown_options(
+                &parsed.options,
+                &[
+                    "all",
+                    "profile",
+                    "new-profile",
+                    "separate-profiles",
+                    "history",
+                    "bookmarks",
+                    "cookies",
+                ],
+                "browser import run",
+            )?;
+            let mut params = browser_import_params_from_args(&parsed, "browser import run")?;
+            let profile = non_blank_string_option(&parsed.options, "profile", "--profile")?;
+            let new_profile =
+                non_blank_string_option(&parsed.options, "new-profile", "--new-profile")?;
+            let separate_profiles = browser_import_bool_option(
+                &parsed.options,
+                "separate-profiles",
+                "--separate-profiles",
+            )?
+            .unwrap_or(false);
+            let destination_count = usize::from(profile.is_some())
+                + usize::from(new_profile.is_some())
+                + usize::from(separate_profiles);
+            if destination_count > 1 {
+                return Err(CliError::new(
+                    "browser import run: choose only one of --profile, --new-profile, or --separate-profiles",
+                ));
+            }
+            if let Some(profile) = profile {
+                params["destination"] = json!({"kind": "existing", "profile": profile});
+            } else if let Some(display_name) = new_profile {
+                params["destination"] = json!({"kind": "create", "display_name": display_name});
+            } else if separate_profiles {
+                params["mode"] = json!("separate_profiles");
+            }
+            let result = send_socket_request(&context.socket_path, "browser.import.run", params)?;
+            print_json(&result)
+        }
+        "" => Err(CliError::new(
+            "browser import requires a subcommand: discover | preview | run",
+        )),
+        other => Err(CliError::new(format!(
+            "browser import: unknown subcommand {other}"
+        ))),
+    }
+}
+
+fn browser_import_params_from_args(parsed: &ParsedFlags, command: &str) -> CliResult<Value> {
+    let all = browser_import_bool_option(&parsed.options, "all", "--all")?.unwrap_or(false);
+    if all && !parsed.positionals.is_empty() {
+        return Err(CliError::new(format!(
+            "{command}: cannot combine --all with explicit source ids"
+        )));
+    }
+    if !all && parsed.positionals.is_empty() {
+        return Err(CliError::new(format!(
+            "{command} requires at least one <source-id> or --all"
+        )));
+    }
+
+    let mut params = Map::new();
+    if all {
+        params.insert("all".to_string(), Value::Bool(true));
+    } else {
+        params.insert(
+            "sources".to_string(),
+            Value::Array(
+                parsed
+                    .positionals
+                    .iter()
+                    .map(|id| Value::String(id.clone()))
+                    .collect(),
+            ),
+        );
+    }
+
+    let mut include = Map::new();
+    for key in ["history", "bookmarks", "cookies"] {
+        if let Some(value) = browser_import_bool_option(&parsed.options, key, &format!("--{key}"))?
+        {
+            include.insert(key.to_string(), Value::Bool(value));
+        }
+    }
+    if !include.is_empty() {
+        params.insert("include".to_string(), Value::Object(include));
+    }
+    Ok(Value::Object(params))
+}
+
+fn browser_import_bool_option(
+    options: &BTreeMap<String, FlagValue>,
+    key: &str,
+    option_name: &str,
+) -> CliResult<Option<bool>> {
+    match options.get(key) {
+        None => Ok(None),
+        Some(FlagValue::Bool) => Ok(Some(true)),
+        Some(FlagValue::String(value)) if value == "true" => Ok(Some(true)),
+        Some(FlagValue::String(value)) if value == "false" => Ok(Some(false)),
+        Some(FlagValue::String(_)) => Err(CliError::new(format!(
+            "{option_name} must be true or false"
         ))),
     }
 }
@@ -6743,5 +6882,127 @@ mod tests {
         assert_eq!(requests[1]["method"], "browser.bookmark.remove");
         assert_eq!(requests[1]["params"]["url"], "https://example.com");
         assert_eq!(requests[1]["params"]["profile"], "Work");
+    }
+
+    #[test]
+    fn browser_import_discover_sends_method() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"browsers": [], "count": 0},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["import", "discover"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.import.discover");
+        assert_eq!(request["params"], json!({}));
+    }
+
+    #[test]
+    fn browser_import_preview_sends_sources_and_include() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"sources": [], "total": {}, "cookies_supported": false},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "import",
+                        "preview",
+                        "firefox:/tmp/profile",
+                        "--cookies",
+                        "false",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.import.preview");
+        assert_eq!(
+            request["params"]["sources"],
+            json!(["firefox:/tmp/profile"])
+        );
+        assert_eq!(request["params"]["include"]["cookies"], json!(false));
+    }
+
+    #[test]
+    fn browser_import_run_sends_new_profile_destination() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"entries": [], "total": {}, "cookies_supported": false},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "import",
+                        "run",
+                        "firefox:/tmp/profile",
+                        "--new-profile",
+                        "Imported",
+                        "--history",
+                        "true",
+                        "--bookmarks",
+                        "false",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.import.run");
+        assert_eq!(
+            request["params"]["destination"],
+            json!({"kind": "create", "display_name": "Imported"})
+        );
+        assert_eq!(request["params"]["include"]["history"], json!(true));
+        assert_eq!(request["params"]["include"]["bookmarks"], json!(false));
+    }
+
+    #[test]
+    fn browser_import_run_rejects_conflicting_destinations() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(
+                &ctx,
+                strings(&[
+                    "import",
+                    "run",
+                    "firefox:/tmp/profile",
+                    "--profile",
+                    "Default",
+                    "--new-profile",
+                    "Imported",
+                ]),
+            ),
+            "choose only one",
+        );
+    }
+
+    #[test]
+    fn browser_import_preview_requires_source_or_all() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["import", "preview"])),
+            "requires at least one <source-id> or --all",
+        );
     }
 }
