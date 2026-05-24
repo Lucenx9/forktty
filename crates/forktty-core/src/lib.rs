@@ -29,5 +29,5 @@ pub use model::{
     Workspace, WorkspaceId, WorkspaceModel, WorkspaceSelector,
 };
 pub use notification::{dispatch_notification, NotificationDispatchError};
-pub use profile::ProfileId;
+pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};

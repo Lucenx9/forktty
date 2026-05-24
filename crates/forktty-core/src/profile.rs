@@ -3,7 +3,9 @@
 //! each `Browser` surface carries a `ProfileId`.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -43,9 +45,193 @@ impl FromStr for ProfileId {
     }
 }
 
+/// Persisted metadata for one profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileMeta {
+    pub id: ProfileId,
+    pub display_name: String,
+    /// Unix seconds at creation.
+    pub created_at: u64,
+    pub is_default: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProfileError {
+    CannotDeleteDefault,
+    NotFound,
+    Io(String),
+}
+
+impl std::fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProfileError::CannotDeleteDefault => write!(f, "the default profile cannot be deleted"),
+            ProfileError::NotFound => write!(f, "profile not found"),
+            ProfileError::Io(e) => write!(f, "profile store io error: {e}"),
+        }
+    }
+}
+impl std::error::Error for ProfileError {}
+
+/// File-backed list of profiles (`profiles.json`). The Default profile is always
+/// present (synthesized if missing). The store owns metadata only; on-disk session
+/// data directories are managed by the GTK layer.
+#[derive(Debug)]
+pub struct ProfileStore {
+    path: PathBuf,
+    profiles: Vec<ProfileMeta>,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn default_meta() -> ProfileMeta {
+    ProfileMeta {
+        id: ProfileId::default(),
+        display_name: "Default".to_string(),
+        created_at: 0,
+        is_default: true,
+    }
+}
+
+impl ProfileStore {
+    /// Load the store from `path`, creating an in-memory Default-only store if the
+    /// file is absent. A present file always has the Default profile ensured.
+    pub fn load(path: PathBuf) -> Result<Self, ProfileError> {
+        let mut profiles: Vec<ProfileMeta> = match std::fs::read(&path) {
+            Ok(bytes) => {
+                serde_json::from_slice(&bytes).map_err(|e| ProfileError::Io(e.to_string()))?
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(ProfileError::Io(e.to_string())),
+        };
+        if !profiles.iter().any(|p| p.is_default) {
+            profiles.insert(0, default_meta());
+        }
+        Ok(Self { path, profiles })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn list(&self) -> &[ProfileMeta] {
+        &self.profiles
+    }
+
+    fn save(&self) -> Result<(), ProfileError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| ProfileError::Io(e.to_string()))?;
+        }
+        let bytes = serde_json::to_vec_pretty(&self.profiles)
+            .map_err(|e| ProfileError::Io(e.to_string()))?;
+        std::fs::write(&self.path, bytes).map_err(|e| ProfileError::Io(e.to_string()))
+    }
+
+    /// Create a new non-default profile and persist.
+    pub fn create(&mut self, display_name: &str) -> Result<ProfileMeta, ProfileError> {
+        let meta = ProfileMeta {
+            id: ProfileId::new(),
+            display_name: display_name.trim().to_string(),
+            created_at: now_secs(),
+            is_default: false,
+        };
+        self.profiles.push(meta.clone());
+        if let Err(e) = self.save() {
+            self.profiles.pop();
+            return Err(e);
+        }
+        Ok(meta)
+    }
+
+    /// Delete a profile by id and persist. Refuses the Default profile.
+    pub fn delete(&mut self, id: &ProfileId) -> Result<(), ProfileError> {
+        if *id == ProfileId::default() {
+            return Err(ProfileError::CannotDeleteDefault);
+        }
+        let Some(pos) = self.profiles.iter().position(|p| p.id == *id) else {
+            return Err(ProfileError::NotFound);
+        };
+        let removed = self.profiles.remove(pos);
+        if let Err(e) = self.save() {
+            self.profiles.insert(pos, removed);
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Resolve an id-or-display-name string to a `ProfileId`. Display-name match is
+    /// trimmed + case-insensitive.
+    pub fn resolve(&self, id_or_name: &str) -> Option<ProfileId> {
+        if let Ok(id) = id_or_name.parse::<ProfileId>() {
+            return self.profiles.iter().find(|p| p.id == id).map(|p| p.id);
+        }
+        let needle = id_or_name.trim().to_ascii_lowercase();
+        self.profiles
+            .iter()
+            .find(|p| p.display_name.trim().to_ascii_lowercase() == needle)
+            .map(|p| p.id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_store() -> (tempfile::TempDir, ProfileStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        let store = ProfileStore::load(path).unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn fresh_store_has_only_the_default_profile() {
+        let (_d, store) = temp_store();
+        let all = store.list();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].is_default);
+        assert_eq!(all[0].id, ProfileId::default());
+    }
+
+    #[test]
+    fn create_adds_a_named_profile_and_persists() {
+        let (_d, mut store) = temp_store();
+        let meta = store.create("Work").unwrap();
+        assert_eq!(meta.display_name, "Work");
+        assert!(!meta.is_default);
+        let reloaded = ProfileStore::load(store.path().to_path_buf()).unwrap();
+        assert!(reloaded
+            .list()
+            .iter()
+            .any(|p| p.id == meta.id && p.display_name == "Work"));
+    }
+
+    #[test]
+    fn delete_removes_a_profile_but_refuses_the_default() {
+        let (_d, mut store) = temp_store();
+        let meta = store.create("Throwaway").unwrap();
+        assert!(store.delete(&meta.id).is_ok());
+        assert!(!store.list().iter().any(|p| p.id == meta.id));
+        assert!(matches!(
+            store.delete(&ProfileId::default()),
+            Err(ProfileError::CannotDeleteDefault)
+        ));
+    }
+
+    #[test]
+    fn resolve_matches_by_id_or_display_name_case_insensitively() {
+        let (_d, mut store) = temp_store();
+        let meta = store.create("Work").unwrap();
+        assert_eq!(store.resolve(&meta.id.to_string()), Some(meta.id));
+        assert_eq!(store.resolve("work"), Some(meta.id));
+        assert_eq!(store.resolve("  WORK "), Some(meta.id));
+        assert_eq!(store.resolve("nope"), None);
+    }
 
     #[test]
     fn default_profile_id_renders_to_the_well_known_p1_string() {
@@ -74,5 +260,11 @@ mod tests {
     #[test]
     fn new_profile_ids_are_unique() {
         assert_ne!(ProfileId::new(), ProfileId::new());
+    }
+
+    #[test]
+    fn resolve_returns_none_for_valid_but_absent_uuid() {
+        let (_d, store) = temp_store();
+        assert_eq!(store.resolve("00000000-0000-0000-0000-000000000099"), None);
     }
 }
