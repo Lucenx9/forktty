@@ -13,6 +13,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Native socket CLI and agent hook installer in the `forktty` binary over the socket API.
 - [x] `events.subscribe` NDJSON change stream and `system.capabilities` discovery, with `forktty events`/`forktty capabilities` CLI.
 - [x] Browser pane SP1: WebKitGTK6 pane kind + `browser.open`/`browser.navigate` + in-pane address bar (behind the `browser` cargo feature).
+- [x] Browser pane SP2: scriptable verbs (`browser.snapshot`/`click`/`fill`/`eval`) + socket-driven `back`/`forward`/`reload` via socket→GTK command channel + `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (behind the `browser` cargo feature).
 
 ### Workspaces and Panes
 
@@ -77,7 +78,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] Full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
-- [ ] Browser pane SP2/SP3: scriptable verbs (snapshot/click/fill/eval) + cookie/profile import.
+- [ ] Browser pane SP3: cookie/history/profile import.
 - [ ] SSH remote workspaces.
 - [ ] MCP/server integration.
 - [ ] Plugin system.
