@@ -38,7 +38,7 @@ driven back/forward/reload, cookie/profile import, multiple tabs per pane.
 
 ## Architecture
 
-```
+```text
 forktty-core (pure, no webkit dependency)
   Surface.kind: SurfaceKind { Terminal, Browser { url } }   (serde default = Terminal)
   WorkspaceModel::open_browser(workspace_id, url, axis) -> Option<Surface>
@@ -129,7 +129,7 @@ socket-driven back/reload then.
 
 ## Data flow
 
-```
+```text
 Open (socket):   browser.open -> open_browser (model split) -> events tick
                  -> SurfaceAdded{kind:Browser,url} -> rebuild_layout sees new leaf
                  -> BrowserPaneWidget::new + load_uri(url)

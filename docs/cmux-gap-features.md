@@ -49,7 +49,7 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
   browsers and browser profiles.
 - ForkTTY SP1 ships a browser pane as a new surface kind (`SurfaceKind::Browser`) embedding WebKitGTK6 behind an opt-in `browser` cargo feature, with socket verbs `browser.open`/`browser.navigate`, an in-pane address bar (back/forward/reload), and `forktty browser open|navigate` CLI. SP2 will add the scriptable verbs (snapshot/click/fill/eval + element refs and socket-driven back/reload); SP3 will add cookie/history/profile import.
 - Scope (Linux):
-  - Embed WebKitGTK 6 (`webkit2gtk-6.0`) as a pane kind alongside VTE.
+  - Embed WebKitGTK 6 (`webkitgtk-6.0`) as a pane kind alongside VTE.
   - Expose a socket verb set mirroring agent-browser (`snapshot`, `click`, `fill`, `eval`, `goto`).
   - Defer cookie/profile import; ship read/navigate/script first.
 

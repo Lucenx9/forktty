@@ -1073,7 +1073,7 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 
 Add under the appropriate section of `HELP_TEXT`:
 
-```
+```text
   forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] <url>
   forktty browser navigate [<surface-id>] <url>
 ```
@@ -1101,7 +1101,7 @@ git commit -m "feat(cli): forktty browser open/navigate subcommands"
 
 In `docs/cmux-gap-features.md` under section 3, change the status line and add a sub-project note:
 
-```
+```text
 - **Impact**: high · **Cost**: high · **Status**: **SP1 done** (browser pane kind + WebKitGTK6 embed + navigation); SP2 (scripting verbs) + SP3 (cookie/profile import) backlog
 ```
 
@@ -1111,7 +1111,7 @@ Add a short paragraph noting SP1 ships `browser.open`/`browser.navigate`, the `b
 
 Add:
 
-```
+```text
 - [x] Browser pane SP1: WebKitGTK6 pane kind + `browser.open`/`browser.navigate` + in-pane address bar (behind the `browser` cargo feature).
 ```
 

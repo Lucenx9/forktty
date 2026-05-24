@@ -77,7 +77,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] Full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
-- [ ] Built-in browser pane.
+- [ ] Browser pane SP2/SP3: scriptable verbs (snapshot/click/fill/eval) + cookie/profile import.
 - [ ] SSH remote workspaces.
 - [ ] MCP/server integration.
 - [ ] Plugin system.
