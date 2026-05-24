@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{types::ValueRef, Connection, OpenFlags};
 
 use crate::model::ImportedCookie;
 
@@ -18,9 +18,7 @@ pub fn chromium_v10_key() -> [u8; 16] {
     key
 }
 
-/// Decrypt a Chromium `encrypted_value` blob with `key`. Returns `None` (caller skips
-/// + counts) on any structural or decode failure — never panics.
-pub fn decrypt_chromium_value(blob: &[u8], key: &[u8; 16]) -> Option<String> {
+fn decrypt_chromium_value_bytes(blob: &[u8], key: &[u8; 16]) -> Option<Vec<u8>> {
     if blob.len() < 3 {
         return None;
     }
@@ -37,7 +35,32 @@ pub fn decrypt_chromium_value(blob: &[u8], key: &[u8; 16]) -> Option<String> {
     let pt = Aes128CbcDec::new(key.into(), &iv.into())
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .ok()?;
-    String::from_utf8(pt.to_vec()).ok()
+    Some(pt.to_vec())
+}
+
+/// Decrypt a Chromium `encrypted_value` blob with `key`. Returns `None` (caller skips
+/// + counts) on any structural or decode failure — never panics.
+pub fn decrypt_chromium_value(blob: &[u8], key: &[u8; 16]) -> Option<String> {
+    String::from_utf8(decrypt_chromium_value_bytes(blob, key)?).ok()
+}
+
+fn decrypt_chromium_cookie_value(
+    blob: &[u8],
+    key: &[u8; 16],
+    db_version: Option<i64>,
+) -> Option<String> {
+    let pt = decrypt_chromium_value_bytes(blob, key)?;
+
+    // Chromium cookie DB version 24+ prepends SHA256(host_key) to the encrypted
+    // plaintext. The digest is arbitrary bytes and often invalid UTF-8, so trying
+    // to decode the full plaintext would skip otherwise valid modern cookies.
+    if db_version.is_some_and(|version| version >= 24) && pt.len() >= 32 {
+        if let Ok(value) = String::from_utf8(pt[32..].to_vec()) {
+            return Some(value);
+        }
+    }
+
+    String::from_utf8(pt).ok()
 }
 
 /// The Linux Chromium `v11` key: read password from Secret Service under `label`,
@@ -97,6 +120,7 @@ pub fn read_chromium_cookies(
     key: &[u8; 16],
 ) -> rusqlite::Result<(Vec<ImportedCookie>, usize)> {
     let conn = open_ro(db)?;
+    let db_version = chromium_cookie_db_version(&conn)?;
     let mut stmt = conn.prepare(
         "SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly FROM cookies",
     )?;
@@ -116,7 +140,7 @@ pub fn read_chromium_cookies(
         let value = if enc.is_empty() {
             plain
         } else {
-            match decrypt_chromium_value(&enc, key) {
+            match decrypt_chromium_cookie_value(&enc, key, db_version) {
                 Some(v) => v,
                 None => {
                     skipped += 1;
@@ -146,6 +170,25 @@ pub fn read_chromium_cookies(
         });
     }
     Ok((cookies, skipped))
+}
+
+fn chromium_cookie_db_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
+    let mut stmt = match conn.prepare("SELECT value FROM meta WHERE key = 'version'") {
+        Ok(stmt) => stmt,
+        Err(e) if e.to_string().contains("no such table") => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    match stmt.query_row([], |row| match row.get_ref(0)? {
+        ValueRef::Integer(version) => Ok(Some(version)),
+        ValueRef::Text(bytes) => Ok(std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| text.parse::<i64>().ok())),
+        _ => Ok(None),
+    }) {
+        Ok(version) => Ok(version),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]
@@ -248,6 +291,35 @@ mod tests {
         assert_eq!(cookies[0].host, ".a.test");
         assert!(cookies[0].secure);
         assert!(!cookies[0].http_only);
+    }
+
+    #[test]
+    fn read_chromium_cookies_strips_modern_host_hash_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("Cookies");
+        let key = chromium_v10_key();
+        let mut plaintext = vec![0xff; 32];
+        plaintext.extend_from_slice(b"tok");
+        let blob = make_v10_blob(&key, &plaintext);
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+             INSERT INTO meta VALUES ('version','24');
+             CREATE TABLE cookies (
+                 host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+                 path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cookies VALUES ('.a.test','sid','',?1,'/',0,0,0)",
+            rusqlite::params![blob],
+        )
+        .unwrap();
+        drop(conn);
+        let (cookies, skipped) = read_chromium_cookies(&db, &key).unwrap();
+        assert_eq!(skipped, 0);
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].value, "tok");
     }
 
     #[test]
