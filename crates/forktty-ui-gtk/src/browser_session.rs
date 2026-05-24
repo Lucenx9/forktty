@@ -145,6 +145,14 @@ mod tests {
     }
 
     #[test]
+    fn default_profile_id_matches_core_profile_default() {
+        assert_eq!(
+            DEFAULT_PROFILE_ID,
+            forktty_core::ProfileId::default().to_string()
+        );
+    }
+
+    #[test]
     fn profile_id_validation_accepts_safe_ids_rejects_traversal() {
         assert!(is_valid_profile_id(DEFAULT_PROFILE_ID));
         assert!(is_valid_profile_id("abc"));

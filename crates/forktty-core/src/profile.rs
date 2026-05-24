@@ -60,6 +60,7 @@ pub enum ProfileError {
     CannotDeleteDefault,
     NotFound,
     Io(String),
+    InvalidInput(String),
 }
 
 impl std::fmt::Display for ProfileError {
@@ -68,6 +69,7 @@ impl std::fmt::Display for ProfileError {
             ProfileError::CannotDeleteDefault => write!(f, "the default profile cannot be deleted"),
             ProfileError::NotFound => write!(f, "profile not found"),
             ProfileError::Io(e) => write!(f, "profile store io error: {e}"),
+            ProfileError::InvalidInput(m) => write!(f, "{m}"),
         }
     }
 }
@@ -129,14 +131,43 @@ impl ProfileStore {
         }
         let bytes = serde_json::to_vec_pretty(&self.profiles)
             .map_err(|e| ProfileError::Io(e.to_string()))?;
-        std::fs::write(&self.path, bytes).map_err(|e| ProfileError::Io(e.to_string()))
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp_path = self
+            .path
+            .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+        let result = (|| -> Result<(), ProfileError> {
+            let mut tmp_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)
+                .map_err(|e| ProfileError::Io(e.to_string()))?;
+            std::io::Write::write_all(&mut tmp_file, &bytes)
+                .map_err(|e| ProfileError::Io(e.to_string()))?;
+            tmp_file
+                .sync_all()
+                .map_err(|e| ProfileError::Io(e.to_string()))?;
+            std::fs::rename(&tmp_path, &self.path).map_err(|e| ProfileError::Io(e.to_string()))
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        result
     }
 
     /// Create a new non-default profile and persist.
     pub fn create(&mut self, display_name: &str) -> Result<ProfileMeta, ProfileError> {
+        let name = display_name.trim();
+        if name.is_empty() {
+            return Err(ProfileError::InvalidInput(
+                "display_name must not be empty".to_string(),
+            ));
+        }
         let meta = ProfileMeta {
             id: ProfileId::new(),
-            display_name: display_name.trim().to_string(),
+            display_name: name.to_string(),
             created_at: now_secs(),
             is_default: false,
         };
@@ -266,5 +297,19 @@ mod tests {
     fn resolve_returns_none_for_valid_but_absent_uuid() {
         let (_d, store) = temp_store();
         assert_eq!(store.resolve("00000000-0000-0000-0000-000000000099"), None);
+    }
+
+    #[test]
+    fn create_rejects_empty_or_whitespace_name() {
+        let (_d, mut store) = temp_store();
+        assert!(matches!(
+            store.create("   "),
+            Err(ProfileError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            store.create(""),
+            Err(ProfileError::InvalidInput(_))
+        ));
+        assert_eq!(store.list().len(), 1); // nothing persisted
     }
 }
