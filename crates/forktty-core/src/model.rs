@@ -35,6 +35,18 @@ pub struct Workspace {
     pub pr: Option<crate::pr::PrInfo>,
 }
 
+/// What a surface renders. Defaults to `Terminal` so sessions persisted
+/// before this field existed load every surface as a terminal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SurfaceKind {
+    #[default]
+    Terminal,
+    Browser {
+        url: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Surface {
     pub id: SurfaceId,
@@ -46,6 +58,8 @@ pub struct Surface {
     pub unread: bool,
     #[serde(default)]
     pub needs_attention: bool,
+    #[serde(default)]
+    pub kind: SurfaceKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -187,6 +201,7 @@ impl WorkspaceModel {
             title: String::from("shell"),
             unread: false,
             needs_attention: false,
+            kind: SurfaceKind::Terminal,
         };
         let workspace = Workspace {
             id: id.clone(),
@@ -265,6 +280,7 @@ impl WorkspaceModel {
                     title: String::from("shell"),
                     unread: false,
                     needs_attention: false,
+                    kind: SurfaceKind::Terminal,
                 };
                 self.next_surface = self.next_surface.max(numeric_suffix(&surface.id));
                 self.surfaces.insert(surface.id.clone(), surface);
@@ -401,6 +417,7 @@ impl WorkspaceModel {
                                 title: String::from("shell"),
                                 unread: false,
                                 needs_attention: false,
+                                kind: SurfaceKind::Terminal,
                             },
                         );
                         changed = true;
@@ -516,6 +533,7 @@ impl WorkspaceModel {
             title: String::from("shell"),
             unread: false,
             needs_attention: false,
+            kind: SurfaceKind::Terminal,
         };
         let workspace = self
             .workspaces
@@ -592,6 +610,7 @@ impl WorkspaceModel {
             title: String::from("shell"),
             unread: false,
             needs_attention: false,
+            kind: SurfaceKind::Terminal,
         })
     }
 
@@ -623,6 +642,7 @@ impl WorkspaceModel {
                     title: String::from("shell"),
                     unread: false,
                     needs_attention: false,
+                    kind: SurfaceKind::Terminal,
                 }
             }
         };
@@ -2533,6 +2553,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
 
@@ -2622,6 +2643,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
 
@@ -2771,6 +2793,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
         // Also inject a surface tied to a no-longer-present workspace.
@@ -2784,6 +2807,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
 
@@ -2813,5 +2837,20 @@ mod tests {
         assert_eq!(restored.list_surfaces(None).len(), 2);
         assert!(restored.surface(&split.id).is_some());
         assert_eq!(restored.to_session_data().workspaces[0].name, "main");
+    }
+
+    #[test]
+    fn surface_without_kind_field_deserializes_as_terminal() {
+        // Sessions persisted before SurfaceKind existed have no `kind` key.
+        let json = r#"{
+            "id": "s1",
+            "workspace_id": "w1",
+            "cwd": "/tmp",
+            "title": "shell",
+            "unread": false,
+            "needs_attention": false
+        }"#;
+        let surface: Surface = serde_json::from_str(json).unwrap();
+        assert_eq!(surface.kind, SurfaceKind::Terminal);
     }
 }
