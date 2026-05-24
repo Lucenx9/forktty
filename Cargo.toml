@@ -25,7 +25,7 @@ base64 = "0.22"
 cbc = "0.1"
 chrono = "0.4"
 dirs = "6"
-git2 = { version = "0.20", features = ["vendored-libgit2"] }
+git2 = { version = "0.21", features = ["vendored-libgit2"] }
 hmac = "0.12"
 libc = "0.2"
 notify-rust = "4"
