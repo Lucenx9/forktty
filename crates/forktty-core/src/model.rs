@@ -44,6 +44,8 @@ pub enum SurfaceKind {
     Terminal,
     Browser {
         url: String,
+        #[serde(default)]
+        profile: crate::profile::ProfileId,
     },
 }
 
@@ -556,6 +558,7 @@ impl WorkspaceModel {
         &mut self,
         workspace_id: &str,
         url: &str,
+        profile: crate::profile::ProfileId,
         axis: SplitAxis,
     ) -> Option<Surface> {
         let focused = self
@@ -569,6 +572,7 @@ impl WorkspaceModel {
             axis,
             SurfaceKind::Browser {
                 url: url.to_string(),
+                profile,
             },
             title,
         )
@@ -658,7 +662,7 @@ impl WorkspaceModel {
     pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
         match self.surfaces.get_mut(surface_id) {
             Some(surface) => match &mut surface.kind {
-                SurfaceKind::Browser { url: current } => {
+                SurfaceKind::Browser { url: current, .. } => {
                     *current = url.to_string();
                     surface.title = browser_title_for(url);
                     true
@@ -2980,13 +2984,19 @@ mod tests {
         let first = first_leaf_surface_id(&model.workspaces[&ws.id].pane_tree).unwrap();
 
         let browser = model
-            .open_browser(&ws.id, "https://example.com", SplitAxis::Horizontal)
+            .open_browser(
+                &ws.id,
+                "https://example.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
             .expect("browser surface created");
 
         assert_eq!(
             browser.kind,
             SurfaceKind::Browser {
-                url: "https://example.com".to_string()
+                url: "https://example.com".to_string(),
+                profile: crate::profile::ProfileId::default(),
             }
         );
         assert_eq!(browser.title, "example.com");
@@ -2997,19 +3007,58 @@ mod tests {
     }
 
     #[test]
+    fn open_browser_records_the_requested_profile() {
+        use crate::profile::ProfileId;
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+
+        let custom = ProfileId::new();
+        let surface = model
+            .open_browser(&ws.id, "https://example.com", custom, SplitAxis::Horizontal)
+            .expect("opens");
+        match surface.kind {
+            SurfaceKind::Browser { url, profile } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(profile, custom);
+            }
+            _ => panic!("expected a browser surface"),
+        }
+    }
+
+    #[test]
+    fn legacy_browser_surface_without_profile_loads_as_default() {
+        use crate::profile::ProfileId;
+        let json = r#"{"type":"browser","url":"https://example.com"}"#;
+        let kind: SurfaceKind = serde_json::from_str(json).unwrap();
+        match kind {
+            SurfaceKind::Browser { url, profile } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(profile, ProfileId::default());
+            }
+            _ => panic!("expected browser"),
+        }
+    }
+
+    #[test]
     fn set_surface_url_updates_only_browser_surfaces() {
         let mut model = WorkspaceModel::default();
         let ws = model.create_workspace("w", PathBuf::from("/tmp"));
         let terminal = first_leaf_surface_id(&model.workspaces[&ws.id].pane_tree).unwrap();
         let browser = model
-            .open_browser(&ws.id, "https://a.com", SplitAxis::Horizontal)
+            .open_browser(
+                &ws.id,
+                "https://a.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
             .unwrap();
 
         assert!(model.set_surface_url(&browser.id, "https://b.com"));
         assert_eq!(
             model.surface(&browser.id).unwrap().kind,
             SurfaceKind::Browser {
-                url: "https://b.com".to_string()
+                url: "https://b.com".to_string(),
+                profile: crate::profile::ProfileId::default(),
             }
         );
         // title also refreshes
@@ -3053,7 +3102,12 @@ mod tests {
     fn restore_session_preserves_browser_surface_kind() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("ws", "/tmp");
-        model.open_browser(&workspace.id, "https://example.com", SplitAxis::Vertical);
+        model.open_browser(
+            &workspace.id,
+            "https://example.com",
+            crate::profile::ProfileId::default(),
+            SplitAxis::Vertical,
+        );
         let browser_id = model
             .list_surfaces(Some(&workspace.id))
             .into_iter()
@@ -3069,7 +3123,8 @@ mod tests {
         assert_eq!(
             surface.kind,
             SurfaceKind::Browser {
-                url: "https://example.com".to_string()
+                url: "https://example.com".to_string(),
+                profile: crate::profile::ProfileId::default(),
             }
         );
     }
