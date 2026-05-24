@@ -73,13 +73,43 @@ pub struct Surface {
 #[serde(tag = "type")]
 pub enum PaneNode {
     #[serde(rename = "leaf")]
-    Leaf { surface_id: SurfaceId },
+    Leaf {
+        tabs: Vec<SurfaceId>,
+        #[serde(default)]
+        active: usize,
+    },
     #[serde(rename = "split")]
     Split {
         axis: SplitAxis,
         children: Vec<PaneNode>,
         sizes: Vec<f64>,
     },
+}
+
+impl PaneNode {
+    /// Construct a leaf holding a single tab.
+    pub fn single_leaf(id: SurfaceId) -> PaneNode {
+        PaneNode::Leaf {
+            tabs: vec![id],
+            active: 0,
+        }
+    }
+
+    /// Return the active surface id of this leaf, or `None` if not a leaf.
+    pub fn leaf_active_id(&self) -> Option<&SurfaceId> {
+        match self {
+            PaneNode::Leaf { tabs, active } => tabs.get(*active),
+            PaneNode::Split { .. } => None,
+        }
+    }
+
+    /// Return the full tab list of this leaf, or `None` if not a leaf.
+    pub fn leaf_tabs(&self) -> Option<&[SurfaceId]> {
+        match self {
+            PaneNode::Leaf { tabs, .. } => Some(tabs.as_slice()),
+            PaneNode::Split { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -218,9 +248,7 @@ impl WorkspaceModel {
             git_branch: String::new(),
             worktree_dir: None,
             worktree_name: None,
-            pane_tree: PaneNode::Leaf {
-                surface_id: surface_id.clone(),
-            },
+            pane_tree: PaneNode::single_leaf(surface_id.clone()),
             focused_surface_id: surface_id,
             needs_attention: false,
             listening_ports: Vec::new(),
@@ -418,9 +446,7 @@ impl WorkspaceModel {
                     }
                 }
                 if let Some(replacement_leaf_id) = replacement_leaf_id {
-                    workspace.pane_tree = PaneNode::Leaf {
-                        surface_id: replacement_leaf_id.clone(),
-                    };
+                    workspace.pane_tree = PaneNode::single_leaf(replacement_leaf_id.clone());
                     workspace.focused_surface_id = replacement_leaf_id;
                 } else if !canonical_leaf_ids.contains(&workspace.focused_surface_id) {
                     if let Some(first_leaf) = canonical_leaf_ids.first() {
@@ -637,9 +663,7 @@ impl WorkspaceModel {
             git_branch: String::new(),
             worktree_dir: None,
             worktree_name: None,
-            pane_tree: PaneNode::Leaf {
-                surface_id: surface_id.clone(),
-            },
+            pane_tree: PaneNode::single_leaf(surface_id.clone()),
             focused_surface_id: surface_id,
             needs_attention: false,
             listening_ports: Vec::new(),
@@ -686,9 +710,7 @@ impl WorkspaceModel {
             &mut workspace.pane_tree,
             surface_id,
             axis,
-            PaneNode::Leaf {
-                surface_id: new_id.clone(),
-            },
+            PaneNode::single_leaf(new_id.clone()),
         );
         debug_assert!(inserted, "leaf existence pre-validated");
         if !inserted {
@@ -728,6 +750,61 @@ impl WorkspaceModel {
             return false;
         }
         workspace.focused_surface_id = surface_id.to_string();
+        // If the surface is a non-active tab in its leaf, update active.
+        set_leaf_active_for_surface(&mut workspace.pane_tree, surface_id);
+        true
+    }
+
+    /// Add a new terminal tab to the pane whose tabs contain `near_surface_id`.
+    /// The new tab becomes the active tab of that pane and the workspace focus.
+    /// Returns the newly created Surface on success.
+    pub fn add_tab(&mut self, near_surface_id: &str) -> Option<Surface> {
+        let source = self.surfaces.get(near_surface_id)?.clone();
+        let workspace_id = source.workspace_id.clone();
+        // Verify the surface lives in a leaf of its workspace.
+        if !leaf_surface_ids(&self.workspaces.get(&workspace_id)?.pane_tree)
+            .contains(&near_surface_id.to_string())
+        {
+            return None;
+        }
+        let new_id = self.next_surface_id();
+        let new_surface = Surface {
+            id: new_id.clone(),
+            workspace_id: workspace_id.clone(),
+            cwd: source.cwd.clone(),
+            title: String::from("shell"),
+            unread: false,
+            needs_attention: false,
+            kind: SurfaceKind::Terminal,
+        };
+        let workspace = self
+            .workspaces
+            .get_mut(&workspace_id)
+            .expect("workspace verified above");
+        if !push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, new_id.clone()) {
+            return None;
+        }
+        workspace.focused_surface_id = new_id.clone();
+        self.surfaces
+            .insert(new_surface.id.clone(), new_surface.clone());
+        Some(new_surface)
+    }
+
+    /// Select an existing tab in any leaf of the owning workspace.
+    /// Sets the leaf's `active` index and the workspace `focused_surface_id`.
+    /// Returns `true` if the surface was found and activated.
+    pub fn select_tab(&mut self, surface_id: &str) -> bool {
+        let Some(surface) = self.surfaces.get(surface_id) else {
+            return false;
+        };
+        let workspace_id = surface.workspace_id.clone();
+        let Some(workspace) = self.workspaces.get_mut(&workspace_id) else {
+            return false;
+        };
+        if !set_leaf_active_for_surface(&mut workspace.pane_tree, surface_id) {
+            return false;
+        }
+        workspace.focused_surface_id = surface_id.to_string();
         true
     }
 
@@ -750,12 +827,13 @@ impl WorkspaceModel {
         let surface = self.surfaces.get(surface_id)?.clone();
         let (workspace_id, working_dir) = {
             let workspace = self.workspaces.get(&surface.workspace_id)?;
-            if !matches!(
+            // Only allow replacement for the root leaf that has exactly one tab
+            // equal to surface_id. Multi-tab leaves are handled by close_surface.
+            let is_sole_root_tab = matches!(
                 &workspace.pane_tree,
-                PaneNode::Leaf {
-                    surface_id: leaf_id
-                } if leaf_id == surface_id
-            ) {
+                PaneNode::Leaf { tabs, .. } if tabs.len() == 1 && tabs[0] == surface_id
+            );
+            if !is_sole_root_tab {
                 return None;
             }
             (workspace.id.clone(), workspace.working_dir.clone())
@@ -784,6 +862,27 @@ impl WorkspaceModel {
         let surface = self.surfaces.get(surface_id)?.clone();
         let workspace_id = surface.workspace_id.clone();
         let working_dir = self.workspaces.get(&workspace_id)?.working_dir.clone();
+
+        // Check if this surface is one of multiple tabs in its leaf.
+        // If so, just remove it from the tab list without collapsing the leaf.
+        if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+            if remove_tab_from_leaf(&mut workspace.pane_tree, surface_id) {
+                // Tab was removed from a multi-tab leaf: update focus if needed.
+                let new_active = find_leaf_active_id(&workspace.pane_tree, surface_id)
+                    .or_else(|| find_leaf_containing_first_tab(&workspace.pane_tree, surface_id));
+                if let Some(new_active) = new_active {
+                    workspace.focused_surface_id = new_active;
+                } else if let Some(first) = first_leaf_surface_id(&workspace.pane_tree) {
+                    workspace.focused_surface_id = first;
+                }
+                let removed = self.surfaces.remove(surface_id)?;
+                self.recompute_workspace_attention(&workspace_id);
+                return Some(removed);
+            }
+        }
+
+        // The surface is the last (only) tab in its leaf: use the existing
+        // leaf-collapse / replacement logic.
         let replacement = match prepared_replacement {
             Some(replacement)
                 if replacement.workspace_id == workspace_id
@@ -815,9 +914,7 @@ impl WorkspaceModel {
         if let Some(next_focus) = next_focus {
             workspace.focused_surface_id = next_focus;
         } else {
-            workspace.pane_tree = PaneNode::Leaf {
-                surface_id: replacement.id.clone(),
-            };
+            workspace.pane_tree = PaneNode::single_leaf(replacement.id.clone());
             workspace.focused_surface_id = replacement.id.clone();
             self.surfaces.insert(replacement.id.clone(), replacement);
         }
@@ -1295,15 +1392,13 @@ fn replace_leaf_with_split(
     new_leaf: PaneNode,
 ) -> bool {
     match node {
-        PaneNode::Leaf { surface_id } if surface_id == target_surface_id => {
+        // Match a leaf whose tabs contain the target (splitting on active tab).
+        PaneNode::Leaf { tabs, .. } if tabs.iter().any(|id| id == target_surface_id) => {
+            // Clone the original leaf (with ALL its tabs) as the left child.
+            let original_leaf = node.clone();
             *node = PaneNode::Split {
                 axis,
-                children: vec![
-                    PaneNode::Leaf {
-                        surface_id: target_surface_id.to_string(),
-                    },
-                    new_leaf,
-                ],
+                children: vec![original_leaf, new_leaf],
                 sizes: vec![0.5, 0.5],
             };
             true
@@ -1318,7 +1413,7 @@ fn replace_leaf_with_split(
                 for index in 0..children.len() {
                     if matches!(
                         &children[index],
-                        PaneNode::Leaf { surface_id } if surface_id == target_surface_id
+                        PaneNode::Leaf { tabs, .. } if tabs.iter().any(|id| id == target_surface_id)
                     ) {
                         children.insert(index + 1, new_leaf);
                         rebalance_split_sizes(sizes, children.len());
@@ -1354,7 +1449,10 @@ fn rebalance_split_sizes(sizes: &mut Vec<f64>, len: usize) {
 
 fn remove_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<bool> {
     match node {
-        PaneNode::Leaf { surface_id } if surface_id == target_surface_id => Some(true),
+        // A leaf is the root — signal "removed root"
+        PaneNode::Leaf { tabs, .. } if tabs.len() == 1 && tabs[0] == target_surface_id => {
+            Some(true)
+        }
         PaneNode::Leaf { .. } => None,
         PaneNode::Split {
             children, sizes, ..
@@ -1477,6 +1575,20 @@ fn apply_partition_ratio(sizes: &mut [f64], split_at: usize, ratio: f64) {
 
 fn repair_pane_tree_structure(node: &mut PaneNode) -> bool {
     let mut changed = false;
+    // Repair leaf invariants: tabs must be non-empty; active must be in range.
+    if let PaneNode::Leaf { tabs, active } = node {
+        if tabs.is_empty() {
+            // Caller should drop this leaf; mark changed so the split above prunes it.
+            // We leave tabs empty; the prune below in Split handling will discard it.
+            return true;
+        }
+        let clamped = (*active).min(tabs.len().saturating_sub(1));
+        if clamped != *active {
+            *active = clamped;
+            changed = true;
+        }
+        return changed;
+    }
     if let PaneNode::Split {
         children, sizes, ..
     } = node
@@ -1507,11 +1619,18 @@ fn repair_pane_tree_structure(node: &mut PaneNode) -> bool {
 
 fn rename_leaf(node: &mut PaneNode, old_id: &str, new_id: &str) -> bool {
     match node {
-        PaneNode::Leaf { surface_id } if surface_id == old_id => {
-            *surface_id = new_id.to_string();
-            true
+        PaneNode::Leaf { tabs, .. } => {
+            let mut found = false;
+            for tab in tabs.iter_mut() {
+                if tab == old_id {
+                    *tab = new_id.to_string();
+                    found = true;
+                    // Each id should appear at most once; stop after the first match.
+                    break;
+                }
+            }
+            found
         }
-        PaneNode::Leaf { .. } => false,
         PaneNode::Split { children, .. } => {
             for child in children {
                 if rename_leaf(child, old_id, new_id) {
@@ -1525,7 +1644,10 @@ fn rename_leaf(node: &mut PaneNode, old_id: &str, new_id: &str) -> bool {
 
 fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
     match node {
-        PaneNode::Leaf { surface_id } => Some(surface_id.clone()),
+        PaneNode::Leaf { tabs, active } => {
+            // Return the active tab if valid, else first.
+            tabs.get(*active).or_else(|| tabs.first()).cloned()
+        }
         PaneNode::Split { children, .. } => children.iter().find_map(first_leaf_surface_id),
     }
 }
@@ -1585,12 +1707,112 @@ fn leaf_surface_ids(node: &PaneNode) -> Vec<SurfaceId> {
 
 fn collect_leaf_surface_ids(node: &PaneNode, ids: &mut Vec<SurfaceId>) {
     match node {
-        PaneNode::Leaf { surface_id } => ids.push(surface_id.clone()),
+        PaneNode::Leaf { tabs, .. } => {
+            for tab in tabs {
+                ids.push(tab.clone());
+            }
+        }
         PaneNode::Split { children, .. } => {
             for child in children {
                 collect_leaf_surface_ids(child, ids);
             }
         }
+    }
+}
+
+/// Remove `target_surface_id` from a multi-tab leaf.
+/// Returns `true` if the id was found AND the leaf still has at least one
+/// remaining tab (i.e. it was NOT the last tab).  Returns `false` when the id
+/// is not found OR when it was the only tab (caller must use `remove_leaf`).
+fn remove_tab_from_leaf(node: &mut PaneNode, target_surface_id: &str) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, active } => {
+            let pos = tabs.iter().position(|id| id == target_surface_id);
+            let Some(pos) = pos else {
+                return false;
+            };
+            if tabs.len() == 1 {
+                // Last tab — caller must handle leaf collapse.
+                return false;
+            }
+            tabs.remove(pos);
+            // Clamp active to the new last index, preferring the previous tab.
+            *active = if *active >= pos && *active > 0 {
+                *active - 1
+            } else {
+                (*active).min(tabs.len().saturating_sub(1))
+            };
+            true
+        }
+        PaneNode::Split { children, .. } => children
+            .iter_mut()
+            .any(|child| remove_tab_from_leaf(child, target_surface_id)),
+    }
+}
+
+/// After removing a tab, find what the new active surface id should be for the
+/// leaf that previously contained `removed_surface_id`.
+/// We walk the tree to find a leaf whose `active` index gives a valid id.
+fn find_leaf_active_id(node: &PaneNode, _removed_surface_id: &str) -> Option<SurfaceId> {
+    match node {
+        PaneNode::Leaf { tabs, active } => tabs.get(*active).cloned(),
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .find_map(|c| find_leaf_active_id(c, _removed_surface_id)),
+    }
+}
+
+/// Find the first tab of the leaf that previously contained `removed_surface_id`.
+/// Used as a fallback when the leaf no longer contains the removed id.
+fn find_leaf_containing_first_tab(node: &PaneNode, removed_surface_id: &str) -> Option<SurfaceId> {
+    match node {
+        PaneNode::Leaf { tabs, .. } => {
+            if tabs.iter().any(|id| id == removed_surface_id) {
+                tabs.first().cloned()
+            } else {
+                None
+            }
+        }
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .find_map(|c| find_leaf_containing_first_tab(c, removed_surface_id)),
+    }
+}
+
+/// Set the `active` index in the leaf that contains `surface_id`.
+/// Returns `true` if found and updated.
+fn set_leaf_active_for_surface(node: &mut PaneNode, surface_id: &str) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, active } => {
+            if let Some(pos) = tabs.iter().position(|id| id == surface_id) {
+                *active = pos;
+                true
+            } else {
+                false
+            }
+        }
+        PaneNode::Split { children, .. } => children
+            .iter_mut()
+            .any(|child| set_leaf_active_for_surface(child, surface_id)),
+    }
+}
+
+/// Push `new_tab_id` to the tabs of the leaf containing `near_surface_id`.
+/// Sets `active` to the new tab's index. Returns `true` if found.
+fn push_tab_to_leaf(node: &mut PaneNode, near_surface_id: &str, new_tab_id: SurfaceId) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, active } => {
+            if tabs.iter().any(|id| id == near_surface_id) {
+                tabs.push(new_tab_id);
+                *active = tabs.len() - 1;
+                true
+            } else {
+                false
+            }
+        }
+        PaneNode::Split { children, .. } => children
+            .iter_mut()
+            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id.clone())),
     }
 }
 
@@ -1755,9 +1977,8 @@ mod tests {
         // Detach the second surface from the pane tree but keep it in the
         // surface map — emulating a corrupted in-memory state.
         let first = workspace.focused_surface_id;
-        model.workspaces.get_mut(&workspace.id).unwrap().pane_tree = PaneNode::Leaf {
-            surface_id: first.clone(),
-        };
+        model.workspaces.get_mut(&workspace.id).unwrap().pane_tree =
+            PaneNode::single_leaf(first.clone());
         let before = model.next_surface;
 
         assert!(model
@@ -1777,8 +1998,7 @@ mod tests {
             .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
             .unwrap();
         let first = workspace.focused_surface_id;
-        model.workspaces.get_mut(&workspace.id).unwrap().pane_tree =
-            PaneNode::Leaf { surface_id: first };
+        model.workspaces.get_mut(&workspace.id).unwrap().pane_tree = PaneNode::single_leaf(first);
 
         assert!(!model.focus_surface(&second.id));
     }
@@ -1793,9 +2013,7 @@ mod tests {
         let first = workspace.focused_surface_id;
         {
             let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
-            workspace.pane_tree = PaneNode::Leaf {
-                surface_id: first.clone(),
-            };
+            workspace.pane_tree = PaneNode::single_leaf(first.clone());
             workspace.focused_surface_id = second.id.clone();
         }
 
@@ -1817,9 +2035,7 @@ mod tests {
             git_branch: String::new(),
             worktree_dir: None,
             worktree_name: None,
-            pane_tree: PaneNode::Leaf {
-                surface_id: "surface-1".to_string(),
-            },
+            pane_tree: PaneNode::single_leaf("surface-1".to_string()),
             focused_surface_id: "surface-1".to_string(),
             needs_attention: false,
             listening_ports: Vec::new(),
@@ -2569,9 +2785,7 @@ mod tests {
         let first = source.create_workspace("first", "/tmp/a");
         let second = source.create_workspace("second", "/tmp/b");
         let mut data = source.to_session_data();
-        data.workspaces[1].pane_tree = PaneNode::Leaf {
-            surface_id: first.focused_surface_id.clone(),
-        };
+        data.workspaces[1].pane_tree = PaneNode::single_leaf(first.focused_surface_id.clone());
         data.workspaces[1].focused_surface_id = first.focused_surface_id.clone();
 
         let mut restored = WorkspaceModel::new();
@@ -2799,9 +3013,7 @@ mod tests {
             let workspace = model.workspaces.get_mut(&workspace.id).unwrap();
             workspace.pane_tree = PaneNode::Split {
                 axis: SplitAxis::Horizontal,
-                children: vec![PaneNode::Leaf {
-                    surface_id: leaf_id.clone(),
-                }],
+                children: vec![PaneNode::single_leaf(leaf_id.clone())],
                 sizes: vec![1.0],
             };
         }
@@ -2811,7 +3023,7 @@ mod tests {
         let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
         assert!(matches!(
             repaired.pane_tree,
-            PaneNode::Leaf { surface_id } if surface_id == leaf_id
+            PaneNode::Leaf { ref tabs, .. } if tabs.len() == 1 && tabs[0] == leaf_id
         ));
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
@@ -2856,9 +3068,7 @@ mod tests {
         let shared_id = first.focused_surface_id.clone();
         {
             let workspace = model.workspaces.get_mut(&second.id).unwrap();
-            workspace.pane_tree = PaneNode::Leaf {
-                surface_id: shared_id.clone(),
-            };
+            workspace.pane_tree = PaneNode::single_leaf(shared_id.clone());
             workspace.focused_surface_id = shared_id.clone();
         }
         model.surfaces.insert(
@@ -2910,12 +3120,8 @@ mod tests {
             workspace.pane_tree = PaneNode::Split {
                 axis: SplitAxis::Horizontal,
                 children: vec![
-                    PaneNode::Leaf {
-                        surface_id: shared_id.clone(),
-                    },
-                    PaneNode::Leaf {
-                        surface_id: shared_id.clone(),
-                    },
+                    PaneNode::single_leaf(shared_id.clone()),
+                    PaneNode::single_leaf(shared_id.clone()),
                 ],
                 sizes: vec![0.5, 0.5],
             };
@@ -2987,9 +3193,7 @@ mod tests {
                         children: Vec::new(),
                         sizes: Vec::new(),
                     },
-                    PaneNode::Leaf {
-                        surface_id: leaf_id.clone(),
-                    },
+                    PaneNode::single_leaf(leaf_id.clone()),
                 ],
                 sizes: vec![0.5, 0.5],
             };
@@ -3000,7 +3204,7 @@ mod tests {
         let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
         assert!(matches!(
             repaired.pane_tree,
-            PaneNode::Leaf { surface_id } if surface_id == leaf_id
+            PaneNode::Leaf { ref tabs, .. } if tabs.len() == 1 && tabs[0] == leaf_id
         ));
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
@@ -3294,5 +3498,196 @@ mod tests {
                 profile: crate::profile::ProfileId::default(),
             }
         );
+    }
+
+    // ── per-pane tab group tests ───────────────────────────────────────────────
+
+    #[test]
+    fn add_tab_creates_new_surface_in_same_leaf_and_focuses_it() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+
+        let new_surface = model.add_tab(&first_id).expect("add_tab succeeds");
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, new_surface.id);
+        // Both surfaces exist.
+        assert!(model.surface(&first_id).is_some());
+        assert!(model.surface(&new_surface.id).is_some());
+        // The pane tree is still a single leaf with 2 tabs.
+        let tabs = workspace.pane_tree.leaf_tabs().expect("root is leaf");
+        assert_eq!(tabs.len(), 2);
+        assert!(tabs.contains(&first_id));
+        assert!(tabs.contains(&new_surface.id));
+        // Active points to the newly added tab.
+        assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&new_surface.id));
+        // Surface count should be 2.
+        assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
+    }
+
+    #[test]
+    fn select_tab_switches_active_and_focus() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        // Now tab2 is active. Switch back to first.
+        assert!(model.select_tab(&first_id));
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, first_id);
+        assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&first_id));
+        // tab2 is still present.
+        assert!(model.surface(&tab2.id).is_some());
+    }
+
+    #[test]
+    fn close_tab_non_last_removes_only_from_leaf_without_collapse() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+
+        // Close the second tab — the leaf must remain (still has first_id).
+        let removed = model.close_surface(&tab2.id).expect("close succeeds");
+        assert_eq!(removed.id, tab2.id);
+
+        let workspace = model.list_workspaces().remove(0);
+        // The pane tree must still be a leaf.
+        assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
+        // The leaf must now have exactly one tab.
+        let tabs = workspace.pane_tree.leaf_tabs().expect("leaf");
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0], first_id);
+        // Focus reverted to the remaining tab.
+        assert_eq!(workspace.focused_surface_id, first_id);
+        // tab2 is gone from the surfaces map.
+        assert!(model.surface(&tab2.id).is_none());
+    }
+
+    #[test]
+    fn close_last_tab_collapses_leaf_and_replaces_with_new_terminal() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let only_id = workspace.focused_surface_id.clone();
+
+        let removed = model.close_surface(&only_id).expect("close succeeds");
+        assert_eq!(removed.id, only_id);
+
+        let workspace = model.list_workspaces().remove(0);
+        // A replacement leaf was created.
+        assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
+        let new_id = workspace.focused_surface_id.clone();
+        assert_ne!(new_id, only_id);
+        assert!(model.surface(&new_id).is_some());
+        assert!(model.surface(&only_id).is_none());
+    }
+
+    #[test]
+    fn split_surface_on_multi_tab_leaf_preserves_all_tabs_in_original_pane() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+
+        // Now split the pane (the active tab is tab2).
+        let new_split = model
+            .split_surface(&tab2.id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+
+        let workspace = model.list_workspaces().remove(0);
+        // The pane tree must now be a split with 2 leaves.
+        let PaneNode::Split { ref children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children.len(), 2);
+        // The first child keeps BOTH original tabs.
+        let orig_tabs = children[0].leaf_tabs().expect("first child is leaf");
+        assert_eq!(orig_tabs.len(), 2);
+        assert!(orig_tabs.contains(&first_id));
+        assert!(orig_tabs.contains(&tab2.id));
+        // The second child is the new split surface.
+        let new_tabs = children[1].leaf_tabs().expect("second child is leaf");
+        assert_eq!(new_tabs, &[new_split.id.clone()]);
+        // Focus is on the new split surface.
+        assert_eq!(workspace.focused_surface_id, new_split.id);
+    }
+
+    #[test]
+    fn update_split_partition_ratio_works_with_multi_tab_leaf() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        // Add a second tab to the initial leaf.
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        // Split on tab2 to get two panes.
+        let right_pane = model
+            .split_surface(&tab2.id, SplitAxis::Horizontal)
+            .expect("split");
+
+        // The left leaf now has [first_id, tab2.id]; right leaf has [right_pane.id].
+        let left_leaves = vec![first_id.clone(), tab2.id.clone()];
+        let right_leaves = vec![right_pane.id.clone()];
+        assert!(model.update_split_partition_ratio(
+            &workspace.id,
+            &left_leaves,
+            &right_leaves,
+            0.7,
+        ));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { sizes, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        let total: f64 = sizes.iter().sum();
+        assert!((total - 1.0).abs() < 1e-6);
+        assert!((sizes[0] / total - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn focus_surface_on_non_active_tab_updates_leaf_active() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let _tab2 = model.add_tab(&first_id).expect("add_tab");
+        // tab2 is now active. Focus back to first.
+        assert!(model.focus_surface(&first_id));
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, first_id);
+        assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&first_id));
+    }
+
+    #[test]
+    fn repair_session_invariants_clamps_out_of_range_active_index() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        {
+            let ws = model.workspaces.get_mut(&workspace.id).unwrap();
+            // Force an invalid active index.
+            ws.pane_tree = PaneNode::Leaf {
+                tabs: vec![first_id.clone()],
+                active: 99,
+            };
+        }
+
+        assert!(model.repair_session_invariants());
+
+        let ws = model.workspaces.get(&workspace.id).unwrap();
+        let PaneNode::Leaf { active, .. } = ws.pane_tree else {
+            panic!("expected leaf");
+        };
+        assert_eq!(active, 0);
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn single_leaf_helper_creates_leaf_with_one_tab() {
+        let leaf = PaneNode::single_leaf("surface-42".to_string());
+        let tabs = leaf.leaf_tabs().expect("leaf");
+        assert_eq!(tabs, &["surface-42"]);
+        assert_eq!(leaf.leaf_active_id(), Some(&"surface-42".to_string()));
     }
 }

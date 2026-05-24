@@ -791,6 +791,40 @@ popover.ft-workspace-popover contents {
   border-bottom-color: alpha(var(--ft-warning), 0.36);
 }
 
+/* Per-pane tab strip (shown when a leaf has >1 tab).
+ * Matches the existing .terminal-pane-header height and surface level. */
+.pane-tabbar {
+  background: var(--ft-pane-header);
+  border-bottom: 1px solid var(--ft-border-subtle);
+  min-height: 24px;
+}
+
+.pane-tabbar tabbar {
+  background: transparent;
+  border-bottom: none;
+}
+
+.pane-tabbar tabbar tab {
+  background: transparent;
+  color: var(--ft-text-muted);
+  font-size: 0.82em;
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 0;
+}
+
+.pane-tabbar tabbar tab:checked {
+  background: alpha(var(--ft-accent), 0.14);
+  color: var(--ft-text-strong);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--ft-accent);
+}
+
+.pane-tabbar tabbar tab:hover:not(:checked) {
+  background: var(--ft-bg-3);
+  color: var(--ft-text);
+}
+
 .terminal-pane-title {
   color: var(--ft-text-muted);
   font-size: 0.82em;
