@@ -129,8 +129,6 @@ impl BrowserPaneWidget {
     /// Connect the close (×) button to a callback. The widget does not own the
     /// model or the confirmation dialog, so gtk_app wires this to the same
     /// `show_close_pane_confirmation` path terminal panes use.
-    // wired in Task 2
-    #[allow(dead_code)]
     pub fn connect_close<F: Fn() + 'static>(&self, f: F) {
         self.close.connect_clicked(move |_| f());
     }
