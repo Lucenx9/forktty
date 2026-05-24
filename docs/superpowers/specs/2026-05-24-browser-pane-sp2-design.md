@@ -247,6 +247,17 @@ browser.back(surface_id):
    help text + arg validation tests in `socket_cli.rs`.
 6. Docs: `docs/cmux-gap-features.md` (#3 → SP2 done, SP3 backlog) + `ROADMAP.md`.
 
+## Concurrency note
+
+The GTK command pump processes commands sequentially but does not await each
+`run_js` callback before pulling the next command, so two in-flight commands'
+JS callbacks may interleave. Rust-side state is unaffected (each command owns its
+reply channel; the pane map is read-and-cloned). The one shared resource is the
+per-page JS `refMap`, which `snapshot` resets — so concurrent callers issuing
+`snapshot` + `click` against the same pane can invalidate each other's refs.
+SP2 targets a single serial agent (snapshot → act on a ref → snapshot); callers
+that drive a pane concurrently must serialize their own snapshot/act cycles.
+
 ## Out of scope (SP2, see SP3)
 
 - Cookie / history / browser-profile import.
