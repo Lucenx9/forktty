@@ -151,6 +151,18 @@ impl BrowserPaneWidget {
         self.web_view.uri().map(|g| g.to_string())
     }
 
+    pub fn go_back(&self) {
+        self.web_view.go_back();
+    }
+
+    pub fn go_forward(&self) {
+        self.web_view.go_forward();
+    }
+
+    pub fn reload(&self) {
+        self.web_view.reload();
+    }
+
     /// Connect the address bar's Enter key to a navigation callback.
     pub fn connect_address_activate<F: Fn(String) + 'static>(&self, f: F) {
         let entry = self.address.clone();
