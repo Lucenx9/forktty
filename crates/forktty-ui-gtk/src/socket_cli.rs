@@ -3801,6 +3801,34 @@ mod tests {
         handle.join().unwrap()
     }
 
+    /// Serves a fixed number of requests, each on its own connection (the CLI
+    /// opens a fresh connection per `send_socket_request`). The responder maps a
+    /// request to a response string; every received request is returned in order.
+    fn with_socket_server(
+        request_count: usize,
+        responder: impl Fn(&Value) -> String + Send + 'static,
+        test: impl FnOnce(&Path),
+    ) -> Vec<Value> {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let handle = thread::spawn(move || {
+            let mut requests = Vec::with_capacity(request_count);
+            for _ in 0..request_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(line.trim()).unwrap();
+                stream.write_all(responder(&request).as_bytes()).unwrap();
+                requests.push(request);
+            }
+            requests
+        });
+        test(&socket_path);
+        handle.join().unwrap()
+    }
+
     fn test_context() -> CliContext {
         CliContext {
             json: true,
@@ -5432,5 +5460,115 @@ mod tests {
             ),
             "browser navigate",
         );
+    }
+
+    #[test]
+    fn browser_open_resolves_active_workspace_when_id_omitted() {
+        let requests = with_socket_server(
+            2,
+            |req| match req["method"].as_str() {
+                Some("workspace.list") => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [
+                        { "id": "ws-idle", "active": false },
+                        { "id": "ws-active", "active": true }
+                    ],
+                })
+                .to_string(),
+                _ => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id":"s1","kind":{"type":"browser","url":"https://example.com"}},
+                })
+                .to_string(),
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["open", "example.com"])).unwrap();
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
+        assert_eq!(requests[1]["method"], "browser.open");
+        assert_eq!(requests[1]["params"]["workspace_id"], "ws-active");
+        assert_eq!(requests[1]["params"]["url"], "example.com");
+    }
+
+    #[test]
+    fn browser_navigate_resolves_focused_surface_when_id_omitted() {
+        let requests = with_socket_server(
+            2,
+            |req| match req["method"].as_str() {
+                Some("workspace.list") => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [
+                        { "id": "a", "active": false, "focused_surface_id": "surface-a" },
+                        { "id": "b", "active": true, "focused_surface_id": "surface-b" }
+                    ],
+                })
+                .to_string(),
+                _ => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"navigated": true},
+                })
+                .to_string(),
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["navigate", "https://rust-lang.org"])).unwrap();
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
+        assert_eq!(requests[1]["method"], "browser.navigate");
+        assert_eq!(requests[1]["params"]["surface_id"], "surface-b");
+        assert_eq!(requests[1]["params"]["url"], "https://rust-lang.org");
+    }
+
+    #[test]
+    fn browser_open_errors_when_no_active_workspace() {
+        let requests = with_socket_server(
+            1,
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                assert_err_contains(
+                    handle_browser(&ctx, strings(&["open", "example.com"])),
+                    "no active workspace",
+                );
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
+    }
+
+    #[test]
+    fn browser_navigate_errors_when_no_focused_surface() {
+        let requests = with_socket_server(
+            1,
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                assert_err_contains(
+                    handle_browser(&ctx, strings(&["navigate", "https://x.com"])),
+                    "surface id",
+                );
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
     }
 }
