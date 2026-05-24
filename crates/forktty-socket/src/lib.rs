@@ -1,8 +1,9 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
-    config, dispatch_notification, validate_worktree_name, worktree, JsonRpcRequest,
-    JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel,
-    WorkspaceSelector,
+    config, dispatch_notification, validate_worktree_name, worktree, BrowserCmdError,
+    BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
+    NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
+    MAX_BROWSER_SCRIPT_BYTES,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
@@ -22,6 +23,7 @@ const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const MAX_BROWSER_URL_BYTES: usize = 8_192;
+const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
@@ -34,8 +36,15 @@ const EVENTS_TICK: Duration = Duration::from_millis(250);
 /// covered by a `dispatch` match arm; the `capabilities_lists_dispatchable`
 /// test guards against an entry here that has no handler.
 pub const METHODS: &[&str] = &[
+    "browser.back",
+    "browser.click",
+    "browser.eval",
+    "browser.fill",
+    "browser.forward",
     "browser.navigate",
     "browser.open",
+    "browser.reload",
+    "browser.snapshot",
     "events.subscribe",
     "metadata.clear_logs",
     "metadata.clear_progress",
@@ -217,6 +226,10 @@ pub struct SocketAppState {
     /// Broadcast channel feeding `events.subscribe` connections. The background
     /// tick task in [`serve`] is the sole producer.
     pub events: broadcast::Sender<ModelEvent>,
+    /// Sends scripting commands to the GTK WebView. `None` when no browser
+    /// engine is wired (no `browser` feature, or headless), in which case the
+    /// browser scripting verbs report unavailable.
+    pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
 }
 
 impl SocketAppState {
@@ -234,11 +247,17 @@ impl SocketAppState {
             socket_path: socket_path.into(),
             notification_dispatch: true,
             events,
+            browser_cmd: None,
         }
     }
 
     pub fn with_notification_dispatch(mut self, enabled: bool) -> Self {
         self.notification_dispatch = enabled;
+        self
+    }
+
+    pub fn with_browser_cmd(mut self, sender: async_channel::Sender<BrowserCommand>) -> Self {
+        self.browser_cmd = Some(sender);
         self
     }
 }
@@ -741,6 +760,54 @@ pub async fn dispatch(
             } else {
                 Err(DispatchError::NotFound("surface".to_string()))
             }
+        }
+        "browser.snapshot" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Snapshot).await
+        }
+        "browser.click" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            let reference = required_string_param(&params, "ref")?.to_string();
+            if reference.is_empty() {
+                return Err("Invalid parameter ref: must not be empty".into());
+            }
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Click { reference }).await
+        }
+        "browser.fill" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            let reference = required_string_param(&params, "ref")?.to_string();
+            if reference.is_empty() {
+                return Err("Invalid parameter ref: must not be empty".into());
+            }
+            let value = required_string_param(&params, "value")?.to_string();
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Fill { reference, value }).await
+        }
+        "browser.eval" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            let script = required_string_param(&params, "script")?.to_string();
+            if script.is_empty() {
+                return Err("Invalid parameter script: must not be empty".into());
+            }
+            if script.len() > MAX_BROWSER_SCRIPT_BYTES {
+                return Err(DispatchError::PayloadTooLarge {
+                    field: "script",
+                    limit: MAX_BROWSER_SCRIPT_BYTES,
+                    actual: script.len(),
+                });
+            }
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Eval { script }).await
+        }
+        "browser.back" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Back).await
+        }
+        "browser.forward" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Forward).await
+        }
+        "browser.reload" => {
+            let surface_id = required_surface_id(&params)?.to_string();
+            dispatch_browser_cmd(state, surface_id, BrowserOp::Reload).await
         }
         "surface.focus" => {
             let surface_id = required_surface_id(&params)?;
@@ -1394,6 +1461,68 @@ fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
         Some("vertical") => Ok(SplitAxis::Vertical),
         Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
         None => Err("Invalid parameter axis: expected string".into()),
+    }
+}
+
+/// Validate the surface is a browser, send `op` to the GTK side, and await the
+/// reply within [`BROWSER_CMD_TIMEOUT`]. Maps [`CmdResult`] to a JSON value or a
+/// [`DispatchError`].
+async fn dispatch_browser_cmd(
+    state: &SocketAppState,
+    surface_id: String,
+    op: BrowserOp,
+) -> Result<Value, DispatchError> {
+    {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        match model.surface(&surface_id) {
+            None => return Err(DispatchError::NotFound("surface".to_string())),
+            Some(surface) => {
+                if !matches!(surface.kind, forktty_core::SurfaceKind::Browser { .. }) {
+                    return Err(DispatchError::NotFound("browser surface".to_string()));
+                }
+            }
+        }
+    }
+    let Some(sender) = state.browser_cmd.clone() else {
+        return Err("browser automation unavailable".into());
+    };
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    sender
+        .send(BrowserCommand {
+            surface_id,
+            op,
+            reply: reply_tx,
+        })
+        .await
+        .map_err(|_| DispatchError::from("browser automation unavailable"))?;
+    let result = tokio::time::timeout(BROWSER_CMD_TIMEOUT, reply_rx)
+        .await
+        .map_err(|_| DispatchError::from("browser command timed out"))?
+        .map_err(|_| DispatchError::Other("browser reply dropped".to_string()))?;
+    match result {
+        CmdResult::Ok => Ok(json!({"ok": true})),
+        CmdResult::Json(raw) => serde_json::from_str::<Value>(&raw)
+            .map_err(|e| DispatchError::Other(format!("invalid browser result json: {e}"))),
+        CmdResult::Err(err) => Err(browser_cmd_error_to_dispatch(err)),
+    }
+}
+
+fn browser_cmd_error_to_dispatch(err: BrowserCmdError) -> DispatchError {
+    match err {
+        BrowserCmdError::SurfaceGone => DispatchError::NotFound("surface".to_string()),
+        BrowserCmdError::NotABrowser => DispatchError::NotFound("browser surface".to_string()),
+        BrowserCmdError::NoWebView => DispatchError::NotFound("web view".to_string()),
+        BrowserCmdError::RefNotFound => DispatchError::NotFound("element ref".to_string()),
+        BrowserCmdError::TooLarge => DispatchError::PayloadTooLarge {
+            field: "result",
+            limit: forktty_core::MAX_BROWSER_RESULT_BYTES,
+            actual: forktty_core::MAX_BROWSER_RESULT_BYTES + 1,
+        },
+        BrowserCmdError::JsError(msg) => DispatchError::Other(msg),
+        BrowserCmdError::Internal(msg) => DispatchError::Other(msg),
     }
 }
 
@@ -5003,5 +5132,143 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, DispatchError::NotFound(_)));
+    }
+
+    // --- SP2 browser scripting verbs ---------------------------------------
+
+    fn state_with_browser_channel() -> (
+        SocketAppState,
+        async_channel::Receiver<forktty_core::BrowserCommand>,
+    ) {
+        let (state, _backend) = test_state();
+        let (tx, rx) = async_channel::unbounded();
+        (state.with_browser_cmd(tx), rx)
+    }
+
+    async fn open_browser_surface(state: &SocketAppState) -> String {
+        let ws = dispatch(state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let workspace_id = ws.get("id").unwrap().as_str().unwrap().to_string();
+        let surface = dispatch(
+            state,
+            "browser.open",
+            json!({"workspace_id": workspace_id, "url": "https://example.com"}),
+        )
+        .await
+        .unwrap();
+        surface.get("id").unwrap().as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn browser_snapshot_unavailable_without_channel() {
+        let (state, _backend) = test_state();
+        let sid = open_browser_surface(&state).await;
+        let err = dispatch(&state, "browser.snapshot", json!({"surface_id": sid}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("browser automation unavailable"));
+    }
+
+    #[tokio::test]
+    async fn browser_snapshot_returns_stub_json() {
+        let (state, rx) = state_with_browser_channel();
+        let sid = open_browser_surface(&state).await;
+        let responder = tokio::spawn(async move {
+            let cmd = rx.recv().await.unwrap();
+            assert_eq!(cmd.op, forktty_core::BrowserOp::Snapshot);
+            cmd.reply
+                .send(forktty_core::CmdResult::Json("{\"role\":\"root\"}".into()))
+                .unwrap();
+        });
+        let result = dispatch(&state, "browser.snapshot", json!({"surface_id": sid}))
+            .await
+            .unwrap();
+        assert_eq!(result, json!({"role": "root"}));
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_back_returns_ok() {
+        let (state, rx) = state_with_browser_channel();
+        let sid = open_browser_surface(&state).await;
+        let responder = tokio::spawn(async move {
+            let cmd = rx.recv().await.unwrap();
+            assert_eq!(cmd.op, forktty_core::BrowserOp::Back);
+            cmd.reply.send(forktty_core::CmdResult::Ok).unwrap();
+        });
+        let result = dispatch(&state, "browser.back", json!({"surface_id": sid}))
+            .await
+            .unwrap();
+        assert_eq!(result, json!({"ok": true}));
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_eval_rejects_oversize_script() {
+        let (state, _rx) = state_with_browser_channel();
+        let sid = open_browser_surface(&state).await;
+        let big = "x".repeat(forktty_core::MAX_BROWSER_SCRIPT_BYTES + 1);
+        let err = dispatch(
+            &state,
+            "browser.eval",
+            json!({"surface_id": sid, "script": big}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "payload_too_large");
+    }
+
+    #[tokio::test]
+    async fn browser_click_on_terminal_surface_is_not_found() {
+        let (state, _rx) = state_with_browser_channel();
+        let ws = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let workspace_id = ws.get("id").unwrap().as_str().unwrap();
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let term_id = surfaces.as_array().unwrap()[0]
+            .get("id")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let err = dispatch(
+            &state,
+            "browser.click",
+            json!({"surface_id": term_id, "ref": "e1"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "not_found");
+    }
+
+    #[tokio::test]
+    async fn browser_click_maps_ref_not_found_reply() {
+        let (state, rx) = state_with_browser_channel();
+        let sid = open_browser_surface(&state).await;
+        let responder = tokio::spawn(async move {
+            let cmd = rx.recv().await.unwrap();
+            cmd.reply
+                .send(forktty_core::CmdResult::Err(
+                    forktty_core::BrowserCmdError::RefNotFound,
+                ))
+                .unwrap();
+        });
+        let err = dispatch(
+            &state,
+            "browser.click",
+            json!({"surface_id": sid, "ref": "e1"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "not_found");
+        responder.await.unwrap();
     }
 }
