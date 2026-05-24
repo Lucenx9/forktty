@@ -818,7 +818,10 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
     // rather than printing it as an event.
     let mut first = String::new();
     if reader.read_line(&mut first)? == 0 {
-        return Ok(());
+        return Err(CliError::new(format!(
+            "Socket closed without response for events.subscribe at {}",
+            socket_path.display()
+        )));
     }
     if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(first.trim()) {
         if !response.ok {
@@ -5189,7 +5192,7 @@ mod tests {
     #[test]
     fn events_defaults_to_replay_true() {
         let request = with_socket_response(
-            |_req| String::new(),
+            |_req| r#"{"event":"subscribed"}"#.to_string(),
             |socket_path| {
                 handle_events(&ctx_for(socket_path), vec![]).unwrap();
             },
@@ -5201,7 +5204,7 @@ mod tests {
     #[test]
     fn events_no_replay_flag_disables_replay() {
         let request = with_socket_response(
-            |_req| String::new(),
+            |_req| r#"{"event":"subscribed"}"#.to_string(),
             |socket_path| {
                 handle_events(&ctx_for(socket_path), strings(&["--no-replay"])).unwrap();
             },
@@ -5233,6 +5236,19 @@ mod tests {
             },
             |socket_path| {
                 assert_err_contains(handle_events(&ctx_for(socket_path), vec![]), "server_busy");
+            },
+        );
+    }
+
+    #[test]
+    fn events_errors_when_socket_closes_before_handshake() {
+        with_socket_response(
+            |_req| String::new(),
+            |socket_path| {
+                assert_err_contains(
+                    handle_events(&ctx_for(socket_path), vec![]),
+                    "Socket closed without response for events.subscribe",
+                );
             },
         );
     }
