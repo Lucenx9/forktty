@@ -65,6 +65,13 @@ Usage:
   forktty events [--no-replay]
   forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] <url>
   forktty browser navigate [<surface-id>] <url>
+  forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
+  forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
+  forktty browser fill <surface-id> <ref> <value>  Set an input's value by snapshot ref
+  forktty browser eval <surface-id> <script>       Run JavaScript, print the JSON result
+  forktty browser back <surface-id>                Navigate back in history
+  forktty browser forward <surface-id>             Navigate forward in history
+  forktty browser reload <surface-id>              Reload the current page
 ";
 
 #[derive(Debug)]
@@ -1370,8 +1377,15 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     match sub.as_str() {
         "open" => browser_open(context, rest),
         "navigate" => browser_navigate(context, rest),
+        "snapshot" => browser_snapshot(context, rest),
+        "click" => browser_click(context, rest),
+        "fill" => browser_fill(context, rest),
+        "eval" => browser_run_script(context, rest),
+        "back" => browser_nav(context, rest, "browser.back", "back"),
+        "forward" => browser_nav(context, rest, "browser.forward", "forward"),
+        "reload" => browser_nav(context, rest, "browser.reload", "reload"),
         "" => Err(CliError::new(
-            "browser requires a subcommand: open | navigate",
+            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload",
         )),
         other => Err(CliError::new(format!(
             "browser: unknown subcommand {other}"
@@ -1452,6 +1466,104 @@ fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         println!("Navigated");
         Ok(())
     }
+}
+
+fn browser_snapshot(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "browser snapshot")?;
+    let surface_id = parsed
+        .positionals
+        .first()
+        .ok_or_else(|| CliError::new("browser snapshot requires a surface-id"))?
+        .clone();
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "browser snapshot: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "browser.snapshot",
+        json!({"surface_id": surface_id}),
+    )?;
+    print_json(&result)
+}
+
+fn browser_click(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "browser click")?;
+    let (surface_id, reference) = match parsed.positionals.as_slice() {
+        [s, r] => (s.clone(), r.clone()),
+        _ => return Err(CliError::new("browser click requires <surface-id> <ref>")),
+    };
+    let result = send_socket_request(
+        &context.socket_path,
+        "browser.click",
+        json!({"surface_id": surface_id, "ref": reference}),
+    )?;
+    print_json(&result)
+}
+
+fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "browser fill")?;
+    let (surface_id, reference, value) = match parsed.positionals.as_slice() {
+        [s, r, v] => (s.clone(), r.clone(), v.clone()),
+        _ => {
+            return Err(CliError::new(
+                "browser fill requires <surface-id> <ref> <value>",
+            ))
+        }
+    };
+    let result = send_socket_request(
+        &context.socket_path,
+        "browser.fill",
+        json!({"surface_id": surface_id, "ref": reference, "value": value}),
+    )?;
+    print_json(&result)
+}
+
+fn browser_run_script(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "browser eval")?;
+    let (surface_id, script) = match parsed.positionals.as_slice() {
+        [s, sc] => (s.clone(), sc.clone()),
+        _ => return Err(CliError::new("browser eval requires <surface-id> <script>")),
+    };
+    let result = send_socket_request(
+        &context.socket_path,
+        "browser.eval",
+        json!({"surface_id": surface_id, "script": script}),
+    )?;
+    print_json(&result)
+}
+
+fn browser_nav(
+    context: &CliContext,
+    args: Vec<String>,
+    method: &str,
+    label: &str,
+) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], &format!("browser {label}"))?;
+    let surface_id = parsed
+        .positionals
+        .first()
+        .ok_or_else(|| CliError::new(format!("browser {label} requires a surface-id")))?
+        .clone();
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "browser {label}: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        method,
+        json!({"surface_id": surface_id}),
+    )?;
+    print_json(&result)
 }
 
 fn handle_worktree_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -5570,5 +5682,149 @@ mod tests {
             },
         );
         assert_eq!(requests[0]["method"], "workspace.list");
+    }
+
+    #[test]
+    fn browser_snapshot_sends_request() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"role": "root", "children": []},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["snapshot", "s9"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.snapshot");
+        assert_eq!(request["params"]["surface_id"], "s9");
+    }
+
+    #[test]
+    fn browser_click_sends_ref() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"ok": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["click", "s9", "e3"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.click");
+        assert_eq!(request["params"]["surface_id"], "s9");
+        assert_eq!(request["params"]["ref"], "e3");
+    }
+
+    #[test]
+    fn browser_fill_sends_ref_and_value() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"ok": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["fill", "s9", "e3", "hello world"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.fill");
+        assert_eq!(request["params"]["surface_id"], "s9");
+        assert_eq!(request["params"]["ref"], "e3");
+        assert_eq!(request["params"]["value"], "hello world");
+    }
+
+    #[test]
+    fn browser_eval_sends_script() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": "ForkTTY",
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["eval", "s9", "document.title"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.eval");
+        assert_eq!(request["params"]["surface_id"], "s9");
+        assert_eq!(request["params"]["script"], "document.title");
+    }
+
+    #[test]
+    fn browser_back_sends_request() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"ok": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["back", "s9"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.back");
+        assert_eq!(request["params"]["surface_id"], "s9");
+    }
+
+    #[test]
+    fn browser_forward_sends_request() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"ok": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["forward", "s9"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.forward");
+        assert_eq!(request["params"]["surface_id"], "s9");
+    }
+
+    #[test]
+    fn browser_reload_sends_request() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"ok": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["reload", "s9"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.reload");
+        assert_eq!(request["params"]["surface_id"], "s9");
     }
 }
