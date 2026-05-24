@@ -7,6 +7,9 @@ mod gtk_app;
 #[cfg(feature = "browser")]
 mod browser_pane;
 
+#[cfg(feature = "browser")]
+mod browser_session;
+
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
