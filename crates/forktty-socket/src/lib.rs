@@ -222,6 +222,7 @@ impl From<&str> for DispatchError {
 #[derive(Clone)]
 pub struct SocketAppState {
     pub model: Arc<Mutex<WorkspaceModel>>,
+    pub profile_store_lock: Arc<Mutex<()>>,
     pub terminal: SharedTerminalBackend,
     pub shell: String,
     pub socket_path: PathBuf,
@@ -245,6 +246,7 @@ impl SocketAppState {
         let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
         Self {
             model,
+            profile_store_lock: Arc::new(Mutex::new(())),
             terminal,
             shell: shell.into(),
             socket_path: socket_path.into(),
@@ -737,13 +739,24 @@ pub async fn dispatch(
             let workspace_id = required_string_param(&params, "workspace_id")?.to_string();
             let url = required_browser_url(&params)?;
             let axis = split_axis_from_params(&params)?;
-            let profile = match params.get("profile").and_then(|v| v.as_str()) {
-                Some(s) => profiles_store()?
-                    .resolve(s)
-                    .ok_or(DispatchError::NotFound("profile".to_string()))?,
-                None => forktty_core::ProfileId::default(),
-            };
             let surface = {
+                let _profile_store_guard = state
+                    .profile_store_lock
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let profile = match params.get("profile") {
+                    Some(value) => {
+                        let profile_name = value.as_str().ok_or_else(|| {
+                            DispatchError::InvalidParam(
+                                "Invalid parameter profile: expected string".to_string(),
+                            )
+                        })?;
+                        profiles_store()?
+                            .resolve(profile_name)
+                            .ok_or(DispatchError::NotFound("profile".to_string()))?
+                    }
+                    None => forktty_core::ProfileId::default(),
+                };
                 let mut model = state
                     .model
                     .lock()
@@ -819,6 +832,10 @@ pub async fn dispatch(
             dispatch_browser_cmd(state, surface_id, BrowserOp::Reload).await
         }
         "browser.profile.list" => {
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
             let store = profiles_store()?;
             let out: Vec<_> = store
                 .list()
@@ -840,6 +857,10 @@ pub async fn dispatch(
                     "display_name must not be empty".to_string(),
                 ));
             }
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
             let mut store = profiles_store()?;
             let meta = store
                 .create(&display_name)
@@ -851,6 +872,10 @@ pub async fn dispatch(
             let id: forktty_core::ProfileId = id_str
                 .parse()
                 .map_err(|_| DispatchError::NotFound("profile".to_string()))?;
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
             {
                 let model = state
                     .model
@@ -2311,7 +2336,7 @@ mod tests {
     use git2::Repository;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Barrier, Mutex};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     /// RAII guard that sets an environment variable for the duration of a test
@@ -5457,5 +5482,94 @@ mod tests {
 
         // _env (EnvGuard) and dir (TempDir) are dropped here, restoring the
         // environment and removing temporary files on any exit path.
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_open_rejects_non_string_profile_param() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", dir.path().to_str().unwrap());
+
+        let (state, _backend) = test_state();
+        let ws = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let workspace_id = ws.get("id").unwrap().as_str().unwrap().to_string();
+
+        let err = dispatch(
+            &state,
+            "browser.open",
+            json!({
+                "workspace_id": workspace_id,
+                "url": "https://example.com",
+                "profile": 123
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+        assert_eq!(
+            err.to_string(),
+            "Invalid parameter profile: expected string"
+        );
+
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": ws.get("id").unwrap().as_str().unwrap()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn browser_profile_create_serializes_store_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", dir.path().to_str().unwrap());
+
+        let (state, _backend) = test_state();
+        let task_count = 24;
+        let barrier = Arc::new(Barrier::new(task_count));
+        let mut handles = Vec::new();
+        for index in 0..task_count {
+            let state = state.clone();
+            let barrier = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap();
+                barrier.wait();
+                runtime
+                    .block_on(dispatch(
+                        &state,
+                        "browser.profile.create",
+                        json!({ "display_name": format!("Profile {index}") }),
+                    ))
+                    .unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let listed = runtime
+            .block_on(dispatch(&state, "browser.profile.list", json!({})))
+            .unwrap();
+        let profiles = listed.as_array().unwrap();
+        assert_eq!(profiles.len(), task_count + 1);
+        for index in 0..task_count {
+            assert!(
+                profiles
+                    .iter()
+                    .any(|profile| profile["display_name"] == json!(format!("Profile {index}"))),
+                "missing Profile {index}"
+            );
+        }
     }
 }
