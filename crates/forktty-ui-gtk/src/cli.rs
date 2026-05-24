@@ -123,6 +123,7 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "ping"
             | "capabilities"
             | "events"
+            | "browser"
     )
 }
 
@@ -872,6 +873,22 @@ mod tests {
                 OsString::from("--no-replay")
             ])
         );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "browser", "open", "https://example.com"]),
+            CliAction::SocketCli(vec![
+                OsString::from("browser"),
+                OsString::from("open"),
+                OsString::from("https://example.com")
+            ])
+        );
+    }
+
+    #[test]
+    fn browser_is_recognized_as_socket_cli_command() {
+        assert!(is_socket_cli_command("browser"));
+        assert!(is_socket_cli_command("capabilities"));
+        assert!(is_socket_cli_command("events"));
+        assert!(!is_socket_cli_command("explode"));
     }
 
     #[test]
