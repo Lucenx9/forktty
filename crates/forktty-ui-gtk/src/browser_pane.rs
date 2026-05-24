@@ -46,7 +46,7 @@ pub struct BrowserPaneWidget {
 
 #[allow(dead_code)]
 impl BrowserPaneWidget {
-    pub fn new(initial_url: &str) -> Self {
+    pub fn new(profile_id: &str, initial_url: &str) -> Self {
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -65,7 +65,8 @@ impl BrowserPaneWidget {
         bar.append(&address);
         bar.append(&close);
 
-        let web_view = WebView::new();
+        let session = crate::browser_session::session_for(profile_id);
+        let web_view = WebView::builder().network_session(&session).build();
         web_view.set_vexpand(true);
 
         {
@@ -260,7 +261,10 @@ mod tests {
             // No display in CI; skip rather than fail.
             return;
         }
-        let pane = BrowserPaneWidget::new("https://example.com");
+        let pane = BrowserPaneWidget::new(
+            crate::browser_session::DEFAULT_PROFILE_ID,
+            "https://example.com",
+        );
         assert_eq!(pane.last_requested.borrow().as_str(), "https://example.com");
         pane.load_uri("https://other.com");
         assert_eq!(pane.address.text().as_str(), "https://other.com");

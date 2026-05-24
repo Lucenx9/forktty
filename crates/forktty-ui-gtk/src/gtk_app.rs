@@ -821,7 +821,10 @@ impl VteController {
             pane.load_uri(url);
             return pane.widget();
         }
-        let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(url));
+        let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(
+            crate::browser_session::DEFAULT_PROFILE_ID,
+            url,
+        ));
         // Address-bar Enter navigates via the model so socket + manual share one path.
         let model = self.model.clone();
         let id = surface_id.to_string();

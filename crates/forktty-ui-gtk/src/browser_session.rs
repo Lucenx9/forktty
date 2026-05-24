@@ -11,7 +11,6 @@ use webkit6::{CookiePersistentStorage, NetworkSession};
 /// Well-known directory id for the Default profile. A fixed UUID string so that
 /// SP3 P2's real `ProfileId::default()` resolves to this same on-disk directory
 /// (no migration). P1 has no profile system, so this is the only profile used.
-#[allow(dead_code)] // used in SP3 P1 Task 3
 pub const DEFAULT_PROFILE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 /// On-disk locations for one profile's browser data.
@@ -59,7 +58,6 @@ thread_local! {
 /// first use. Falls back to an ephemeral session (logging a warning) if the data root
 /// is unavailable or its directories cannot be created — the pane still works, just
 /// without persistence for that run.
-#[allow(dead_code)] // used in SP3 P1 Task 3
 pub fn session_for(profile_id: &str) -> NetworkSession {
     if let Some(existing) = SESSIONS.with(|c| c.borrow().get(profile_id).cloned()) {
         return existing;
@@ -103,10 +101,14 @@ fn build_persistent_session(profile_id: &str) -> Option<NetworkSession> {
         .ok()?;
 
     let session = NetworkSession::new(Some(dirs.data.to_str()?), Some(dirs.cache.to_str()?));
-    if let Some(cookie_manager) = session.cookie_manager() {
-        if let Some(cookies_path) = dirs.cookies_sqlite.to_str() {
+    match (session.cookie_manager(), dirs.cookies_sqlite.to_str()) {
+        (Some(cookie_manager), Some(cookies_path)) => {
             cookie_manager.set_persistent_storage(cookies_path, CookiePersistentStorage::Sqlite);
         }
+        _ => eprintln!(
+            "forktty: no persistent cookie storage for profile '{profile_id}'; \
+             cookies will not be saved"
+        ),
     }
     Some(session)
 }
