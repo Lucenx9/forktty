@@ -515,6 +515,44 @@ impl WorkspaceModel {
     }
 
     pub fn split_surface(&mut self, surface_id: &str, axis: SplitAxis) -> Option<Surface> {
+        self.split_with(
+            surface_id,
+            axis,
+            SurfaceKind::Terminal,
+            String::from("shell"),
+        )
+    }
+
+    /// Split the workspace's focused surface into a new browser pane.
+    pub fn open_browser(
+        &mut self,
+        workspace_id: &str,
+        url: &str,
+        axis: SplitAxis,
+    ) -> Option<Surface> {
+        let focused = self
+            .workspaces
+            .get(workspace_id)?
+            .focused_surface_id
+            .clone();
+        let title = browser_title_for(url);
+        self.split_with(
+            &focused,
+            axis,
+            SurfaceKind::Browser {
+                url: url.to_string(),
+            },
+            title,
+        )
+    }
+
+    fn split_with(
+        &mut self,
+        surface_id: &str,
+        axis: SplitAxis,
+        kind: SurfaceKind,
+        title: String,
+    ) -> Option<Surface> {
         let source = self.surfaces.get(surface_id)?.clone();
         // Pre-validate the workspace still owns this surface in its pane tree
         // before allocating an id, so failure paths don't leak monotonic ids.
@@ -530,10 +568,10 @@ impl WorkspaceModel {
             id: new_id.clone(),
             workspace_id: source.workspace_id.clone(),
             cwd: source.cwd.clone(),
-            title: String::from("shell"),
+            title,
             unread: false,
             needs_attention: false,
-            kind: SurfaceKind::Terminal,
+            kind,
         };
         let workspace = self
             .workspaces
@@ -1369,6 +1407,21 @@ fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
     match node {
         PaneNode::Leaf { surface_id } => Some(surface_id.clone()),
         PaneNode::Split { children, .. } => children.iter().find_map(first_leaf_surface_id),
+    }
+}
+
+/// Derive a browser pane title from its URL host, falling back to "browser".
+fn browser_title_for(url: &str) -> String {
+    let without_scheme = url.split("://").nth(1).unwrap_or(url);
+    let host = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    if host.is_empty() {
+        "browser".to_string()
+    } else {
+        host.to_string()
     }
 }
 
@@ -2852,5 +2905,27 @@ mod tests {
         }"#;
         let surface: Surface = serde_json::from_str(json).unwrap();
         assert_eq!(surface.kind, SurfaceKind::Terminal);
+    }
+
+    #[test]
+    fn open_browser_adds_browser_surface_splits_and_focuses() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let first = first_leaf_surface_id(&model.workspaces[&ws.id].pane_tree).unwrap();
+
+        let browser = model
+            .open_browser(&ws.id, "https://example.com", SplitAxis::Horizontal)
+            .expect("browser surface created");
+
+        assert_eq!(
+            browser.kind,
+            SurfaceKind::Browser {
+                url: "https://example.com".to_string()
+            }
+        );
+        assert_eq!(model.workspaces[&ws.id].focused_surface_id, browser.id);
+        let leaves = leaf_surface_ids(&model.workspaces[&ws.id].pane_tree);
+        assert!(leaves.contains(&first));
+        assert!(leaves.contains(&browser.id));
     }
 }
