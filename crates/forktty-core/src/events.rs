@@ -152,7 +152,9 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
         for surface in model.list_surfaces(Some(&workspace.id)) {
             let (kind, url) = match surface.kind {
                 crate::model::SurfaceKind::Terminal => (SurfaceSnapKind::Terminal, None),
-                crate::model::SurfaceKind::Browser { url } => (SurfaceSnapKind::Browser, Some(url)),
+                crate::model::SurfaceKind::Browser { url, .. } => {
+                    (SurfaceSnapKind::Browser, Some(url))
+                }
             };
             surfaces.insert(
                 surface.id,

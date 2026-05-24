@@ -741,7 +741,7 @@ impl VteController {
         #[cfg(feature = "browser")]
         self.browser_panes.borrow_mut().retain(|surface_id, pane| {
             match model.surface(surface_id).map(|s| &s.kind) {
-                Some(forktty_core::SurfaceKind::Browser { url }) => {
+                Some(forktty_core::SurfaceKind::Browser { url, .. }) => {
                     // Safe to call every tick: BrowserPaneWidget edge-triggers on the
                     // last *requested* url, so an unchanged url is a no-op and user
                     // navigations (which only move the committed uri) are not reset.
@@ -802,8 +802,8 @@ impl VteController {
             .and_then(|model| model.surface(surface_id).map(|s| s.kind.clone()));
         match kind {
             #[cfg(feature = "browser")]
-            Some(forktty_core::SurfaceKind::Browser { url }) => {
-                self.browser_pane_widget(surface_id, &url)
+            Some(forktty_core::SurfaceKind::Browser { url, profile }) => {
+                self.browser_pane_widget(surface_id, &url, &profile.to_string())
             }
             #[cfg(not(feature = "browser"))]
             Some(forktty_core::SurfaceKind::Browser { .. }) => {
@@ -814,17 +814,14 @@ impl VteController {
     }
 
     #[cfg(feature = "browser")]
-    fn browser_pane_widget(&self, surface_id: &str, url: &str) -> gtk::Widget {
+    fn browser_pane_widget(&self, surface_id: &str, url: &str, profile_id: &str) -> gtk::Widget {
         if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
             // Widget self-guards on the last requested url; calling unconditionally
             // is harmless and avoids the committed-uri divergence problem.
             pane.load_uri(url);
             return pane.widget();
         }
-        let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(
-            crate::browser_session::DEFAULT_PROFILE_ID,
-            url,
-        ));
+        let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(profile_id, url));
         // Address-bar Enter navigates via the model so socket + manual share one path.
         let model = self.model.clone();
         let id = surface_id.to_string();
@@ -870,15 +867,17 @@ impl VteController {
         if let Some(pane) = self.browser_panes.borrow().get(surface_id).cloned() {
             return Some(pane);
         }
-        let url = self.model.lock().ok().and_then(|model| {
+        let (url, profile_id) = self.model.lock().ok().and_then(|model| {
             model
                 .surface(surface_id)
                 .and_then(|surface| match &surface.kind {
-                    forktty_core::SurfaceKind::Browser { url } => Some(url.clone()),
+                    forktty_core::SurfaceKind::Browser { url, profile } => {
+                        Some((url.clone(), profile.to_string()))
+                    }
                     _ => None,
                 })
         })?;
-        let _ = self.browser_pane_widget(surface_id, &url);
+        let _ = self.browser_pane_widget(surface_id, &url, &profile_id);
         self.browser_panes.borrow().get(surface_id).cloned()
     }
 
@@ -5334,7 +5333,12 @@ fn open_browser_active(state: &SocketAppState, axis: SplitAxis) {
             return;
         };
         let workspace_id = workspace.id.clone();
-        model.open_browser(&workspace_id, "about:blank", axis)
+        model.open_browser(
+            &workspace_id,
+            "about:blank",
+            forktty_core::ProfileId::default(),
+            axis,
+        )
     };
     if opened.is_some() {
         save_session_from_state(state);
@@ -8922,7 +8926,12 @@ mod tests {
             let workspace = model.create_workspace("project", &project_cwd);
             let terminal_id = workspace.focused_surface_id.clone();
             let browser = model
-                .open_browser(&workspace.id, "about:blank", SplitAxis::Horizontal)
+                .open_browser(
+                    &workspace.id,
+                    "about:blank",
+                    forktty_core::ProfileId::default(),
+                    SplitAxis::Horizontal,
+                )
                 .unwrap();
             assert!(model.focus_surface(&terminal_id));
             (workspace.id, terminal_id, browser.id)

@@ -43,6 +43,9 @@ pub const METHODS: &[&str] = &[
     "browser.forward",
     "browser.navigate",
     "browser.open",
+    "browser.profile.create",
+    "browser.profile.delete",
+    "browser.profile.list",
     "browser.reload",
     "browser.snapshot",
     "events.subscribe",
@@ -219,6 +222,7 @@ impl From<&str> for DispatchError {
 #[derive(Clone)]
 pub struct SocketAppState {
     pub model: Arc<Mutex<WorkspaceModel>>,
+    pub profile_store_lock: Arc<Mutex<()>>,
     pub terminal: SharedTerminalBackend,
     pub shell: String,
     pub socket_path: PathBuf,
@@ -242,6 +246,7 @@ impl SocketAppState {
         let (events, _) = broadcast::channel(EVENTS_CHANNEL_CAPACITY);
         Self {
             model,
+            profile_store_lock: Arc::new(Mutex::new(())),
             terminal,
             shell: shell.into(),
             socket_path: socket_path.into(),
@@ -735,12 +740,29 @@ pub async fn dispatch(
             let url = required_browser_url(&params)?;
             let axis = split_axis_from_params(&params)?;
             let surface = {
+                let _profile_store_guard = state
+                    .profile_store_lock
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let profile = match params.get("profile") {
+                    Some(value) => {
+                        let profile_name = value.as_str().ok_or_else(|| {
+                            DispatchError::InvalidParam(
+                                "Invalid parameter profile: expected string".to_string(),
+                            )
+                        })?;
+                        profiles_store()?
+                            .resolve(profile_name)
+                            .ok_or(DispatchError::NotFound("profile".to_string()))?
+                    }
+                    None => forktty_core::ProfileId::default(),
+                };
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .open_browser(&workspace_id, &url, axis)
+                    .open_browser(&workspace_id, &url, profile, axis)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(surface))
@@ -808,6 +830,81 @@ pub async fn dispatch(
         "browser.reload" => {
             let surface_id = required_surface_id(&params)?.to_string();
             dispatch_browser_cmd(state, surface_id, BrowserOp::Reload).await
+        }
+        "browser.profile.list" => {
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let store = profiles_store()?;
+            let out: Vec<_> = store
+                .list()
+                .iter()
+                .map(|p| {
+                    json!({
+                        "id": p.id.to_string(),
+                        "display_name": p.display_name,
+                        "is_default": p.is_default,
+                    })
+                })
+                .collect();
+            Ok(json!(out))
+        }
+        "browser.profile.create" => {
+            let display_name = required_string_param(&params, "display_name")?.to_string();
+            if display_name.trim().is_empty() {
+                return Err(DispatchError::InvalidParam(
+                    "display_name must not be empty".to_string(),
+                ));
+            }
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let mut store = profiles_store()?;
+            let meta = store
+                .create(&display_name)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!({ "id": meta.id.to_string(), "display_name": meta.display_name }))
+        }
+        "browser.profile.delete" => {
+            let id_str = required_string_param(&params, "id")?.to_string();
+            let id: forktty_core::ProfileId = id_str
+                .parse()
+                .map_err(|_| DispatchError::NotFound("profile".to_string()))?;
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let in_use = model.list_surfaces(None).iter().any(|s| {
+                    matches!(
+                        &s.kind,
+                        forktty_core::SurfaceKind::Browser { profile, .. } if *profile == id
+                    )
+                });
+                if in_use {
+                    return Err(DispatchError::Conflict(
+                        "profile in use by an open browser pane".to_string(),
+                    ));
+                }
+            }
+            let mut store = profiles_store()?;
+            // on-disk data dir cleanup deferred to the GUI profile manager (P4)
+            store.delete(&id).map_err(|e| match e {
+                forktty_core::ProfileError::NotFound => {
+                    DispatchError::NotFound("profile".to_string())
+                }
+                forktty_core::ProfileError::CannotDeleteDefault => {
+                    DispatchError::Conflict("the default profile cannot be deleted".to_string())
+                }
+                other => DispatchError::from(other.to_string()),
+            })?;
+            Ok(json!({ "deleted": true }))
         }
         "surface.focus" => {
             let surface_id = required_surface_id(&params)?;
@@ -1545,6 +1642,17 @@ fn required_browser_url(params: &Value) -> Result<String, DispatchError> {
     }
 }
 
+fn profiles_store() -> Result<forktty_core::ProfileStore, DispatchError> {
+    let path = dirs::data_local_dir()
+        .map(|d| {
+            d.join("forktty")
+                .join("browser_profiles")
+                .join("profiles.json")
+        })
+        .ok_or_else(|| DispatchError::from("no data dir for profiles".to_string()))?;
+    forktty_core::ProfileStore::load(path).map_err(|e| DispatchError::from(e.to_string()))
+}
+
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
     let Some(kind) = params.get("kind") else {
         return Ok(NotificationKind::Info);
@@ -2228,8 +2336,36 @@ mod tests {
     use git2::Repository;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Barrier, Mutex};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    /// RAII guard that sets an environment variable for the duration of a test
+    /// and restores the previous value (or removes it) on drop, even on panic.
+    ///
+    /// Use together with `#[serial_test::serial]` so that tests touching
+    /// process-global env vars do not race with each other.
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, val: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            // SAFETY: test-only; access serialized via #[serial_test::serial].
+            unsafe { std::env::set_var(key, val) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => unsafe { std::env::set_var(self.key, v) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
@@ -4982,6 +5118,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn capabilities_lists_only_dispatchable_methods() {
         let (state, _backend) = test_state();
         let result = dispatch(&state, "system.capabilities", json!({}))
@@ -5107,11 +5244,9 @@ mod tests {
         .await
         .unwrap();
         let surface_id = opened["id"].as_str().unwrap().to_string();
-        // Bare domain gets https:// prepended.
-        assert_eq!(
-            opened["kind"],
-            json!({"type": "browser", "url": "https://example.com"})
-        );
+        // Bare domain gets https:// prepended. Kind now carries the profile id too.
+        assert_eq!(opened["kind"]["type"], json!("browser"));
+        assert_eq!(opened["kind"]["url"], json!("https://example.com"));
 
         let navigated = dispatch(
             &state,
@@ -5270,5 +5405,171 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "not_found");
         responder.await.unwrap();
+    }
+
+    // --- SP3 P2 browser.profile verbs ----------------------------------------
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_profile_create_list_then_open_with_profile() {
+        // Isolate profiles.json from the real user data dir.
+        // XDG_DATA_HOME is process-global; serialize with capabilities test via
+        // #[serial_test::serial] and restore on any exit path via EnvGuard.
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", dir.path().to_str().unwrap());
+
+        let (state, _backend) = test_state();
+
+        // Create a workspace so we have a workspace_id for browser.open.
+        let ws = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let workspace_id = ws.get("id").unwrap().as_str().unwrap().to_string();
+
+        // browser.profile.create
+        let created = dispatch(
+            &state,
+            "browser.profile.create",
+            json!({ "display_name": "Work" }),
+        )
+        .await
+        .unwrap();
+        let new_id = created
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(created["display_name"], json!("Work"));
+
+        // browser.profile.list — should have Default (is_default=true) + Work
+        let listed = dispatch(&state, "browser.profile.list", json!({}))
+            .await
+            .unwrap();
+        let arr = listed.as_array().unwrap();
+        assert!(
+            arr.iter().any(|p| p["is_default"] == json!(true)),
+            "list must contain the default profile"
+        );
+        assert!(
+            arr.iter().any(|p| p["display_name"] == json!("Work")),
+            "list must contain Work profile"
+        );
+
+        // browser.open with profile name — resolves "Work" to its id
+        let opened = dispatch(
+            &state,
+            "browser.open",
+            json!({
+                "workspace_id": workspace_id,
+                "url": "https://example.com",
+                "profile": "Work"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(opened.get("id").is_some(), "opened surface must have an id");
+        // Surface kind should be a browser
+        assert_eq!(opened["kind"]["type"], json!("browser"));
+
+        // browser.profile.delete while a pane is open in that profile must be refused
+        let del_err = dispatch(&state, "browser.profile.delete", json!({ "id": new_id }))
+            .await
+            .unwrap_err();
+        assert!(
+            del_err.to_string().contains("in use"),
+            "expected in-use error, got: {del_err}"
+        );
+
+        // _env (EnvGuard) and dir (TempDir) are dropped here, restoring the
+        // environment and removing temporary files on any exit path.
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_open_rejects_non_string_profile_param() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", dir.path().to_str().unwrap());
+
+        let (state, _backend) = test_state();
+        let ws = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let workspace_id = ws.get("id").unwrap().as_str().unwrap().to_string();
+
+        let err = dispatch(
+            &state,
+            "browser.open",
+            json!({
+                "workspace_id": workspace_id,
+                "url": "https://example.com",
+                "profile": 123
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+        assert_eq!(
+            err.to_string(),
+            "Invalid parameter profile: expected string"
+        );
+
+        let surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": ws.get("id").unwrap().as_str().unwrap()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn browser_profile_create_serializes_store_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", dir.path().to_str().unwrap());
+
+        let (state, _backend) = test_state();
+        let task_count = 24;
+        let barrier = Arc::new(Barrier::new(task_count));
+        let mut handles = Vec::new();
+        for index in 0..task_count {
+            let state = state.clone();
+            let barrier = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap();
+                barrier.wait();
+                runtime
+                    .block_on(dispatch(
+                        &state,
+                        "browser.profile.create",
+                        json!({ "display_name": format!("Profile {index}") }),
+                    ))
+                    .unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let listed = runtime
+            .block_on(dispatch(&state, "browser.profile.list", json!({})))
+            .unwrap();
+        let profiles = listed.as_array().unwrap();
+        assert_eq!(profiles.len(), task_count + 1);
+        for index in 0..task_count {
+            assert!(
+                profiles
+                    .iter()
+                    .any(|profile| profile["display_name"] == json!(format!("Profile {index}"))),
+                "missing Profile {index}"
+            );
+        }
     }
 }

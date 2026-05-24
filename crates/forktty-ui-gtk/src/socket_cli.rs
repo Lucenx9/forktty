@@ -63,7 +63,7 @@ Usage:
   forktty ping
   forktty capabilities [--json]
   forktty events [--no-replay]
-  forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] <url>
+  forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] [--profile <id|name>] <url>
   forktty browser navigate [<surface-id>] <url>
   forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
   forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
@@ -72,6 +72,9 @@ Usage:
   forktty browser back <surface-id>                Navigate back in history
   forktty browser forward <surface-id>             Navigate forward in history
   forktty browser reload <surface-id>              Reload the current page
+  forktty browser profile list                     List browser profiles
+  forktty browser profile create <name>            Create a new browser profile with the given display name
+  forktty browser profile delete <id>              Delete a browser profile by id
 ";
 
 #[derive(Debug)]
@@ -1402,8 +1405,9 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             "reload",
             Some("Reloaded"),
         ),
+        "profile" => browser_profile(context, rest),
         "" => Err(CliError::new(
-            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload",
+            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile",
         )),
         other => Err(CliError::new(format!(
             "browser: unknown subcommand {other}"
@@ -1413,7 +1417,11 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 
 fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &["workspace-id", "axis"], "browser open")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "axis", "profile"],
+        "browser open",
+    )?;
     let url = parsed
         .positionals
         .first()
@@ -1440,6 +1448,9 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             ));
         }
         params.insert("axis".to_string(), Value::String(axis.to_string()));
+    }
+    if let Some(profile) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+        params.insert("profile".to_string(), Value::String(profile.to_string()));
     }
     let result = send_socket_request(&context.socket_path, "browser.open", Value::Object(params))?;
     if context.json {
@@ -1578,6 +1589,66 @@ fn browser_surface_cmd(
     match human_message {
         Some(message) => print_result_or_json(context, message, result),
         None => print_json(&result),
+    }
+}
+
+fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut iter = args.into_iter();
+    let sub = iter.next().unwrap_or_default();
+    let rest: Vec<String> = iter.collect();
+    match sub.as_str() {
+        "list" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser profile list")?;
+            require_no_args(&parsed.positionals, "browser profile list")?;
+            let result =
+                send_socket_request(&context.socket_path, "browser.profile.list", json!({}))?;
+            print_json(&result)
+        }
+        "create" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser profile create")?;
+            let name = match parsed.positionals.as_slice() {
+                [] => return Err(CliError::new("browser profile create requires a <name>")),
+                [_, extra, ..] => {
+                    return Err(CliError::new(format!(
+                        "browser profile create: unexpected argument '{extra}'"
+                    )))
+                }
+                [name] => name.clone(),
+            };
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.profile.create",
+                json!({"display_name": name}),
+            )?;
+            print_json(&result)
+        }
+        "delete" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &[], "browser profile delete")?;
+            let id = match parsed.positionals.as_slice() {
+                [] => return Err(CliError::new("browser profile delete requires an <id>")),
+                [_, extra, ..] => {
+                    return Err(CliError::new(format!(
+                        "browser profile delete: unexpected argument '{extra}'"
+                    )))
+                }
+                [id] => id.clone(),
+            };
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.profile.delete",
+                json!({"id": id}),
+            )?;
+            print_json(&result)
+        }
+        "" => Err(CliError::new(
+            "browser profile requires a subcommand: list | create | delete",
+        )),
+        other => Err(CliError::new(format!(
+            "browser profile: unknown subcommand {other}"
+        ))),
     }
 }
 
@@ -5859,5 +5930,107 @@ mod tests {
         );
         assert_eq!(request["method"], "browser.reload");
         assert_eq!(request["params"]["surface_id"], "s9");
+    }
+
+    #[test]
+    fn browser_profile_list_sends_profile_list() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["profile", "list"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.profile.list");
+        assert_eq!(request["params"], json!({}));
+    }
+
+    #[test]
+    fn browser_profile_create_sends_display_name() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id": "p1", "display_name": "Work"},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["profile", "create", "Work"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.profile.create");
+        assert_eq!(request["params"]["display_name"], "Work");
+    }
+
+    #[test]
+    fn browser_profile_create_missing_name_returns_error() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["profile", "create"])),
+            "browser profile create requires a <name>",
+        );
+    }
+
+    #[test]
+    fn browser_profile_delete_sends_id() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"deleted": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["profile", "delete", "p-abc123"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.profile.delete");
+        assert_eq!(request["params"]["id"], "p-abc123");
+    }
+
+    #[test]
+    fn browser_open_with_profile_includes_profile_param() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id": "s1", "kind": {"type": "browser", "url": "https://example.com"}},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "open",
+                        "--workspace-id",
+                        "w1",
+                        "--profile",
+                        "Work",
+                        "https://example.com",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.open");
+        assert_eq!(request["params"]["url"], "https://example.com");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["profile"], "Work");
     }
 }

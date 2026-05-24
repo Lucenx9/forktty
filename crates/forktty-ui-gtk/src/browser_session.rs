@@ -11,6 +11,9 @@ use webkit6::{CookiePersistentStorage, NetworkSession};
 /// Well-known directory id for the Default profile. A fixed UUID string so that
 /// SP3 P2's real `ProfileId::default()` resolves to this same on-disk directory
 /// (no migration). P1 has no profile system, so this is the only profile used.
+/// Used by tests in `browser_pane` and `browser_session` to construct sessions
+/// with the default profile without pulling in `forktty_core`.
+#[allow(dead_code)]
 pub const DEFAULT_PROFILE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 /// Whether `id` is safe to use as a single on-disk directory name. Rejects empty
@@ -139,6 +142,14 @@ mod tests {
     #[test]
     fn default_profile_id_value_is_stable() {
         assert_eq!(DEFAULT_PROFILE_ID, "00000000-0000-0000-0000-000000000001");
+    }
+
+    #[test]
+    fn default_profile_id_matches_core_profile_default() {
+        assert_eq!(
+            DEFAULT_PROFILE_ID,
+            forktty_core::ProfileId::default().to_string()
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ pub mod model;
 pub mod notification;
 pub mod ports;
 pub mod pr;
+pub mod profile;
 pub mod protocol;
 pub mod session;
 pub mod worktree;
@@ -28,4 +29,5 @@ pub use model::{
     Workspace, WorkspaceId, WorkspaceModel, WorkspaceSelector,
 };
 pub use notification::{dispatch_notification, NotificationDispatchError};
+pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
