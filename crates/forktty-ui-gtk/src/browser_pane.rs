@@ -171,12 +171,10 @@ impl BrowserPaneWidget {
             });
         }
 
-        // Title-notify handler: re-record the visit once the page <title> is
+        // Title-notify handler: update the row once the page <title> is
         // available. WebKit fires LoadEvent::Committed before the title is
         // parsed, so the Committed handler above usually records an empty title.
-        // This handler fires whenever `WebView::title` changes and refreshes the
-        // history entry with the real title. Double-counting visit_count is
-        // acceptable (cmux-parity behaviour, best-effort).
+        // This keeps visit_count tied to committed navigations.
         {
             web_view.connect_title_notify(move |wv| {
                 if let Some(uri) = wv.uri() {
@@ -186,8 +184,8 @@ impl BrowserPaneWidget {
                         // Only bother if we actually have a title now.
                         if !title.is_empty() {
                             if let Ok(store) = forktty_core::HistoryStore::for_profile(profile) {
-                                if let Err(e) = store.record_visit(&u, &title) {
-                                    eprintln!("forktty: history record_visit (title) failed: {e}");
+                                if let Err(e) = store.update_title(&u, &title) {
+                                    eprintln!("forktty: history update_title failed: {e}");
                                 }
                             }
                         }

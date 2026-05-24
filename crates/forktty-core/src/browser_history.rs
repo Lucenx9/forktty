@@ -130,6 +130,19 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Update the stored title for an already-recorded visit without incrementing
+    /// its visit count.
+    pub fn update_title(&self, url: &str, title: &str) -> Result<(), HistoryError> {
+        if title.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE visits SET title = ?2 WHERE url = ?1",
+            rusqlite::params![url, title],
+        )?;
+        Ok(())
+    }
+
     /// Most-recently-visited rows first, capped at `limit`.
     pub fn list(&self, limit: usize) -> Result<Vec<Visit>, HistoryError> {
         let mut stmt = self.conn.prepare_cached(
@@ -306,6 +319,16 @@ mod tests {
         let rows = h.list(10).unwrap();
         assert_eq!(rows[0].title, "Real Title");
         assert_eq!(rows[0].visit_count, 2);
+    }
+
+    #[test]
+    fn update_title_does_not_increment_visit_count() {
+        let h = store();
+        h.record_visit("https://a.test/", "").unwrap();
+        h.update_title("https://a.test/", "Real Title").unwrap();
+        let rows = h.list(10).unwrap();
+        assert_eq!(rows[0].title, "Real Title");
+        assert_eq!(rows[0].visit_count, 1);
     }
 
     #[test]
