@@ -323,7 +323,14 @@ struct VteController {
     last_layout_signature: Option<String>,
     maximized_pane: bool,
     /// Spawned child PID per surface, used to discover listening ports.
-    surface_pids: Rc<RefCell<BTreeMap<String, i32>>>,
+    surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    next_spawn_token: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SurfacePid {
+    pid: i32,
+    spawn_token: u64,
 }
 
 impl VteController {
@@ -343,6 +350,7 @@ impl VteController {
             last_layout_signature: None,
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
+            next_spawn_token: 0,
         }
     }
 
@@ -393,11 +401,17 @@ impl VteController {
         let spawn_model_for_error = spawn_model.clone();
         let spawn_pids = self.surface_pids.clone();
         let spawn_pid_surface_id = request.surface_id.clone();
+        self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
+        let spawn_token = self.next_spawn_token;
         match spawn_vte_terminal_with_callback(&request, move |result| match result {
             Ok(pid) => {
-                spawn_pids
-                    .borrow_mut()
-                    .insert(spawn_pid_surface_id.clone(), pid.0);
+                spawn_pids.borrow_mut().insert(
+                    spawn_pid_surface_id.clone(),
+                    SurfacePid {
+                        pid: pid.0,
+                        spawn_token,
+                    },
+                );
                 if let Some(state) = &spawn_state_for_ready {
                     if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
                         eprintln!(
@@ -427,7 +441,13 @@ impl VteController {
                     );
                 }
                 apply_vte_appearance(&widget);
-                attach_vte_signal_handlers(&widget, &self.model, &request, &self.surface_pids);
+                attach_vte_signal_handlers(
+                    &widget,
+                    &self.model,
+                    &request,
+                    &self.surface_pids,
+                    spawn_token,
+                );
                 let chrome = build_pane_chrome(
                     &request.surface_id,
                     &widget,
@@ -1348,7 +1368,8 @@ fn attach_vte_signal_handlers(
     widget: &VteTerminalWidget,
     model: &Arc<Mutex<WorkspaceModel>>,
     request: &SpawnRequest,
-    surface_pids: &Rc<RefCell<BTreeMap<String, i32>>>,
+    surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    spawn_token: u64,
 ) {
     let surface_id = request.surface_id.clone();
     let focus_model = model.clone();
@@ -1482,7 +1503,14 @@ fn attach_vte_signal_handlers(
         if exit_fired.replace(true) {
             return;
         }
-        exit_surface_pids.borrow_mut().remove(&surface_id);
+        let mut pids = exit_surface_pids.borrow_mut();
+        if matches!(
+            pids.get(&surface_id),
+            Some(entry) if entry.spawn_token == spawn_token
+        ) {
+            pids.remove(&surface_id);
+        }
+        drop(pids);
         if let Ok(mut model) = exit_model.lock() {
             if model.surface(&surface_id).is_none() {
                 return;
@@ -3490,6 +3518,8 @@ fn build_ui(app: &adw::Application) {
         }
         if pr_lookup_enabled() {
             spawn_pr_refresh(pr_model_for_timer.clone(), pr_in_flight_for_timer.clone());
+        } else {
+            clear_pr_hints(&pr_model_for_timer);
         }
         glib::ControlFlow::Continue
     });
@@ -3604,8 +3634,15 @@ fn settings_apply_callback(
             &config.appearance.sidebar_position,
         );
         sidebar_shell.set_visible(config.appearance.sidebar_visible);
-        for widget in controller.borrow().widgets.values() {
-            apply_vte_appearance(widget);
+        let model = {
+            let controller = controller.borrow();
+            for widget in controller.widgets.values() {
+                apply_vte_appearance(widget);
+            }
+            controller.model.clone()
+        };
+        if !config.general.enable_pr_lookup {
+            clear_pr_hints(&model);
         }
     })
 }
@@ -3788,7 +3825,7 @@ fn refresh_listening_ports(
                 let roots = model_guard
                     .list_surfaces(Some(&workspace.id))
                     .iter()
-                    .filter_map(|surface| surface_pids.get(&surface.id).copied())
+                    .filter_map(|surface| surface_pids.get(&surface.id).map(|entry| entry.pid))
                     .collect::<Vec<_>>();
                 (workspace.id, roots)
             })
@@ -3851,6 +3888,20 @@ fn pr_lookup_enabled() -> bool {
     config::load_config()
         .map(|config| config.general.enable_pr_lookup)
         .unwrap_or(false)
+}
+
+fn clear_pr_hints(model: &Arc<Mutex<WorkspaceModel>>) {
+    let Ok(mut model) = model.lock() else {
+        return;
+    };
+    let workspace_ids = model
+        .list_workspaces()
+        .into_iter()
+        .map(|workspace| workspace.id)
+        .collect::<Vec<_>>();
+    for workspace_id in workspace_ids {
+        model.set_pr(&workspace_id, None);
+    }
 }
 
 fn trusted_command_path(program: &str) -> Option<PathBuf> {
@@ -3923,6 +3974,10 @@ fn spawn_pr_refresh(model: Arc<Mutex<WorkspaceModel>>, in_flight: Arc<AtomicBool
 /// model. `gh` makes a network call, so this runs on a worker thread, never the
 /// GTK main loop.
 fn refresh_pull_requests(model: Arc<Mutex<WorkspaceModel>>) {
+    if !pr_lookup_enabled() {
+        clear_pr_hints(&model);
+        return;
+    }
     let targets: Vec<(String, PathBuf)> = match model.lock() {
         Ok(model) => model
             .list_workspaces()
@@ -3933,6 +3988,10 @@ fn refresh_pull_requests(model: Arc<Mutex<WorkspaceModel>>) {
     };
     for (workspace_id, working_dir) in targets {
         let pr = resolve_pr(&working_dir);
+        if !pr_lookup_enabled() {
+            clear_pr_hints(&model);
+            return;
+        }
         if let Ok(mut model) = model.lock() {
             model.set_pr(&workspace_id, pr);
         }
