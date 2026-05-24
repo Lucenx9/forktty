@@ -764,6 +764,7 @@ impl VteController {
                         title: "Terminal".to_string(),
                         unread: false,
                         needs_attention: false,
+                        kind: forktty_core::SurfaceKind::Terminal,
                     },
                     false,
                 )
