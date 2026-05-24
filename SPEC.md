@@ -172,7 +172,7 @@ Implemented categories:
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
 | Events | `events.subscribe` |
-| Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete` |
+| Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
 
 Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged VTE pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 
@@ -206,8 +206,9 @@ Browser profile metadata is stored in:
 
 Each profile has a directory under `browser_profiles/<id>/` containing WebKit
 data/cache/cookies. `forktty-core` also contains pure per-profile
-`HistoryStore` and `BookmarkStore` implementations; their socket/CLI methods
-and GTK address-bar completion are not wired yet.
+`HistoryStore` and `BookmarkStore` implementations, and the socket exposes
+history/bookmark list/search/clear/add/remove methods over those stores. CLI
+mirrors, visit recording, and GTK address-bar completion are not wired yet.
 
 ## Worktree Behavior
 

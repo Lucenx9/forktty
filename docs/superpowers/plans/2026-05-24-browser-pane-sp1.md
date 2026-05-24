@@ -1106,7 +1106,7 @@ git commit -m "feat(cli): forktty browser open/navigate subcommands"
 In `docs/cmux-gap-features.md` under section 3, change the status line and add a sub-project note:
 
 ```text
-- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; SP3 P1/P2 done; SP3 P3 core stores done; P3 socket/CLI/GTK wiring and P4 import backlog
+- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; SP3 P1/P2 done; SP3 P3 core/socket done; P3 CLI/GTK wiring and P4 import backlog
 ```
 
 Add a short paragraph noting SP1 ships `browser.open`/`browser.navigate`, the `browser` cargo feature, and the in-pane address bar; SP2 adds snapshot/click/fill/eval + socket-driven back/reload; SP3 adds persistence, profiles, history/bookmarks, and import in phases.

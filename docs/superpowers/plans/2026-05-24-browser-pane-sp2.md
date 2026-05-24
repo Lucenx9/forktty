@@ -1198,7 +1198,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 In `docs/cmux-gap-features.md`, feature #3 Status line (`:45`):
 
 ```text
-- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; SP3 P1/P2 done; SP3 P3 core stores done; P3 socket/CLI/GTK wiring and P4 import backlog
+- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; SP3 P1/P2 done; SP3 P3 core/socket done; P3 CLI/GTK wiring and P4 import backlog
 ```
 
 Update the ForkTTY description paragraph (`:50`) to note SP2 shipped: snapshot/click/fill/JS-evaluate verbs, socket-driven back/forward/reload, `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI, behind the `browser` feature.

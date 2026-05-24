@@ -15,7 +15,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Browser pane SP1: WebKitGTK6 pane kind + `browser.open`/`browser.navigate` + in-pane address bar (behind the `browser` cargo feature).
 - [x] Browser pane SP2: scriptable verbs (`browser.snapshot`/`click`/`fill`/`eval`) + socket-driven `back`/`forward`/`reload` via socket→GTK command channel + `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (behind the `browser` cargo feature).
 - [x] Browser pane SP3 P1/P2: persistent per-profile WebKit sessions, `ProfileId` on browser surfaces, profile metadata store, `browser.profile.*` socket methods, and `forktty browser profile ...` CLI.
-- [x] Browser pane SP3 P3 core stores: per-profile `HistoryStore` and `BookmarkStore` in `forktty-core`.
+- [x] Browser pane SP3 P3 core/socket storage: per-profile `HistoryStore` and `BookmarkStore` in `forktty-core` plus `browser.history.*` / `browser.bookmark.*` socket verbs.
 
 ### Workspaces and Panes
 
@@ -81,7 +81,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] Full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
-- [ ] Browser history/bookmark socket verbs, CLI mirrors, visit recording, and address-bar completion.
+- [ ] Browser history/bookmark CLI mirrors, visit recording, and address-bar completion.
 - [ ] Browser import wizard for cookies, history, and bookmarks from Firefox/Chromium-family profiles.
 - [ ] SSH remote workspaces.
 - [ ] MCP/server integration.

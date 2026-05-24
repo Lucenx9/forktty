@@ -2,10 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Current status on `main`:** Task 1 and Task 2's pure core stores are implemented
-(`browser_history.rs`, `HistoryStore`, `BookmarkStore`). Task 3 socket verbs,
-Task 4 CLI mirrors, and Task 5 GTK visit recording/address completion remain
-pending.
+**Current status on `main`:** Tasks 1-3 are implemented
+(`browser_history.rs`, `HistoryStore`, `BookmarkStore`, and
+`browser.history.*` / `browser.bookmark.*` socket verbs). Task 4 CLI mirrors
+and Task 5 GTK visit recording/address completion remain pending.
 
 **Goal:** Per-profile visited-URL history and bookmarks, queryable over the socket/CLI and surfaced as browser-pane address-bar completion.
 
@@ -17,7 +17,7 @@ pending.
 - `history.sqlite` — table `visits(url TEXT PRIMARY KEY, title TEXT, visit_count INTEGER, last_visit_us INTEGER)`
 - `bookmarks.json` — `[{ "url", "title", "added_at" }]`
 
-**Feature gating note:** The stores are pure (no webkit), so — like P2's `ProfileStore` — they compile unconditionally in core. The socket history/bookmark verbs and CLI mirrors are not wired in current `main`; once implemented, they can use the stores without requiring the `browser` feature. Visit recording and `EntryCompletion` (Task 5) remain GTK/`browser`-gated.
+**Feature gating note:** The stores are pure (no webkit), so — like P2's `ProfileStore` — they compile unconditionally in core. The socket history/bookmark verbs are wired in current `main` and do not require the `browser` feature. CLI mirrors are not wired yet. Visit recording and `EntryCompletion` (Task 5) remain GTK/`browser`-gated.
 
 ---
 
