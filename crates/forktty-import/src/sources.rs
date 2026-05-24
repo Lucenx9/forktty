@@ -43,7 +43,7 @@ fn scan_firefox_profiles(root: &Path) -> Vec<SourceProfile> {
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && path.join("cookies.sqlite").exists() {
+            if path.is_dir() && has_firefox_importable_data(&path) {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 profiles.push(SourceProfile {
                     family: BrowserFamily::Firefox,
@@ -55,6 +55,16 @@ fn scan_firefox_profiles(root: &Path) -> Vec<SourceProfile> {
         }
     }
     profiles
+}
+
+fn has_firefox_importable_data(profile_dir: &Path) -> bool {
+    profile_dir.join("cookies.sqlite").exists() || profile_dir.join("places.sqlite").exists()
+}
+
+fn has_chromium_importable_data(profile_dir: &Path) -> bool {
+    profile_dir.join("Cookies").exists()
+        || profile_dir.join("History").exists()
+        || profile_dir.join("Bookmarks").exists()
 }
 
 /// Discover Firefox profiles under `root` (typically `~/.mozilla/firefox`).
@@ -99,7 +109,7 @@ pub fn discover_firefox(root: &Path) -> Option<SourceBrowser> {
             } else {
                 PathBuf::from(path_val)
             };
-            if !profile_dir.join("cookies.sqlite").exists() {
+            if !has_firefox_importable_data(&profile_dir) {
                 continue;
             }
             let is_default = ini_get(section, "Default")
@@ -168,7 +178,7 @@ pub fn discover_chromium_family(family: BrowserFamily, root: &Path) -> Option<So
     let mut profiles: Vec<SourceProfile> = Vec::new();
     for dir_name in &candidates {
         let dir_path = root.join(dir_name);
-        if !dir_path.join("Cookies").exists() {
+        if !has_chromium_importable_data(&dir_path) {
             continue;
         }
         let display_name = name_map
@@ -316,6 +326,35 @@ mod tests {
         assert_eq!(browser.profiles.len(), 1);
         assert_eq!(browser.profiles[0].display_name, "xyz.default");
         assert!(!browser.profiles[0].is_default);
+    }
+
+    #[test]
+    fn discover_firefox_includes_history_only_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let ff = dir.path().join(".mozilla/firefox");
+        fs::create_dir_all(ff.join("history.default")).unwrap();
+        fs::write(ff.join("history.default/places.sqlite"), b"x").unwrap();
+        fs::write(
+            ff.join("profiles.ini"),
+            "[Profile0]\nName=history\nPath=history.default\nDefault=1\n",
+        )
+        .unwrap();
+        let browser = discover_firefox(&ff).unwrap();
+        assert_eq!(browser.profiles.len(), 1);
+        assert_eq!(browser.profiles[0].display_name, "history");
+        assert!(browser.profiles[0].is_default);
+    }
+
+    #[test]
+    fn discover_chromium_includes_bookmark_only_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(".config/chromium");
+        fs::create_dir_all(root.join("Default")).unwrap();
+        fs::write(root.join("Default/Bookmarks"), b"{}").unwrap();
+        let browser = discover_chromium_family(BrowserFamily::Chromium, &root).unwrap();
+        assert_eq!(browser.profiles.len(), 1);
+        assert_eq!(browser.profiles[0].display_name, "Default");
+        assert!(browser.profiles[0].is_default);
     }
 
     #[test]

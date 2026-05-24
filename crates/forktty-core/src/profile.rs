@@ -100,14 +100,37 @@ fn default_meta() -> ProfileMeta {
     }
 }
 
+fn unique_backup_path(path: &Path, extension: &str) -> PathBuf {
+    let candidate = path.with_extension(extension);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.with_extension(format!("{extension}-{}-{nonce}", std::process::id()))
+}
+
+fn backup_corrupt_profile_store(path: &Path, bytes: &[u8]) {
+    let backup = unique_backup_path(path, "json.bak");
+    if std::fs::rename(path, &backup).is_err() {
+        let _ = std::fs::write(&backup, bytes);
+    }
+}
+
 impl ProfileStore {
     /// Load the store from `path`, creating an in-memory Default-only store if the
     /// file is absent. A present file always has the Default profile ensured.
     pub fn load(path: PathBuf) -> Result<Self, ProfileError> {
         let mut profiles: Vec<ProfileMeta> = match std::fs::read(&path) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|e| ProfileError::Io(e.to_string()))?
-            }
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(profiles) => profiles,
+                Err(_) => {
+                    backup_corrupt_profile_store(&path, &bytes);
+                    Vec::new()
+                }
+            },
             Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(ProfileError::Io(e.to_string())),
         };
@@ -311,5 +334,17 @@ mod tests {
             Err(ProfileError::InvalidInput(_))
         ));
         assert_eq!(store.list().len(), 1); // nothing persisted
+    }
+
+    #[test]
+    fn corrupt_profile_store_is_backed_up_and_restarts_with_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        std::fs::write(&path, b"{ not json").unwrap();
+
+        let store = ProfileStore::load(path.clone()).unwrap();
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.list()[0].id, ProfileId::default());
+        assert!(path.with_extension("json.bak").exists());
     }
 }
