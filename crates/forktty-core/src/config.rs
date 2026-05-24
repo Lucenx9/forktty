@@ -66,8 +66,6 @@ pub struct AppearanceConfig {
     pub sidebar_position: String,
     #[serde(default = "default_sidebar_visible")]
     pub sidebar_visible: bool,
-    #[serde(default = "default_show_workspace_tabs")]
-    pub show_workspace_tabs: bool,
     #[serde(default = "default_terminal_renderer")]
     pub terminal_renderer: String,
     #[serde(default = "default_terminal_theme")]
@@ -122,7 +120,6 @@ impl Default for AppearanceConfig {
             terminal_audible_bell: default_terminal_audible_bell(),
             sidebar_position: default_sidebar_position(),
             sidebar_visible: default_sidebar_visible(),
-            show_workspace_tabs: default_show_workspace_tabs(),
             terminal_renderer: default_terminal_renderer(),
             terminal_theme: default_terminal_theme(),
             window_mode: default_window_mode(),
@@ -486,9 +483,6 @@ fn default_sidebar_position() -> String {
     "left".to_string()
 }
 fn default_sidebar_visible() -> bool {
-    true
-}
-fn default_show_workspace_tabs() -> bool {
     true
 }
 fn default_terminal_renderer() -> String {
