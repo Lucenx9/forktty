@@ -1442,9 +1442,7 @@ fn spawn_terminal_surfaces(
     surfaces: &[forktty_core::Surface],
 ) -> Result<(), String> {
     for surface in surfaces {
-        if matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
-            spawn_surface_terminal(state, surface)?;
-        }
+        spawn_surface_terminal(state, surface)?;
     }
     Ok(())
 }
@@ -2582,6 +2580,38 @@ mod tests {
         .with_notification_dispatch(false);
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
+    }
+
+    #[test]
+    fn spawn_terminal_surfaces_respawns_ssh_surfaces() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let surface = forktty_core::Surface {
+            id: "surface-ssh".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "ssh".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Ssh {
+                host: "user@example.test".to_string(),
+            },
+        };
+
+        spawn_terminal_surfaces(&state, &[surface]).unwrap();
+
+        assert!(backend.spawn_shell("surface-ssh").unwrap().ends_with("ssh"));
+        assert_eq!(
+            backend.spawn_args("surface-ssh").unwrap(),
+            vec!["user@example.test"]
+        );
     }
 
     #[derive(Debug, Default)]
