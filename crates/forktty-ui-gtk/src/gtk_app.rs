@@ -537,9 +537,7 @@ impl VteController {
             return;
         };
         let visible_tree = if self.maximized_pane {
-            PaneNode::Leaf {
-                surface_id: focused_surface_id.clone(),
-            }
+            PaneNode::single_leaf(focused_surface_id.clone())
         } else {
             pane_tree
         };
@@ -793,7 +791,14 @@ impl VteController {
         on_resize: SplitResizeCallback,
     ) -> gtk::Widget {
         match node {
-            PaneNode::Leaf { surface_id } => self.pane_widget_for(surface_id),
+            PaneNode::Leaf { tabs, active } => {
+                let active_id = &tabs[*active];
+                if tabs.len() == 1 {
+                    self.pane_widget_for(active_id)
+                } else {
+                    self.leaf_widget_with_tabstrip(tabs, *active)
+                }
+            }
             PaneNode::Split {
                 axis,
                 children,
@@ -828,6 +833,129 @@ impl VteController {
             }
             _ => self.terminal_pane_widget(surface_id),
         }
+    }
+
+    /// Build a leaf widget with a per-pane tab strip for leaves with >1 tab.
+    /// The active terminal is shown below an `adw::TabBar` whose backing
+    /// `adw::TabView` is kept off-tree (selector-only pattern).
+    fn leaf_widget_with_tabstrip(&self, tabs: &[String], active: usize) -> gtk::Widget {
+        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        outer.set_hexpand(true);
+        outer.set_vexpand(true);
+
+        // Build off-tree TabView as a backing store for TabBar.
+        let tab_view = adw::TabView::new();
+
+        // Collect surface titles from model.
+        let titles: Vec<String> = {
+            let model = self.model.lock().ok();
+            tabs.iter()
+                .map(|id| {
+                    model
+                        .as_ref()
+                        .and_then(|m| m.surface(id))
+                        .map(surface_title)
+                        .unwrap_or_else(|| "Terminal".to_string())
+                })
+                .collect()
+        };
+
+        // Add a page per tab.  Page children are empty boxes (off-tree viewer).
+        let pages: Vec<adw::TabPage> = tabs
+            .iter()
+            .zip(titles.iter())
+            .map(|(id, title)| {
+                let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let page = tab_view.append(&dummy);
+                page.set_title(title);
+                // Store surface id in the page keyword so we can retrieve it.
+                // We use the keyword as a stringified index placeholder and
+                // look up by position instead.
+                let _ = id; // used via position index below
+                page
+            })
+            .collect();
+
+        // Select the active page.
+        if active < pages.len() {
+            tab_view.set_selected_page(&pages[active]);
+        }
+
+        // Build and pack the TabBar.
+        let tab_bar = adw::TabBar::new();
+        tab_bar.set_view(Some(&tab_view));
+        tab_bar.set_autohide(false);
+        tab_bar.add_css_class("pane-tabbar");
+        outer.append(&tab_bar);
+
+        // Show the real terminal widget for the active tab.
+        let active_id = &tabs[active];
+        let pane_widget = self.pane_widget_for(active_id);
+        outer.append(&pane_widget);
+
+        // Wire tab selection: user clicks a tab → select_tab in model.
+        let model_for_sel = self.model.clone();
+        let tabs_for_sel: Vec<String> = tabs.to_vec();
+        let syncing = Rc::new(Cell::new(false));
+        let syncing_for_sel = syncing.clone();
+        tab_view.connect_selected_page_notify(move |tv| {
+            if syncing_for_sel.get() {
+                return;
+            }
+            let Some(page) = tv.selected_page() else {
+                return;
+            };
+            let idx = tv.page_position(&page) as usize;
+            let Some(id) = tabs_for_sel.get(idx) else {
+                return;
+            };
+            syncing_for_sel.set(true);
+            if let Ok(mut m) = model_for_sel.lock() {
+                let _ = m.select_tab(id);
+            }
+            syncing_for_sel.set(false);
+        });
+
+        // Wire tab close button (×): close the surface.
+        let model_for_close = self.model.clone();
+        let state_for_close = self.state.clone();
+        let parent_for_close = self.parent_window.clone();
+        let tabs_for_close: Vec<String> = tabs.to_vec();
+        tab_view.connect_close_page(move |_tv, page| {
+            let idx = _tv.page_position(page) as usize;
+            let Some(id) = tabs_for_close.get(idx) else {
+                return glib::Propagation::Proceed;
+            };
+            // Check whether this is the last tab in the leaf.
+            let is_last = tabs_for_close.len() == 1;
+            if is_last {
+                // Use the same confirmation dialog as the pane close button.
+                if let Some(state) = &state_for_close {
+                    show_close_pane_confirmation(&parent_for_close, state, id);
+                }
+            } else {
+                // Non-last tab: close without confirmation.
+                let id = id.clone();
+                if let Some(state) = &state_for_close {
+                    match state.terminal.close(&id) {
+                        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+                        Err(err) => {
+                            eprintln!("Failed to close tab terminal: {err}");
+                        }
+                    }
+                }
+                if let Ok(mut m) = model_for_close.lock() {
+                    let _ = m.close_surface(&id);
+                }
+                if let Some(state) = &state_for_close {
+                    save_session_from_state(state);
+                }
+            }
+            // Always inhibit default TabView removal; model drives the rebuild.
+            glib::Propagation::Stop
+        });
+
+        outer.upcast()
     }
 
     #[cfg(feature = "browser")]
@@ -986,8 +1114,10 @@ fn build_pane_chrome(
     close.add_css_class("pane-close-action");
     let close_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     close_separator.add_css_class("pane-action-separator");
+    let new_tab = pane_action_button("tab-new-symbolic", "New Tab (Ctrl+Shift+T)");
     actions.append(&split_h);
     actions.append(&split_v);
+    actions.append(&new_tab);
     #[cfg(feature = "browser")]
     let open_browser = pane_action_button("web-browser-symbolic", "Open Browser Pane");
     #[cfg(feature = "browser")]
@@ -1067,6 +1197,11 @@ fn build_pane_chrome(
                 });
             });
         }
+        let state_for_nt = state.clone();
+        let sid_nt = surface_id_owned.clone();
+        new_tab.connect_clicked(move |_| {
+            add_new_tab_surface(&state_for_nt, &sid_nt);
+        });
         let state_for_c = state.clone();
         let parent_for_c = parent.clone();
         let sid_c = surface_id_owned;
@@ -1078,6 +1213,7 @@ fn build_pane_chrome(
         split_v.set_sensitive(false);
         single_split_h.set_sensitive(false);
         single_split_v.set_sensitive(false);
+        new_tab.set_sensitive(false);
         close.set_sensitive(false);
         #[cfg(feature = "browser")]
         {
@@ -1296,9 +1432,17 @@ fn active_layout_snapshot(
 
 fn layout_structure_signature(node: &PaneNode, out: &mut String) {
     match node {
-        PaneNode::Leaf { surface_id } => {
+        PaneNode::Leaf { tabs, active } => {
             out.push_str("L(");
-            out.push_str(surface_id);
+            for (i, id) in tabs.iter().enumerate() {
+                if i > 0 {
+                    out.push('|');
+                }
+                if i == *active {
+                    out.push('*');
+                }
+                out.push_str(id);
+            }
             out.push(')');
         }
         PaneNode::Split { axis, children, .. } => {
@@ -2934,7 +3078,9 @@ fn collect_leaves(node: &PaneNode) -> Vec<String> {
 
 fn collect_leaves_into(node: &PaneNode, ids: &mut Vec<String>) {
     match node {
-        PaneNode::Leaf { surface_id } => ids.push(surface_id.clone()),
+        PaneNode::Leaf { tabs, .. } => {
+            ids.extend(tabs.iter().cloned());
+        }
         PaneNode::Split { children, .. } => {
             for child in children {
                 collect_leaves_into(child, ids);
@@ -4430,6 +4576,15 @@ fn install_actions(
         let state = state.clone();
         move || split_active_surface(&state, SplitAxis::Vertical)
     });
+    add_action(app, "new-tab", {
+        let state = state.clone();
+        move || {
+            let near_id = focused_surface_id(&state).unwrap_or_default();
+            if !near_id.is_empty() {
+                add_new_tab_surface(&state, &near_id);
+            }
+        }
+    });
     add_action(app, "command-palette", {
         let window = window.clone();
         let state = state.clone();
@@ -4530,6 +4685,7 @@ fn install_actions(
 
     app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
     app.set_accels_for_action("app.split-vertical", &[SPLIT_VERTICAL_ACCEL]);
+    app.set_accels_for_action("app.new-tab", &["<Control><Shift>T"]);
     app.set_accels_for_action("app.new-workspace", &["<Control><Shift>N"]);
     app.set_accels_for_action("app.open-workspace", &["<Control><Shift>O"]);
     app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);
@@ -5313,6 +5469,41 @@ where
     let action = gio::SimpleAction::new(name, None);
     action.connect_activate(move |_, _| callback());
     app.add_action(&action);
+}
+
+fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
+    let surface = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => {
+                eprintln!("Failed to add tab: workspace model lock poisoned");
+                return;
+            }
+        };
+        model.add_tab(near_surface_id)
+    };
+
+    let Some(surface) = surface else {
+        return;
+    };
+    if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
+        &surface,
+        state.shell.clone(),
+        state.socket_path.clone(),
+    )) {
+        if let Ok(mut model) = state.model.lock() {
+            let _ = model.close_surface(&surface.id);
+        }
+        eprintln!("Failed to spawn new tab terminal: {err}");
+        create_global_notification(
+            state,
+            "New Tab Failed",
+            &err.to_string(),
+            NotificationKind::Error,
+        );
+    } else {
+        save_session_from_state(state);
+    }
 }
 
 fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {

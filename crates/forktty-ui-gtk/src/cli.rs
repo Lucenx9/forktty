@@ -91,6 +91,12 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "close-surface"
             | "surface-close"
             | "surface:close"
+            | "new-tab"
+            | "pane-new-tab"
+            | "pane:new-tab"
+            | "select-tab"
+            | "pane-select-tab"
+            | "pane:select-tab"
             | "send-text"
             | "send_text"
             | "worktree-list"
@@ -889,6 +895,16 @@ mod tests {
         assert!(is_socket_cli_command("capabilities"));
         assert!(is_socket_cli_command("events"));
         assert!(!is_socket_cli_command("explode"));
+    }
+
+    #[test]
+    fn pane_tab_commands_are_recognized_as_socket_cli_commands() {
+        assert!(is_socket_cli_command("new-tab"));
+        assert!(is_socket_cli_command("pane-new-tab"));
+        assert!(is_socket_cli_command("pane:new-tab"));
+        assert!(is_socket_cli_command("select-tab"));
+        assert!(is_socket_cli_command("pane-select-tab"));
+        assert!(is_socket_cli_command("pane:select-tab"));
     }
 
     #[test]

@@ -24,7 +24,7 @@ pub enum SessionError {
     InvalidData(String),
 }
 
-pub const SESSION_FORMAT_VERSION: u32 = 2;
+pub const SESSION_FORMAT_VERSION: u32 = 3;
 const MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
 const MAX_SESSION_SPLIT_DEPTH: usize = 6;
 
@@ -77,6 +77,52 @@ enum LegacyPaneTreeSnapshot {
         children: Vec<LegacyPaneTreeSnapshot>,
         sizes: Vec<f64>,
     },
+}
+
+// ── v2 → v3 migration types ──────────────────────────────────────────────────
+// v2 serialized `PaneNode::Leaf` as `{"type":"leaf","surface_id":"..."}`.
+// v3 uses `{"type":"leaf","tabs":[...],"active":N}`.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum V2PaneNode {
+    #[serde(rename = "leaf")]
+    Leaf { surface_id: String },
+    #[serde(rename = "split")]
+    Split {
+        axis: SplitAxis,
+        children: Vec<V2PaneNode>,
+        sizes: Vec<f64>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct V2Workspace {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub active: bool,
+    pub working_dir: std::path::PathBuf,
+    #[serde(default)]
+    pub git_branch: String,
+    #[serde(default)]
+    pub worktree_dir: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+    pub pane_tree: V2PaneNode,
+    pub focused_surface_id: String,
+    #[serde(default)]
+    pub needs_attention: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct V2SessionData {
+    pub version: u32,
+    pub workspaces: Vec<V2Workspace>,
+    #[serde(default)]
+    pub active_workspace_id: Option<String>,
+    #[serde(default)]
+    pub surfaces: Vec<Surface>,
 }
 
 pub fn save_session(data: &SessionData) -> Result<(), SessionError> {
@@ -233,17 +279,67 @@ fn log_quarantine_reason(path: &Path, reason: &str) {
 
 fn parse_session_content(content: &str) -> Result<SessionData, SessionError> {
     let value: serde_json::Value = serde_json::from_str(content)?;
-    if value
+    let version = value
         .get("version")
         .and_then(serde_json::Value::as_u64)
-        .unwrap_or(1)
-        == u64::from(SESSION_FORMAT_VERSION)
-    {
+        .unwrap_or(1) as u32;
+
+    if version == SESSION_FORMAT_VERSION {
         return Ok(serde_json::from_value(value)?);
+    }
+
+    if version == 2 {
+        let v2: V2SessionData = serde_json::from_value(value)?;
+        return migrate_v2_session(v2);
     }
 
     let legacy: LegacySessionData = serde_json::from_value(value)?;
     migrate_legacy_session(legacy)
+}
+
+fn migrate_v2_session(v2: V2SessionData) -> Result<SessionData, SessionError> {
+    let workspaces = v2
+        .workspaces
+        .into_iter()
+        .map(|ws| {
+            let pane_tree = migrate_v2_pane_node(ws.pane_tree);
+            Workspace {
+                id: ws.id,
+                name: ws.name,
+                active: ws.active,
+                working_dir: ws.working_dir,
+                git_branch: ws.git_branch,
+                worktree_dir: ws.worktree_dir,
+                worktree_name: ws.worktree_name,
+                pane_tree,
+                focused_surface_id: ws.focused_surface_id,
+                needs_attention: ws.needs_attention,
+                listening_ports: Vec::new(),
+                pr: None,
+            }
+        })
+        .collect();
+    Ok(SessionData {
+        version: SESSION_FORMAT_VERSION,
+        workspaces,
+        active_workspace_id: v2.active_workspace_id,
+        surfaces: v2.surfaces,
+    })
+}
+
+fn migrate_v2_pane_node(node: V2PaneNode) -> PaneNode {
+    match node {
+        V2PaneNode::Leaf { surface_id } => PaneNode::single_leaf(surface_id),
+        V2PaneNode::Split {
+            axis,
+            children,
+            sizes,
+        } => PaneNode::Split {
+            axis,
+            children: children.into_iter().map(migrate_v2_pane_node).collect(),
+            sizes,
+        },
+    }
 }
 
 fn migrate_legacy_session(legacy: LegacySessionData) -> Result<SessionData, SessionError> {
@@ -309,7 +405,7 @@ fn migrate_legacy_pane_tree(
             let surface_id = format!("surface-{next_surface_index}");
             *next_surface_index += 1;
             leaf_ids.push(surface_id.clone());
-            Ok(PaneNode::Leaf { surface_id })
+            Ok(PaneNode::single_leaf(surface_id))
         }
         LegacyPaneTreeSnapshot::Horizontal { children, sizes } => migrate_legacy_split(
             SplitAxis::Horizontal,
@@ -481,10 +577,19 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
 
 fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, SessionError> {
     match node {
-        PaneNode::Leaf { surface_id } if surface_id.trim().is_empty() => Err(
-            SessionError::InvalidData("pane leaf surface id must not be empty".to_string()),
-        ),
-        PaneNode::Leaf { .. } => Ok(1),
+        PaneNode::Leaf { tabs, .. } if tabs.is_empty() => Err(SessionError::InvalidData(
+            "pane leaf must have at least one tab".to_string(),
+        )),
+        PaneNode::Leaf { tabs, .. } => {
+            for tab in tabs {
+                if tab.trim().is_empty() {
+                    return Err(SessionError::InvalidData(
+                        "pane leaf surface id must not be empty".to_string(),
+                    ));
+                }
+            }
+            Ok(1)
+        }
         PaneNode::Split {
             children, sizes, ..
         } => {
@@ -519,7 +624,11 @@ fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, Sess
 
 fn collect_pane_surface_ids(node: &PaneNode, ids: &mut Vec<String>) {
     match node {
-        PaneNode::Leaf { surface_id } => ids.push(surface_id.clone()),
+        PaneNode::Leaf { tabs, .. } => {
+            for tab in tabs {
+                ids.push(tab.clone());
+            }
+        }
         PaneNode::Split { children, .. } => {
             for child in children {
                 collect_pane_surface_ids(child, ids);
@@ -901,9 +1010,7 @@ mod tests {
         let first = model.create_workspace("main", "/tmp/main");
         let second = model.create_workspace("other", "/tmp/other");
         let mut data = model.to_session_data();
-        data.workspaces[1].pane_tree = PaneNode::Leaf {
-            surface_id: first.focused_surface_id.clone(),
-        };
+        data.workspaces[1].pane_tree = PaneNode::single_leaf(first.focused_surface_id.clone());
         data.workspaces[1].focused_surface_id = first.focused_surface_id;
         data.active_workspace_id = Some(second.id);
 
@@ -985,7 +1092,8 @@ mod tests {
         model.create_workspace("main", "/tmp");
         let mut data = model.to_session_data();
         data.workspaces[0].pane_tree = PaneNode::Leaf {
-            surface_id: " \n ".to_string(),
+            tabs: vec![" \n ".to_string()],
+            active: 0,
         };
         data.workspaces[0].focused_surface_id = " \n ".to_string();
 
@@ -1140,12 +1248,8 @@ mod tests {
         data.workspaces[0].pane_tree = PaneNode::Split {
             axis: SplitAxis::Horizontal,
             children: vec![
-                PaneNode::Leaf {
-                    surface_id: data.workspaces[0].focused_surface_id.clone(),
-                },
-                PaneNode::Leaf {
-                    surface_id: "extra-leaf".to_string(),
-                },
+                PaneNode::single_leaf(data.workspaces[0].focused_surface_id.clone()),
+                PaneNode::single_leaf("extra-leaf".to_string()),
             ],
             sizes: vec![f64::NAN, 0.5],
         };
@@ -1214,5 +1318,148 @@ mod tests {
             }"#,
         )
         .unwrap();
+    }
+
+    // ── v3 session tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn round_trip_multi_tab_leaf() {
+        // Build a workspace with a multi-tab leaf manually and verify that
+        // serialising → deserialising through SessionData preserves all tabs.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v3.json");
+
+        let mut model = WorkspaceModel::new();
+        let ws = model.create_workspace("main", "/tmp");
+        let first_id = ws.focused_surface_id.clone();
+        // Add a second tab using the public API.
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        let tab2_id = tab2.id.clone();
+
+        let data = model.to_session_data();
+        assert_eq!(data.version, SESSION_FORMAT_VERSION);
+        // The leaf must serialise with both tab ids.
+        let json = serde_json::to_string_pretty(&data).unwrap();
+        assert!(
+            json.contains("\"tabs\""),
+            "expected tabs key in JSON: {json}"
+        );
+        // The pane leaf must not use the old "surface_id" field form.
+        assert!(
+            !json.contains("\"surface_id\""),
+            "must not contain old bare surface_id key: {json}"
+        );
+
+        save_session_to_path(&path, &data).unwrap();
+        let loaded = load_session_from_path(&path).unwrap().unwrap();
+        assert_eq!(loaded.version, SESSION_FORMAT_VERSION);
+        let leaf = &loaded.workspaces[0].pane_tree;
+        let tabs = leaf.leaf_tabs().expect("leaf must have tabs");
+        assert_eq!(tabs.len(), 2);
+        assert!(tabs.contains(&ws.focused_surface_id));
+        assert!(tabs.contains(&tab2_id));
+    }
+
+    #[test]
+    fn loads_v2_session_with_surface_id_leaf_as_single_tab_leaf() {
+        // A hand-crafted v2 JSON with the old `surface_id` leaf form should be
+        // migrated to the v3 `tabs` form automatically.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2-old.json");
+        fs::write(
+            &path,
+            r#"{
+              "version": 2,
+              "active_workspace_id": "workspace-1",
+              "workspaces": [
+                {
+                  "id": "workspace-1",
+                  "name": "w1",
+                  "active": true,
+                  "working_dir": "/tmp",
+                  "git_branch": "",
+                  "pane_tree": { "type": "leaf", "surface_id": "surface-1" },
+                  "focused_surface_id": "surface-1",
+                  "needs_attention": false
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap().unwrap();
+
+        assert_eq!(loaded.version, SESSION_FORMAT_VERSION);
+        assert_eq!(loaded.active_workspace_id.as_deref(), Some("workspace-1"));
+        let pane_tree = &loaded.workspaces[0].pane_tree;
+        let tabs = pane_tree.leaf_tabs().expect("root must be a leaf");
+        assert_eq!(tabs, &["surface-1"]);
+        let active = pane_tree.leaf_active_id().expect("active tab must exist");
+        assert_eq!(active, "surface-1");
+    }
+
+    #[test]
+    fn loads_v2_session_with_split_pane_tree() {
+        // A v2 session that already has a split pane tree should also migrate
+        // correctly: each leaf becomes a single-tab leaf.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2-split.json");
+        fs::write(
+            &path,
+            r#"{
+              "version": 2,
+              "active_workspace_id": "workspace-1",
+              "workspaces": [
+                {
+                  "id": "workspace-1",
+                  "name": "w1",
+                  "active": true,
+                  "working_dir": "/tmp",
+                  "git_branch": "",
+                  "pane_tree": {
+                    "type": "split",
+                    "axis": "horizontal",
+                    "sizes": [0.5, 0.5],
+                    "children": [
+                      { "type": "leaf", "surface_id": "surface-1" },
+                      { "type": "leaf", "surface_id": "surface-2" }
+                    ]
+                  },
+                  "focused_surface_id": "surface-1",
+                  "needs_attention": false
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap().unwrap();
+
+        assert_eq!(loaded.version, SESSION_FORMAT_VERSION);
+        let PaneNode::Split { ref children, .. } = loaded.workspaces[0].pane_tree else {
+            panic!("expected split root");
+        };
+        assert_eq!(children.len(), 2);
+        for (child, expected_id) in children.iter().zip(["surface-1", "surface-2"]) {
+            let tabs = child.leaf_tabs().expect("child must be leaf");
+            assert_eq!(tabs, &[expected_id]);
+        }
+    }
+
+    #[test]
+    fn rejects_session_with_empty_tabs_leaf() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        // Forge an invalid leaf with empty tabs.
+        data.workspaces[0].pane_tree = PaneNode::Leaf {
+            tabs: Vec::new(),
+            active: 0,
+        };
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
     }
 }

@@ -37,6 +37,8 @@ Usage:
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
   forktty focus-surface <surface-id>
   forktty close-surface <surface-id>
+  forktty new-tab [--surface-id <id>]
+  forktty select-tab <surface-id>
   forktty send-text <text> [--surface-id <id>]
   forktty worktree-list [--cwd <repo>]
   forktty worktree-status [--path <worktree>] [--cwd <worktree>]
@@ -368,6 +370,8 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "split-surface" | "surface-split" | "surface:split" => handle_split_surface(&context, args),
         "focus-surface" | "surface-focus" | "surface:focus" => handle_focus_surface(&context, args),
         "close-surface" | "surface-close" | "surface:close" => handle_close_surface(&context, args),
+        "new-tab" | "pane-new-tab" | "pane:new-tab" => handle_new_tab(&context, args),
+        "select-tab" | "pane-select-tab" | "pane:select-tab" => handle_select_tab(&context, args),
         "send-text" | "send_text" => handle_send_text(&context, args),
         "worktree-list" | "worktree:list" => handle_worktree_list(&context, args),
         "worktree-status" | "worktree:status" => handle_worktree_status(&context, args),
@@ -1345,6 +1349,47 @@ fn handle_close_surface(context: &CliContext, args: Vec<String>) -> CliResult<()
         "surface.close",
         "close-surface",
         "Closed surface",
+    )
+}
+
+fn handle_new_tab(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["surface-id"], "new-tab")?;
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "new-tab: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let mut params = Map::new();
+    if let Some(surface_id) = surface_id_from_args(&parsed, "new-tab")? {
+        params.insert("surface_id".to_string(), Value::String(surface_id));
+    } else if let Some(surface_id) = resolve_focused_surface_id(context)? {
+        params.insert("surface_id".to_string(), Value::String(surface_id));
+    } else {
+        return Err(CliError::new(
+            "new-tab requires --surface-id, a surface id, FORKTTY_SURFACE_ID, or an active workspace surface",
+        ));
+    }
+    let result = send_socket_request(&context.socket_path, "pane.new_tab", Value::Object(params))?;
+    if context.json {
+        print_json(&result)
+    } else {
+        println!(
+            "Created tab {}",
+            string_field(&result, "id").unwrap_or("(unknown)")
+        );
+        Ok(())
+    }
+}
+
+fn handle_select_tab(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    surface_action(
+        context,
+        args,
+        "pane.select_tab",
+        "select-tab",
+        "Selected tab",
     )
 }
 
