@@ -1377,13 +1377,13 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     match sub.as_str() {
         "open" => browser_open(context, rest),
         "navigate" => browser_navigate(context, rest),
-        "snapshot" => browser_snapshot(context, rest),
+        "snapshot" => browser_surface_cmd(context, rest, "browser.snapshot", "snapshot"),
         "click" => browser_click(context, rest),
         "fill" => browser_fill(context, rest),
-        "eval" => browser_run_script(context, rest),
-        "back" => browser_nav(context, rest, "browser.back", "back"),
-        "forward" => browser_nav(context, rest, "browser.forward", "forward"),
-        "reload" => browser_nav(context, rest, "browser.reload", "reload"),
+        "eval" => browser_eval(context, rest),
+        "back" => browser_surface_cmd(context, rest, "browser.back", "back"),
+        "forward" => browser_surface_cmd(context, rest, "browser.forward", "forward"),
+        "reload" => browser_surface_cmd(context, rest, "browser.reload", "reload"),
         "" => Err(CliError::new(
             "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload",
         )),
@@ -1468,33 +1468,16 @@ fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
-fn browser_snapshot(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &[], "browser snapshot")?;
-    let surface_id = parsed
-        .positionals
-        .first()
-        .ok_or_else(|| CliError::new("browser snapshot requires a surface-id"))?
-        .clone();
-    if parsed.positionals.len() > 1 {
-        return Err(CliError::new(format!(
-            "browser snapshot: unexpected argument {}",
-            parsed.positionals[1]
-        )));
-    }
-    let result = send_socket_request(
-        &context.socket_path,
-        "browser.snapshot",
-        json!({"surface_id": surface_id}),
-    )?;
-    print_json(&result)
-}
-
 fn browser_click(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser click")?;
     let (surface_id, reference) = match parsed.positionals.as_slice() {
         [s, r] => (s.clone(), r.clone()),
+        [_, _, extra, ..] => {
+            return Err(CliError::new(format!(
+                "browser click: unexpected argument '{extra}'"
+            )))
+        }
         _ => return Err(CliError::new("browser click requires <surface-id> <ref>")),
     };
     let result = send_socket_request(
@@ -1510,6 +1493,11 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     reject_unknown_options(&parsed.options, &[], "browser fill")?;
     let (surface_id, reference, value) = match parsed.positionals.as_slice() {
         [s, r, v] => (s.clone(), r.clone(), v.clone()),
+        [_, _, _, extra, ..] => {
+            return Err(CliError::new(format!(
+                "browser fill: unexpected argument '{extra}'"
+            )))
+        }
         _ => {
             return Err(CliError::new(
                 "browser fill requires <surface-id> <ref> <value>",
@@ -1524,11 +1512,16 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     print_json(&result)
 }
 
-fn browser_run_script(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser eval")?;
     let (surface_id, script) = match parsed.positionals.as_slice() {
         [s, sc] => (s.clone(), sc.clone()),
+        [_, _, extra, ..] => {
+            return Err(CliError::new(format!(
+                "browser eval: unexpected argument '{extra}'"
+            )))
+        }
         _ => return Err(CliError::new("browser eval requires <surface-id> <script>")),
     };
     let result = send_socket_request(
@@ -1539,7 +1532,7 @@ fn browser_run_script(context: &CliContext, args: Vec<String>) -> CliResult<()> 
     print_json(&result)
 }
 
-fn browser_nav(
+fn browser_surface_cmd(
     context: &CliContext,
     args: Vec<String>,
     method: &str,
@@ -5571,6 +5564,24 @@ mod tests {
                 strings(&["navigate", "--surface-id", "s9", "https://x.com"]),
             ),
             "browser navigate",
+        );
+    }
+
+    #[test]
+    fn browser_click_rejects_extra_argument() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["click", "s9", "e3", "extra"])),
+            "unexpected argument",
+        );
+    }
+
+    #[test]
+    fn browser_fill_rejects_extra_argument() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["fill", "s9", "e3", "hello", "extra"])),
+            "unexpected argument",
         );
     }
 
