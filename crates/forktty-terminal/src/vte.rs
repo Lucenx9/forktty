@@ -103,6 +103,7 @@ mod tests {
             surface_id: "surface-1".to_string(),
             workspace_id: "workspace-1".to_string(),
             shell: "/bin/sh".to_string(),
+            args: Vec::new(),
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: vec![("PATH".to_string(), "/custom/bin".to_string())],

@@ -4684,7 +4684,11 @@ fn refresh_tabbar(tab_bar_ui: &TabBarUi, state: &SocketAppState) {
     tab_bar_ui.syncing.set(true);
 
     // ── Remove pages whose workspace was deleted ──────────────────────────
-    let model_ids: Vec<&str> = snapshot.rows.iter().map(|r| r.workspace.id.as_str()).collect();
+    let model_ids: Vec<&str> = snapshot
+        .rows
+        .iter()
+        .map(|r| r.workspace.id.as_str())
+        .collect();
     let mut pages = tab_bar_ui.pages.borrow_mut();
     pages.retain(|(id, page)| {
         if model_ids.contains(&id.as_str()) {
@@ -4710,7 +4714,11 @@ fn refresh_tabbar(tab_bar_ui: &TabBarUi, state: &SocketAppState) {
 
     // ── Reorder pages to match model order ───────────────────────────────
     for (target_pos, row) in snapshot.rows.iter().enumerate() {
-        if let Some(page) = pages.iter().find(|(id, _)| id == &row.workspace.id).map(|(_, p)| p.clone()) {
+        if let Some(page) = pages
+            .iter()
+            .find(|(id, _)| id == &row.workspace.id)
+            .map(|(_, p)| p.clone())
+        {
             view.reorder_page(&page, target_pos as i32);
         }
     }
