@@ -11,6 +11,7 @@ description = "ForkTTY Unix socket JSON-RPC server"
 
 [dependencies]
 async-channel = { workspace = true }
+dirs.workspace = true
 forktty-core = { path = "../forktty-core" }
 forktty-terminal = { path = "../forktty-terminal" }
 git2.workspace = true

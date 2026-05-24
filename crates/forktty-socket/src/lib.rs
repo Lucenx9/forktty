@@ -43,6 +43,9 @@ pub const METHODS: &[&str] = &[
     "browser.forward",
     "browser.navigate",
     "browser.open",
+    "browser.profile.create",
+    "browser.profile.delete",
+    "browser.profile.list",
     "browser.reload",
     "browser.snapshot",
     "events.subscribe",
@@ -734,13 +737,19 @@ pub async fn dispatch(
             let workspace_id = required_string_param(&params, "workspace_id")?.to_string();
             let url = required_browser_url(&params)?;
             let axis = split_axis_from_params(&params)?;
+            let profile = match params.get("profile").and_then(|v| v.as_str()) {
+                Some(s) => profiles_store()?
+                    .resolve(s)
+                    .ok_or(DispatchError::NotFound("profile".to_string()))?,
+                None => forktty_core::ProfileId::default(),
+            };
             let surface = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .open_browser(&workspace_id, &url, axis)
+                    .open_browser(&workspace_id, &url, profile, axis)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(surface))
@@ -808,6 +817,61 @@ pub async fn dispatch(
         "browser.reload" => {
             let surface_id = required_surface_id(&params)?.to_string();
             dispatch_browser_cmd(state, surface_id, BrowserOp::Reload).await
+        }
+        "browser.profile.list" => {
+            let store = profiles_store()?;
+            let out: Vec<_> = store
+                .list()
+                .iter()
+                .map(|p| {
+                    json!({
+                        "id": p.id.to_string(),
+                        "display_name": p.display_name,
+                        "is_default": p.is_default,
+                    })
+                })
+                .collect();
+            Ok(json!(out))
+        }
+        "browser.profile.create" => {
+            let display_name = required_string_param(&params, "display_name")?.to_string();
+            let mut store = profiles_store()?;
+            let meta = store
+                .create(&display_name)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!({ "id": meta.id.to_string(), "display_name": meta.display_name }))
+        }
+        "browser.profile.delete" => {
+            let id_str = required_string_param(&params, "id")?.to_string();
+            let id: forktty_core::ProfileId = id_str
+                .parse()
+                .map_err(|_| DispatchError::NotFound("profile".to_string()))?;
+            {
+                let model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let in_use = model.list_surfaces(None).iter().any(|s| {
+                    matches!(
+                        &s.kind,
+                        forktty_core::SurfaceKind::Browser { profile, .. } if *profile == id
+                    )
+                });
+                if in_use {
+                    return Err(DispatchError::from(
+                        "profile in use by an open browser pane".to_string(),
+                    ));
+                }
+            }
+            let mut store = profiles_store()?;
+            // on-disk data dir cleanup deferred to the GUI profile manager (P4)
+            store.delete(&id).map_err(|e| match e {
+                forktty_core::ProfileError::NotFound => {
+                    DispatchError::NotFound("profile".to_string())
+                }
+                other => DispatchError::from(other.to_string()),
+            })?;
+            Ok(json!({ "deleted": true }))
         }
         "surface.focus" => {
             let surface_id = required_surface_id(&params)?;
@@ -1543,6 +1607,17 @@ fn required_browser_url(params: &Value) -> Result<String, DispatchError> {
     } else {
         Ok(format!("https://{raw}"))
     }
+}
+
+fn profiles_store() -> Result<forktty_core::ProfileStore, DispatchError> {
+    let path = dirs::data_local_dir()
+        .map(|d| {
+            d.join("forktty")
+                .join("browser_profiles")
+                .join("profiles.json")
+        })
+        .ok_or_else(|| DispatchError::from("no data dir for profiles".to_string()))?;
+    forktty_core::ProfileStore::load(path).map_err(|e| DispatchError::from(e.to_string()))
 }
 
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
@@ -5107,11 +5182,9 @@ mod tests {
         .await
         .unwrap();
         let surface_id = opened["id"].as_str().unwrap().to_string();
-        // Bare domain gets https:// prepended.
-        assert_eq!(
-            opened["kind"],
-            json!({"type": "browser", "url": "https://example.com"})
-        );
+        // Bare domain gets https:// prepended. Kind now carries the profile id too.
+        assert_eq!(opened["kind"]["type"], json!("browser"));
+        assert_eq!(opened["kind"]["url"], json!("https://example.com"));
 
         let navigated = dispatch(
             &state,
@@ -5270,5 +5343,82 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "not_found");
         responder.await.unwrap();
+    }
+
+    // --- SP3 P2 browser.profile verbs ----------------------------------------
+
+    #[tokio::test]
+    async fn browser_profile_create_list_then_open_with_profile() {
+        // Isolate profiles.json from the real user data dir.
+        // XDG_DATA_HOME is process-global; no other test calls profile verbs so
+        // concurrent interference is limited to this test itself.
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+
+        let (state, _backend) = test_state();
+
+        // Create a workspace so we have a workspace_id for browser.open.
+        let ws = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let workspace_id = ws.get("id").unwrap().as_str().unwrap().to_string();
+
+        // browser.profile.create
+        let created = dispatch(
+            &state,
+            "browser.profile.create",
+            json!({ "display_name": "Work" }),
+        )
+        .await
+        .unwrap();
+        let new_id = created
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(created["display_name"], json!("Work"));
+
+        // browser.profile.list — should have Default (is_default=true) + Work
+        let listed = dispatch(&state, "browser.profile.list", json!({}))
+            .await
+            .unwrap();
+        let arr = listed.as_array().unwrap();
+        assert!(
+            arr.iter().any(|p| p["is_default"] == json!(true)),
+            "list must contain the default profile"
+        );
+        assert!(
+            arr.iter().any(|p| p["display_name"] == json!("Work")),
+            "list must contain Work profile"
+        );
+
+        // browser.open with profile name — resolves "Work" to its id
+        let opened = dispatch(
+            &state,
+            "browser.open",
+            json!({
+                "workspace_id": workspace_id,
+                "url": "https://example.com",
+                "profile": "Work"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(opened.get("id").is_some(), "opened surface must have an id");
+        // Surface kind should be a browser
+        assert_eq!(opened["kind"]["type"], json!("browser"));
+
+        // browser.profile.delete while a pane is open in that profile must be refused
+        let del_err = dispatch(&state, "browser.profile.delete", json!({ "id": new_id }))
+            .await
+            .unwrap_err();
+        assert!(
+            del_err.to_string().contains("in use"),
+            "expected in-use error, got: {del_err}"
+        );
+
+        // Cleanup: restore env (best-effort; tempdir Drop also removes files)
+        std::env::remove_var("XDG_DATA_HOME");
+        drop(dir);
     }
 }
