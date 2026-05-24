@@ -47,6 +47,9 @@ pub const METHODS: &[&str] = &[
     "browser.history.clear",
     "browser.history.list",
     "browser.history.search",
+    "browser.import.discover",
+    "browser.import.preview",
+    "browser.import.run",
     "browser.navigate",
     "browser.open",
     "browser.profile.create",
@@ -1018,6 +1021,9 @@ pub async fn dispatch(
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!({ "removed": removed }))
         }
+        "browser.import.discover" => Ok(browser_import_discover_json()),
+        "browser.import.preview" => browser_import_preview(&params),
+        "browser.import.run" => browser_import_run(state, &params),
         "surface.focus" => {
             let surface_id = required_surface_id(&params)?;
             let focused = {
@@ -1851,6 +1857,475 @@ fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, Disp
                 .ok_or(DispatchError::NotFound("profile".to_string()))
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BrowserImportSelection {
+    history: bool,
+    bookmarks: bool,
+    cookies: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BrowserImportCounts {
+    cookies: usize,
+    history: usize,
+    bookmarks: usize,
+    skipped: usize,
+}
+
+impl BrowserImportCounts {
+    fn add(&mut self, other: BrowserImportCounts) {
+        self.cookies += other.cookies;
+        self.history += other.history;
+        self.bookmarks += other.bookmarks;
+        self.skipped += other.skipped;
+    }
+}
+
+fn browser_family_key(family: forktty_import::BrowserFamily) -> &'static str {
+    match family {
+        forktty_import::BrowserFamily::Firefox => "firefox",
+        forktty_import::BrowserFamily::Chrome => "chrome",
+        forktty_import::BrowserFamily::Chromium => "chromium",
+        forktty_import::BrowserFamily::Brave => "brave",
+        forktty_import::BrowserFamily::Edge => "edge",
+        forktty_import::BrowserFamily::Vivaldi => "vivaldi",
+    }
+}
+
+fn browser_import_source_id(profile: &forktty_import::SourceProfile) -> String {
+    format!("{}:{}", browser_family_key(profile.family), profile.path)
+}
+
+fn browser_import_profile_json(profile: &forktty_import::SourceProfile) -> Value {
+    json!({
+        "id": browser_import_source_id(profile),
+        "family": profile.family,
+        "display_name": profile.display_name,
+        "path": profile.path,
+        "is_default": profile.is_default,
+    })
+}
+
+fn browser_import_discover_json() -> Value {
+    let browsers = forktty_import::discover();
+    let profile_count: usize = browsers.iter().map(|browser| browser.profiles.len()).sum();
+    let browsers_json: Vec<Value> = browsers
+        .iter()
+        .map(|browser| {
+            let profiles: Vec<Value> = browser
+                .profiles
+                .iter()
+                .map(browser_import_profile_json)
+                .collect();
+            json!({
+                "family": browser.family,
+                "label": browser.family.label(),
+                "profiles": profiles,
+            })
+        })
+        .collect();
+    json!({
+        "browsers": browsers_json,
+        "count": profile_count,
+    })
+}
+
+fn browser_import_bool_param(
+    value: Option<&Value>,
+    key: &'static str,
+    default: bool,
+) -> Result<bool, DispatchError> {
+    match value {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {key}: expected boolean"
+        ))),
+    }
+}
+
+fn browser_import_selection(params: &Value) -> Result<BrowserImportSelection, DispatchError> {
+    let Some(include) = params.get("include") else {
+        return Ok(BrowserImportSelection {
+            history: true,
+            bookmarks: true,
+            cookies: true,
+        });
+    };
+    let object = include.as_object().ok_or_else(|| {
+        DispatchError::InvalidParam("Invalid parameter include: expected object".to_string())
+    })?;
+    Ok(BrowserImportSelection {
+        history: browser_import_bool_param(object.get("history"), "include.history", true)?,
+        bookmarks: browser_import_bool_param(object.get("bookmarks"), "include.bookmarks", true)?,
+        cookies: browser_import_bool_param(object.get("cookies"), "include.cookies", true)?,
+    })
+}
+
+fn browser_import_all_sources_param(params: &Value) -> Result<bool, DispatchError> {
+    browser_import_bool_param(params.get("all"), "all", false)
+}
+
+fn browser_import_selected_sources(
+    params: &Value,
+) -> Result<Vec<forktty_import::SourceProfile>, DispatchError> {
+    let all = browser_import_all_sources_param(params)?;
+    let discovered: Vec<forktty_import::SourceProfile> = forktty_import::discover()
+        .into_iter()
+        .flat_map(|browser| browser.profiles.into_iter())
+        .collect();
+    if all {
+        return Ok(discovered);
+    }
+
+    let Some(sources) = params.get("sources") else {
+        return Err(DispatchError::MissingParam("sources"));
+    };
+    let ids = sources.as_array().ok_or_else(|| {
+        DispatchError::InvalidParam("Invalid parameter sources: expected array".to_string())
+    })?;
+    if ids.is_empty() {
+        return Err(DispatchError::InvalidParam(
+            "sources must not be empty".to_string(),
+        ));
+    }
+
+    let mut selected = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for value in ids {
+        let id = value.as_str().ok_or_else(|| {
+            DispatchError::InvalidParam("Invalid parameter sources: expected strings".to_string())
+        })?;
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let Some(profile) = discovered
+            .iter()
+            .find(|profile| browser_import_source_id(profile) == id)
+        else {
+            return Err(DispatchError::NotFound("browser import source".to_string()));
+        };
+        selected.push(profile.clone());
+    }
+    Ok(selected)
+}
+
+fn browser_import_counts_from_data(
+    data: &forktty_import::ImportedData,
+    include: BrowserImportSelection,
+) -> BrowserImportCounts {
+    BrowserImportCounts {
+        cookies: if include.cookies {
+            data.result.cookies
+        } else {
+            0
+        },
+        history: if include.history {
+            data.visits.len()
+        } else {
+            0
+        },
+        bookmarks: if include.bookmarks {
+            data.bookmarks.len()
+        } else {
+            0
+        },
+        skipped: if include.cookies {
+            data.result.skipped
+        } else {
+            0
+        },
+    }
+}
+
+fn browser_import_counts_json(counts: BrowserImportCounts) -> Value {
+    json!({
+        "cookies": counts.cookies,
+        "history": counts.history,
+        "bookmarks": counts.bookmarks,
+        "skipped": counts.skipped,
+    })
+}
+
+fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> {
+    let include = browser_import_selection(params)?;
+    let selected = browser_import_selected_sources(params)?;
+    let mut total = BrowserImportCounts::default();
+    let mut source_rows = Vec::new();
+
+    for source in selected {
+        let data = forktty_import::ImportEngine::read_source(&source)
+            .map_err(|err| DispatchError::Other(err.to_string()))?;
+        let counts = browser_import_counts_from_data(&data, include);
+        total.add(counts);
+        source_rows.push(json!({
+            "source": browser_import_profile_json(&source),
+            "counts": browser_import_counts_json(counts),
+        }));
+    }
+
+    Ok(json!({
+        "sources": source_rows,
+        "total": browser_import_counts_json(total),
+        "cookies_supported": false,
+    }))
+}
+
+fn resolve_profile_value_in_store(
+    store: &forktty_core::ProfileStore,
+    value: &Value,
+) -> Result<forktty_core::ProfileId, DispatchError> {
+    let profile = value.as_str().ok_or_else(|| {
+        DispatchError::InvalidParam("Invalid parameter profile: expected string".to_string())
+    })?;
+    store
+        .resolve(profile)
+        .ok_or(DispatchError::NotFound("profile".to_string()))
+}
+
+fn optional_profile_param_in_store(
+    store: &forktty_core::ProfileStore,
+    params: &Value,
+) -> Result<forktty_core::ProfileId, DispatchError> {
+    match params.get("profile") {
+        None | Some(Value::Null) => Ok(forktty_core::ProfileId::default()),
+        Some(value) => resolve_profile_value_in_store(store, value),
+    }
+}
+
+fn browser_import_destination_from_params(
+    params: &Value,
+    store: &forktty_core::ProfileStore,
+) -> Result<Option<forktty_import::ImportDestination>, DispatchError> {
+    let Some(destination) = params.get("destination") else {
+        return Ok(None);
+    };
+    let object = destination.as_object().ok_or_else(|| {
+        DispatchError::InvalidParam("Invalid parameter destination: expected object".to_string())
+    })?;
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or(DispatchError::MissingParam("destination.kind"))?;
+    match kind {
+        "existing" => {
+            let value = object
+                .get("profile")
+                .or_else(|| object.get("id"))
+                .ok_or(DispatchError::MissingParam("destination.profile"))?;
+            Ok(Some(forktty_import::ImportDestination::Existing(
+                resolve_profile_value_in_store(store, value)?,
+            )))
+        }
+        "create" => {
+            let name = object
+                .get("display_name")
+                .or_else(|| object.get("name"))
+                .and_then(Value::as_str)
+                .ok_or(DispatchError::MissingParam("destination.display_name"))?
+                .trim()
+                .to_string();
+            if name.is_empty() {
+                return Err(DispatchError::InvalidParam(
+                    "destination.display_name must not be empty".to_string(),
+                ));
+            }
+            Ok(Some(forktty_import::ImportDestination::Create(name)))
+        }
+        other => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter destination.kind: expected existing or create, got {other}"
+        ))),
+    }
+}
+
+fn browser_import_plan_from_params(
+    params: &Value,
+    selected: &[forktty_import::SourceProfile],
+    store: &forktty_core::ProfileStore,
+) -> Result<forktty_import::ImportPlan, DispatchError> {
+    if let Some(destination) = browser_import_destination_from_params(params, store)? {
+        return Ok(forktty_import::ImportPlan {
+            mode: forktty_import::ImportMode::SingleDestination,
+            entries: vec![forktty_import::ImportEntry {
+                sources: selected.to_vec(),
+                destination,
+            }],
+        });
+    }
+
+    let mode = params
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("default");
+    match mode {
+        "default" => {
+            let preferred = optional_profile_param_in_store(store, params)?;
+            Ok(forktty_import::resolve_default_plan(
+                selected,
+                store.list(),
+                preferred,
+            ))
+        }
+        "single_destination" => {
+            let profile = optional_profile_param_in_store(store, params)?;
+            Ok(forktty_import::ImportPlan {
+                mode: forktty_import::ImportMode::SingleDestination,
+                entries: vec![forktty_import::ImportEntry {
+                    sources: selected.to_vec(),
+                    destination: forktty_import::ImportDestination::Existing(profile),
+                }],
+            })
+        }
+        "separate_profiles" => Ok(forktty_import::resolve_separate_profiles_plan(
+            selected,
+            store.list(),
+        )),
+        other => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter mode: expected default, single_destination, or separate_profiles, got {other}"
+        ))),
+    }
+}
+
+fn browser_import_profile_meta_json(
+    id: forktty_core::ProfileId,
+    display_name: &str,
+    created: bool,
+) -> Value {
+    json!({
+        "id": id.to_string(),
+        "display_name": display_name,
+        "created": created,
+    })
+}
+
+fn browser_import_prepare_destination(
+    store: &mut forktty_core::ProfileStore,
+    destination: &forktty_import::ImportDestination,
+) -> Result<(forktty_core::ProfileId, String, bool), DispatchError> {
+    match destination {
+        forktty_import::ImportDestination::Existing(id) => {
+            let Some(meta) = store.list().iter().find(|profile| profile.id == *id) else {
+                return Err(DispatchError::NotFound("profile".to_string()));
+            };
+            Ok((meta.id, meta.display_name.clone(), false))
+        }
+        forktty_import::ImportDestination::Create(display_name) => {
+            let meta = store.create(display_name).map_err(|err| match err {
+                forktty_core::ProfileError::InvalidInput(message) => {
+                    DispatchError::InvalidParam(message)
+                }
+                other => DispatchError::Other(other.to_string()),
+            })?;
+            Ok((meta.id, meta.display_name, true))
+        }
+    }
+}
+
+fn browser_import_run(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let include = browser_import_selection(params)?;
+    let selected = browser_import_selected_sources(params)?;
+    let _profile_store_guard = state
+        .profile_store_lock
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let mut store = profiles_store()?;
+    let plan = browser_import_plan_from_params(params, &selected, &store)?;
+    let mode = plan.mode;
+
+    let mut total_read = BrowserImportCounts::default();
+    let mut total_written = BrowserImportCounts::default();
+    let mut total_unsupported_cookies = 0usize;
+    let mut entries_json = Vec::new();
+
+    for entry in plan.entries {
+        let (profile_id, display_name, created) =
+            browser_import_prepare_destination(&mut store, &entry.destination)?;
+        let history_store = if include.history {
+            Some(
+                forktty_core::HistoryStore::for_profile(profile_id)
+                    .map_err(|err| DispatchError::Other(err.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let mut bookmark_store = if include.bookmarks {
+            Some(
+                forktty_core::BookmarkStore::for_profile(profile_id)
+                    .map_err(|err| DispatchError::Other(err.to_string()))?,
+            )
+        } else {
+            None
+        };
+
+        let mut entry_read = BrowserImportCounts::default();
+        let mut entry_written = BrowserImportCounts::default();
+        let mut entry_unsupported_cookies = 0usize;
+        let mut entry_sources = Vec::new();
+
+        for source in entry.sources {
+            let data = forktty_import::ImportEngine::read_source(&source)
+                .map_err(|err| DispatchError::Other(err.to_string()))?;
+            let read_counts = browser_import_counts_from_data(&data, include);
+            entry_read.add(read_counts);
+            entry_sources.push(browser_import_profile_json(&source));
+
+            if let Some(history_store) = &history_store {
+                for visit in &data.visits {
+                    history_store
+                        .import_visit(&visit.url, &visit.title, visit.visit_count)
+                        .map_err(|err| DispatchError::Other(err.to_string()))?;
+                    entry_written.history += 1;
+                }
+            }
+
+            if let Some(bookmark_store) = bookmark_store.as_mut() {
+                for bookmark in &data.bookmarks {
+                    bookmark_store
+                        .add(&bookmark.url, &bookmark.title)
+                        .map_err(|err| DispatchError::Other(err.to_string()))?;
+                    entry_written.bookmarks += 1;
+                }
+            }
+
+            if include.cookies {
+                entry_unsupported_cookies += data.result.cookies;
+            }
+        }
+
+        total_read.add(entry_read);
+        total_written.add(entry_written);
+        total_unsupported_cookies += entry_unsupported_cookies;
+        entries_json.push(json!({
+            "destination": browser_import_profile_meta_json(profile_id, &display_name, created),
+            "sources": entry_sources,
+            "read": browser_import_counts_json(entry_read),
+            "written": browser_import_counts_json(entry_written),
+            "cookies": {
+                "read": entry_read.cookies,
+                "written": 0,
+                "unsupported": entry_unsupported_cookies,
+                "skipped": entry_read.skipped,
+            },
+        }));
+    }
+
+    Ok(json!({
+        "mode": mode,
+        "entries": entries_json,
+        "total": {
+            "read": browser_import_counts_json(total_read),
+            "written": browser_import_counts_json(total_written),
+            "cookies": {
+                "read": total_read.cookies,
+                "written": 0,
+                "unsupported": total_unsupported_cookies,
+                "skipped": total_read.skipped,
+            },
+        },
+        "cookies_supported": false,
+    }))
 }
 
 fn history_limit_from_params(params: &Value) -> usize {
@@ -5888,6 +6363,234 @@ mod tests {
             .await
             .unwrap();
         assert!(listed2.as_array().unwrap().is_empty());
+    }
+
+    fn create_firefox_import_source(home: &Path, name: &str) -> forktty_import::SourceProfile {
+        let profile_dir = home.join(".mozilla/firefox").join(name);
+        fs::create_dir_all(&profile_dir).unwrap();
+
+        let cookies = rusqlite::Connection::open(profile_dir.join("cookies.sqlite")).unwrap();
+        cookies
+            .execute_batch(
+                "CREATE TABLE moz_cookies (
+                    name TEXT, value TEXT, host TEXT, path TEXT,
+                    expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER
+                 );
+                 INSERT INTO moz_cookies VALUES ('sid','cookie-value','.example.test','/',0,0,1);",
+            )
+            .unwrap();
+        drop(cookies);
+
+        let places = rusqlite::Connection::open(profile_dir.join("places.sqlite")).unwrap();
+        places
+            .execute_batch(
+                "CREATE TABLE moz_places (
+                    id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER
+                 );
+                 CREATE TABLE moz_bookmarks (
+                    id INTEGER PRIMARY KEY, fk INTEGER, title TEXT, type INTEGER
+                 );
+                 INSERT INTO moz_places (id,url,title,visit_count)
+                    VALUES (1,'https://example.test/','Example',2);
+                 INSERT INTO moz_bookmarks (fk,title,type)
+                    VALUES (1,'Example Bookmark',1);",
+            )
+            .unwrap();
+        drop(places);
+
+        let profile = forktty_import::SourceProfile {
+            family: forktty_import::BrowserFamily::Firefox,
+            display_name: name.to_string(),
+            path: profile_dir.to_string_lossy().into_owned(),
+            is_default: false,
+        };
+        let profiles_ini = format!("[Profile0]\nName={name}\nPath={name}\nDefault=1\n");
+        fs::write(home.join(".mozilla/firefox/profiles.ini"), profiles_ini).unwrap();
+        profile
+    }
+
+    fn create_corrupt_firefox_import_source(
+        home: &Path,
+        name: &str,
+    ) -> forktty_import::SourceProfile {
+        let profile_dir = home.join(".mozilla/firefox").join(name);
+        fs::create_dir_all(&profile_dir).unwrap();
+        let cookies = rusqlite::Connection::open(profile_dir.join("cookies.sqlite")).unwrap();
+        cookies
+            .execute_batch(
+                "CREATE TABLE moz_cookies (
+                    name TEXT, value TEXT, host TEXT, path TEXT,
+                    expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER
+                 );",
+            )
+            .unwrap();
+        drop(cookies);
+        fs::write(profile_dir.join("places.sqlite"), b"not a sqlite database").unwrap();
+        let profiles_ini = format!("[Profile0]\nName={name}\nPath={name}\nDefault=1\n");
+        fs::write(home.join(".mozilla/firefox/profiles.ini"), profiles_ini).unwrap();
+        forktty_import::SourceProfile {
+            family: forktty_import::BrowserFamily::Firefox,
+            display_name: name.to_string(),
+            path: profile_dir.to_string_lossy().into_owned(),
+            is_default: true,
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_import_discover_preview_and_run_imports_history_bookmarks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+        let source = create_firefox_import_source(&home, "default-release");
+        let source_id = browser_import_source_id(&source);
+        let (state, _backend) = test_state();
+
+        let discovered = dispatch(&state, "browser.import.discover", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(discovered["count"], json!(1));
+        assert_eq!(
+            discovered["browsers"][0]["profiles"][0]["id"],
+            json!(source_id)
+        );
+
+        let preview = dispatch(
+            &state,
+            "browser.import.preview",
+            json!({"sources": [source_id.clone()]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(preview["total"]["history"], json!(1));
+        assert_eq!(preview["total"]["bookmarks"], json!(1));
+        assert_eq!(preview["total"]["cookies"], json!(1));
+
+        let imported = dispatch(
+            &state,
+            "browser.import.run",
+            json!({
+                "sources": [source_id.clone()],
+                "destination": {"kind": "existing", "profile": "Default"}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported["total"]["written"]["history"], json!(1));
+        assert_eq!(imported["total"]["written"]["bookmarks"], json!(1));
+        assert_eq!(imported["total"]["cookies"]["written"], json!(0));
+        assert_eq!(imported["total"]["cookies"]["unsupported"], json!(1));
+
+        let history = dispatch(
+            &state,
+            "browser.history.search",
+            json!({"query": "example.test", "limit": 10}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(history.as_array().unwrap().len(), 1);
+        assert_eq!(history[0]["visit_count"], json!(2));
+        let bookmarks = dispatch(&state, "browser.bookmark.list", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(bookmarks.as_array().unwrap().len(), 1);
+
+        let imported_again = dispatch(
+            &state,
+            "browser.import.run",
+            json!({
+                "sources": [source_id],
+                "destination": {"kind": "existing", "profile": "Default"}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported_again["total"]["written"]["history"], json!(1));
+        let history_after = dispatch(
+            &state,
+            "browser.history.search",
+            json!({"query": "example.test", "limit": 10}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(history_after.as_array().unwrap().len(), 1);
+        assert_eq!(history_after[0]["visit_count"], json!(2));
+        let bookmarks_after = dispatch(&state, "browser.bookmark.list", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(bookmarks_after.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_import_run_creates_new_profile_from_plan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+        let source = create_firefox_import_source(&home, "work");
+        let source_id = browser_import_source_id(&source);
+        let (state, _backend) = test_state();
+
+        let imported = dispatch(
+            &state,
+            "browser.import.run",
+            json!({
+                "sources": [source_id],
+                "destination": {"kind": "create", "display_name": "Imported Work"}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            imported["entries"][0]["destination"]["created"],
+            json!(true)
+        );
+        let profile_id = imported["entries"][0]["destination"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let profiles = dispatch(&state, "browser.profile.list", json!({}))
+            .await
+            .unwrap();
+        assert!(profiles.as_array().unwrap().iter().any(|profile| {
+            profile["id"] == json!(profile_id) && profile["display_name"] == json!("Imported Work")
+        }));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_import_missing_and_corrupt_sources_are_errors_not_crashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let missing = dispatch(
+            &state,
+            "browser.import.preview",
+            json!({"sources": ["firefox:/does/not/exist"]}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.code(), "not_found");
+
+        let source = create_corrupt_firefox_import_source(&home, "corrupt");
+        let corrupt = dispatch(
+            &state,
+            "browser.import.preview",
+            json!({"sources": [browser_import_source_id(&source)]}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(corrupt.code(), "error");
+        assert!(corrupt.to_string().contains("import database error"));
     }
 
     #[tokio::test]

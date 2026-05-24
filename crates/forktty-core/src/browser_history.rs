@@ -199,6 +199,27 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Import an aggregate visit row from another browser. Re-importing the same
+    /// source keeps the highest visit count instead of incrementing endlessly.
+    pub fn import_visit(
+        &self,
+        url: &str,
+        title: &str,
+        visit_count: i64,
+    ) -> Result<(), HistoryError> {
+        let count = visit_count.max(1);
+        self.conn.execute(
+            "INSERT INTO visits (url, title, visit_count, last_visit_us)
+                 VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(url) DO UPDATE SET
+                 visit_count   = MAX(visit_count, ?3),
+                 last_visit_us = ?4,
+                 title         = CASE WHEN ?2 <> '' THEN ?2 ELSE title END",
+            rusqlite::params![url, title, count, now_us()],
+        )?;
+        Ok(())
+    }
+
     /// Most-recently-visited rows first, capped at `limit`.
     pub fn list(&self, limit: usize) -> Result<Vec<Visit>, HistoryError> {
         let mut stmt = self.conn.prepare_cached(
@@ -394,6 +415,18 @@ mod tests {
         let rows = h.list(10).unwrap();
         assert_eq!(rows[0].title, "Real Title");
         assert_eq!(rows[0].visit_count, 1);
+    }
+
+    #[test]
+    fn import_visit_is_idempotent_by_url() {
+        let h = store();
+        h.import_visit("https://a.test/", "Imported", 7).unwrap();
+        h.import_visit("https://a.test/", "Imported Again", 7)
+            .unwrap();
+        let rows = h.list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].visit_count, 7);
+        assert_eq!(rows[0].title, "Imported Again");
     }
 
     #[test]
