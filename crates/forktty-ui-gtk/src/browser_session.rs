@@ -13,6 +13,17 @@ use webkit6::{CookiePersistentStorage, NetworkSession};
 /// (no migration). P1 has no profile system, so this is the only profile used.
 pub const DEFAULT_PROFILE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
+/// Whether `id` is safe to use as a single on-disk directory name. Rejects empty
+/// ids, anything longer than 64 bytes, and anything outside `[A-Za-z0-9_-]` — in
+/// particular `/`, `\`, and `.`, which could traverse outside the profiles root.
+fn is_valid_profile_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 /// On-disk locations for one profile's browser data.
 pub struct ProfileDirs {
     #[allow(dead_code)] // retained for SP3 P2 profile management
@@ -40,10 +51,10 @@ impl ProfileDirs {
 }
 
 /// The forktty data root (`~/.local/share/forktty`), matching the rest of the app
-/// (see `cli.rs` `dirs::data_dir().join("forktty")`). `None` if the platform has no
+/// (see `session.rs` `dirs::data_local_dir().join("forktty")`). `None` if the platform has no
 /// data dir.
 pub fn data_root() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join("forktty"))
+    dirs::data_local_dir().map(|d| d.join("forktty"))
 }
 
 // Note (P2): to evict a session, close it first to release its data-dir lock.
@@ -61,6 +72,14 @@ thread_local! {
 pub fn session_for(profile_id: &str) -> NetworkSession {
     if let Some(existing) = SESSIONS.with(|c| c.borrow().get(profile_id).cloned()) {
         return existing;
+    }
+
+    if !is_valid_profile_id(profile_id) {
+        eprintln!(
+            "forktty: invalid browser profile id {profile_id:?}; \
+             using an ephemeral session this run"
+        );
+        return NetworkSession::new_ephemeral();
     }
 
     let session = build_persistent_session(profile_id).unwrap_or_else(|| {
@@ -116,6 +135,24 @@ fn build_persistent_session(profile_id: &str) -> Option<NetworkSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_profile_id_value_is_stable() {
+        assert_eq!(DEFAULT_PROFILE_ID, "00000000-0000-0000-0000-000000000001");
+    }
+
+    #[test]
+    fn profile_id_validation_accepts_safe_ids_rejects_traversal() {
+        assert!(is_valid_profile_id(DEFAULT_PROFILE_ID));
+        assert!(is_valid_profile_id("abc"));
+        assert!(is_valid_profile_id("work_profile-2"));
+        assert!(!is_valid_profile_id(""));
+        assert!(!is_valid_profile_id("../evil"));
+        assert!(!is_valid_profile_id("a/b"));
+        assert!(!is_valid_profile_id("a.b"));
+        assert!(!is_valid_profile_id("a\\b"));
+        assert!(!is_valid_profile_id(&"x".repeat(65)));
+    }
 
     #[test]
     fn default_profile_dirs_use_the_default_id_as_directory_name() {
