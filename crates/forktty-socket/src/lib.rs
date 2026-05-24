@@ -918,7 +918,8 @@ pub async fn dispatch(
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize)
-                .unwrap_or(100);
+                .unwrap_or(100)
+                .min(10_000);
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -933,7 +934,8 @@ pub async fn dispatch(
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize)
-                .unwrap_or(100);
+                .unwrap_or(100)
+                .min(10_000);
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -953,7 +955,9 @@ pub async fn dispatch(
         "browser.bookmark.add" => {
             let url = required_string_param(&params, "url")?.to_string();
             if url.trim().is_empty() {
-                return Err("Invalid parameter url: must not be empty".into());
+                return Err(DispatchError::InvalidParam(
+                    "url must not be empty".to_string(),
+                ));
             }
             let title = params
                 .get("title")
@@ -5762,7 +5766,7 @@ mod tests {
         let err = dispatch(&state, "browser.bookmark.add", json!({"url": "   "}))
             .await
             .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
     }
 
     #[tokio::test]
