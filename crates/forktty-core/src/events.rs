@@ -219,11 +219,11 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
         });
     }
 
-    // Per-workspace field changes (only for workspaces present in both).
+    // Per-workspace field changes. Workspaces new in `next` are diffed against a
+    // default so replay (and same-tick creation) still advertises their metadata.
+    let default_ws = WsSnap::default();
     for (id, next_ws) in &next.workspaces {
-        let Some(prev_ws) = prev.workspaces.get(id) else {
-            continue;
-        };
+        let prev_ws = prev.workspaces.get(id).unwrap_or(&default_ws);
         if prev_ws.focused_surface_id != next_ws.focused_surface_id {
             events.push(ModelEvent::SurfaceFocused {
                 workspace_id: id.clone(),
@@ -250,15 +250,16 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
         }
     }
 
-    // Surface title changes (surfaces present in both).
+    // Surface title changes. New surfaces are diffed against an empty title so a
+    // titled surface advertises its title on replay too.
+    let default_surf = SurfSnap::default();
     for (id, next_surf) in &next.surfaces {
-        if let Some(prev_surf) = prev.surfaces.get(id) {
-            if prev_surf.title != next_surf.title {
-                events.push(ModelEvent::SurfaceTitleChanged {
-                    id: id.clone(),
-                    title: next_surf.title.clone(),
-                });
-            }
+        let prev_surf = prev.surfaces.get(id).unwrap_or(&default_surf);
+        if prev_surf.title != next_surf.title {
+            events.push(ModelEvent::SurfaceTitleChanged {
+                id: id.clone(),
+                title: next_surf.title.clone(),
+            });
         }
     }
 
@@ -494,6 +495,71 @@ mod tests {
                 total: Some(1.0),
             }]
         );
+    }
+
+    #[test]
+    fn new_workspace_replay_includes_metadata() {
+        // Replay diffs against an empty snapshot; a freshly observed workspace
+        // must still advertise its focus/status/progress/ports/pr, not just the
+        // bare workspace_added.
+        let prev = Snapshot::default();
+        let mut next = Snapshot::default();
+        let mut w = ws("main", "s1");
+        w.status.insert("build".into(), "ok".into());
+        w.progress.insert("dl".into(), (0.5, Some(1.0)));
+        w.ports = vec![3000];
+        w.pr = Some("#1 OPEN".into());
+        next.workspaces.insert("w1".into(), w);
+        let events = diff(&prev, &next);
+        assert!(events.contains(&ModelEvent::WorkspaceAdded {
+            id: "w1".into(),
+            name: "main".into(),
+        }));
+        assert!(events.contains(&ModelEvent::SurfaceFocused {
+            workspace_id: "w1".into(),
+            surface_id: "s1".into(),
+        }));
+        assert!(events.contains(&ModelEvent::StatusChanged {
+            workspace_id: "w1".into(),
+            key: "build".into(),
+            value: Some("ok".into()),
+        }));
+        assert!(events.contains(&ModelEvent::ProgressChanged {
+            workspace_id: "w1".into(),
+            key: "dl".into(),
+            value: Some(0.5),
+            total: Some(1.0),
+        }));
+        assert!(events.contains(&ModelEvent::PortsChanged {
+            workspace_id: "w1".into(),
+            ports: vec![3000],
+        }));
+        assert!(events.contains(&ModelEvent::PrChanged {
+            workspace_id: "w1".into(),
+            pr: Some("#1 OPEN".into()),
+        }));
+    }
+
+    #[test]
+    fn new_surface_replay_includes_title() {
+        let prev = Snapshot::default();
+        let mut next = Snapshot::default();
+        next.surfaces.insert(
+            "s1".into(),
+            SurfSnap {
+                workspace_id: "w1".into(),
+                title: "editor".into(),
+            },
+        );
+        let events = diff(&prev, &next);
+        assert!(events.contains(&ModelEvent::SurfaceAdded {
+            id: "s1".into(),
+            workspace_id: "w1".into(),
+        }));
+        assert!(events.contains(&ModelEvent::SurfaceTitleChanged {
+            id: "s1".into(),
+            title: "editor".into(),
+        }));
     }
 
     #[test]

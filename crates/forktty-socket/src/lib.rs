@@ -1760,7 +1760,7 @@ async fn handle_connection(
                 .get("replay")
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            return stream_events(&state, replay, &mut writer).await;
+            return stream_events(&state, replay, &mut reader, &mut writer).await;
         }
         let id = request.id.clone();
         let response = match dispatch(&state, &request.method, request.params).await {
@@ -1782,6 +1782,7 @@ async fn handle_connection(
 async fn stream_events(
     state: &SocketAppState,
     replay: bool,
+    reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<(), SocketError> {
     let mut receiver = state.events.subscribe();
@@ -1793,15 +1794,41 @@ async fn stream_events(
         }
     }
     loop {
-        match receiver.recv().await {
-            Ok(event) => write_ndjson(writer, &json!(event)).await?,
-            Err(broadcast::error::RecvError::Lagged(dropped)) => {
-                write_ndjson(writer, &lagged_notice(dropped)).await?;
+        tokio::select! {
+            // Watch the read half so an idle client's disconnect is noticed
+            // immediately, releasing the connection permit instead of blocking
+            // on recv() until the next broadcast.
+            closed = peer_closed(reader) => {
+                closed?;
+                break;
             }
-            Err(broadcast::error::RecvError::Closed) => break,
+            received = receiver.recv() => match received {
+                Ok(event) => write_ndjson(writer, &json!(event)).await?,
+                Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                    write_ndjson(writer, &lagged_notice(dropped)).await?;
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            },
         }
     }
     Ok(())
+}
+
+/// Resolve when the peer closes the connection (EOF) or the read errors.
+/// Any bytes the client sends on a subscribed connection are discarded.
+async fn peer_closed(
+    reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+) -> Result<(), SocketError> {
+    loop {
+        let consumed = {
+            let buf = reader.fill_buf().await?;
+            if buf.is_empty() {
+                return Ok(()); // EOF: peer closed.
+            }
+            buf.len()
+        };
+        reader.consume(consumed);
+    }
 }
 
 /// The NDJSON notice sent when a subscriber falls behind and the channel drops
@@ -4854,5 +4881,33 @@ mod tests {
     #[test]
     fn lagged_notice_reports_dropped_count() {
         assert_eq!(lagged_notice(7), json!({"event": "lagged", "dropped": 7}));
+    }
+
+    #[tokio::test]
+    async fn events_subscribe_ends_when_idle_client_disconnects() {
+        let (state, _backend) = test_state();
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let server_task = tokio::spawn(handle_connection(server, state.clone()));
+        let (read_half, mut write_half) = client.into_split();
+        write_half
+            .write_all(br#"{"id":1,"method":"events.subscribe","params":{"replay":false}}"#)
+            .await
+            .unwrap();
+        write_half.write_all(b"\n").await.unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert!(line.contains("subscribed"));
+
+        // Disconnect with no events ever broadcast: the server must notice the
+        // closed socket and return, releasing its connection permit.
+        drop(reader);
+        drop(write_half);
+        tokio::time::timeout(Duration::from_secs(2), server_task)
+            .await
+            .expect("server did not exit on idle disconnect")
+            .unwrap()
+            .unwrap();
     }
 }
