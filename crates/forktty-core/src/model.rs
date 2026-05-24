@@ -3173,7 +3173,8 @@ mod tests {
     #[test]
     fn create_ssh_workspace_produces_ssh_surface() {
         let mut model = WorkspaceModel::new();
-        let workspace = model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+        let workspace =
+            model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
 
         assert_eq!(workspace.name, "remote");
         let surfaces = model.list_surfaces(Some(&workspace.id));
@@ -3193,7 +3194,11 @@ mod tests {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
         let new_surface = model
-            .open_ssh(&workspace.id, "server.local".to_string(), SplitAxis::Horizontal)
+            .open_ssh(
+                &workspace.id,
+                "server.local".to_string(),
+                SplitAxis::Horizontal,
+            )
             .expect("open_ssh succeeds");
 
         assert_eq!(

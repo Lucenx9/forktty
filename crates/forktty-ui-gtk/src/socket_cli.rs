@@ -5827,6 +5827,46 @@ mod tests {
     }
 
     #[test]
+    fn ssh_sends_workspace_create_ssh() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id":"w2","name":"prod"},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_ssh(
+                    &ctx,
+                    strings(&[
+                        "user@example.com",
+                        "--name",
+                        "prod",
+                        "--cwd",
+                        "/tmp/project",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workspace.create_ssh");
+        assert_eq!(request["params"]["host"], "user@example.com");
+        assert_eq!(request["params"]["name"], "prod");
+        assert_eq!(request["params"]["workingDir"], "/tmp/project");
+    }
+
+    #[test]
+    fn ssh_requires_host() {
+        assert_err_contains(
+            handle_ssh(&test_context(), Vec::new()),
+            "ssh: missing required argument <user@host>",
+        );
+    }
+
+    #[test]
     fn browser_open_sends_browser_open_with_url_and_workspace() {
         let request = with_socket_response(
             |req| {

@@ -412,9 +412,6 @@ mod tests {
             backend.spawn_args("surface-ssh").unwrap(),
             vec!["user@example.com"]
         );
-        assert_eq!(
-            backend.spawn_shell("surface-ssh").unwrap(),
-            "/usr/bin/ssh"
-        );
+        assert_eq!(backend.spawn_shell("surface-ssh").unwrap(), "/usr/bin/ssh");
     }
 }

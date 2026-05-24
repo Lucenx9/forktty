@@ -66,16 +66,14 @@ pub fn is_valid_ssh_host(host: &str) -> bool {
         return false;
     }
     // Reject any whitespace or control characters.
-    if host
-        .chars()
-        .any(|c| c.is_whitespace() || c.is_control())
-    {
+    if host.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return false;
     }
     // Allow only characters that legitimately appear in an ssh target:
     // alphanumerics, `.`, `-`, `_`, `@`, `:`, `[`, `]`, `%` (zone IDs).
-    host.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | ':' | '[' | ']' | '%'))
+    host.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | ':' | '[' | ']' | '%')
+    })
 }
 
 /// Returns a trimmed, validated worktree/branch name suitable for passing to

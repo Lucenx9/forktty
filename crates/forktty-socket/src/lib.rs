@@ -438,7 +438,7 @@ pub async fn dispatch(
                     previous_active_id,
                 )
             };
-            if let Err(err) = spawn_ssh_terminal(state, &workspace) {
+            if let Err(err) = spawn_workspace_terminal(state, &workspace) {
                 rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
                 return Err(err.into());
             }
@@ -1330,28 +1330,20 @@ fn spawn_workspace_terminal(
     state: &SocketAppState,
     workspace: &forktty_core::Workspace,
 ) -> Result<(), String> {
-    state
-        .terminal
-        .spawn(SpawnRequest::for_workspace(
-            workspace,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    let Some(request) = spawn_request_for_workspace(state, workspace)? else {
+        return Ok(());
+    };
+    state.terminal.spawn(request).map_err(|err| err.to_string())
 }
 
 fn spawn_surface_terminal(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Result<(), String> {
-    state
-        .terminal
-        .spawn(SpawnRequest::for_surface(
-            surface,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    let Some(request) = spawn_request_for_surface(state, surface) else {
+        return Ok(());
+    };
+    state.terminal.spawn(request).map_err(|err| err.to_string())
 }
 
 /// Resolve the absolute path to the `ssh` binary, preferring known locations.
@@ -1364,32 +1356,49 @@ fn resolve_ssh_binary() -> String {
     "ssh".to_string()
 }
 
-/// Spawn a terminal whose process is `ssh <host>` rather than an interactive shell.
-fn spawn_ssh_terminal(
+fn spawn_request_for_workspace(
     state: &SocketAppState,
     workspace: &forktty_core::Workspace,
-) -> Result<(), String> {
-    // Extract the host from the workspace's focused surface kind.
-    let host = {
+) -> Result<Option<SpawnRequest>, String> {
+    let surface = {
         let model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        let surface = model
+        model
             .surface(&workspace.focused_surface_id)
-            .ok_or_else(|| "Surface not found".to_string())?;
-        match &surface.kind {
-            forktty_core::SurfaceKind::Ssh { host } => host.clone(),
-            _ => return Err("Surface is not an SSH surface".to_string()),
-        }
+            .cloned()
+            .ok_or_else(|| "Surface not found".to_string())?
     };
-    let ssh_bin = resolve_ssh_binary();
-    let request = SpawnRequest::for_workspace(workspace, ssh_bin, state.socket_path.clone())
-        .with_args([host]);
-    state
-        .terminal
-        .spawn(request)
-        .map_err(|err| err.to_string())
+    Ok(spawn_request_for_surface_kind(
+        SpawnRequest::for_workspace(workspace, state.shell.clone(), state.socket_path.clone()),
+        &surface.kind,
+    ))
+}
+
+fn spawn_request_for_surface(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+) -> Option<SpawnRequest> {
+    spawn_request_for_surface_kind(
+        SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone()),
+        &surface.kind,
+    )
+}
+
+fn spawn_request_for_surface_kind(
+    request: SpawnRequest,
+    kind: &forktty_core::SurfaceKind,
+) -> Option<SpawnRequest> {
+    match kind {
+        forktty_core::SurfaceKind::Terminal => Some(request),
+        forktty_core::SurfaceKind::Ssh { host } => {
+            let mut request = request;
+            request.shell = resolve_ssh_binary();
+            Some(request.with_args([host.clone()]))
+        }
+        forktty_core::SurfaceKind::Browser { .. } => None,
+    }
 }
 
 /// Validate the `host` parameter for SSH verbs.
@@ -1399,9 +1408,9 @@ fn required_ssh_host_param(params: &Value) -> Result<&str, DispatchError> {
     let Some(value) = params.get("host") else {
         return Err(DispatchError::MissingParam("host"));
     };
-    let host = value
-        .as_str()
-        .ok_or_else(|| DispatchError::InvalidParam("Invalid parameter host: expected string".to_string()))?;
+    let host = value.as_str().ok_or_else(|| {
+        DispatchError::InvalidParam("Invalid parameter host: expected string".to_string())
+    })?;
     if !is_valid_ssh_host(host) {
         return Err(DispatchError::InvalidParam(format!(
             "Invalid parameter host: {host:?} is not a valid SSH target"
@@ -1485,14 +1494,7 @@ async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<
     {
         return Ok(());
     }
-    state
-        .terminal
-        .spawn(SpawnRequest::for_workspace(
-            &workspace,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    spawn_workspace_terminal(state, &workspace)
 }
 
 fn resolve_workspace_cwd_param(params: &Value) -> Result<PathBuf, String> {
@@ -2173,14 +2175,7 @@ pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Resu
             model.create_workspace("main", cwd)
         }
     };
-    state
-        .terminal
-        .spawn(SpawnRequest::for_workspace(
-            &workspace,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        ))
-        .map_err(|err| err.to_string())
+    spawn_workspace_terminal(state, &workspace)
 }
 
 async fn handle_connection(
@@ -5895,6 +5890,64 @@ mod tests {
         );
         let args = backend.spawn_args(surface_id).unwrap();
         assert_eq!(args, vec!["user@example.com"]);
+    }
+
+    #[tokio::test]
+    async fn workspace_select_respawns_ssh_workspace_with_ssh_process() {
+        let (state, backend) = test_state();
+        let result = dispatch(
+            &state,
+            "workspace.create_ssh",
+            json!({"host": "user@example.com", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        let workspace_id = result["id"].as_str().unwrap();
+        let surface_id = result["focused_surface_id"].as_str().unwrap();
+        backend.close(surface_id).unwrap();
+
+        dispatch(&state, "workspace.select", json!({"id": workspace_id}))
+            .await
+            .unwrap();
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert!(
+            shell.ends_with("/ssh") || shell == "ssh",
+            "expected ssh binary, got {shell}"
+        );
+        assert_eq!(
+            backend.spawn_args(surface_id).unwrap(),
+            vec!["user@example.com"]
+        );
+    }
+
+    #[test]
+    fn bootstrap_default_workspace_respawns_existing_ssh_workspace_with_ssh_process() {
+        let (state, backend) = test_state();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let result = runtime
+            .block_on(dispatch(
+                &state,
+                "workspace.create_ssh",
+                json!({"host": "server.local", "workingDir": "/tmp"}),
+            ))
+            .unwrap();
+        let surface_id = result["focused_surface_id"].as_str().unwrap();
+        backend.close(surface_id).unwrap();
+
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert!(
+            shell.ends_with("/ssh") || shell == "ssh",
+            "expected ssh binary, got {shell}"
+        );
+        assert_eq!(
+            backend.spawn_args(surface_id).unwrap(),
+            vec!["server.local"]
+        );
     }
 
     #[tokio::test]
