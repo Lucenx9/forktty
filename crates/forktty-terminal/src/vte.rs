@@ -41,11 +41,8 @@ where
     terminal.set_scrollback_lines(20_000);
 
     let env_storage = child_environment(request);
-    // Build argv from shell + args so SSH panes get `["ssh", "user@host"]`.
-    let argv_storage: Vec<String> = std::iter::once(request.shell.clone())
-        .chain(request.args.iter().cloned())
-        .collect();
-    let cwd_storage = request.cwd.to_string_lossy().to_string();
+    let argv_storage = child_argv(request);
+    let cwd_storage = child_cwd(request);
     let on_spawn_result = Rc::new(RefCell::new(Some(on_spawn_result)));
     let spawned = Rc::new(Cell::new(false));
 
@@ -92,6 +89,18 @@ fn child_environment(request: &SpawnRequest) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "vte")]
+fn child_argv(request: &SpawnRequest) -> Vec<String> {
+    std::iter::once(request.shell.clone())
+        .chain(request.args.iter().cloned())
+        .collect()
+}
+
+#[cfg(feature = "vte")]
+fn child_cwd(request: &SpawnRequest) -> String {
+    request.cwd.to_string_lossy().to_string()
+}
+
 #[cfg(all(test, feature = "vte"))]
 mod tests {
     use super::*;
@@ -106,7 +115,11 @@ mod tests {
             args: Vec::new(),
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
-            extra_env: vec![("PATH".to_string(), "/custom/bin".to_string())],
+            extra_env: vec![
+                ("PATH".to_string(), "/custom/bin".to_string()),
+                ("TERM".to_string(), "dumb".to_string()),
+                ("FORKTTY_SURFACE_ID".to_string(), "spoofed".to_string()),
+            ],
         };
 
         let env = child_environment(&request);
@@ -121,5 +134,42 @@ mod tests {
         assert!(env
             .iter()
             .any(|entry| entry == "FORKTTY_SOCKET_PATH=/tmp/forktty.sock"));
+        assert!(env.iter().any(|entry| entry == "TERM=xterm-256color"));
+        assert!(!env.iter().any(|entry| entry == "TERM=dumb"));
+        assert!(!env
+            .iter()
+            .any(|entry| entry == "FORKTTY_SURFACE_ID=spoofed"));
+    }
+
+    #[test]
+    fn child_process_uses_requested_shell_argv_and_cwd() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/zsh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp/project"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        assert_eq!(child_argv(&request), vec!["/bin/zsh"]);
+        assert_eq!(child_cwd(&request), "/tmp/project");
+    }
+
+    #[test]
+    fn child_process_appends_spawn_args() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "ssh".to_string(),
+            args: vec!["user@example.test".to_string()],
+            cwd: PathBuf::from("/tmp/project"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        assert_eq!(child_argv(&request), vec!["ssh", "user@example.test"]);
+        assert_eq!(child_cwd(&request), "/tmp/project");
     }
 }

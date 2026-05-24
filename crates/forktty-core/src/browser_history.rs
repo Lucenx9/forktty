@@ -44,6 +44,47 @@ impl From<rusqlite::Error> for HistoryError {
     }
 }
 
+fn unique_backup_path(path: &Path, extension: &str) -> PathBuf {
+    let candidate = path.with_extension(extension);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.with_extension(format!("{extension}-{}-{nonce}", std::process::id()))
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
+fn is_recoverable_sqlite_error(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(err, _)
+            if matches!(
+                err.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            )
+    )
+}
+
+fn backup_corrupt_sqlite(path: &Path) -> Result<(), HistoryError> {
+    let backup = unique_backup_path(path, "sqlite.bak");
+    std::fs::rename(path, &backup).map_err(|e| HistoryError::Io(e.to_string()))?;
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = sqlite_sidecar_path(path, suffix);
+        if sidecar.exists() {
+            let _ = std::fs::remove_file(sidecar);
+        }
+    }
+    Ok(())
+}
+
 fn now_us() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -81,8 +122,19 @@ impl HistoryStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| HistoryError::Io(e.to_string()))?;
         }
+        match Self::open_sqlite(path) {
+            Ok(store) => Ok(store),
+            Err(e) if path.exists() && is_recoverable_sqlite_error(&e) => {
+                backup_corrupt_sqlite(path)?;
+                Self::open_sqlite(path).map_err(HistoryError::from)
+            }
+            Err(e) => Err(HistoryError::from(e)),
+        }
+    }
+
+    fn open_sqlite(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
-        Self::init(conn)
+        Self::init_sqlite(conn)
     }
 
     /// Open the history store for `profile` at its default path.
@@ -98,6 +150,10 @@ impl HistoryStore {
     }
 
     fn init(conn: Connection) -> Result<Self, HistoryError> {
+        Self::init_sqlite(conn).map_err(HistoryError::from)
+    }
+
+    fn init_sqlite(conn: Connection) -> rusqlite::Result<Self> {
         // WAL so a socket-side reader and a GTK-side writer coexist. Ignored for
         // in-memory connections, which is fine.
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
@@ -279,7 +335,16 @@ impl BookmarkStore {
             .path
             .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         let result = (|| -> Result<(), HistoryError> {
-            std::fs::write(&tmp, &bytes).map_err(|e| HistoryError::Io(e.to_string()))?;
+            let mut tmp_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+                .map_err(|e| HistoryError::Io(e.to_string()))?;
+            std::io::Write::write_all(&mut tmp_file, &bytes)
+                .map_err(|e| HistoryError::Io(e.to_string()))?;
+            tmp_file
+                .sync_all()
+                .map_err(|e| HistoryError::Io(e.to_string()))?;
             std::fs::rename(&tmp, &self.path).map_err(|e| HistoryError::Io(e.to_string()))
         })();
         if result.is_err() {
@@ -383,6 +448,24 @@ mod tests {
         }
         let h2 = HistoryStore::open(&path).unwrap();
         assert_eq!(h2.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn open_recovers_corrupt_history_db_with_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        std::fs::write(&path, b"not a sqlite database").unwrap();
+
+        let h = HistoryStore::open(&path).unwrap();
+        assert!(h.list(10).unwrap().is_empty());
+        assert!(path.with_extension("sqlite.bak").exists());
+
+        h.record_visit("https://recovered.test/", "Recovered")
+            .unwrap();
+        let h2 = HistoryStore::open(&path).unwrap();
+        let rows = h2.list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].url, "https://recovered.test/");
     }
 
     #[test]

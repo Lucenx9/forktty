@@ -321,6 +321,7 @@ impl WorkspaceModel {
                 }
             }
         }
+        let _ = self.repair_session_invariants();
     }
 
     pub fn to_session_data(&self) -> SessionData {
@@ -2560,6 +2561,37 @@ mod tests {
         assert!(restored
             .surface(&restored_workspace.focused_surface_id)
             .is_some());
+    }
+
+    #[test]
+    fn restore_session_repairs_duplicate_leaf_ids() {
+        let mut source = WorkspaceModel::new();
+        let first = source.create_workspace("first", "/tmp/a");
+        let second = source.create_workspace("second", "/tmp/b");
+        let mut data = source.to_session_data();
+        data.workspaces[1].pane_tree = PaneNode::Leaf {
+            surface_id: first.focused_surface_id.clone(),
+        };
+        data.workspaces[1].focused_surface_id = first.focused_surface_id.clone();
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let workspaces = restored.list_workspaces();
+        let first_leaves = leaf_surface_ids(&workspaces[0].pane_tree);
+        let second_leaves = leaf_surface_ids(&workspaces[1].pane_tree);
+        assert_eq!(first_leaves.len(), 1);
+        assert_eq!(second_leaves.len(), 1);
+        assert_ne!(first_leaves[0], second_leaves[0]);
+        assert_eq!(
+            restored.surface(&first_leaves[0]).unwrap().workspace_id,
+            first.id
+        );
+        assert_eq!(
+            restored.surface(&second_leaves[0]).unwrap().workspace_id,
+            second.id
+        );
+        crate::session::validate_session_data(&restored.to_session_data()).unwrap();
     }
 
     #[test]

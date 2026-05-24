@@ -347,6 +347,21 @@ struct SurfacePid {
     spawn_token: u64,
 }
 
+fn remove_surface_pid_for_spawn(
+    pids: &mut BTreeMap<String, SurfacePid>,
+    surface_id: &str,
+    spawn_token: u64,
+) -> bool {
+    if !matches!(
+        pids.get(surface_id),
+        Some(entry) if entry.spawn_token == spawn_token
+    ) {
+        return false;
+    }
+    pids.remove(surface_id);
+    true
+}
+
 impl VteController {
     fn new(
         container: gtk::Box,
@@ -1277,7 +1292,10 @@ fn active_layout_snapshot(
     let workspace = model.active_workspace()?;
     let mut structure = String::new();
     layout_structure_signature(&workspace.pane_tree, &mut structure);
-    let signature = format!("{}:{}", workspace.id, structure);
+    let signature = format!(
+        "{}:{}:focus({})",
+        workspace.id, structure, workspace.focused_surface_id
+    );
     Some((
         signature,
         workspace.pane_tree,
@@ -1690,11 +1708,8 @@ fn attach_vte_signal_handlers(
             return;
         }
         let mut pids = exit_surface_pids.borrow_mut();
-        if matches!(
-            pids.get(&surface_id),
-            Some(entry) if entry.spawn_token == spawn_token
-        ) {
-            pids.remove(&surface_id);
+        if !remove_surface_pid_for_spawn(&mut pids, &surface_id, spawn_token) {
+            return;
         }
         drop(pids);
         if let Ok(mut model) = exit_model.lock() {
@@ -5600,6 +5615,9 @@ fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool {
     let Some(surface) = surface else {
         return false;
     };
+    if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
+        return false;
+    }
 
     if let Ok(mut model) = state.model.lock() {
         let _ = model.set_status(
@@ -9039,6 +9057,24 @@ mod tests {
     }
 
     #[test]
+    fn child_exit_pid_removal_ignores_stale_spawn_tokens() {
+        let mut pids = BTreeMap::new();
+        pids.insert(
+            "surface-1".to_string(),
+            SurfacePid {
+                pid: 1002,
+                spawn_token: 2,
+            },
+        );
+
+        assert!(!remove_surface_pid_for_spawn(&mut pids, "surface-1", 1));
+        assert_eq!(pids["surface-1"].spawn_token, 2);
+
+        assert!(remove_surface_pid_for_spawn(&mut pids, "surface-1", 2));
+        assert!(pids.is_empty());
+    }
+
+    #[test]
     fn detects_visible_prompt_text() {
         assert!(looks_like_prompt("build finished\n> "));
         assert!(looks_like_prompt("? Continue (Y/n)"));
@@ -9523,6 +9559,64 @@ mod tests {
             &[restarting],
             "surface-1"
         ));
+    }
+
+    #[test]
+    fn active_layout_signature_changes_when_model_focus_changes() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (first_surface_id, second_surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let first_surface_id = workspace.focused_surface_id.clone();
+            let second = model
+                .split_surface(&first_surface_id, SplitAxis::Horizontal)
+                .unwrap();
+            (first_surface_id, second.id)
+        };
+        let before = active_layout_snapshot(&model).unwrap().0;
+
+        assert!(model.lock().unwrap().focus_surface(&first_surface_id));
+        let after = active_layout_snapshot(&model).unwrap().0;
+
+        assert_ne!(before, after);
+        assert!(before.contains(&format!("focus({second_surface_id})")));
+        assert!(after.contains(&format!("focus({first_surface_id})")));
+    }
+
+    #[test]
+    fn restart_surface_does_not_spawn_terminal_for_browser_pane() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, browser_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("project", "/tmp/project");
+            let browser = model
+                .open_browser(
+                    &workspace.id,
+                    "https://example.com",
+                    forktty_core::ProfileId::default(),
+                    SplitAxis::Horizontal,
+                )
+                .unwrap();
+            (workspace.id, browser.id)
+        };
+
+        assert!(!restart_surface(&state, &browser_id));
+
+        assert!(terminal.surfaces().unwrap().is_empty());
+        let model = model.lock().unwrap();
+        assert!(matches!(
+            model.surface(&browser_id).unwrap().kind,
+            forktty_core::SurfaceKind::Browser { .. }
+        ));
+        assert!(model.list_status(&workspace_id).is_empty());
     }
 
     #[test]

@@ -609,17 +609,9 @@ pub async fn dispatch(
             let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
             let fallback_path =
                 worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
-            let mut workspace_worktree_name = name.to_string();
-            if let Ok(existing) = worktree::list(&cwd) {
-                if let Some(info) = existing
-                    .iter()
-                    .find(|info| info.worktree_name == name || info.branch == name)
-                {
-                    workspace_worktree_name = info.worktree_name.clone();
-                }
-            }
-            worktree::remove(&cwd, name, false).map_err(DispatchError::from)?;
-            let (workspace, surface_ids, is_last_workspace) = {
+            let removal = worktree::prepare_remove(&cwd, name).map_err(DispatchError::from)?;
+            let workspace_worktree_name = removal.worktree_name().to_string();
+            let (workspace, surfaces, is_last_workspace) = {
                 let model = state
                     .model
                     .lock()
@@ -627,19 +619,21 @@ pub async fn dispatch(
                 let workspace = model.list_workspaces().into_iter().find(|workspace| {
                     workspace.worktree_name.as_deref() == Some(workspace_worktree_name.as_str())
                 });
-                let surface_ids = workspace
+                let surfaces = workspace
                     .as_ref()
-                    .map(|workspace| {
-                        model
-                            .list_surfaces(Some(&workspace.id))
-                            .into_iter()
-                            .map(|surface| surface.id)
-                            .collect::<Vec<_>>()
-                    })
+                    .map(|workspace| model.list_surfaces(Some(&workspace.id)))
                     .unwrap_or_default();
                 let is_last_workspace = workspace.is_some() && model.list_workspaces().len() == 1;
-                (workspace, surface_ids, is_last_workspace)
+                (workspace, surfaces, is_last_workspace)
             };
+            let surface_ids = surfaces
+                .iter()
+                .map(|surface| surface.id.clone())
+                .collect::<Vec<_>>();
+            if workspace.is_none() {
+                removal.finish(false).map_err(DispatchError::from)?;
+                return Ok(json!({"removed": name}));
+            }
             if is_last_workspace {
                 let workspace = workspace
                     .as_ref()
@@ -678,6 +672,23 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
+                if let Err(err) = removal.finish(false) {
+                    let mut err = err.to_string();
+                    if let Err(cleanup_err) =
+                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
+                    {
+                        err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+                    }
+                    if let Err(rollback_err) =
+                        rollback_workspace_creation(state, &replacement.id, previous_active_id)
+                    {
+                        err = format!("{err}; workspace rollback failed: {rollback_err}");
+                    }
+                    if let Err(respawn_err) = spawn_terminal_surfaces(state, &surfaces) {
+                        err = format!("{err}; terminal restore failed: {respawn_err}");
+                    }
+                    return Err(err.into());
+                }
                 {
                     let mut model = state
                         .model
@@ -688,6 +699,13 @@ pub async fn dispatch(
                 return Ok(json!({"removed": name}));
             }
             close_terminal_surfaces_if_present(state, &surface_ids)?;
+            if let Err(err) = removal.finish(false) {
+                let mut err = err.to_string();
+                if let Err(respawn_err) = spawn_terminal_surfaces(state, &surfaces) {
+                    err = format!("{err}; terminal restore failed: {respawn_err}");
+                }
+                return Err(err.into());
+            }
             {
                 let mut model = state
                     .model
@@ -1417,6 +1435,16 @@ fn required_ssh_host_param(params: &Value) -> Result<&str, DispatchError> {
         )));
     }
     Ok(host)
+}
+
+fn spawn_terminal_surfaces(
+    state: &SocketAppState,
+    surfaces: &[forktty_core::Surface],
+) -> Result<(), String> {
+    for surface in surfaces {
+        spawn_surface_terminal(state, surface)?;
+    }
+    Ok(())
 }
 
 fn close_terminal_surface_if_present(
@@ -2552,6 +2580,38 @@ mod tests {
         .with_notification_dispatch(false);
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
+    }
+
+    #[test]
+    fn spawn_terminal_surfaces_respawns_ssh_surfaces() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let surface = forktty_core::Surface {
+            id: "surface-ssh".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "ssh".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Ssh {
+                host: "user@example.test".to_string(),
+            },
+        };
+
+        spawn_terminal_surfaces(&state, &[surface]).unwrap();
+
+        assert!(backend.spawn_shell("surface-ssh").unwrap().ends_with("ssh"));
+        assert_eq!(
+            backend.spawn_args("surface-ssh").unwrap(),
+            vec!["user@example.test"]
+        );
     }
 
     #[derive(Debug, Default)]
@@ -4787,9 +4847,12 @@ mod tests {
             .unwrap()
             .iter()
             .any(|surface| surface.surface_id == surface_id));
-        assert!(worktree::list(repo_dir.path().to_str().unwrap())
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            worktree::list(repo_dir.path().to_str().unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -4855,9 +4918,12 @@ mod tests {
         assert_eq!(surfaces[0]["id"], surface_id);
         assert_eq!(backend.surfaces().unwrap().len(), 1);
         assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
-        assert!(worktree::list(repo_dir.path().to_str().unwrap())
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            worktree::list(repo_dir.path().to_str().unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]

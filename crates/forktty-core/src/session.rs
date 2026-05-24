@@ -456,6 +456,26 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
             }
         }
     }
+    let mut persisted_surface_ids = HashSet::new();
+    for surface in &data.surfaces {
+        if surface.id.trim().is_empty() {
+            return Err(SessionError::InvalidData(
+                "persisted surface id must not be empty".to_string(),
+            ));
+        }
+        if !persisted_surface_ids.insert(surface.id.as_str()) {
+            return Err(SessionError::InvalidData(format!(
+                "duplicate persisted surface id: {}",
+                surface.id
+            )));
+        }
+        if !surface_ids.contains(&surface.id) {
+            return Err(SessionError::InvalidData(format!(
+                "persisted surface id is not present in pane tree: {}",
+                surface.id
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -886,6 +906,72 @@ mod tests {
         };
         data.workspaces[1].focused_surface_id = first.focused_surface_id;
         data.active_workspace_id = Some(second.id);
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_duplicate_persisted_surface_ids() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model
+            .open_browser(
+                &workspace.id,
+                "https://example.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+        let mut data = model.to_session_data();
+        assert_eq!(data.surfaces.len(), 1);
+        data.surfaces.push(data.surfaces[0].clone());
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_persisted_surface_outside_pane_tree() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model
+            .open_browser(
+                &workspace.id,
+                "https://example.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+        let mut data = model.to_session_data();
+        assert_eq!(data.surfaces.len(), 1);
+        data.surfaces[0].id = "surface-missing".to_string();
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_with_blank_persisted_surface_id() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model
+            .open_browser(
+                &workspace.id,
+                "https://example.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+        let mut data = model.to_session_data();
+        assert_eq!(data.surfaces.len(), 1);
+        data.surfaces[0].id = " ".to_string();
 
         assert!(matches!(
             validate_session_data(&data),
