@@ -28,7 +28,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
-- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
+- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, quake mode, and optional WebKitGTK6 browser panes for source builds.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
 
 ## Install
@@ -90,6 +90,7 @@ Requirements:
 - Linux
 - [Rust 1.88+](https://rustup.rs/)
 - GTK4, libadwaita, VTE GTK4 development libraries
+- WebKitGTK 6 development files if you build the optional browser-pane feature
 
 Debian / Ubuntu:
 
@@ -117,6 +118,14 @@ Clone and run:
 git clone https://github.com/Lucenx9/forktty.git
 cd forktty
 cargo run -p forktty-ui-gtk --features gtk-vte
+```
+
+The prebuilt alpha artifacts and packaging scripts currently build the
+GTK/VTE terminal runtime (`--features gtk-vte`). To try browser panes
+from source, install WebKitGTK 6 development files and run:
+
+```bash
+cargo run -p forktty-ui-gtk --features browser
 ```
 
 Build the Debian package locally:
@@ -194,6 +203,22 @@ forktty set-status --key agent:codex --label Codex --value Running --color blue
 forktty set-progress --key build --label Build --value 42 --total 100
 forktty log --level warn "Waiting for reviewer input"
 forktty notifications
+forktty capabilities
+forktty events
+```
+
+Source builds with the `browser` feature also expose browser-pane
+automation over the same socket:
+
+```bash
+forktty browser open --profile Default https://example.com
+forktty browser navigate <surface-id> https://www.rust-lang.org
+forktty browser snapshot <surface-id>
+forktty browser click <surface-id> <ref>
+forktty browser fill <surface-id> <ref> "value"
+forktty browser eval <surface-id> "document.title"
+forktty browser profile list
+forktty browser profile create Work
 ```
 
 The socket CLI and agent hook bridge are native Rust code in the
@@ -261,10 +286,11 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded VTE terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace, surface, notification, worktree, and metadata automation.
+- Direct Unix socket JSON-RPC server for workspace, surface, notification, worktree, metadata, event-stream, capabilities, and optional browser automation.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
+- Optional browser-pane source build with WebKitGTK6 panes, scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, and profile CRUD.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
 ## Configuration
@@ -276,6 +302,7 @@ Config file: `~/.config/forktty/config.toml`. All fields are optional.
 theme_source = "auto"
 shell = "/bin/bash"
 worktree_layout = "nested" # "nested", "sibling", or "outer-nested"
+enable_pr_lookup = false
 notification_command = ""
 
 [appearance]
@@ -285,7 +312,7 @@ scrollback_lines = 20000
 terminal_audible_bell = true
 sidebar_position = "left" # "left" or "right"
 sidebar_visible = true
-terminal_renderer = "vte"
+terminal_renderer = "auto" # legacy compatibility; native GTK uses VTE
 terminal_theme = "system" # "system", "catppuccin-mocha", "rose-pine", "tokyo-night", "dracula", or "gruvbox-dark"
 window_mode = "normal" # "normal" or "quake"
 
@@ -317,7 +344,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
 - Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.
-- ForkTTY makes no telemetry, update-check, or external network calls.
+- ForkTTY makes no telemetry, update-check, or product network calls. Optional browser panes only load URLs the user or local socket automation opens.
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
@@ -329,7 +356,8 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Full theme customization, multi-window, persistent scrollback, and browser panes are backlog items.
+- Full theme customization, multi-window, persistent scrollback, browser history/bookmark UI, and browser import from external browsers are backlog items.
+- Browser panes are an opt-in source-build feature today; the packaged alpha artifacts are built with the GTK/VTE terminal feature set.
 
 ## Troubleshooting
 

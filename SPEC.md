@@ -6,20 +6,24 @@ ForkTTY is a Linux-only native terminal for running multiple coding agents in pa
 
 ```text
 forktty-core
-  Workspace model, pane tree, config, session v2, notifications, worktree logic
+  Workspace model, pane tree, config, session v2, notifications, worktree logic,
+  browser profile/history stores
 
 forktty-terminal
   TerminalBackend trait, headless test backend, VTE adapter
 
 forktty-socket
-  Tokio Unix socket server, newline-delimited JSON-RPC, direct dispatch
+  Tokio Unix socket server, newline-delimited JSON-RPC, direct dispatch,
+  events stream, capabilities discovery
 
 forktty-ui-gtk
   GTK4/libadwaita app shell, VTE panes, sidebar, dialogs, quake mode,
-  socket CLI, and agent hook installer over the socket API
+  socket CLI, agent hook installer over the socket API, and optional
+  WebKitGTK6 browser panes behind the `browser` feature
 ```
 
-There is no Tauri/WebKit/React runtime in the primary tree.
+There is no Tauri/React runtime in the primary tree. WebKitGTK6 is used
+only by the optional browser-pane feature.
 
 ## Tech Stack
 
@@ -27,11 +31,13 @@ There is no Tauri/WebKit/React runtime in the primary tree.
 | ----- | ---------- | --- |
 | UI shell | GTK4 + libadwaita | Native Linux window, header, dialogs, sidebar |
 | Terminal | VTE GTK4 | Embedded terminal widget and child PTY owner |
+| Browser feature | WebKitGTK6 | Optional browser-pane surface, page scripting, and per-profile web data |
 | State | Rust `WorkspaceModel` | Workspaces, panes, surfaces, metadata, notifications |
 | Git | `git2` | Worktree create/attach/remove/merge/status |
 | Notifications | `notify-rust` | Desktop notifications and custom notification command dispatch |
 | Socket API | tokio + serde_json | Local Unix JSON-RPC automation |
 | Config | TOML | `~/.config/forktty/config.toml` |
+| Browser stores | `uuid`, `rusqlite`, JSON | Profile identity, history store, and bookmarks metadata |
 | CLI hooks | Rust (`forktty` binary) | Native socket client and hook config merger |
 
 ## Workspace and Pane Model
@@ -52,6 +58,7 @@ Each surface has:
 - workspace ID;
 - cwd;
 - optional terminal title;
+- surface kind (`Terminal` or `Browser { url, profile }`);
 - unread/attention state.
 
 Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`; leaf nodes reference surface IDs. GTK renders the active workspace tree into nested `gtk::Paned` containers and reuses VTE widgets by surface ID.
@@ -84,6 +91,10 @@ Native session file:
 
 The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata. It excludes running PTY process handles and scrollback.
 
+Browser panes persist their surface URL and profile ID in the same session
+model. WebKit processes, in-memory page state, and terminal PTY state are
+not restored.
+
 ForkTTY can import the legacy `session.json` format but saves native sessions as v2. Session load validates file type, size, version, pane-tree depth/shape, and focused leaf index. Invalid files are quarantined instead of crashing startup.
 
 ## Config
@@ -99,6 +110,7 @@ Config file:
 theme_source = "auto"
 shell = "/bin/bash"
 worktree_layout = "nested"
+enable_pr_lookup = false
 notification_command = ""
 
 [appearance]
@@ -108,7 +120,7 @@ scrollback_lines = 20000
 terminal_audible_bell = true
 sidebar_position = "left"
 sidebar_visible = true
-terminal_renderer = "vte"
+terminal_renderer = "auto"
 terminal_theme = "system"
 window_mode = "normal"
 
@@ -117,7 +129,7 @@ desktop = true
 sound = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, and notification command. `terminal_theme = "system"` follows the app light/dark scheme; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
+Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, and notification command. `terminal_theme = "system"` follows the app light/dark scheme; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; the native GTK runtime uses VTE.
 
 ## Socket API
 
@@ -153,12 +165,14 @@ Implemented categories:
 
 | Category | Methods |
 | -------- | ------- |
-| System | `system.ping` |
+| System | `system.ping`, `system.capabilities` |
 | Workspace | `workspace.list`, `workspace.create`, `workspace.select`, `workspace.close` |
 | Surface | `surface.list`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
 | Notification | `notification.create`, `notification.list`, `notification.clear` |
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
+| Events | `events.subscribe` |
+| Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete` |
 
 Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged VTE pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 
@@ -170,7 +184,30 @@ Error responses include a structured `code` field so clients can branch on outco
 | `missing_param` | A required parameter is absent or has the wrong type. |
 | `not_found` | The referenced workspace, surface, worktree, or metadata entry does not exist. |
 | `payload_too_large` | The request line exceeds 1 MiB, or `surface.send_text` text exceeds 256 KiB. |
+| `conflict` | The operation is valid but blocked by current state, such as dirty worktrees or in-use browser profiles. |
+| `already_exists` | The requested worktree or resource already exists. |
+| `not_ready` | A target exists but is not ready to accept the operation. |
+| `invalid_param` | A supplied parameter has an invalid value. |
 | `error` | Catch-all for other failures (carries a `message`). |
+
+## Browser Pane Feature
+
+The `browser` cargo feature builds WebKitGTK6 panes alongside VTE panes.
+Browser surfaces are part of `WorkspaceModel` and carry a URL plus a
+`ProfileId`. The socket can open/navigate browser surfaces and, when a
+GTK browser command channel is available, run snapshot/click/fill/eval and
+back/forward/reload operations against the live WebView.
+
+Browser profile metadata is stored in:
+
+```text
+~/.local/share/forktty/browser_profiles/profiles.json
+```
+
+Each profile has a directory under `browser_profiles/<id>/` containing WebKit
+data/cache/cookies. `forktty-core` also contains pure per-profile
+`HistoryStore` and `BookmarkStore` implementations; their socket/CLI methods
+and GTK address-bar completion are not wired yet.
 
 ## Worktree Behavior
 
@@ -204,12 +241,16 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 ## Security Constraints
 
 - Local Linux desktop threat model; same-user processes are not treated as hostile isolation boundaries.
-- No remote network calls, telemetry, or update checks.
+- No telemetry, update checks, or product-service network calls. Optional
+  browser panes and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
 - 1 MiB bounds for socket requests, config, and session files.
 - Shell and notification executables must be absolute executable files.
 - Hooks are limited to verified worktree-local paths.
 - Worktree removal rejects dirty/tampered targets.
+- Browser profile IDs are validated before becoming directory names.
+- Browser JavaScript evaluation is available only through the local socket and
+  runs in the addressed WebKit page.
 
 Residual risks:
 
@@ -222,6 +263,7 @@ Residual risks:
 Current automated coverage:
 
 - Rust unit tests for config validation, session validation/quarantine, workspace/pane model, socket protocol, terminal backend, notification metadata, and worktree hardening.
+- Rust tests for browser command types, profile metadata, and history/bookmark stores.
 - Rust tests in `crates/forktty-ui-gtk/src/socket_cli.rs` for CLI parameter building, hook config merging, notification formatting, and socket-target fallbacks.
 - CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
 

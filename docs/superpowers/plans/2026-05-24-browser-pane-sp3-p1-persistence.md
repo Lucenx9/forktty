@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Current status on `main`:** Implemented. `browser_session.rs` provides
+per-profile persistent `NetworkSession`s; P2 now passes the actual
+`SurfaceKind::Browser.profile` value instead of only the fixed Default profile.
+
 **Goal:** Browser panes persist cookies and website data across forktty restarts by binding each WebView to a persistent per-profile `NetworkSession` (P1 uses a single fixed Default profile).
 
 **Architecture:** A new `browser_session.rs` owns the mapping profile-id → persistent `webkit6::NetworkSession`, rooted under `~/.local/share/forktty/browser_profiles/<id>/`, with sqlite cookie storage. `BrowserPaneWidget::new` takes a profile id and builds its WebView via `WebView::builder().network_session(&session).build()` instead of `WebView::new()`. P1 always passes the fixed Default profile id; the profile *system* (CRUD, per-pane selection) is P2.

@@ -3,6 +3,10 @@
 Date: 2026-05-24
 Gap feature: #3 in `docs/cmux-gap-features.md` (Built-in browser pane, scriptable).
 
+Status: implemented on `main` and later extended by SP3 profiles. Browser
+surfaces now carry both `url` and `profile`; this SP1 design keeps the original
+phase boundary for historical context.
+
 ## Decomposition
 
 Full agent-browser parity is the north star but spans 4+ independent subsystems.
@@ -14,8 +18,9 @@ It is split into sub-projects, each with its own spec → plan → ship cycle:
 - **SP2** — Scriptable socket verbs: `snapshot` (accessibility tree), `click`,
   `fill`, `eval`, element refs. The agent-browser core. Builds the socket→GTK
   command channel (also used by socket-driven back/reload).
-- **SP3** — Cookie / history / profile import from 20+ browsers. Heaviest, least
-  critical; deferred.
+- **SP3** — Persistence, profiles, history/bookmarks, and import. P1/P2 and the
+  core P3 stores are now implemented; P3 socket/CLI/GTK wiring and P4 import
+  remain deferred.
 
 ## Goal (SP1)
 
@@ -40,12 +45,12 @@ driven back/forward/reload, cookie/profile import, multiple tabs per pane.
 
 ```text
 forktty-core (pure, no webkit dependency)
-  Surface.kind: SurfaceKind { Terminal, Browser { url } }   (serde default = Terminal)
-  WorkspaceModel::open_browser(workspace_id, url, axis) -> Option<Surface>
+  Surface.kind: SurfaceKind { Terminal, Browser { url, profile } }   (serde default = Terminal)
+  WorkspaceModel::open_browser(workspace_id, url, profile, axis) -> Option<Surface>
   WorkspaceModel::set_surface_url(surface_id, url) -> bool
 
 forktty-socket (no webkit dependency)
-  browser.open      { workspace_id, url, axis? }  -> model.open_browser -> event
+  browser.open      { workspace_id, url, profile?, axis? }  -> model.open_browser -> event
   browser.navigate  { surface_id, url }           -> model.set_surface_url -> event
   (back/forward/reload are NOT socket verbs in SP1 — address-bar buttons only;
    socket-driven nav lands in SP2 with the command channel)

@@ -17,6 +17,14 @@ bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```
 
+When browser-pane code changed and WebKitGTK 6 development files are
+available, also run:
+
+```bash
+cargo build -p forktty-ui-gtk --features browser
+cargo test -p forktty-ui-gtk --features browser browser_pane
+```
+
 ## Manual Runtime Smoke
 
 - Start from a clean config/session directory.
@@ -65,6 +73,8 @@ rebuilding.
 - Against a stub socket that resets before replying, `forktty ping --socket <stub>` reports the socket path and reset code instead of a raw socket error.
 - `forktty list` — returns at least one workspace.
 - `forktty ping --wat` — exits with `ping: unexpected argument --wat` before trying to connect to the socket.
+- `forktty capabilities` — lists `system.capabilities`, `events.subscribe`, and the advertised socket methods.
+- Start `forktty events` in one terminal, change focus or create a workspace from another, and confirm NDJSON events stream until interrupted.
 - `forktty clear-notifications --workspace-id main` — exits with `clear-notifications: unexpected argument --workspace-id` instead of clearing all notifications.
 - `forktty create-workspace --working-dir=` — exits with `--working-dir requires a value` instead of opening a workspace in the default directory.
 - `forktty create-workspace project` — exits with `create-workspace: unexpected argument project` instead of creating a default-named workspace.
@@ -130,6 +140,21 @@ rebuilding.
 - If a terminal backend close fails during `workspace.close`, the socket returns the close error and keeps the workspace in the model instead of orphaning its panes.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"workspace-missing","key":"agent:test","label":"Test","value":"Running"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"not_found"`.
 - `python3 -c 'import json,sys; sys.stdout.write(json.dumps({"id":"x","method":"surface.send_text","params":{"surface_id":"main:1","text":"x"*300000}})+"\n")' | nc -U "$XDG_RUNTIME_DIR/forktty.sock"` — response includes `"code":"payload_too_large"` (the 256 KiB `surface.send_text` cap).
+
+## Optional Browser Feature Smoke
+
+Run this only from a source build compiled with `--features browser`;
+the current `.deb` and AppImage packaging scripts build the GTK/VTE
+terminal feature set.
+
+- Launch with `cargo run -p forktty-ui-gtk --features browser`.
+- `forktty browser profile list` — returns the built-in Default profile.
+- `forktty browser profile create QA` — creates a named profile; `forktty browser profile delete <id>` removes it when no open pane uses it.
+- `forktty browser open --profile Default https://example.com` — opens a browser pane with an address bar and WebKit content.
+- `forktty browser navigate <surface-id> https://www.rust-lang.org` — updates the pane and address bar.
+- `forktty browser snapshot <surface-id>` — returns JSON from the injected page driver.
+- `forktty browser back <surface-id>`, `forward`, and `reload` reach the GTK WebView command channel.
+- Close the browser pane with its in-pane close button and confirm the same close confirmation/path as terminal panes.
 
 ## Session Restore Smoke
 

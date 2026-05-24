@@ -14,6 +14,8 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] `events.subscribe` NDJSON change stream and `system.capabilities` discovery, with `forktty events`/`forktty capabilities` CLI.
 - [x] Browser pane SP1: WebKitGTK6 pane kind + `browser.open`/`browser.navigate` + in-pane address bar (behind the `browser` cargo feature).
 - [x] Browser pane SP2: scriptable verbs (`browser.snapshot`/`click`/`fill`/`eval`) + socket-driven `back`/`forward`/`reload` via socket→GTK command channel + `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (behind the `browser` cargo feature).
+- [x] Browser pane SP3 P1/P2: persistent per-profile WebKit sessions, `ProfileId` on browser surfaces, profile metadata store, `browser.profile.*` socket methods, and `forktty browser profile ...` CLI.
+- [x] Browser pane SP3 P3 core stores: per-profile `HistoryStore` and `BookmarkStore` in `forktty-core`.
 
 ### Workspaces and Panes
 
@@ -58,13 +60,14 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Shell, notification command, sidebar position, renderer, window mode, layout, and font-size validation.
 - [x] Socket bind hardening against live multi-instance takeover.
 - [x] Owner-only socket permissions and 1 MiB request line cap.
+- [x] Browser profile IDs and metadata writes validated before touching profile storage paths.
 
 ### Packaging and CI
 
 - [x] Native `.deb` package installing `forktty`.
 - [x] Desktop entry and icon under `packaging/linux`.
 - [x] CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
-- [x] GitHub prerelease workflow that uploads the Debian package artifact.
+- [x] GitHub prerelease workflow that uploads the Debian package, experimental AppImage, and shared `SHA256SUMS`.
 
 ## Backlog
 
@@ -78,7 +81,8 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] Full theme customization.
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
-- [ ] Browser pane SP3: cookie/history/profile import.
+- [ ] Browser history/bookmark socket verbs, CLI mirrors, visit recording, and address-bar completion.
+- [ ] Browser import wizard for cookies, history, and bookmarks from Firefox/Chromium-family profiles.
 - [ ] SSH remote workspaces.
 - [ ] MCP/server integration.
 - [ ] Plugin system.

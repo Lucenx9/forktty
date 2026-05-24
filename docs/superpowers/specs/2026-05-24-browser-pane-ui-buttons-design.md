@@ -5,6 +5,9 @@ Standalone mini-feature, separate from browser-pane SP1/SP2. Depends only on SP1
 (`SurfaceKind::Browser`, `WorkspaceModel::open_browser`, `BrowserPaneWidget`), all
 merged to `main`. Independent of SP2 (scripting verbs).
 
+Status: implemented on `main`. SP3 later changed `open_browser` to require a
+`ProfileId`; the GUI globe button uses the Default profile.
+
 ## Goal
 
 Let a user open and close a browser pane from the GUI, without the socket/CLI:
@@ -35,8 +38,8 @@ multiple tabs.
   `#![cfg(feature = "browser")]`): a vertical Box with an address-bar row
   (back/forward/reload buttons + entry) over the WebView. It has no split/close chrome.
   `focus_target()` returns the address entry (already the focus target).
-- `WorkspaceModel::open_browser(workspace_id, url, axis) -> Option<Surface>` (SP1)
-  splits the focused surface into a `Browser { url }` leaf.
+- `WorkspaceModel::open_browser(workspace_id, url, profile, axis) -> Option<Surface>`
+  splits the focused surface into a `Browser { url, profile }` leaf.
 
 ## Architecture
 
@@ -47,7 +50,7 @@ forktty-ui-gtk (all new code feature-gated under `browser`)
     pane chrome (terminal): + globe button -> open_browser_active(state, Horizontal)
     single_pane_actions overlay: + globe button (same handler)
     fn open_browser_active(state, axis): resolve active workspace ->
-        model.open_browser(ws_id, "about:blank", axis); focus the new browser pane
+        model.open_browser(ws_id, "about:blank", Default profile, axis); focus the new browser pane
         so its address bar takes keyboard focus.
 
   browser_pane.rs
@@ -97,7 +100,7 @@ feature is on, so the × needs no additional gate.
 #[cfg(feature = "browser")]
 fn open_browser_active(state: &SocketAppState, axis: SplitAxis) {
     // resolve active workspace id (reuse the same resolution split uses),
-    // model.open_browser(ws_id, "about:blank", axis);
+    // model.open_browser(ws_id, "about:blank", ProfileId::default(), axis);
     // the refresh tick rebuilds the layout; the new browser pane's
     // focus_target (address entry) receives focus on build.
 }
@@ -132,7 +135,7 @@ pane (same path SP1's socket `browser.open` relies on).
 
 ```text
 Open:  globe click -> focus_surface_and(focus the pane) -> open_browser_active
-       -> model.open_browser(ws, "about:blank", Horizontal)
+       -> model.open_browser(ws, "about:blank", Default profile, Horizontal)
        -> chrome refresh tick -> rebuild_layout builds BrowserPaneWidget
        -> focus_target (address entry) focused -> user types a URL
 
@@ -149,8 +152,9 @@ Close: × click (browser pane) -> connect_close callback
 - Closing the last/root surface: `show_close_pane_confirmation` already handles root
   replacement (the existing terminal close path); browser panes use the identical
   path, so no new edge case.
-- Build without `browser`: globe button never constructed; browser panes never exist,
-  so the × is unreachable. Terminal chrome unchanged.
+- Build without `browser`: globe button never constructed; browser surfaces opened
+  through the socket render as an unavailable placeholder, so the × is unreachable.
+  Terminal chrome unchanged.
 
 ## Testing
 

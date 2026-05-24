@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Current status on `main`:** Implemented and later extended by SP3. Browser
+surfaces now serialize as `Browser { url, profile }`; this SP1 plan keeps the
+original task sequence for historical implementation context.
+
 **Goal:** Add a browser pane kind to ForkTTY that embeds WebKitGTK6, openable and navigable from both the Unix socket and a thin in-pane address bar, with the engine gated behind an opt-in `browser` cargo feature.
 
 **Architecture:** `Surface` gains a `kind` field (`Terminal` | `Browser { url }`, serde-default `Terminal`). Socket navigation is pure model state — `browser.navigate` sets the url, the GTK layer observes the diff and calls `load_uri`, reusing existing model-observation plumbing. Back/forward/reload are address-bar buttons only this cycle. The WebKitGTK6 widget lives in a new `browser_pane.rs` gated behind `feature = "browser"`.
@@ -1102,10 +1106,10 @@ git commit -m "feat(cli): forktty browser open/navigate subcommands"
 In `docs/cmux-gap-features.md` under section 3, change the status line and add a sub-project note:
 
 ```text
-- **Impact**: high · **Cost**: high · **Status**: **SP1 done** (browser pane kind + WebKitGTK6 embed + navigation); SP2 (scripting verbs) + SP3 (cookie/profile import) backlog
+- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; SP3 P1/P2 done; SP3 P3 core stores done; P3 socket/CLI/GTK wiring and P4 import backlog
 ```
 
-Add a short paragraph noting SP1 ships `browser.open`/`browser.navigate`, the `browser` cargo feature, and the in-pane address bar; SP2 adds snapshot/click/fill/eval + socket-driven back/reload; SP3 adds cookie/history/profile import.
+Add a short paragraph noting SP1 ships `browser.open`/`browser.navigate`, the `browser` cargo feature, and the in-pane address bar; SP2 adds snapshot/click/fill/eval + socket-driven back/reload; SP3 adds persistence, profiles, history/bookmarks, and import in phases.
 
 - [ ] **Step 2: Update ROADMAP**
 

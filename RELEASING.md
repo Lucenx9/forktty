@@ -20,6 +20,8 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
    - `desktop-file-validate packaging/linux/forktty.desktop`
    - `bash scripts/build-deb.sh`
    - `bash scripts/build-appimage.sh`
+   - If the release includes browser-pane changes, also run
+     `cargo build -p forktty-ui-gtk --features browser`.
 3. Run `cargo audit` and (optionally) `cargo deny check`. Resolve any
    `high`/`critical` advisories before tagging.
 4. Walk the GTK runtime smoke tests in [`docs/release-qa.md`](docs/release-qa.md).
@@ -35,6 +37,9 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
      `## [<version>] - <YYYY-MM-DD>` section.
    - Leave an empty `## [Unreleased]` heading above it.
 4. Update the README download badge / link if it tracks the prerelease.
+   The packaged artifacts are built with `--features gtk-vte`; document
+   browser-pane changes as source-build features unless the packaging scripts
+   are changed to enable `browser`.
 5. Commit:
    ```
    git commit -am "release: forktty 0.2.0-alpha.N"

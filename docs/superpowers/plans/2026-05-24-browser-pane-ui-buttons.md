@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Current status on `main`:** Implemented. SP3 later changed
+`WorkspaceModel::open_browser` to require a `ProfileId`; the GUI open-browser
+button now opens `about:blank` with the Default profile.
+
 **Goal:** Add a globe button to the pane chrome that opens a blank browser pane (address bar focused), and a close (×) button on browser panes — both absent when the `browser` cargo feature is off.
 
 **Architecture:** Pure GTK glue in `forktty-ui-gtk`. A feature-gated `open_browser_active` helper mirrors `split_active_surface` but calls SP1's `WorkspaceModel::open_browser(ws, "about:blank", axis)` (no PTY spawn). The globe button is added to the terminal pane action chrome and the single-pane overlay under `#[cfg(feature = "browser")]`. `BrowserPaneWidget` gains a × button + `connect_close` callback, wired by gtk_app to the existing `show_close_pane_confirmation`.
@@ -21,7 +25,7 @@
   - `split_active_surface(state, axis)` (~line 5211): locks `state.model`, gets `model.active_workspace()`, calls `model.split_surface(&workspace.focused_surface_id, axis)`, then spawns a terminal. Browser panes need NO terminal spawn.
   - `show_close_pane_confirmation(parent, state, surface_id)` (~line 1131): the close path terminals use.
   - `browser_pane_widget(&self, surface_id: &str, url: &str) -> gtk::Widget` (~line 817): constructs `BrowserPaneWidget`, wires `connect_address_activate` and `connect_focus_in`, inserts into `self.browser_panes`. It has access to `self.model`, and the function lives on the controller. The terminal chrome's `parent` for the confirmation dialog: see how `show_close_pane_confirmation` is called from the terminal `close.connect_clicked` (~line 1009) — it captures a `parent` (a `&adw::ApplicationWindow` or similar) and `state`. Determine the equivalent handle available in `browser_pane_widget` (the controller holds `self.state`; for the window parent, follow whatever `browser_pane_widget` or nearby controller methods already use to reach the toplevel window — grep for how other controller-side code obtains the parent window).
-- `WorkspaceModel::open_browser(workspace_id: &str, url: &str, axis: SplitAxis) -> Option<Surface>` exists (SP1). `model.active_workspace() -> Option<&Workspace>`; `Workspace` has `.id: String`.
+- `WorkspaceModel::open_browser(workspace_id: &str, url: &str, profile: ProfileId, axis: SplitAxis) -> Option<Surface>` exists. `model.active_workspace() -> Option<&Workspace>`; `Workspace` has `.id: String`.
 - `SplitAxis` is imported in gtk_app.rs already (used by split buttons).
 - `save_session_from_state(state)` persists after structural changes (called at the end of `split_active_surface`).
 - No headless tests for button clicks exist (split/close buttons have none — they need a display). This feature adds no automated tests; verification is build + clippy + fmt on both feature sets, plus manual smoke.

@@ -4,6 +4,10 @@ Date: 2026-05-24
 Gap feature: #3 in `docs/cmux-gap-features.md` (Built-in browser pane, scriptable).
 Builds on SP1 (`2026-05-24-browser-pane-sp1-design.md`, merged to `main`).
 
+Status: implemented on `main` and later extended by SP3 profiles. P1/P2 and the
+core P3 history/bookmark stores are now present; external browser import and P3
+socket/CLI/GTK history wiring remain backlog.
+
 ## Goal
 
 Add agent-browser-parity scripting to the browser pane: `snapshot` (accessibility
@@ -11,8 +15,8 @@ tree with element refs), `click`, `fill`, `eval`, plus socket-driven `back` /
 `forward` / `reload`. These are request/reply operations against a live WebView, so
 SP2 builds the imperative socket→GTK command channel that SP1 deliberately deferred.
 
-Non-goals (SP2): cookie / history / browser-profile import (SP3); multiple tabs per
-pane; downloads UI; devtools; screenshots; network interception.
+Non-goals (SP2): persistence / profiles / history / import (SP3); multiple tabs
+per pane; downloads UI; devtools; screenshots; network interception.
 
 ## Why a command channel (not model-state diff like SP1)
 

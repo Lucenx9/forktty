@@ -3,6 +3,9 @@
 Date: 2026-05-24
 Gap feature: #2 in `docs/cmux-gap-features.md`.
 
+Status: implemented on `main` as `events.subscribe` plus
+`system.capabilities`; the CLI command remains `forktty capabilities`.
+
 ## Goal
 
 Give external automation (editors, MCP servers, scripts) two things the
@@ -11,7 +14,7 @@ request/response socket cannot offer today:
 1. **`events.subscribe`** — a long-lived connection that streams newline-delimited
    JSON (NDJSON) describing changes to the workspace model: workspaces, surfaces,
    focus, status, progress, notifications, listening ports, and linked PR state.
-2. **`capabilities`** — a one-shot verb returning the protocol version and the list
+2. **`system.capabilities`** — a one-shot verb returning the protocol version and the list
    of supported methods, so clients can feature-detect instead of guessing.
 
 Non-goals: persistence/replay of past events, per-client filtering, authentication
@@ -46,10 +49,11 @@ pub enum ModelEvent {
     WorkspaceAdded { id: String, name: String },
     WorkspaceRemoved { id: String },
     WorkspaceSelected { id: Option<String> },          // None = nothing active
-    SurfaceAdded { id: String, workspace_id: String },
+    SurfaceAdded { id: String, workspace_id: String, kind: SurfaceSnapKind },
     SurfaceRemoved { id: String },
     SurfaceFocused { workspace_id: String, surface_id: String }, // per-workspace focus
     SurfaceTitleChanged { id: String, title: String },
+    SurfaceUrlChanged { id: String, url: String },
     // Status/progress are keyed multi-entries per workspace; value None = key cleared.
     StatusChanged { workspace_id: String, key: String, value: Option<String> },
     ProgressChanged { workspace_id: String, key: String, value: Option<f64>, total: Option<f64> },
@@ -63,7 +67,7 @@ pub enum ModelEvent {
 - `struct Snapshot` — a compact, owned copy of just the fields the events above
   depend on, keyed by id for cheap diffing:
   - workspaces: `BTreeMap<id, WsSnap { name, focused_surface_id, status: BTreeMap<key,value>, progress: BTreeMap<key,(value,total)>, ports: Vec<u16>, pr: Option<String> }>`
-  - surfaces: `BTreeMap<id, SurfSnap { workspace_id, title }>`
+  - surfaces: `BTreeMap<id, SurfSnap { workspace_id, title, kind, url }>`
   - `active_workspace_id: Option<String>`
   - notifications: `BTreeMap<id, NotifSnap { workspace_id, title, body }>` (ids only ever grow within a session; cleared notifications produce no event).
 
@@ -100,7 +104,7 @@ clients track liveness via workspace/surface events, not notification removal.
      peer disconnects (write error) or the server stops. On `RecvError::Lagged(n)` it
      writes `{"event":"lagged","dropped":n}` and continues. On `RecvError::Closed` it
      ends.
-- `capabilities` verb (normal sync dispatch): returns
+- `system.capabilities` verb (normal sync dispatch): returns
   `{"version": <crate version>, "methods": [ ... sorted verb names ... ]}`. The method
   list is a single source-of-truth `const METHODS: &[&str]` that the `dispatch` match
   is checked against by a test (so the list can't drift from the match arms).
@@ -113,7 +117,7 @@ the socket and write each to stdout until the connection closes or the user
 interrupts. No read timeout (the stream is idle-by-design). Reconnection is the
 caller's job (re-run the command), matching cmux's reconnectable contract.
 
-`forktty capabilities [--json]` subcommand: one-shot, prints the `capabilities`
+`forktty capabilities [--json]` subcommand: one-shot, prints the `system.capabilities`
 result (human-readable by default, JSON with `--json`).
 
 ## Data flow
@@ -146,14 +150,14 @@ socket dispatch┘                                                              
   and the no-change case (empty diff). Pure, no I/O.
 - `forktty-socket`: a test that subscribes, mutates the model via existing dispatch
   verbs, and asserts the expected NDJSON events arrive on the receiver; a test that
-  `capabilities` lists exactly the dispatchable methods (guards match/list drift); a
+  `system.capabilities` lists exactly the dispatchable methods (guards match/list drift); a
   test that a lagged receiver yields the lagged notice.
 - Manual: `forktty events` in one terminal, drive changes from another, observe stream.
 
 ## Build sequence
 
 1. `events.rs` + unit tests (core). Verify: `cargo test -p forktty-core`.
-2. Channel in `SocketAppState` + tick task in `serve` + `capabilities` verb + method
+2. Channel in `SocketAppState` + tick task in `serve` + `system.capabilities` verb + method
    const + drift test. Verify: `cargo test -p forktty-socket`.
 3. `events.subscribe` streaming branch in `handle_connection` + subscribe/lag tests.
 4. CLI `events` + `capabilities` subcommands + help text.

@@ -44,7 +44,7 @@ against the current `forktty` executable and reports `launcherCheck.status`
 status means the AppImage or installed binary has moved since the last
 `hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
-event names ForkTTY installs hooks for (Codex: 5; Claude Code: 9).
+event names ForkTTY installs hooks for (Codex: 5; Claude Code: 9; Gemini: 8).
 
 ## Status entries published by hooks
 
@@ -73,10 +73,12 @@ Replace `{{FORKTTY_LAUNCHER}}` with the absolute path to the `forktty` launcher
 if you install these by hand; keep it shell-quoted. The installer handles this
 quoting automatically.
 
-The `timeout` field is provider-defined and measured in **seconds** for both
-Claude Code and Codex (Codex default 600 s; Claude default 600 s, 30 s for
-`UserPromptSubmit`). ForkTTY pins every entry at 30 s so a hook never blocks
-the agent loop longer than a local socket round-trip needs.
+The `timeout` field is provider-defined. Claude Code and Codex measure it in
+**seconds** (Codex default 600 s; Claude default 600 s, 30 s for
+`UserPromptSubmit`), and ForkTTY pins those entries at 30 s. Gemini templates
+use `5000`, matching Gemini's millisecond-style hook timeout field. The intent
+is the same for every provider: a hook should not block the agent loop longer
+than a local socket round-trip needs.
 
 Each command is guarded by a per-agent disable variable:
 

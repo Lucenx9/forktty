@@ -4,15 +4,21 @@ Date: 2026-05-24
 Epic: full cmux browser-feature parity for the forktty browser pane.
 Builds on SP1 (`SurfaceKind::Browser`, WebKitGTK6 embed, `browser.open`/`navigate`)
 and SP2 (scriptable verbs snapshot/click/fill/eval, socket→GTK command channel),
-both merged to `main`. All SP3 code lives behind the existing `browser` cargo feature.
+both merged to `main`.
+
+Current implementation status on `main`: P1 persistence and P2 profiles are
+implemented; P3 currently has the pure core history/bookmark stores only; P3
+socket/CLI/GTK wiring and P4 import are still backlog. WebKit/GTK browser code
+is behind the existing `browser` cargo feature, while the pure core profile and
+history/bookmark stores compile unconditionally.
 
 ## Goal
 
 Bring the browser pane to parity with cmux's browser feature:
 
 1. **Persistence** — cookies, localStorage, and other website data survive forktty
-   restarts (today `WebView::new()` uses an ephemeral default session, so every
-   relaunch is logged out).
+   restarts. Before P1, `WebView::new()` used an ephemeral default session, so
+   every relaunch logged out.
 2. **Profiles** — multiple isolated browsing identities (cmux's `BrowserProfileStore`),
    each pane bound to one profile, selectable per pane.
 3. **History + bookmarks** — per-profile visited-URL history and bookmarks, queryable
@@ -36,7 +42,7 @@ other browsers; importing saved passwords (cookies/history/bookmarks only).
 |-------|----------|--------------|----------|
 | P1 Persistence | per-profile persistent `NetworkSession`; one fixed Default profile | no | none |
 | P2 Profiles | `ProfileId` on `Browser` surface; profile CRUD + per-pane binding | yes | `uuid` (if not present) |
-| P3 History+bookmarks | per-profile history/bookmarks store; socket verbs; address completion | no | `rusqlite` |
+| P3 History+bookmarks | per-profile history/bookmark stores are in core; socket verbs and address completion remain pending | no | `rusqlite` |
 | P4 Import wizard | read+decrypt Firefox/Chromium data; plan resolver; GTK wizard | no | `soup`, `rusqlite`, `aes`/`cbc`, `pbkdf2`/`sha2`, `secret-service` |
 
 Each phase's "Out of scope until next phase" is implicit in the table: e.g. P1 ships a
@@ -54,12 +60,11 @@ single Default profile with no UI to create others; P2 adds the profile system o
   - `session.cookie_manager() -> Option<CookieManager>`, with
     `set_persistent_storage(filename, CookiePersistentStorage::Sqlite)` and
     `add_cookie(soup::Cookie, cb)` / `all_cookies(cb)`.
-- Core `SurfaceKind::Browser` currently carries only `{ url }`. Session save/restore
-  serializes it; any new field needs a serde default for backward compatibility with
-  existing saved sessions.
-- `WorkspaceModel::open_browser(workspace_id, url, axis) -> Option<Surface>` is the
+- Core `SurfaceKind::Browser` now carries `{ url, profile }`. Session save/restore
+  serializes it, with serde compatibility for older saved browser surfaces.
+- `WorkspaceModel::open_browser(workspace_id, url, profile, axis) -> Option<Surface>` is the
   single model entry point for creating a browser pane (used by socket `browser.open`
-  and the UI globe button). A profile argument threads through here.
+  and the UI globe button).
 - The socket runs on its own OS thread with a tokio runtime; the WebView lives on the
   GTK main thread. SP2's `async_channel` + `oneshot` command bridge (`BrowserCommand`)
   is the established pattern for socket→GTK calls that need a WebView; profile/history
@@ -391,10 +396,13 @@ chrome (feature-gated; absent without `browser`):
 
 ### Feature gating
 
-All SP3 code is under the `browser` feature, consistent with SP1/SP2. The new socket
-verbs always dispatch but return "browser automation unavailable" without the feature
-(same shape as SP2). `forktty-import` is only depended on by `forktty-ui-gtk` under
-`browser`; it is GTK-free but feature-gated at the consumer.
+WebKit/GTK SP3 code is under the `browser` feature, consistent with SP1/SP2.
+Pure stores (`ProfileStore`, `HistoryStore`, `BookmarkStore`) live in
+`forktty-core` and compile unconditionally so socket/CLI code can share them.
+SP3 P2 profile socket verbs dispatch regardless of the GUI feature; scripting
+verbs still return "browser automation unavailable" when no browser command
+channel is wired. `forktty-import` remains planned and would be depended on by
+`forktty-ui-gtk` under `browser`.
 
 ### Dependencies added
 
@@ -410,8 +418,8 @@ verbs always dispatch but return "browser automation unavailable" without the fe
 1. **P1** persistence: `browser_session.rs`; switch `WebView::new()` → builder + session.
 2. **P2** profiles: core `ProfileId`/`Browser.profile`/`ProfileStore`; socket+CLI verbs;
    thread profile through `open_browser` and pane construction.
-3. **P3** history+bookmarks: `browser_history.rs`; visit recording; socket+CLI verbs;
-   address-bar completion.
+3. **P3** history+bookmarks: `browser_history.rs` is implemented in core; visit
+   recording, socket+CLI verbs, and address-bar completion remain pending.
 4. **P4** import: `forktty-import` crate (discovery/decrypt/plan, headless-tested);
    socket+CLI; `import_wizard.rs` GTK UI.
 

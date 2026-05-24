@@ -2,9 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Current status on `main`:** Implemented. `SurfaceKind::Browser` carries a
+`ProfileId`, `browser.profile.{list,create,delete}` and `browser open --profile`
+are wired through the socket/CLI, and browser panes bind their WebKit session to
+the surface profile. Deleting a profile removes metadata only; on-disk profile
+data cleanup remains deferred.
+
 **Goal:** Give each browser pane an isolated, named profile: a `ProfileId` on the `Browser` surface kind, a file-backed `ProfileStore`, and socket/CLI verbs to create/list/delete profiles and open a pane in a chosen profile.
 
-**Architecture:** `forktty-core` gains a `ProfileId` newtype (UUID-backed, `Default` = the well-known P1 Default UUID) carried on `SurfaceKind::Browser`, plus a pure `ProfileStore` that reads/writes `browser_profiles/profiles.json`. `forktty-socket` adds `browser.profile.{list,create,delete}` and a `profile` arg to `browser.open`, resolving names→ids via the store. `forktty-ui-gtk` binds each pane's WebView to `session_for(&surface.profile.to_string())` (P1's factory) and removes a deleted profile's on-disk data dir.
+**Architecture:** `forktty-core` gains a `ProfileId` newtype (UUID-backed, `Default` = the well-known P1 Default UUID) carried on `SurfaceKind::Browser`, plus a pure `ProfileStore` that reads/writes `browser_profiles/profiles.json`. `forktty-socket` adds `browser.profile.{list,create,delete}` and a `profile` arg to `browser.open`, resolving names→ids via the store. `forktty-ui-gtk` binds each pane's WebView to `session_for(&surface.profile.to_string())` (P1's factory). On-disk data-dir cleanup for deleted profiles is deferred.
 
 **Tech Stack:** Rust, `uuid` (new workspace dep, v1, features `v4`+`serde`), serde/serde_json, the existing socket JSON-RPC + CLI patterns.
 

@@ -37,10 +37,16 @@ const EVENTS_TICK: Duration = Duration::from_millis(250);
 /// test guards against an entry here that has no handler.
 pub const METHODS: &[&str] = &[
     "browser.back",
+    "browser.bookmark.add",
+    "browser.bookmark.list",
+    "browser.bookmark.remove",
     "browser.click",
     "browser.eval",
     "browser.fill",
     "browser.forward",
+    "browser.history.clear",
+    "browser.history.list",
+    "browser.history.search",
     "browser.navigate",
     "browser.open",
     "browser.profile.create",
@@ -906,6 +912,78 @@ pub async fn dispatch(
             })?;
             Ok(json!({ "deleted": true }))
         }
+        "browser.history.list" => {
+            let profile = resolve_profile_param(&params)?;
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(100);
+            let store = forktty_core::HistoryStore::for_profile(profile)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            let rows = store
+                .list(limit)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!(rows))
+        }
+        "browser.history.search" => {
+            let query = required_string_param(&params, "query")?.to_string();
+            let profile = resolve_profile_param(&params)?;
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(100);
+            let store = forktty_core::HistoryStore::for_profile(profile)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            let rows = store
+                .search(&query, limit)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!(rows))
+        }
+        "browser.history.clear" => {
+            let profile = resolve_profile_param(&params)?;
+            let store = forktty_core::HistoryStore::for_profile(profile)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            store
+                .clear()
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!({ "cleared": true }))
+        }
+        "browser.bookmark.add" => {
+            let url = required_string_param(&params, "url")?.to_string();
+            if url.trim().is_empty() {
+                return Err("Invalid parameter url: must not be empty".into());
+            }
+            let title = params
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let profile = resolve_profile_param(&params)?;
+            let mut store = forktty_core::BookmarkStore::for_profile(profile)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            store
+                .add(&url, &title)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!({ "added": true }))
+        }
+        "browser.bookmark.list" => {
+            let profile = resolve_profile_param(&params)?;
+            let store = forktty_core::BookmarkStore::for_profile(profile)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!(store.list()))
+        }
+        "browser.bookmark.remove" => {
+            let url = required_string_param(&params, "url")?.to_string();
+            let profile = resolve_profile_param(&params)?;
+            let mut store = forktty_core::BookmarkStore::for_profile(profile)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            let removed = store
+                .remove(&url)
+                .map_err(|e| DispatchError::from(e.to_string()))?;
+            Ok(json!({ "removed": removed }))
+        }
         "surface.focus" => {
             let surface_id = required_surface_id(&params)?;
             let focused = {
@@ -1651,6 +1729,26 @@ fn profiles_store() -> Result<forktty_core::ProfileStore, DispatchError> {
         })
         .ok_or_else(|| DispatchError::from("no data dir for profiles".to_string()))?;
     forktty_core::ProfileStore::load(path).map_err(|e| DispatchError::from(e.to_string()))
+}
+
+/// Resolve an optional `profile` param (id or display name) to a `ProfileId`.
+/// Absent or null → the Default profile. Present-but-unknown → NotFound.
+/// Non-string → InvalidParam.
+fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, DispatchError> {
+    match params.get("profile") {
+        None => Ok(forktty_core::ProfileId::default()),
+        Some(Value::Null) => Ok(forktty_core::ProfileId::default()),
+        Some(value) => {
+            let name = value.as_str().ok_or_else(|| {
+                DispatchError::InvalidParam(
+                    "Invalid parameter profile: expected string".to_string(),
+                )
+            })?;
+            profiles_store()?
+                .resolve(name)
+                .ok_or(DispatchError::NotFound("profile".to_string()))
+        }
+    }
 }
 
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
@@ -5571,5 +5669,117 @@ mod tests {
                 "missing Profile {index}"
             );
         }
+    }
+
+    // --- SP3 P3 browser.history + browser.bookmark verbs ---------------------
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_history_list_and_clear() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        // history list on a fresh profile is empty
+        let hist = dispatch(&state, "browser.history.list", json!({}))
+            .await
+            .unwrap();
+        assert!(
+            hist.as_array().unwrap().is_empty(),
+            "fresh history must be empty"
+        );
+
+        // clear is a no-op success on empty history
+        let cleared = dispatch(&state, "browser.history.clear", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(cleared["cleared"], json!(true));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_bookmark_add_list_remove_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        // add
+        let added = dispatch(
+            &state,
+            "browser.bookmark.add",
+            json!({"url": "https://a.test/", "title": "A"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added["added"], json!(true));
+
+        // list
+        let listed = dispatch(&state, "browser.bookmark.list", json!({}))
+            .await
+            .unwrap();
+        let arr = listed.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["url"], json!("https://a.test/"));
+        assert_eq!(arr[0]["title"], json!("A"));
+
+        // remove
+        let removed = dispatch(
+            &state,
+            "browser.bookmark.remove",
+            json!({"url": "https://a.test/"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed["removed"], json!(true));
+
+        // list is now empty
+        let listed2 = dispatch(&state, "browser.bookmark.list", json!({}))
+            .await
+            .unwrap();
+        assert!(listed2.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_history_search_requires_query() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let err = dispatch(&state, "browser.history.search", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "missing_param");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_bookmark_add_rejects_empty_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let err = dispatch(&state, "browser.bookmark.add", json!({"url": "   "}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "error");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_history_search_returns_results() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        // history is empty so search returns empty array (not an error)
+        let results = dispatch(
+            &state,
+            "browser.history.search",
+            json!({"query": "example"}),
+        )
+        .await
+        .unwrap();
+        assert!(results.as_array().unwrap().is_empty());
     }
 }

@@ -5,7 +5,7 @@ use the channel that best matches what you need.
 
 ## I think I found a bug
 
-Open a [bug report](https://github.com/Lucenx9/forktty/issues/new?template=bug_report.yml).
+Open a [bug report](https://github.com/Lucenx9/forktty/issues/new).
 
 Before filing, please:
 
@@ -17,7 +17,7 @@ Before filing, please:
 
 ## I have a feature idea
 
-Open a [feature request](https://github.com/Lucenx9/forktty/issues/new?template=feature_request.yml).
+Open a [feature request](https://github.com/Lucenx9/forktty/issues/new).
 Please describe the user-facing outcome you want and the workflow it
 supports. Scope alignment lives in [`ROADMAP.md`](ROADMAP.md).
 

@@ -28,7 +28,7 @@ Assumptions:
 - Same-user local processes may interact with user-owned runtime resources.
 - User-authored hooks and notification commands execute with the user's privileges.
 
-ForkTTY makes no external network calls and does not treat the local Unix socket as a remote security boundary.
+ForkTTY makes no telemetry, update-check, or product-service network calls and does not treat the local Unix socket as a remote security boundary. Optional browser panes load user-requested URLs, and optional PR lookup delegates to the local `gh` CLI.
 
 ## Security Boundaries
 
@@ -46,6 +46,8 @@ ForkTTY makes no external network calls and does not treat the local Unix socket
 | Worktree merge | Rejects dirty target checkouts and merge conflicts before completing the operation. |
 | Worktree hooks | Only `.forktty/setup` and `.forktty/teardown` are executed; hook paths are canonicalized and must remain inside the worktree; execution uses argv, not `sh -c`. |
 | Logs | Newlines are sanitized before writing structured log lines. |
+| Browser profiles | Profile IDs are UUID-backed and validated before becoming directory names under `~/.local/share/forktty/browser_profiles/`; profile metadata writes are atomic. |
+| Browser scripting | `browser.snapshot`/`click`/`fill`/`eval` are local socket operations. `browser.eval` runs caller-provided JavaScript in the addressed WebKit page, so it is inside the same-user automation trust boundary. |
 
 ## Notification Command Details
 
@@ -72,6 +74,7 @@ Do not point `notification_command` at a script unless you trust that script wit
 - User-created `.forktty/setup` and `.forktty/teardown` hooks run with the user's privileges.
 - Worktree operations modify local Git checkouts and branches; users should review changes before merging or removing worktrees.
 - Session files and logs can contain local paths, branch names, workspace names, and notification text.
+- Optional browser profile data can contain cookies, cache, localStorage, history, bookmarks, and URLs for pages the user opens.
 - VTE owns the child PTY, so byte-level terminal escape parsing is intentionally narrower than the legacy PTY-owner path.
 
 ## Dependencies and CI

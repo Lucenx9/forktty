@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Current status on `main`:** Implemented and later extended by SP3 profiles.
+`SocketAppState` now also carries profile-store locking, and browser surfaces
+carry a profile ID in addition to the URL.
+
 **Goal:** Add scriptable browser-pane verbs (`snapshot`, `click`, `fill`, JS-evaluate) and socket-driven `back`/`forward`/`reload` via a request/reply command channel from the socket thread to the GTK WebView.
 
 **Architecture:** Pure command/result types live in `forktty-core`. The socket server holds an optional `async_channel::Sender<BrowserCommand>`; each command carries a `tokio::oneshot` reply sender. The GTK main thread pumps the receiver, runs JavaScript against the addressed WebView (an injected `window.__forktty` driver for snapshot/click/fill, raw script for JS-evaluate), and fulfils the reply. The socket handler awaits the reply with a bounded timeout.
@@ -1194,7 +1198,7 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 In `docs/cmux-gap-features.md`, feature #3 Status line (`:45`):
 
 ```text
-- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done** (browser pane kind + WebKitGTK6 embed + navigation + scriptable verbs snapshot/click/fill/JS-evaluate + socket-driven back/forward/reload); SP3 (cookie/profile import) backlog
+- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; SP3 P1/P2 done; SP3 P3 core stores done; P3 socket/CLI/GTK wiring and P4 import backlog
 ```
 
 Update the ForkTTY description paragraph (`:50`) to note SP2 shipped: snapshot/click/fill/JS-evaluate verbs, socket-driven back/forward/reload, `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI, behind the `browser` feature.

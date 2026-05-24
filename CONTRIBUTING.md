@@ -15,7 +15,6 @@ VTE shell is the primary implementation.
 - Pre-release QA matrix: [`docs/QA.md`](docs/QA.md) and [`docs/release-qa.md`](docs/release-qa.md)
 - Security policy and threat model: [`SECURITY.md`](SECURITY.md)
 - Privacy posture: [`PRIVACY.md`](PRIVACY.md)
-- Community expectations: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 
 ## Development environment
 
@@ -24,8 +23,9 @@ You will need:
 - Linux
 - Rust 1.88+ (install via [rustup](https://rustup.rs/))
 - GTK4, libadwaita, and VTE GTK4 development libraries
+- WebKitGTK 6 development files when working on the optional browser-pane feature
 
-Distro-specific install commands are in the [README](README.md#quick-start).
+Distro-specific install commands are in the [README](README.md#build-from-source).
 
 Clone and build:
 
@@ -64,6 +64,13 @@ cargo build -p forktty-ui-gtk --features gtk-vte
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
+```
+
+If your change touches browser-pane code, also run:
+
+```bash
+cargo build -p forktty-ui-gtk --features browser
+cargo test -p forktty-ui-gtk --features browser browser_pane
 ```
 
 If your change touches dependencies, also run:

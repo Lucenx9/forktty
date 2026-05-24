@@ -42,16 +42,16 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 
 ## 3. Built-in browser pane (scriptable)
 
-- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done** (browser pane kind + WebKitGTK6 embed + navigation + scriptable verbs snapshot/click/fill/JS-evaluate + socket-driven back/forward/reload); SP3 (cookie/profile import) backlog
+- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; **SP3 P1/P2 done** (persistent WebKit sessions + profiles); **SP3 P3 core stores done** (history/bookmark stores); P3 socket/CLI/GTK wiring and P4 import wizard backlog
 - cmux: browser pane with a scriptable API ported from
   [agent-browser](https://github.com/vercel-labs/agent-browser) (Apache-2.0): accessibility-tree
   snapshot, element refs, click, fill forms, evaluate JS. Plus cookie/history import from 20+
   browsers and browser profiles.
-- ForkTTY SP1 ships a browser pane as a new surface kind (`SurfaceKind::Browser`) embedding WebKitGTK6 behind an opt-in `browser` cargo feature, with socket verbs `browser.open`/`browser.navigate`, an in-pane address bar (back/forward/reload), and `forktty browser open|navigate` CLI. SP2 now ships the scriptable socket verbs (`browser.snapshot`/`browser.click`/`browser.fill`/`browser.eval`) plus socket-driven `back`/`forward`/`reload` via a socket→GTK command channel, with `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (element refs come from a pragmatic ARIA DOM walk; full AT-SPI is not claimed); all behind the `browser` feature. SP3 (cookie/history/profile import) remains backlog.
+- ForkTTY SP1 ships a browser pane as a new surface kind (`SurfaceKind::Browser`) embedding WebKitGTK6 behind an opt-in `browser` cargo feature, with socket verbs `browser.open`/`browser.navigate`, an in-pane address bar (back/forward/reload), and `forktty browser open|navigate` CLI. SP2 ships the scriptable socket verbs (`browser.snapshot`/`browser.click`/`browser.fill`/`browser.eval`) plus socket-driven `back`/`forward`/`reload` via a socket→GTK command channel, with `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (element refs come from a pragmatic ARIA DOM walk; full AT-SPI is not claimed). SP3 P1/P2 adds persistent per-profile WebKit sessions plus `browser.profile.*` socket/CLI verbs; P3 currently has core history/bookmark stores, with socket/CLI/GTK completion still pending. Browser import remains backlog.
 - Scope (Linux):
   - Embed WebKitGTK 6 (`webkitgtk-6.0`) as a pane kind alongside VTE.
   - Expose a socket verb set mirroring agent-browser (`open`, `navigate`, `snapshot`, `click`, `fill`, `eval`).
-  - Defer cookie/profile import; ship read/navigate/script first.
+  - Defer external browser import; ship read/navigate/script/profile first.
 
 ## 4. SSH remote workspaces
 
