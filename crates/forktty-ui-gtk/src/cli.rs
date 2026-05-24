@@ -121,6 +121,8 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "notification:clear"
             | "hooks"
             | "ping"
+            | "capabilities"
+            | "events"
     )
 }
 
@@ -857,6 +859,17 @@ mod tests {
                 OsString::from("--socket"),
                 OsString::from("/tmp/forktty.sock"),
                 OsString::from("ping")
+            ])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "capabilities"]),
+            CliAction::SocketCli(vec![OsString::from("capabilities")])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "events", "--no-replay"]),
+            CliAction::SocketCli(vec![
+                OsString::from("events"),
+                OsString::from("--no-replay")
             ])
         );
     }
