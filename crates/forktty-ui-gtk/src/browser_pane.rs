@@ -7,6 +7,30 @@ use gtk::prelude::*;
 use webkit6::prelude::*;
 use webkit6::WebView;
 
+use forktty_core::BrowserCmdError;
+
+/// The scripting driver injected into every page (SP2).
+pub const DRIVER_JS: &str = include_str!("driver.js");
+
+/// Build the JS call for `window.__forktty.click(ref)`, JSON-quoting `reference`.
+#[allow(dead_code)]
+pub fn click_js(reference: &str) -> String {
+    format!(
+        "window.__forktty.click({})",
+        serde_json::to_string(reference).unwrap_or_else(|_| "\"\"".to_string())
+    )
+}
+
+/// Build the JS call for `window.__forktty.fill(ref, value)`, JSON-quoting both.
+#[allow(dead_code)]
+pub fn fill_js(reference: &str, value: &str) -> String {
+    format!(
+        "window.__forktty.fill({},{})",
+        serde_json::to_string(reference).unwrap_or_else(|_| "\"\"".to_string()),
+        serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+    )
+}
+
 /// A browser pane: an address bar (entry + back/forward/reload) above a WebView.
 ///
 /// Wired into the pane layout in a later task; unused until then.
@@ -40,6 +64,19 @@ impl BrowserPaneWidget {
 
         let web_view = WebView::new();
         web_view.set_vexpand(true);
+
+        {
+            use webkit6::{UserContentInjectedFrames, UserScript, UserScriptInjectionTime};
+            let content_manager = web_view.user_content_manager().expect("ucm");
+            let script = UserScript::new(
+                DRIVER_JS,
+                UserContentInjectedFrames::TopFrame,
+                UserScriptInjectionTime::Start,
+                &[],
+                &[],
+            );
+            content_manager.add_script(&script);
+        }
 
         {
             let wv = web_view.clone();
@@ -119,11 +156,70 @@ impl BrowserPaneWidget {
             f(entry.text().to_string());
         });
     }
+
+    /// Run JavaScript in the page, delivering the JSON-serialized result (or an
+    /// error) to `on_done`. `on_done` runs on the GTK main thread once the GIO
+    /// async call settles.
+    pub fn run_js<F>(&self, js: &str, on_done: F)
+    where
+        F: FnOnce(Result<String, BrowserCmdError>) + 'static,
+    {
+        use webkit6::gio::Cancellable;
+        self.web_view
+            .evaluate_javascript(js, None, None, Cancellable::NONE, move |result| {
+                let mapped = match result {
+                    Ok(value) => match value.to_json(0) {
+                        Some(s) => {
+                            let s = s.to_string();
+                            if s.len() > forktty_core::MAX_BROWSER_RESULT_BYTES {
+                                Err(BrowserCmdError::TooLarge)
+                            } else {
+                                Ok(s)
+                            }
+                        }
+                        None => Ok("null".to_string()),
+                    },
+                    Err(err) => {
+                        let msg = err.to_string();
+                        if msg.contains("ref-not-found") {
+                            Err(BrowserCmdError::RefNotFound)
+                        } else {
+                            Err(BrowserCmdError::JsError(msg))
+                        }
+                    }
+                };
+                on_done(mapped);
+            });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn driver_script_is_present() {
+        assert!(DRIVER_JS.contains("window.__forktty"));
+        assert!(DRIVER_JS.contains("snapshot"));
+    }
+
+    #[test]
+    fn click_call_quotes_ref() {
+        assert_eq!(click_js("e1"), "window.__forktty.click(\"e1\")");
+        assert_eq!(click_js("e\"1"), "window.__forktty.click(\"e\\\"1\")");
+    }
+
+    #[test]
+    fn fill_call_quotes_ref_and_value() {
+        assert_eq!(
+            fill_js("e2", "hello"),
+            "window.__forktty.fill(\"e2\",\"hello\")"
+        );
+        assert_eq!(
+            fill_js("e2", "a\"b"),
+            "window.__forktty.fill(\"e2\",\"a\\\"b\")"
+        );
+    }
 
     // Constructs a live WebKitGTK WebView, which requires a display and whose
     // process-teardown aborts under WebKit. Marked #[ignore] so it stays out of
