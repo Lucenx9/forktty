@@ -18,8 +18,16 @@
     var r = el.getAttribute && el.getAttribute("role");
     if (r) return r;
     var tag = el.tagName.toLowerCase();
+    if (tag === "input") {
+      var t = (el.getAttribute("type") || "text").toLowerCase();
+      if (t === "checkbox") return "checkbox";
+      if (t === "radio") return "radio";
+      if (t === "button" || t === "submit" || t === "reset") return "button";
+      if (t === "hidden") return "";
+      return "textbox";
+    }
     var implicit = {
-      a: "link", button: "button", input: "textbox", textarea: "textbox",
+      a: "link", button: "button", textarea: "textbox",
       select: "combobox", h1: "heading", h2: "heading", h3: "heading",
       h4: "heading", h5: "heading", h6: "heading", nav: "navigation",
       main: "main", img: "img", form: "form"
@@ -43,49 +51,54 @@
     return roleOf(el) !== "";
   }
 
-  function walk(el) {
-    var node = null;
-    if (isInteresting(el)) {
-      var ref = "e" + (++counter);
-      refMap.set(ref, el);
-      node = {
-        ref: ref,
-        role: roleOf(el),
-        name: nameOf(el),
-        value: el.value !== undefined ? String(el.value) : "",
-        children: []
-      };
-    }
+  function nodeFor(el) {
+    var ref = "e" + (++counter);
+    refMap.set(ref, el);
+    return {
+      ref: ref,
+      role: roleOf(el),
+      name: nameOf(el),
+      value: el.value !== undefined ? String(el.value) : "",
+      children: walkChildren(el)
+    };
+  }
+
+  function walkChildren(el) {
+    var out = [];
     var kids = el.children || [];
     for (var i = 0; i < kids.length; i++) {
       var child = kids[i];
       if (isHidden(child)) continue;
-      var childNode = walk(child);
-      if (childNode) {
-        if (node) node.children.push(childNode);
-        else return childNode; // collapse: surface descendant when parent uninteresting
+      if (isInteresting(child)) {
+        out.push(nodeFor(child));
+      } else {
+        var sub = walkChildren(child);
+        for (var j = 0; j < sub.length; j++) out.push(sub[j]);
       }
     }
-    return node;
+    return out;
   }
 
   window.__forktty = {
     snapshot: function () {
       refMap = new Map();
       counter = 0;
-      var root = walk(document.body) || { role: "document", name: "", value: "", children: [] };
+      var children = document.body ? walkChildren(document.body) : [];
+      var root = { role: "document", name: "", value: "", children: children };
       return JSON.stringify(root);
     },
     click: function (ref) {
       var el = refMap.get(ref);
-      if (!el) throw "ref-not-found";
+      if (!el) throw new Error("ref-not-found");
       el.scrollIntoView({ block: "center" });
       el.click();
       return true;
     },
+    // Note: sets .value + input/change events; does not handle contenteditable
+    // rich-text editors (SP2 pragmatic scope).
     fill: function (ref, value) {
       var el = refMap.get(ref);
-      if (!el) throw "ref-not-found";
+      if (!el) throw new Error("ref-not-found");
       el.focus();
       el.value = value;
       el.dispatchEvent(new Event("input", { bubbles: true }));

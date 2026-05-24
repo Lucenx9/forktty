@@ -67,7 +67,9 @@ impl BrowserPaneWidget {
 
         {
             use webkit6::{UserContentInjectedFrames, UserScript, UserScriptInjectionTime};
-            let content_manager = web_view.user_content_manager().expect("ucm");
+            let content_manager = web_view
+                .user_content_manager()
+                .expect("WebView always has a default UserContentManager");
             let script = UserScript::new(
                 DRIVER_JS,
                 UserContentInjectedFrames::TopFrame,
@@ -171,7 +173,7 @@ impl BrowserPaneWidget {
                     Ok(value) => match value.to_json(0) {
                         Some(s) => {
                             let s = s.to_string();
-                            if s.len() > forktty_core::MAX_BROWSER_RESULT_BYTES {
+                            if s.len() >= forktty_core::MAX_BROWSER_RESULT_BYTES {
                                 Err(BrowserCmdError::TooLarge)
                             } else {
                                 Ok(s)
