@@ -970,7 +970,7 @@ fn build_pane_chrome(
     actions.append(&split_h);
     actions.append(&split_v);
     #[cfg(feature = "browser")]
-    let open_browser = pane_action_button("globe-symbolic", "Open Browser Pane");
+    let open_browser = pane_action_button("web-browser-symbolic", "Open Browser Pane");
     #[cfg(feature = "browser")]
     actions.append(&open_browser);
     actions.append(&close_separator);
@@ -995,7 +995,7 @@ fn build_pane_chrome(
     single_pane_actions.append(&single_split_h);
     single_pane_actions.append(&single_split_v);
     #[cfg(feature = "browser")]
-    let single_open_browser = pane_action_button("globe-symbolic", "Open Browser Pane");
+    let single_open_browser = pane_action_button("web-browser-symbolic", "Open Browser Pane");
     #[cfg(feature = "browser")]
     single_pane_actions.append(&single_open_browser);
     terminal_overlay.add_overlay(&single_pane_actions);
