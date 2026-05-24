@@ -866,14 +866,16 @@ impl WorkspaceModel {
         // Check if this surface is one of multiple tabs in its leaf.
         // If so, just remove it from the tab list without collapsing the leaf.
         if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
-            if remove_tab_from_leaf(&mut workspace.pane_tree, surface_id) {
-                // Tab was removed from a multi-tab leaf: update focus if needed.
-                let new_active = find_leaf_active_id(&workspace.pane_tree, surface_id)
-                    .or_else(|| find_leaf_containing_first_tab(&workspace.pane_tree, surface_id));
-                if let Some(new_active) = new_active {
+            let closing_focused_surface = workspace.focused_surface_id == surface_id;
+            if let Some(new_active) = remove_tab_from_leaf(&mut workspace.pane_tree, surface_id) {
+                if closing_focused_surface {
                     workspace.focused_surface_id = new_active;
-                } else if let Some(first) = first_leaf_surface_id(&workspace.pane_tree) {
-                    workspace.focused_surface_id = first;
+                } else if !leaf_surface_ids(&workspace.pane_tree)
+                    .contains(&workspace.focused_surface_id)
+                {
+                    if let Some(first) = first_leaf_surface_id(&workspace.pane_tree) {
+                        workspace.focused_surface_id = first;
+                    }
                 }
                 let removed = self.surfaces.remove(surface_id)?;
                 self.recompute_workspace_attention(&workspace_id);
@@ -1721,19 +1723,16 @@ fn collect_leaf_surface_ids(node: &PaneNode, ids: &mut Vec<SurfaceId>) {
 }
 
 /// Remove `target_surface_id` from a multi-tab leaf.
-/// Returns `true` if the id was found AND the leaf still has at least one
-/// remaining tab (i.e. it was NOT the last tab).  Returns `false` when the id
-/// is not found OR when it was the only tab (caller must use `remove_leaf`).
-fn remove_tab_from_leaf(node: &mut PaneNode, target_surface_id: &str) -> bool {
+/// Returns the remaining active tab in that leaf when the id was removed.
+/// Returns `None` when the id is not found or it was the only tab, in which
+/// case the caller must use the leaf-collapse path.
+fn remove_tab_from_leaf(node: &mut PaneNode, target_surface_id: &str) -> Option<SurfaceId> {
     match node {
         PaneNode::Leaf { tabs, active } => {
-            let pos = tabs.iter().position(|id| id == target_surface_id);
-            let Some(pos) = pos else {
-                return false;
-            };
+            let pos = tabs.iter().position(|id| id == target_surface_id)?;
             if tabs.len() == 1 {
                 // Last tab — caller must handle leaf collapse.
-                return false;
+                return None;
             }
             tabs.remove(pos);
             // Clamp active to the new last index, preferring the previous tab.
@@ -1742,40 +1741,11 @@ fn remove_tab_from_leaf(node: &mut PaneNode, target_surface_id: &str) -> bool {
             } else {
                 (*active).min(tabs.len().saturating_sub(1))
             };
-            true
+            tabs.get(*active).cloned()
         }
         PaneNode::Split { children, .. } => children
             .iter_mut()
-            .any(|child| remove_tab_from_leaf(child, target_surface_id)),
-    }
-}
-
-/// After removing a tab, find what the new active surface id should be for the
-/// leaf that previously contained `removed_surface_id`.
-/// We walk the tree to find a leaf whose `active` index gives a valid id.
-fn find_leaf_active_id(node: &PaneNode, _removed_surface_id: &str) -> Option<SurfaceId> {
-    match node {
-        PaneNode::Leaf { tabs, active } => tabs.get(*active).cloned(),
-        PaneNode::Split { children, .. } => children
-            .iter()
-            .find_map(|c| find_leaf_active_id(c, _removed_surface_id)),
-    }
-}
-
-/// Find the first tab of the leaf that previously contained `removed_surface_id`.
-/// Used as a fallback when the leaf no longer contains the removed id.
-fn find_leaf_containing_first_tab(node: &PaneNode, removed_surface_id: &str) -> Option<SurfaceId> {
-    match node {
-        PaneNode::Leaf { tabs, .. } => {
-            if tabs.iter().any(|id| id == removed_surface_id) {
-                tabs.first().cloned()
-            } else {
-                None
-            }
-        }
-        PaneNode::Split { children, .. } => children
-            .iter()
-            .find_map(|c| find_leaf_containing_first_tab(c, removed_surface_id)),
+            .find_map(|child| remove_tab_from_leaf(child, target_surface_id)),
     }
 }
 
@@ -3564,6 +3534,51 @@ mod tests {
         assert_eq!(workspace.focused_surface_id, first_id);
         // tab2 is gone from the surfaces map.
         assert!(model.surface(&tab2.id).is_none());
+    }
+
+    #[test]
+    fn close_focused_tab_in_later_pane_keeps_focus_in_that_pane() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let split_surface = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        let second_tab = model.add_tab(&split_surface.id).expect("add_tab");
+
+        let removed = model.close_surface(&second_tab.id).expect("close succeeds");
+        assert_eq!(removed.id, second_tab.id);
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, split_surface.id);
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children[1].leaf_active_id(), Some(&split_surface.id));
+    }
+
+    #[test]
+    fn close_background_pane_tab_preserves_current_focus() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let focused_pane = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        let background_tab = model.add_tab(&first_id).expect("add_tab");
+        assert!(model.focus_surface(&focused_pane.id));
+
+        let removed = model
+            .close_surface(&background_tab.id)
+            .expect("close succeeds");
+        assert_eq!(removed.id, background_tab.id);
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, focused_pane.id);
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children[0].leaf_active_id(), Some(&first_id));
     }
 
     #[test]
