@@ -3161,8 +3161,14 @@ fn build_ui(app: &adw::Application) {
     let brand_logo = gtk::Image::from_icon_name("forktty");
     brand_logo.set_pixel_size(18);
     brand_logo.add_css_class("app-brand-logo");
+    let brand_wordmark = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    brand_wordmark.add_css_class("app-brand-wordmark");
+    brand_wordmark.set_valign(gtk::Align::Center);
     let brand_name = gtk::Label::builder().label("forktty").xalign(0.0).build();
     brand_name.add_css_class("app-brand-name");
+    let brand_cursor = gtk::Label::builder().label("_").xalign(0.0).build();
+    brand_cursor.add_css_class("app-brand-name");
+    brand_cursor.add_css_class("app-brand-cursor");
     let brand_alpha_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     brand_alpha_dot.add_css_class("app-brand-tag-dot");
     brand_alpha_dot.set_valign(gtk::Align::Center);
@@ -3175,8 +3181,10 @@ fn build_ui(app: &adw::Application) {
     brand_alpha.set_tooltip_text(Some("Pre-release build"));
     brand_alpha.append(&brand_alpha_dot);
     brand_alpha.append(&brand_alpha_label);
+    brand_wordmark.append(&brand_name);
+    brand_wordmark.append(&brand_cursor);
     brand.append(&brand_logo);
-    brand.append(&brand_name);
+    brand.append(&brand_wordmark);
     brand.append(&brand_alpha);
     let brand_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     brand_separator.add_css_class("header-action-separator");
