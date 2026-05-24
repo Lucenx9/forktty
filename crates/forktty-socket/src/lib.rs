@@ -1405,7 +1405,7 @@ fn spawn_surface_terminal(
 }
 
 /// Resolve the absolute path to the `ssh` binary, preferring known locations.
-fn resolve_ssh_binary() -> String {
+pub fn resolve_ssh_binary() -> String {
     for candidate in &["/usr/bin/ssh", "/bin/ssh"] {
         if forktty_core::command_safety::is_executable_file(std::path::Path::new(candidate)) {
             return candidate.to_string();
@@ -1444,7 +1444,12 @@ fn spawn_request_for_surface(
     )
 }
 
-fn spawn_request_for_surface_kind(
+/// Adapt a base [`SpawnRequest`] for a surface's [`SurfaceKind`].
+///
+/// `Terminal` keeps the request as-is, `Ssh` rewrites the shell to the ssh
+/// binary and passes the host as the sole argument, and `Browser` returns
+/// `None` (browser panes never get a PTY backend).
+pub fn spawn_request_for_surface_kind(
     request: SpawnRequest,
     kind: &forktty_core::SurfaceKind,
 ) -> Option<SpawnRequest> {

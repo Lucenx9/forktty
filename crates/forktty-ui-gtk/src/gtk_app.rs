@@ -548,7 +548,7 @@ impl VteController {
             pane_tree
         };
         let widget = self.widget_for_pane(&visible_tree, &workspace_id);
-        let single_pane = collect_leaves(&visible_tree).len() == 1;
+        let single_pane = collect_panes(&visible_tree).len() == 1;
         for chrome in self.chromes.values() {
             chrome.header.set_visible(!single_pane);
             chrome.single_pane_actions.set_visible(single_pane);
@@ -705,12 +705,6 @@ impl VteController {
                 .collect::<Vec<_>>()
         };
         for (surface, auto_spawn_blocked) in surfaces {
-            // Browser surfaces are rendered by browser_panes and never get a
-            // terminal backend; spawning a PTY for them would leak a hidden
-            // shell process and emit bogus terminal status/port/close events.
-            if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
-                continue;
-            }
             if auto_spawn_blocked {
                 continue;
             }
@@ -720,14 +714,25 @@ impl VteController {
             {
                 continue;
             }
-            let surface_id = surface.id.clone();
-            let workspace_id = surface.workspace_id.clone();
-            self.pending_spawns.insert(surface_id.clone());
-            if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
+            // Browser surfaces are rendered by browser_panes and never get a
+            // terminal backend; spawning a PTY for them would leak a hidden
+            // shell process and emit bogus terminal status/port/close events.
+            // Ssh surfaces rewrite the request to launch ssh <host>; this is
+            // what respawns restored remote workspaces on session restore.
+            let base = SpawnRequest::for_surface(
                 &surface,
                 state.shell.clone(),
                 state.socket_path.clone(),
-            )) {
+            );
+            let Some(request) =
+                forktty_socket::spawn_request_for_surface_kind(base, &surface.kind)
+            else {
+                continue;
+            };
+            let surface_id = surface.id.clone();
+            let workspace_id = surface.workspace_id.clone();
+            self.pending_spawns.insert(surface_id.clone());
+            if let Err(err) = state.terminal.spawn(request) {
                 self.pending_spawns.remove(&surface_id);
                 record_terminal_spawn_failure(
                     &self.model,
@@ -3095,6 +3100,30 @@ fn collect_leaves_into(node: &PaneNode, ids: &mut Vec<String>) {
     }
 }
 
+/// One representative surface id per pane (leaf), using the leaf's active tab.
+/// Unlike `collect_leaves`, this counts panes — not the tabs inside them — so
+/// pane navigation and "Pane X/Y" labels are not skewed by multi-tab leaves.
+fn collect_panes(node: &PaneNode) -> Vec<String> {
+    let mut ids = Vec::new();
+    collect_panes_into(node, &mut ids);
+    ids
+}
+
+fn collect_panes_into(node: &PaneNode, ids: &mut Vec<String>) {
+    match node {
+        PaneNode::Leaf { tabs, active } => {
+            if let Some(id) = tabs.get(*active).or_else(|| tabs.first()) {
+                ids.push(id.clone());
+            }
+        }
+        PaneNode::Split { children, .. } => {
+            for child in children {
+                collect_panes_into(child, ids);
+            }
+        }
+    }
+}
+
 fn configure_terminal_paned(paned: &gtk::Paned) {
     paned.set_hexpand(true);
     paned.set_vexpand(true);
@@ -5133,9 +5162,9 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             .unwrap_or_else(|| workspace.working_dir.to_string_lossy().to_string())
     });
     let active_pane_label = active_workspace.and_then(|workspace| {
-        let leaves = collect_leaves(&workspace.pane_tree);
-        let pane_count = leaves.len();
-        let index = leaves
+        let panes = collect_panes(&workspace.pane_tree);
+        let pane_count = panes.len();
+        let index = panes
             .iter()
             .position(|surface_id| surface_id == &workspace.focused_surface_id)?;
         let surface = model.surface(&workspace.focused_surface_id);
@@ -5264,17 +5293,17 @@ fn focus_relative_pane(state: &SocketAppState, delta: isize) -> bool {
     let Some(workspace) = model.active_workspace() else {
         return false;
     };
-    let leaves = collect_leaves(&workspace.pane_tree);
-    if leaves.len() < 2 {
+    let panes = collect_panes(&workspace.pane_tree);
+    if panes.len() < 2 {
         return false;
     }
-    let current = leaves
+    let current = panes
         .iter()
         .position(|surface_id| surface_id == &workspace.focused_surface_id)
         .unwrap_or(0);
-    let len = leaves.len() as isize;
+    let len = panes.len() as isize;
     let next = (current as isize + delta).rem_euclid(len) as usize;
-    model.focus_surface(&leaves[next])
+    model.focus_surface(&panes[next])
 }
 
 fn notification_targets_workspace(
@@ -5751,9 +5780,6 @@ fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), Termina
     let Some(surface) = surface else {
         return Ok(());
     };
-    if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
-        return Ok(());
-    };
     if state
         .terminal
         .surfaces()?
@@ -5762,11 +5788,13 @@ fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), Termina
     {
         return Ok(());
     }
-    state.terminal.spawn(SpawnRequest::for_surface(
-        &surface,
-        state.shell.clone(),
-        state.socket_path.clone(),
-    ))
+    // Browser surfaces return None (no PTY backend); Ssh surfaces are rewritten
+    // to launch ssh <host> so reselecting a restored remote workspace respawns.
+    let base = SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
+    let Some(request) = forktty_socket::spawn_request_for_surface_kind(base, &surface.kind) else {
+        return Ok(());
+    };
+    state.terminal.spawn(request)
 }
 
 fn show_workspace_popover<W: IsA<gtk::Widget>>(
@@ -9636,6 +9664,74 @@ mod tests {
         assert!(model.list_notifications().iter().any(|notification| {
             notification.title == "Close Pane Failed" && notification.body.contains("spawn failed")
         }));
+    }
+
+    #[test]
+    fn restored_ssh_surface_respawns_with_ssh_shell() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let surface_id = {
+            let mut model = model.lock().unwrap();
+            let workspace =
+                model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+            workspace.focused_surface_id
+        };
+
+        // Mirrors session-restore / workspace-reselect: the focused surface is an
+        // Ssh surface that has no backend yet.
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        assert_eq!(
+            terminal.spawn_shell(&surface_id).unwrap(),
+            forktty_socket::resolve_ssh_binary()
+        );
+        assert_eq!(
+            terminal.spawn_args(&surface_id).unwrap(),
+            vec!["user@example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_panes_counts_panes_not_tabs() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        model.add_tab(&first).unwrap();
+
+        let tree = model.active_workspace().unwrap().pane_tree;
+        // One leaf holding two tabs: two surfaces, one pane.
+        assert_eq!(collect_leaves(&tree).len(), 2);
+        assert_eq!(collect_panes(&tree).len(), 1);
+    }
+
+    #[test]
+    fn focus_relative_pane_ignores_extra_tabs_in_a_single_pane() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let first = workspace.focused_surface_id.clone();
+            model.add_tab(&first).unwrap();
+        }
+
+        // Single pane with two tabs must not be treated as two panes.
+        assert!(!focus_relative_pane(&state, 1));
+        assert!(!focus_relative_pane(&state, -1));
     }
 
     #[test]
