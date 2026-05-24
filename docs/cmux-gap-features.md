@@ -30,15 +30,14 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 
 ## 2. Socket: `events` stream + `capabilities`
 
-- **Impact**: high · **Cost**: medium · **Status**: new
+- **Impact**: high · **Cost**: medium · **Status**: **done** (events stream + capabilities)
 - cmux: `cmux events` streams reconnectable newline-delimited JSON of workspace/surface/focus
   changes; `cmux capabilities` exposes a discovery surface; `cmux rpc <method>` raw passthrough;
   `cmux top` resource usage.
-- ForkTTY socket is request/response only; no push/event channel, no capability discovery.
-- Scope:
-  - Add a `subscribe`/`events` socket verb that holds the connection open and emits bounded
-    NDJSON events from the existing model mutation points.
-  - Add `capabilities` returning supported verbs + version for forward-compat clients.
+- ForkTTY now ships `events.subscribe` (long-lived NDJSON stream of workspace/surface/focus/
+  status/progress/notification/ports/PR changes, computed by a source-agnostic snapshot diff)
+  and `system.capabilities` (version + advertised methods). CLI: `forktty events`,
+  `forktty capabilities`. `rpc` passthrough and `top` remain out of scope.
 - Unblocks external automation and editor/MCP integrations.
 
 ## 3. Built-in browser pane (scriptable)
