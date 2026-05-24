@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod browser_cmd;
 pub mod command_safety;
 pub mod config;
 pub mod events;
@@ -13,6 +14,10 @@ pub mod worktree;
 pub use agents::{
     normalize_agent_status, AgentCapabilities, AgentConfigLocation, AgentKind, AgentProfile,
     AgentStatus,
+};
+pub use browser_cmd::{
+    BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, MAX_BROWSER_RESULT_BYTES,
+    MAX_BROWSER_SCRIPT_BYTES,
 };
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
 

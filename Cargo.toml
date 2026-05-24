@@ -18,6 +18,7 @@ homepage = "https://github.com/Lucenx9/forktty"
 repository = "https://github.com/Lucenx9/forktty"
 
 [workspace.dependencies]
+async-channel = "2"
 base64 = "0.22"
 chrono = "0.4"
 dirs = "6"
