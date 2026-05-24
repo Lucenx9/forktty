@@ -8456,6 +8456,8 @@ fn handle_browser_command(
                 let _ = reply.send(into_cmd_result(r));
             });
         }
+        // Nav ops are fire-and-forget: Ok means "navigation initiated", not
+        // "page loaded". Callers issue a follow-up snapshot to see the result.
         BrowserOp::Back => {
             pane.go_back();
             let _ = reply.send(CmdResult::Ok);

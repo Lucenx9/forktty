@@ -16,14 +16,14 @@ path = "src/main.rs"
 [features]
 default = []
 gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/vte"]
-browser = ["gtk-vte", "dep:webkit6"]
+browser = ["gtk-vte", "dep:webkit6", "dep:async-channel"]
 
 [dependencies]
 forktty-core = { path = "../forktty-core" }
 forktty-socket = { path = "../forktty-socket" }
 forktty-terminal = { path = "../forktty-terminal" }
 adw = { package = "libadwaita", version = "0.8", features = ["v1_4"], optional = true }
-async-channel = { workspace = true }
+async-channel = { workspace = true, optional = true }
 dirs.workspace = true
 global-hotkey = { version = "0.8", optional = true }
 gtk4 = { version = "0.10", optional = true }

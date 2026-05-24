@@ -13,7 +13,6 @@ use forktty_core::BrowserCmdError;
 pub const DRIVER_JS: &str = include_str!("driver.js");
 
 /// Build the JS call for `window.__forktty.click(ref)`, JSON-quoting `reference`.
-#[allow(dead_code)]
 pub fn click_js(reference: &str) -> String {
     format!(
         "window.__forktty.click({})",
@@ -22,7 +21,6 @@ pub fn click_js(reference: &str) -> String {
 }
 
 /// Build the JS call for `window.__forktty.fill(ref, value)`, JSON-quoting both.
-#[allow(dead_code)]
 pub fn fill_js(reference: &str, value: &str) -> String {
     format!(
         "window.__forktty.fill({},{})",
