@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod command_safety;
 pub mod config;
+pub mod events;
 pub mod model;
 pub mod notification;
 pub mod ports;
