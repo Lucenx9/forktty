@@ -4911,8 +4911,16 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             logs.first(),
             latest_attention_notification.as_ref(),
         );
-        let surface_count = model.list_surfaces(Some(&workspace.id)).len();
-        let meta = workspace_meta_line(&workspace);
+        let surfaces = model.list_surfaces(Some(&workspace.id));
+        let surface_count = surfaces.len();
+        let ssh_host = surfaces.iter().find_map(|s| {
+            if let forktty_core::SurfaceKind::Ssh { host } = &s.kind {
+                Some(host.clone())
+            } else {
+                None
+            }
+        });
+        let meta = workspace_meta_line(&workspace, ssh_host.as_deref());
         rows.push(SidebarWorkspaceRow {
             workspace,
             meta,
@@ -5006,8 +5014,11 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     }
 }
 
-fn workspace_meta_line(workspace: &forktty_core::Workspace) -> String {
+fn workspace_meta_line(workspace: &forktty_core::Workspace, ssh_host: Option<&str>) -> String {
     let mut parts = Vec::new();
+    if let Some(host) = ssh_host {
+        parts.push(format!("ssh:{host}"));
+    }
     if !workspace.git_branch.trim().is_empty() {
         parts.push(workspace.git_branch.clone());
     }
@@ -5550,11 +5561,24 @@ fn show_workspace_popover<W: IsA<gtk::Widget>>(
     container.add_css_class("ft-workspace-popover-list");
     container.set_width_request(300);
 
-    let (active_id, workspaces) = {
+    let (active_id, workspaces, ssh_hosts) = {
         let Ok(model) = state.model.lock() else {
             return;
         };
-        (model.active_workspace_id(), model.list_workspaces())
+        let workspaces = model.list_workspaces();
+        let ssh_hosts: std::collections::BTreeMap<String, String> = workspaces
+            .iter()
+            .filter_map(|ws| {
+                model.list_surfaces(Some(&ws.id)).into_iter().find_map(|s| {
+                    if let forktty_core::SurfaceKind::Ssh { host } = s.kind {
+                        Some((ws.id.clone(), host))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        (model.active_workspace_id(), workspaces, ssh_hosts)
     };
 
     if workspaces.is_empty() {
@@ -5588,6 +5612,9 @@ fn show_workspace_popover<W: IsA<gtk::Widget>>(
                 .build();
             name.add_css_class("ft-workspace-popover-name");
             let mut meta_parts: Vec<String> = Vec::new();
+            if let Some(host) = ssh_hosts.get(&ws.id) {
+                meta_parts.push(format!("ssh:{host}"));
+            }
             let branch = ws.git_branch.trim();
             if !branch.is_empty() {
                 meta_parts.push(branch.to_string());

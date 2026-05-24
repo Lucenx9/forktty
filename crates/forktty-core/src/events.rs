@@ -94,6 +94,7 @@ pub enum SurfaceSnapKind {
     #[default]
     Terminal,
     Browser,
+    Ssh,
 }
 
 /// Per-workspace fields tracked for diffing.
@@ -155,6 +156,7 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
                 crate::model::SurfaceKind::Browser { url, .. } => {
                     (SurfaceSnapKind::Browser, Some(url))
                 }
+                crate::model::SurfaceKind::Ssh { host } => (SurfaceSnapKind::Ssh, Some(host)),
             };
             surfaces.insert(
                 surface.id,
