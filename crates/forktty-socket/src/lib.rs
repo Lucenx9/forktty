@@ -4814,8 +4814,7 @@ mod tests {
             if *method == "events.subscribe" {
                 continue;
             }
-            if let Err(DispatchError::MethodNotFound(_)) =
-                dispatch(&state, method, json!({})).await
+            if let Err(DispatchError::MethodNotFound(_)) = dispatch(&state, method, json!({})).await
             {
                 panic!("advertised method {method} has no dispatch handler");
             }
@@ -4852,11 +4851,10 @@ mod tests {
         let mut saw_live = false;
         for _ in 0..50 {
             let mut buf = String::new();
-            let read =
-                tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut buf))
-                    .await
-                    .expect("stream did not stall")
-                    .unwrap();
+            let read = tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut buf))
+                .await
+                .expect("stream did not stall")
+                .unwrap();
             assert!(read > 0, "stream closed unexpectedly");
             if buf.contains("workspace_added") {
                 saw_replay = true;

@@ -379,8 +379,10 @@ mod tests {
 
     #[test]
     fn workspace_selected_changes() {
-        let mut prev = Snapshot::default();
-        prev.active_workspace_id = Some("w1".into());
+        let prev = Snapshot {
+            active_workspace_id: Some("w1".into()),
+            ..Default::default()
+        };
         let mut next = prev.clone();
         next.active_workspace_id = Some("w2".into());
         assert_eq!(

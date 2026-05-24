@@ -113,7 +113,8 @@ the socket and write each to stdout until the connection closes or the user
 interrupts. No read timeout (the stream is idle-by-design). Reconnection is the
 caller's job (re-run the command), matching cmux's reconnectable contract.
 
-`forktty capabilities` subcommand: one-shot, prints the `capabilities` result.
+`forktty capabilities [--json]` subcommand: one-shot, prints the `capabilities`
+result (human-readable by default, JSON with `--json`).
 
 ## Data flow
 

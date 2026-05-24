@@ -1,4 +1,4 @@
-use forktty_core::{JsonRpcRequest, JsonRpcResponse};
+use forktty_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsString;
@@ -786,7 +786,9 @@ fn handle_events(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         match arg.as_str() {
             "--no-replay" => replay = false,
             other => {
-                return Err(CliError::new(format!("events: unexpected argument: {other}")));
+                return Err(CliError::new(format!(
+                    "events: unexpected argument: {other}"
+                )));
             }
         }
     }
@@ -809,9 +811,33 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
     stream.write_all(b"\n")?;
     stream.flush()?;
 
-    let reader = BufReader::new(stream);
+    let mut reader = BufReader::new(stream);
+    // The server either rejects the request with a JSON-RPC error line (e.g.
+    // server_busy) before closing, or accepts it with a `{"event":"subscribed"}`
+    // handshake followed by the NDJSON stream. Surface the former as an error
+    // rather than printing it as an event.
+    let mut first = String::new();
+    if reader.read_line(&mut first)? == 0 {
+        return Ok(());
+    }
+    if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(first.trim()) {
+        if !response.ok {
+            let error = response.error.unwrap_or_else(|| JsonRpcError {
+                code: "error".to_string(),
+                message: "events.subscribe failed".to_string(),
+            });
+            return Err(CliError::code(
+                format!("events.subscribe failed: {}: {}", error.code, error.message),
+                error.code,
+            ));
+        }
+    }
+
     let stdout = io::stdout();
     let mut handle = stdout.lock();
+    if writeln!(handle, "{}", first.trim_end()).is_err() {
+        return Ok(());
+    }
     for line in reader.lines() {
         let line = line?;
         if writeln!(handle, "{line}").is_err() {
@@ -5188,6 +5214,26 @@ mod tests {
         assert_err_contains(
             handle_events(&test_context(), strings(&["--bogus"])),
             "unexpected argument",
+        );
+    }
+
+    #[test]
+    fn events_surfaces_jsonrpc_error_handshake() {
+        // An over-capacity (or otherwise rejecting) server replies with a
+        // JSON-RPC error line then closes; the CLI must report it, not print it
+        // as an event.
+        with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": false,
+                    "error": { "code": "server_busy", "message": "Too many connections" },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                assert_err_contains(handle_events(&ctx_for(socket_path), vec![]), "server_busy");
+            },
         );
     }
 }
