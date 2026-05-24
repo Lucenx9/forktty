@@ -32,6 +32,7 @@
   --ft-accent-soft: var(--active-toggle-bg-color);
   --ft-accent-soft-2: var(--active-toggle-bg-color);
   --ft-accent-fg: var(--accent-fg-color);
+  --ft-brand-purple: #a78bfa;
 
   --ft-warning: var(--warning-color);
   --ft-warning-soft: alpha(var(--warning-color), 0.14);
@@ -103,10 +104,18 @@ window {
   opacity: 0.95;
 }
 
+.app-brand-wordmark {
+  color: var(--ft-text-strong);
+}
+
 .app-brand-name {
   color: var(--ft-text-strong);
   font-size: 0.90em;
   font-weight: 700;
+}
+
+.app-brand-cursor {
+  color: var(--ft-brand-purple);
 }
 
 /* Pre-release tag chip beside the brand name. Tinted with the brand
