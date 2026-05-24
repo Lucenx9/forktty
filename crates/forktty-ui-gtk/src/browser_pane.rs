@@ -90,7 +90,12 @@ impl BrowserPaneWidget {
 mod tests {
     use super::*;
 
+    // Constructs a live WebKitGTK WebView, which requires a display and whose
+    // process-teardown aborts under WebKit. Marked #[ignore] so it stays out of
+    // the default suite; run explicitly with:
+    //   cargo test -p forktty-ui-gtk --features browser -- --ignored browser_pane_widget_constructs_and_loads
     #[test]
+    #[ignore]
     fn browser_pane_widget_constructs_and_loads() {
         if gtk::init().is_err() {
             // No display in CI; skip rather than fail.
@@ -100,10 +105,5 @@ mod tests {
         pane.load_uri("https://other.com");
         assert_eq!(pane.address.text().as_str(), "https://other.com");
         let _ = pane.widget();
-        // WebKitGTK installs atexit handlers (web/network process teardown)
-        // that abort under headless/sandboxed process exit. The widget has been
-        // constructed and exercised successfully by this point, so exit cleanly
-        // before that teardown runs rather than letting it SIGABRT the harness.
-        std::process::exit(0);
     }
 }
