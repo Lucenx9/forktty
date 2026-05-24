@@ -835,6 +835,11 @@ pub async fn dispatch(
         }
         "browser.profile.create" => {
             let display_name = required_string_param(&params, "display_name")?.to_string();
+            if display_name.trim().is_empty() {
+                return Err(DispatchError::InvalidParam(
+                    "display_name must not be empty".to_string(),
+                ));
+            }
             let mut store = profiles_store()?;
             let meta = store
                 .create(&display_name)
@@ -858,7 +863,7 @@ pub async fn dispatch(
                     )
                 });
                 if in_use {
-                    return Err(DispatchError::from(
+                    return Err(DispatchError::Conflict(
                         "profile in use by an open browser pane".to_string(),
                     ));
                 }
@@ -868,6 +873,9 @@ pub async fn dispatch(
             store.delete(&id).map_err(|e| match e {
                 forktty_core::ProfileError::NotFound => {
                     DispatchError::NotFound("profile".to_string())
+                }
+                forktty_core::ProfileError::CannotDeleteDefault => {
+                    DispatchError::Conflict("the default profile cannot be deleted".to_string())
                 }
                 other => DispatchError::from(other.to_string()),
             })?;
@@ -2305,6 +2313,34 @@ mod tests {
     use std::fs;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    /// RAII guard that sets an environment variable for the duration of a test
+    /// and restores the previous value (or removes it) on drop, even on panic.
+    ///
+    /// Use together with `#[serial_test::serial]` so that tests touching
+    /// process-global env vars do not race with each other.
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, val: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            // SAFETY: test-only; access serialized via #[serial_test::serial].
+            unsafe { std::env::set_var(key, val) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => unsafe { std::env::set_var(self.key, v) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
@@ -5057,6 +5093,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn capabilities_lists_only_dispatchable_methods() {
         let (state, _backend) = test_state();
         let result = dispatch(&state, "system.capabilities", json!({}))
@@ -5348,12 +5385,13 @@ mod tests {
     // --- SP3 P2 browser.profile verbs ----------------------------------------
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn browser_profile_create_list_then_open_with_profile() {
         // Isolate profiles.json from the real user data dir.
-        // XDG_DATA_HOME is process-global; no other test calls profile verbs so
-        // concurrent interference is limited to this test itself.
+        // XDG_DATA_HOME is process-global; serialize with capabilities test via
+        // #[serial_test::serial] and restore on any exit path via EnvGuard.
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_DATA_HOME", dir.path());
+        let _env = EnvGuard::set("XDG_DATA_HOME", dir.path().to_str().unwrap());
 
         let (state, _backend) = test_state();
 
@@ -5417,8 +5455,7 @@ mod tests {
             "expected in-use error, got: {del_err}"
         );
 
-        // Cleanup: restore env (best-effort; tempdir Drop also removes files)
-        std::env::remove_var("XDG_DATA_HOME");
-        drop(dir);
+        // _env (EnvGuard) and dir (TempDir) are dropped here, restoring the
+        // environment and removing temporary files on any exit path.
     }
 }
