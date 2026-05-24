@@ -41,7 +41,10 @@ where
     terminal.set_scrollback_lines(20_000);
 
     let env_storage = child_environment(request);
-    let argv_storage = [request.shell.clone()];
+    // Build argv from shell + args so SSH panes get `["ssh", "user@host"]`.
+    let argv_storage: Vec<String> = std::iter::once(request.shell.clone())
+        .chain(request.args.iter().cloned())
+        .collect();
     let cwd_storage = request.cwd.to_string_lossy().to_string();
     let on_spawn_result = Rc::new(RefCell::new(Some(on_spawn_result)));
     let spawned = Rc::new(Cell::new(false));

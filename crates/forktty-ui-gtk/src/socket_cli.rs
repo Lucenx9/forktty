@@ -81,6 +81,8 @@ Usage:
   forktty browser bookmark add <url> [--title <t>] [--profile <id|name>]
   forktty browser bookmark list [--profile <id|name>]
   forktty browser bookmark remove <url> [--profile <id|name>]
+  forktty ssh <user@host>                          Open a new workspace running ssh <user@host>
+  forktty ssh <user@host> [--name <name>] [--cwd <path>]
 ";
 
 #[derive(Debug)]
@@ -393,6 +395,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "capabilities" => handle_capabilities(&context, args),
         "events" => handle_events(&context, args),
         "browser" => handle_browser(&context, args),
+        "ssh" => handle_ssh(&context, args),
         "help" => {
             print!("{HELP_TEXT}");
             Ok(())
@@ -962,6 +965,54 @@ fn handle_create_workspace(context: &CliContext, args: Vec<String>) -> CliResult
             .map(|name| format!(" ({name})"))
             .unwrap_or_default();
         println!("Created workspace {id}{suffix}");
+        Ok(())
+    }
+}
+
+fn handle_ssh(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["name", "cwd"], "ssh")?;
+    if parsed.positionals.is_empty() {
+        return Err(CliError::new(
+            "ssh: missing required argument <user@host>. Usage: forktty ssh <user@host>",
+        ));
+    }
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "ssh: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let host = parsed.positionals[0].trim().to_string();
+    if host.is_empty() {
+        return Err(CliError::new("ssh: host must not be empty"));
+    }
+    let mut params = Map::new();
+    params.insert("host".to_string(), Value::String(host));
+    if let Some(name) = non_blank_string_option(&parsed.options, "name", "--name")? {
+        params.insert("name".to_string(), Value::String(name.trim().to_string()));
+    }
+    if let Some(cwd) = non_blank_string_option(&parsed.options, "cwd", "--cwd")? {
+        params.insert(
+            "workingDir".to_string(),
+            Value::String(cwd.trim().to_string()),
+        );
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workspace.create_ssh",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        let id = string_field(&result, "id").unwrap_or("(unknown)");
+        let suffix = result
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| format!(" ({name})"))
+            .unwrap_or_default();
+        println!("Created SSH workspace {id}{suffix}");
         Ok(())
     }
 }

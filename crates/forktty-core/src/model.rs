@@ -47,6 +47,11 @@ pub enum SurfaceKind {
         #[serde(default)]
         profile: crate::profile::ProfileId,
     },
+    /// The surface's shell process is `ssh <host>`.
+    Ssh {
+        /// Full ssh target, e.g. `user@example.com` or `[::1]`.
+        host: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -578,6 +583,73 @@ impl WorkspaceModel {
         )
     }
 
+    /// Split the workspace's focused surface into a new SSH pane.
+    ///
+    /// The caller is responsible for spawning the underlying process with
+    /// `shell = ssh_binary` and `args = [host]`.
+    pub fn open_ssh(
+        &mut self,
+        workspace_id: &str,
+        host: String,
+        axis: SplitAxis,
+    ) -> Option<Surface> {
+        let focused = self
+            .workspaces
+            .get(workspace_id)?
+            .focused_surface_id
+            .clone();
+        let title = format!("ssh:{host}");
+        self.split_with(&focused, axis, SurfaceKind::Ssh { host }, title)
+    }
+
+    /// Create a new workspace whose first (and only) surface is an SSH surface.
+    ///
+    /// This mirrors `create_workspace` but produces a `SurfaceKind::Ssh`
+    /// surface instead of `SurfaceKind::Terminal`.
+    pub fn create_ssh_workspace(
+        &mut self,
+        name: impl Into<String>,
+        working_dir: impl Into<PathBuf>,
+        host: String,
+    ) -> Workspace {
+        for workspace in self.workspaces.values_mut() {
+            workspace.active = false;
+        }
+        let id = self.next_workspace_id();
+        let surface_id = self.next_surface_id();
+        let working_dir = working_dir.into();
+        let title = format!("ssh:{host}");
+        let surface = Surface {
+            id: surface_id.clone(),
+            workspace_id: id.clone(),
+            cwd: working_dir.clone(),
+            title,
+            unread: false,
+            needs_attention: false,
+            kind: SurfaceKind::Ssh { host },
+        };
+        let workspace = Workspace {
+            id: id.clone(),
+            name: name.into(),
+            active: true,
+            working_dir,
+            git_branch: String::new(),
+            worktree_dir: None,
+            worktree_name: None,
+            pane_tree: PaneNode::Leaf {
+                surface_id: surface_id.clone(),
+            },
+            focused_surface_id: surface_id,
+            needs_attention: false,
+            listening_ports: Vec::new(),
+            pr: None,
+        };
+        self.surfaces.insert(surface.id.clone(), surface);
+        self.workspace_order.push(id.clone());
+        self.workspaces.insert(id, workspace.clone());
+        workspace
+    }
+
     fn split_with(
         &mut self,
         surface_id: &str,
@@ -658,7 +730,7 @@ impl WorkspaceModel {
         true
     }
 
-    /// Update a browser surface's URL. Returns false for terminals or missing ids.
+    /// Update a browser surface's URL. Returns false for terminals, SSH surfaces, or missing ids.
     pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
         match self.surfaces.get_mut(surface_id) {
             Some(surface) => match &mut surface.kind {
@@ -667,7 +739,7 @@ impl WorkspaceModel {
                     surface.title = browser_title_for(url);
                     true
                 }
-                SurfaceKind::Terminal => false,
+                SurfaceKind::Terminal | SurfaceKind::Ssh { .. } => false,
             },
             None => false,
         }
@@ -3096,6 +3168,64 @@ mod tests {
         assert!(!has_uri_scheme("://x"));
         assert!(!has_uri_scheme("1http://x"));
         assert!(!has_uri_scheme("noscheme"));
+    }
+
+    #[test]
+    fn create_ssh_workspace_produces_ssh_surface() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+
+        assert_eq!(workspace.name, "remote");
+        let surfaces = model.list_surfaces(Some(&workspace.id));
+        assert_eq!(surfaces.len(), 1);
+        let surface = &surfaces[0];
+        assert_eq!(
+            surface.kind,
+            SurfaceKind::Ssh {
+                host: "user@example.com".to_string()
+            }
+        );
+        assert_eq!(surface.title, "ssh:user@example.com");
+    }
+
+    #[test]
+    fn open_ssh_splits_into_ssh_surface() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let new_surface = model
+            .open_ssh(&workspace.id, "server.local".to_string(), SplitAxis::Horizontal)
+            .expect("open_ssh succeeds");
+
+        assert_eq!(
+            new_surface.kind,
+            SurfaceKind::Ssh {
+                host: "server.local".to_string()
+            }
+        );
+        assert_eq!(new_surface.title, "ssh:server.local");
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, new_surface.id);
+        assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
+    }
+
+    #[test]
+    fn ssh_workspace_survives_session_round_trip() {
+        let mut model = WorkspaceModel::new();
+        let workspace =
+            model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+        let ssh_id = workspace.focused_surface_id.clone();
+
+        let data = model.to_session_data();
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let surface = restored.surface(&ssh_id).expect("ssh surface restored");
+        assert_eq!(
+            surface.kind,
+            SurfaceKind::Ssh {
+                host: "user@example.com".to_string()
+            }
+        );
     }
 
     #[test]
