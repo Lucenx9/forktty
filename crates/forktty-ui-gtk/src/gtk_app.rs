@@ -292,6 +292,7 @@ struct WorkspaceStatusBadge {
 
 struct SidebarSnapshot {
     rows: Vec<SidebarWorkspaceRow>,
+    active_workspace_id: Option<String>,
     active_workspace_name: Option<String>,
     active_status_label: Option<String>,
     active_full_path: Option<String>,
@@ -309,6 +310,17 @@ struct SidebarUi {
     last_signature: Rc<RefCell<Option<String>>>,
     context_menu_open: Rc<Cell<bool>>,
     context_popover: Rc<RefCell<Option<gtk::Popover>>>,
+}
+
+#[derive(Clone)]
+struct TabBarUi {
+    view: adw::TabView,
+    tab_bar: adw::TabBar,
+    /// Ordered vec of (workspace_id, TabPage) — mirrors the model order.
+    pages: Rc<RefCell<Vec<(String, adw::TabPage)>>>,
+    /// Guards reentrancy: true while a programmatic reconcile is running so
+    /// `connect_selected_page_notify` does not recurse into select_sidebar_workspace.
+    syncing: Rc<Cell<bool>>,
 }
 
 type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
@@ -3589,9 +3601,38 @@ fn build_ui(app: &adw::Application) {
     status_bar.append(&status_spacer);
     status_bar.append(&palette_hint);
 
+    // ── Workspace tab bar ──────────────────────────────────────────────────
+    // AdwTabView is used selector-only: each TabPage wraps a tiny empty Box
+    // child. The real terminal content stays in terminal_stack.  Only the
+    // AdwTabBar widget is inserted into the layout; the TabView itself stays
+    // off-tree (just `tab_bar.set_view(Some(&view))`).
+    let tab_view = adw::TabView::new();
+    let tab_bar = adw::TabBar::new();
+    tab_bar.set_view(Some(&tab_view));
+    tab_bar.set_autohide(false);
+    tab_bar.set_expand_tabs(false);
+    tab_bar.add_css_class("workspace-tabbar");
+    let tab_new_btn = gtk::Button::builder()
+        .icon_name("tab-new-symbolic")
+        .tooltip_text("New Workspace")
+        .build();
+    tab_new_btn.add_css_class("flat");
+    tab_new_btn.set_action_name(Some("app.new-workspace"));
+    set_accessible_button_text(&tab_new_btn, "New Workspace", None);
+    tab_bar.set_end_action_widget(Some(&tab_new_btn));
+    tab_bar.set_visible(app_config.appearance.show_workspace_tabs);
+
+    let tab_bar_ui = TabBarUi {
+        view: tab_view,
+        tab_bar: tab_bar.clone(),
+        pages: Rc::new(RefCell::new(Vec::new())),
+        syncing: Rc::new(Cell::new(false)),
+    };
+
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
     content.append(&header);
+    content.append(&tab_bar);
     content.append(&paned);
     content.append(&status_bar);
 
@@ -3675,6 +3716,86 @@ fn build_ui(app: &adw::Application) {
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
     };
+
+    // ── Wire tab bar signals ───────────────────────────────────────────────
+    {
+        let state_for_tab = state.clone();
+        let controller_for_tab = controller.clone();
+        let sidebar_ui_for_tab = sidebar_ui.clone();
+        let tab_bar_ui_for_sel = tab_bar_ui.clone();
+        tab_bar_ui.view.connect_selected_page_notify(move |view| {
+            if tab_bar_ui_for_sel.syncing.get() {
+                return;
+            }
+            let Some(page) = view.selected_page() else {
+                return;
+            };
+            // Find the workspace id that corresponds to this page.
+            let workspace_id = tab_bar_ui_for_sel
+                .pages
+                .borrow()
+                .iter()
+                .find(|(_, p)| p == &page)
+                .map(|(id, _)| id.clone());
+            let Some(workspace_id) = workspace_id else {
+                return;
+            };
+            select_sidebar_workspace(&state_for_tab, &workspace_id, &controller_for_tab);
+            schedule_sidebar_refresh(
+                sidebar_ui_for_tab.clone(),
+                tab_bar_ui_for_sel.clone(),
+                state_for_tab.clone(),
+                controller_for_tab.clone(),
+            );
+        });
+    }
+    {
+        let state_for_close = state.clone();
+        let window_for_close = window.clone();
+        let tab_bar_ui_for_close = tab_bar_ui.clone();
+        tab_bar_ui.view.connect_close_page(move |_view, page| {
+            // Look up workspace info for the confirmation dialog.
+            let workspace_id = tab_bar_ui_for_close
+                .pages
+                .borrow()
+                .iter()
+                .find(|(_, p)| p == page)
+                .map(|(id, _)| id.clone());
+            let Some(workspace_id) = workspace_id else {
+                return glib::Propagation::Stop;
+            };
+            let (ws_name, ws_path) = {
+                let Ok(model) = state_for_close.model.lock() else {
+                    return glib::Propagation::Stop;
+                };
+                let ws = model
+                    .list_workspaces()
+                    .into_iter()
+                    .find(|w| w.id == workspace_id);
+                match ws {
+                    Some(w) => (w.name.clone(), w.working_dir.clone()),
+                    None => return glib::Propagation::Stop,
+                }
+            };
+            let body = close_workspace_confirmation_body(&ws_name, &ws_path);
+            let state_confirm = state_for_close.clone();
+            show_destructive_confirmation(
+                &window_for_close,
+                "Close Workspace?",
+                &body,
+                "Close Workspace",
+                move || {
+                    if focus_workspace(&state_confirm, &workspace_id) {
+                        close_active_workspace(&state_confirm);
+                    }
+                },
+            );
+            // Return Stop so AdwTabView does not remove the page itself.
+            // The page will disappear on the next model→tabbar reconcile.
+            glib::Propagation::Stop
+        });
+    }
+
     let controller_for_timer = controller.clone();
     let alive_for_terminal_timer = ui_alive.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -3691,10 +3812,13 @@ fn build_ui(app: &adw::Application) {
         controller_for_timer.borrow_mut().ensure_layout_current();
         glib::ControlFlow::Continue
     });
-    refresh_sidebar(&sidebar_ui, &state, &controller, true);
+    refresh_sidebar(&sidebar_ui, &tab_bar_ui, &state, &controller, true);
+    refresh_tabbar(&tab_bar_ui, &state);
     let state_for_sidebar = state.clone();
     let controller_for_sidebar = controller.clone();
     let sidebar_ui_for_timer = sidebar_ui.clone();
+    let tab_bar_ui_for_timer = tab_bar_ui.clone();
+    let state_for_tabbar_timer = state.clone();
     let alive_for_sidebar_timer = ui_alive.clone();
     glib::timeout_add_local(Duration::from_millis(500), move || {
         if !alive_for_sidebar_timer.get() {
@@ -3702,10 +3826,12 @@ fn build_ui(app: &adw::Application) {
         }
         refresh_sidebar(
             &sidebar_ui_for_timer,
+            &tab_bar_ui_for_timer,
             &state_for_sidebar,
             &controller_for_sidebar,
             false,
         );
+        refresh_tabbar(&tab_bar_ui_for_timer, &state_for_tabbar_timer);
         glib::ControlFlow::Continue
     });
     let notifications_for_timer = notifications.clone();
@@ -3755,6 +3881,7 @@ fn build_ui(app: &adw::Application) {
     let settings_apply = settings_apply_callback(
         &paned,
         &sidebar_shell,
+        &tab_bar_ui.tab_bar,
         &terminal_stack_for_settings,
         &controller,
     );
@@ -3817,6 +3944,7 @@ fn build_ui(app: &adw::Application) {
     let state_for_bootstrap = state.clone();
     let controller_for_bootstrap = controller.clone();
     let sidebar_ui_for_bootstrap = sidebar_ui.clone();
+    let tab_bar_ui_for_bootstrap = tab_bar_ui.clone();
     let pr_model_for_bootstrap = state.model.clone();
     let pr_in_flight_for_bootstrap = pr_in_flight.clone();
     let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
@@ -3835,10 +3963,12 @@ fn build_ui(app: &adw::Application) {
             .ensure_layout_current();
         refresh_sidebar(
             &sidebar_ui_for_bootstrap,
+            &tab_bar_ui_for_bootstrap,
             &state_for_bootstrap,
             &controller_for_bootstrap,
             true,
         );
+        refresh_tabbar(&tab_bar_ui_for_bootstrap, &state_for_bootstrap);
         if enable_pr_lookup_on_startup {
             spawn_pr_refresh(pr_model_for_bootstrap, pr_in_flight_for_bootstrap);
         }
@@ -3849,14 +3979,16 @@ fn build_ui(app: &adw::Application) {
 fn settings_apply_callback(
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
+    tab_bar: &adw::TabBar,
     terminal_stack: &gtk::Box,
     controller: &Rc<RefCell<VteController>>,
 ) -> SettingsApplyCallback {
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
+    let tab_bar = tab_bar.clone();
     let terminal_stack = terminal_stack.clone();
     let controller = controller.clone();
-    Rc::new(move |config| {
+    Rc::new(move |config: &config::AppConfig| {
         apply_color_scheme(config);
         apply_sidebar_position(
             &paned,
@@ -3865,6 +3997,7 @@ fn settings_apply_callback(
             &config.appearance.sidebar_position,
         );
         sidebar_shell.set_visible(config.appearance.sidebar_visible);
+        tab_bar.set_visible(config.appearance.show_workspace_tabs);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -4552,16 +4685,91 @@ fn install_actions(
 
 fn schedule_sidebar_refresh(
     ui: SidebarUi,
+    tab_bar_ui: TabBarUi,
     state: SocketAppState,
     controller: Rc<RefCell<VteController>>,
 ) {
     glib::idle_add_local_once(move || {
-        refresh_sidebar(&ui, &state, &controller, true);
+        refresh_sidebar(&ui, &tab_bar_ui, &state, &controller, true);
+        refresh_tabbar(&tab_bar_ui, &state);
     });
+}
+
+/// Reconcile the AdwTabView's pages to match the current model order.
+/// Source of truth is `sidebar_snapshot`; this function is the tab-bar
+/// equivalent of the sidebar portion of `refresh_sidebar`.
+fn refresh_tabbar(tab_bar_ui: &TabBarUi, state: &SocketAppState) {
+    let snapshot = sidebar_snapshot(state);
+    let view = &tab_bar_ui.view;
+
+    // Set syncing=true for the entire reconcile so the selected-page signal
+    // handler does not re-enter select_sidebar_workspace.
+    tab_bar_ui.syncing.set(true);
+
+    // ── Remove pages whose workspace was deleted ──────────────────────────
+    let model_ids: Vec<&str> = snapshot
+        .rows
+        .iter()
+        .map(|r| r.workspace.id.as_str())
+        .collect();
+    let mut pages = tab_bar_ui.pages.borrow_mut();
+    pages.retain(|(id, page)| {
+        if model_ids.contains(&id.as_str()) {
+            true
+        } else {
+            // Close and immediately finish so the page is removed from the view.
+            view.close_page(page);
+            view.close_page_finish(page, true);
+            false
+        }
+    });
+
+    // ── Add pages for new workspaces ──────────────────────────────────────
+    for row in &snapshot.rows {
+        let id = &row.workspace.id;
+        if !pages.iter().any(|(pid, _)| pid == id) {
+            let placeholder = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            let page = view.append(&placeholder);
+            page.set_title(&row.workspace.name);
+            pages.push((id.clone(), page));
+        }
+    }
+
+    // ── Reorder pages to match model order ───────────────────────────────
+    for (target_pos, row) in snapshot.rows.iter().enumerate() {
+        if let Some(page) = pages
+            .iter()
+            .find(|(id, _)| id == &row.workspace.id)
+            .map(|(_, p)| p.clone())
+        {
+            view.reorder_page(&page, target_pos as i32);
+        }
+    }
+
+    // ── Update titles ─────────────────────────────────────────────────────
+    for row in &snapshot.rows {
+        if let Some((_, page)) = pages.iter().find(|(id, _)| id == &row.workspace.id) {
+            if page.title().as_str() != row.workspace.name.as_str() {
+                page.set_title(&row.workspace.name);
+            }
+        }
+    }
+
+    // ── Select the active workspace ───────────────────────────────────────
+    if let Some(active_id) = snapshot.active_workspace_id.as_deref() {
+        if let Some((_, page)) = pages.iter().find(|(id, _)| id == active_id) {
+            let page = page.clone();
+            view.set_selected_page(&page);
+        }
+    }
+
+    drop(pages);
+    tab_bar_ui.syncing.set(false);
 }
 
 fn refresh_sidebar(
     ui: &SidebarUi,
+    tab_bar_ui: &TabBarUi,
     state: &SocketAppState,
     controller: &Rc<RefCell<VteController>>,
     force: bool,
@@ -4789,6 +4997,7 @@ fn refresh_sidebar(
         let state_for_click = state.clone();
         let controller_for_click = controller.clone();
         let ui_for_click = ui.clone();
+        let tab_bar_ui_for_click = tab_bar_ui.clone();
         let row_for_click = row.clone();
         primary_click.connect_pressed(move |gesture, _n_press, _x, _y| {
             gesture.set_state(gtk::EventSequenceState::Claimed);
@@ -4801,6 +5010,7 @@ fn refresh_sidebar(
             );
             schedule_sidebar_refresh(
                 ui_for_click.clone(),
+                tab_bar_ui_for_click.clone(),
                 state_for_click.clone(),
                 controller_for_click.clone(),
             );
@@ -4812,6 +5022,7 @@ fn refresh_sidebar(
         let state_for_key = state.clone();
         let controller_for_key = controller.clone();
         let ui_for_key = ui.clone();
+        let tab_bar_ui_for_key = tab_bar_ui.clone();
         let row_for_key = row.clone();
         key.connect_key_pressed(move |_, key, _, _| {
             let should_activate = matches!(
@@ -4826,6 +5037,7 @@ fn refresh_sidebar(
             select_sidebar_workspace(&state_for_key, &workspace_id_for_key, &controller_for_key);
             schedule_sidebar_refresh(
                 ui_for_key.clone(),
+                tab_bar_ui_for_key.clone(),
                 state_for_key.clone(),
                 controller_for_key.clone(),
             );
@@ -4842,6 +5054,7 @@ fn refresh_sidebar(
         let workspace_for_menu = workspace.clone();
         let row_for_menu = row.clone();
         let ui_for_menu = ui.clone();
+        let tab_bar_ui_for_menu = tab_bar_ui.clone();
         gesture.connect_pressed(move |gesture, _n_press, x, y| {
             // Claim the sequence so ListBox doesn't also treat right-click as
             // row activation (would switch workspace under the menu).
@@ -4857,6 +5070,7 @@ fn refresh_sidebar(
             let ui_for_closed = ui_for_menu.clone();
             let state_for_closed = state_for_menu.clone();
             let controller_for_closed = controller_for_menu.clone();
+            let tab_bar_ui_for_closed = tab_bar_ui_for_menu.clone();
             popover.connect_closed(move |popover| {
                 let is_current = ui_for_closed
                     .context_popover
@@ -4868,6 +5082,7 @@ fn refresh_sidebar(
                     ui_for_closed.context_popover.borrow_mut().take();
                     schedule_sidebar_refresh(
                         ui_for_closed.clone(),
+                        tab_bar_ui_for_closed.clone(),
                         state_for_closed.clone(),
                         controller_for_closed.clone(),
                     );
@@ -4896,6 +5111,7 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     let Ok(model) = state.model.lock() else {
         return SidebarSnapshot {
             rows: Vec::new(),
+            active_workspace_id: None,
             active_workspace_name: None,
             active_status_label: None,
             active_full_path: None,
@@ -5029,6 +5245,7 @@ fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     }
     SidebarSnapshot {
         rows,
+        active_workspace_id: active_workspace_id.clone(),
         active_workspace_name,
         active_status_label,
         active_full_path,
@@ -7557,6 +7774,12 @@ fn show_settings_dialog(
         .active(loaded.appearance.sidebar_visible)
         .build();
     window_group.add(&sidebar_visible);
+    let show_workspace_tabs = adw::SwitchRow::builder()
+        .title("Show workspace tabs")
+        .subtitle("Horizontal tab bar below the titlebar showing all workspaces.")
+        .active(loaded.appearance.show_workspace_tabs)
+        .build();
+    window_group.add(&show_workspace_tabs);
     appearance_page.add(&window_group);
     dialog.add(&appearance_page);
 
@@ -7838,6 +8061,26 @@ fn show_settings_dialog(
             );
         }
     });
+    show_workspace_tabs.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.appearance.show_workspace_tabs = row.is_active();
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                next,
+                "Workspace tabs visibility updated.",
+            );
+        }
+    });
     worktree_layout.connect_changed({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -7951,6 +8194,7 @@ fn show_settings_dialog(
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
+            let show_workspace_tabs_for_reset = show_workspace_tabs.clone();
             let worktree_layout_for_reset = worktree_layout.clone();
             let pr_lookup_for_reset = pr_lookup.clone();
             let notification_command_for_reset = notification_command.clone();
@@ -7980,6 +8224,8 @@ fn show_settings_dialog(
                     let _ = sidebar_position_for_reset
                         .set_active_id(Some(&defaults.appearance.sidebar_position));
                     sidebar_visible_for_reset.set_active(defaults.appearance.sidebar_visible);
+                    show_workspace_tabs_for_reset
+                        .set_active(defaults.appearance.show_workspace_tabs);
                     let _ =
                         worktree_layout_for_reset.set_active_id(Some(&defaults.general.worktree_layout));
                     pr_lookup_for_reset.set_active(defaults.general.enable_pr_lookup);

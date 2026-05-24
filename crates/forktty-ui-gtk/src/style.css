@@ -348,6 +348,32 @@ popover.ft-context-menu contents {
 }
 
 /* --------------------------------------------------------------------------
+ * Workspace tab bar (AdwTabBar, selector-only)
+ * -------------------------------------------------------------------------- */
+
+.workspace-tabbar {
+  background: var(--ft-bg-1);
+  border-bottom: 1px solid var(--ft-border-subtle);
+  min-height: 36px;
+}
+
+.workspace-tabbar tabbar {
+  background: transparent;
+}
+
+.workspace-tabbar tab {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.9em;
+}
+
+.workspace-tabbar tab:checked {
+  background: var(--ft-bg-0);
+  color: var(--ft-accent);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
  * Workspace paned + sidebar
  * -------------------------------------------------------------------------- */
 
