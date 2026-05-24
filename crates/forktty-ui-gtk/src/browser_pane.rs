@@ -37,6 +37,7 @@ pub struct BrowserPaneWidget {
     container: gtk::Box,
     web_view: WebView,
     address: gtk::Entry,
+    close: gtk::Button,
     /// The last url this widget was *asked* to load. The reload guard
     /// edge-triggers on this, not on the WebView's committed `current_uri()`,
     /// which diverges due to WebKit normalization, redirects, and user clicks.
@@ -55,10 +56,14 @@ impl BrowserPaneWidget {
         let address = gtk::Entry::new();
         address.set_hexpand(true);
         address.set_text(initial_url);
+        let close = gtk::Button::from_icon_name("window-close-symbolic");
+        close.set_tooltip_text(Some("Close Pane"));
+        close.add_css_class("pane-close-action");
         bar.append(&back);
         bar.append(&forward);
         bar.append(&reload);
         bar.append(&address);
+        bar.append(&close);
 
         let web_view = WebView::new();
         web_view.set_vexpand(true);
@@ -98,6 +103,7 @@ impl BrowserPaneWidget {
             container,
             web_view,
             address,
+            close,
             // Empty so the first load_uri(initial_url) below is not a no-op;
             // that single call populates last_requested and avoids a double-load.
             last_requested: std::cell::RefCell::new(String::new()),
@@ -167,6 +173,13 @@ impl BrowserPaneWidget {
         self.address.connect_activate(move |_| {
             f(entry.text().to_string());
         });
+    }
+
+    /// Connect the close (×) button to a callback. The widget does not own the
+    /// model or the confirmation dialog, so gtk_app wires this to the same
+    /// `show_close_pane_confirmation` path terminal panes use.
+    pub fn connect_close<F: Fn() + 'static>(&self, f: F) {
+        self.close.connect_clicked(move |_| f());
     }
 
     /// Run JavaScript in the page, delivering the JSON-serialized result (or an

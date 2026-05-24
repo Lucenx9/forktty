@@ -847,6 +847,14 @@ impl VteController {
                 }
             });
         }
+        // Wire the × button to the same confirmation flow terminal panes use.
+        if let Some(state) = self.state.clone() {
+            let parent = self.parent_window.clone();
+            let sid_close = surface_id.to_string();
+            pane.connect_close(move || {
+                show_close_pane_confirmation(&parent, &state, &sid_close);
+            });
+        }
         let widget = pane.widget();
         self.browser_panes
             .borrow_mut()
@@ -961,6 +969,10 @@ fn build_pane_chrome(
     close_separator.add_css_class("pane-action-separator");
     actions.append(&split_h);
     actions.append(&split_v);
+    #[cfg(feature = "browser")]
+    let open_browser = pane_action_button("globe-symbolic", "Open Browser Pane");
+    #[cfg(feature = "browser")]
+    actions.append(&open_browser);
     actions.append(&close_separator);
     actions.append(&close);
 
@@ -982,6 +994,10 @@ fn build_pane_chrome(
     );
     single_pane_actions.append(&single_split_h);
     single_pane_actions.append(&single_split_v);
+    #[cfg(feature = "browser")]
+    let single_open_browser = pane_action_button("globe-symbolic", "Open Browser Pane");
+    #[cfg(feature = "browser")]
+    single_pane_actions.append(&single_open_browser);
     terminal_overlay.add_overlay(&single_pane_actions);
 
     if let Some(state) = state {
@@ -1015,6 +1031,23 @@ fn build_pane_chrome(
                 split_active_surface(s, SplitAxis::Vertical)
             });
         });
+        #[cfg(feature = "browser")]
+        {
+            let state_for_browser = state.clone();
+            let sid_browser = surface_id_owned.clone();
+            open_browser.connect_clicked(move |_| {
+                focus_surface_and(&state_for_browser, &sid_browser, |s| {
+                    open_browser_active(s, SplitAxis::Horizontal)
+                });
+            });
+            let state_for_single_browser = state.clone();
+            let sid_single_browser = surface_id_owned.clone();
+            single_open_browser.connect_clicked(move |_| {
+                focus_surface_and(&state_for_single_browser, &sid_single_browser, |s| {
+                    open_browser_active(s, SplitAxis::Horizontal)
+                });
+            });
+        }
         let state_for_c = state.clone();
         let parent_for_c = parent.clone();
         let sid_c = surface_id_owned;
@@ -1027,6 +1060,11 @@ fn build_pane_chrome(
         single_split_h.set_sensitive(false);
         single_split_v.set_sensitive(false);
         close.set_sensitive(false);
+        #[cfg(feature = "browser")]
+        {
+            open_browser.set_sensitive(false);
+            single_open_browser.set_sensitive(false);
+        }
     }
 
     let motion = gtk::EventControllerMotion::new();
@@ -5275,6 +5313,27 @@ fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
             NotificationKind::Error,
         );
     } else {
+        save_session_from_state(state);
+    }
+}
+
+#[cfg(feature = "browser")]
+fn open_browser_active(state: &SocketAppState, axis: SplitAxis) {
+    let opened = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => {
+                eprintln!("Failed to open browser pane: workspace model lock poisoned");
+                return;
+            }
+        };
+        let Some(workspace) = model.active_workspace() else {
+            return;
+        };
+        let workspace_id = workspace.id.clone();
+        model.open_browser(&workspace_id, "about:blank", axis)
+    };
+    if opened.is_some() {
         save_session_from_state(state);
     }
 }
