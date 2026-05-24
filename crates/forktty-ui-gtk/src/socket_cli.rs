@@ -565,6 +565,48 @@ fn non_blank_string_option<'a>(
     }
 }
 
+fn required_non_blank_arg<'a>(arg: Option<&'a String>, message: &str) -> CliResult<&'a str> {
+    let value = arg.ok_or_else(|| CliError::new(message))?;
+    if value.trim().is_empty() {
+        return Err(CliError::new(message));
+    }
+    Ok(value)
+}
+
+fn required_trimmed_arg(arg: Option<&String>, message: &str) -> CliResult<String> {
+    Ok(required_non_blank_arg(arg, message)?.trim().to_string())
+}
+
+fn parse_u64_option(
+    options: &BTreeMap<String, FlagValue>,
+    key: &str,
+    option_name: &str,
+) -> CliResult<Option<u64>> {
+    let Some(raw) = non_blank_string_option(options, key, option_name)? else {
+        return Ok(None);
+    };
+    raw.trim()
+        .parse()
+        .map(Some)
+        .map_err(|_| CliError::new(format!("{option_name} must be a number")))
+}
+
+fn insert_optional_trimmed_string_param(
+    params: &mut Map<String, Value>,
+    options: &BTreeMap<String, FlagValue>,
+    key: &str,
+    option_name: &str,
+    param_name: &str,
+) -> CliResult<()> {
+    if let Some(value) = non_blank_string_option(options, key, option_name)? {
+        params.insert(
+            param_name.to_string(),
+            Value::String(value.trim().to_string()),
+        );
+    }
+    Ok(())
+}
+
 fn bool_option(options: &BTreeMap<String, FlagValue>, key: &str) -> Option<bool> {
     match options.get(key) {
         Some(FlagValue::Bool) => Some(true),
@@ -1195,7 +1237,9 @@ fn handle_split_surface(context: &CliContext, args: Vec<String>) -> CliResult<()
             parsed.positionals[1]
         )));
     }
-    let axis = non_blank_string_option(&parsed.options, "axis", "--axis")?.unwrap_or("horizontal");
+    let axis = non_blank_string_option(&parsed.options, "axis", "--axis")?
+        .map(str::trim)
+        .unwrap_or("horizontal");
     if !matches!(axis, "horizontal" | "vertical") {
         return Err(CliError::new(
             "Invalid --axis: expected horizontal or vertical",
@@ -1424,11 +1468,7 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         &["workspace-id", "axis", "profile"],
         "browser open",
     )?;
-    let url = parsed
-        .positionals
-        .first()
-        .ok_or_else(|| CliError::new("browser open requires a URL"))?
-        .clone();
+    let url = required_trimmed_arg(parsed.positionals.first(), "browser open requires a URL")?;
     if parsed.positionals.len() > 1 {
         return Err(CliError::new(format!(
             "browser open: unexpected argument {}",
@@ -1437,13 +1477,13 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
     let workspace_id =
         match non_blank_string_option(&parsed.options, "workspace-id", "--workspace-id")? {
-            Some(id) => id.to_string(),
+            Some(id) => id.trim().to_string(),
             None => resolve_active_workspace_id(context)?,
         };
     let mut params = Map::new();
     params.insert("url".to_string(), Value::String(url));
     params.insert("workspace_id".to_string(), Value::String(workspace_id));
-    if let Some(axis) = non_blank_string_option(&parsed.options, "axis", "--axis")? {
+    if let Some(axis) = non_blank_string_option(&parsed.options, "axis", "--axis")?.map(str::trim) {
         if !matches!(axis, "horizontal" | "vertical") {
             return Err(CliError::new(
                 "Invalid --axis: expected horizontal or vertical",
@@ -1451,9 +1491,13 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         }
         params.insert("axis".to_string(), Value::String(axis.to_string()));
     }
-    if let Some(profile) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-        params.insert("profile".to_string(), Value::String(profile.to_string()));
-    }
+    insert_optional_trimmed_string_param(
+        &mut params,
+        &parsed.options,
+        "profile",
+        "--profile",
+        "profile",
+    )?;
     let result = send_socket_request(&context.socket_path, "browser.open", Value::Object(params))?;
     if context.json {
         print_json(&result)
@@ -1470,11 +1514,15 @@ fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser navigate")?;
     let (surface_id, url) = match parsed.positionals.as_slice() {
-        [surface, url] => (surface.clone(), url.clone()),
+        [surface, url] => (
+            required_trimmed_arg(Some(surface), "browser navigate requires a surface id")?,
+            required_trimmed_arg(Some(url), "browser navigate requires a URL")?,
+        ),
         [url] => {
+            let url = required_trimmed_arg(Some(url), "browser navigate requires a URL")?;
             let surface = resolve_focused_surface_id(context)?
                 .ok_or_else(|| CliError::new("browser navigate requires a surface id"))?;
-            (surface, url.clone())
+            (surface, url)
         }
         [] => {
             return Err(CliError::new(
@@ -1503,7 +1551,10 @@ fn browser_click(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser click")?;
     let (surface_id, reference) = match parsed.positionals.as_slice() {
-        [s, r] => (s.clone(), r.clone()),
+        [s, r] => (
+            required_trimmed_arg(Some(s), "browser click requires <surface-id> <ref>")?,
+            required_trimmed_arg(Some(r), "browser click requires <surface-id> <ref>")?,
+        ),
         [_, _, extra, ..] => {
             return Err(CliError::new(format!(
                 "browser click: unexpected argument '{extra}'"
@@ -1523,7 +1574,11 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser fill")?;
     let (surface_id, reference, value) = match parsed.positionals.as_slice() {
-        [s, r, v] => (s.clone(), r.clone(), v.clone()),
+        [s, r, v] => (
+            required_trimmed_arg(Some(s), "browser fill requires <surface-id> <ref> <value>")?,
+            required_trimmed_arg(Some(r), "browser fill requires <surface-id> <ref> <value>")?,
+            v.clone(),
+        ),
         [_, _, _, extra, ..] => {
             return Err(CliError::new(format!(
                 "browser fill: unexpected argument '{extra}'"
@@ -1547,7 +1602,11 @@ fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser eval")?;
     let (surface_id, script) = match parsed.positionals.as_slice() {
-        [s, sc] => (s.clone(), sc.clone()),
+        [s, sc] => (
+            required_trimmed_arg(Some(s), "browser eval requires <surface-id> <script>")?,
+            required_non_blank_arg(Some(sc), "browser eval requires <surface-id> <script>")?
+                .to_string(),
+        ),
         [_, _, extra, ..] => {
             return Err(CliError::new(format!(
                 "browser eval: unexpected argument '{extra}'"
@@ -1572,11 +1631,10 @@ fn browser_surface_cmd(
 ) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], &format!("browser {label}"))?;
-    let surface_id = parsed
-        .positionals
-        .first()
-        .ok_or_else(|| CliError::new(format!("browser {label} requires a surface-id")))?
-        .clone();
+    let surface_id = required_trimmed_arg(
+        parsed.positionals.first(),
+        &format!("browser {label} requires a surface-id"),
+    )?;
     if parsed.positionals.len() > 1 {
         return Err(CliError::new(format!(
             "browser {label}: unexpected argument '{}'",
@@ -1617,7 +1675,9 @@ fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                         "browser profile create: unexpected argument '{extra}'"
                     )))
                 }
-                [name] => name.clone(),
+                [name] => {
+                    required_trimmed_arg(Some(name), "browser profile create requires a <name>")?
+                }
             };
             let result = send_socket_request(
                 &context.socket_path,
@@ -1636,7 +1696,7 @@ fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                         "browser profile delete: unexpected argument '{extra}'"
                     )))
                 }
-                [id] => id.clone(),
+                [id] => required_trimmed_arg(Some(id), "browser profile delete requires an <id>")?,
             };
             let result = send_socket_request(
                 &context.socket_path,
@@ -1668,13 +1728,14 @@ fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             )?;
             require_no_args(&parsed.positionals, "browser history list")?;
             let mut params = Map::new();
-            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-                params.insert("profile".to_string(), Value::String(p.to_string()));
-            }
-            if let Some(n) = string_option(&parsed.options, "limit", "--limit")? {
-                let num: u64 = n
-                    .parse()
-                    .map_err(|_| CliError::new("--limit must be a number"))?;
+            insert_optional_trimmed_string_param(
+                &mut params,
+                &parsed.options,
+                "profile",
+                "--profile",
+                "profile",
+            )?;
+            if let Some(num) = parse_u64_option(&parsed.options, "limit", "--limit")? {
                 params.insert("limit".to_string(), Value::Number(num.into()));
             }
             let result = send_socket_request(
@@ -1691,11 +1752,10 @@ fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                 &["profile", "limit"],
                 "browser history search",
             )?;
-            let query = parsed
-                .positionals
-                .first()
-                .ok_or_else(|| CliError::new("browser history search requires a <query>"))?
-                .clone();
+            let query = required_trimmed_arg(
+                parsed.positionals.first(),
+                "browser history search requires a <query>",
+            )?;
             if parsed.positionals.len() > 1 {
                 return Err(CliError::new(format!(
                     "browser history search: unexpected argument '{}'",
@@ -1704,13 +1764,14 @@ fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             }
             let mut params = Map::new();
             params.insert("query".to_string(), Value::String(query));
-            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-                params.insert("profile".to_string(), Value::String(p.to_string()));
-            }
-            if let Some(n) = string_option(&parsed.options, "limit", "--limit")? {
-                let num: u64 = n
-                    .parse()
-                    .map_err(|_| CliError::new("--limit must be a number"))?;
+            insert_optional_trimmed_string_param(
+                &mut params,
+                &parsed.options,
+                "profile",
+                "--profile",
+                "profile",
+            )?;
+            if let Some(num) = parse_u64_option(&parsed.options, "limit", "--limit")? {
                 params.insert("limit".to_string(), Value::Number(num.into()));
             }
             let result = send_socket_request(
@@ -1725,9 +1786,13 @@ fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             reject_unknown_options(&parsed.options, &["profile"], "browser history clear")?;
             require_no_args(&parsed.positionals, "browser history clear")?;
             let mut params = Map::new();
-            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-                params.insert("profile".to_string(), Value::String(p.to_string()));
-            }
+            insert_optional_trimmed_string_param(
+                &mut params,
+                &parsed.options,
+                "profile",
+                "--profile",
+                "profile",
+            )?;
             let result = send_socket_request(
                 &context.socket_path,
                 "browser.history.clear",
@@ -1756,11 +1821,10 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                 &["title", "profile"],
                 "browser bookmark add",
             )?;
-            let url = parsed
-                .positionals
-                .first()
-                .ok_or_else(|| CliError::new("browser bookmark add requires a <url>"))?
-                .clone();
+            let url = required_trimmed_arg(
+                parsed.positionals.first(),
+                "browser bookmark add requires a <url>",
+            )?;
             if parsed.positionals.len() > 1 {
                 return Err(CliError::new(format!(
                     "browser bookmark add: unexpected argument '{}'",
@@ -1770,11 +1834,15 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             let mut params = Map::new();
             params.insert("url".to_string(), Value::String(url));
             if let Some(t) = non_blank_string_option(&parsed.options, "title", "--title")? {
-                params.insert("title".to_string(), Value::String(t.to_string()));
+                params.insert("title".to_string(), Value::String(t.trim().to_string()));
             }
-            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-                params.insert("profile".to_string(), Value::String(p.to_string()));
-            }
+            insert_optional_trimmed_string_param(
+                &mut params,
+                &parsed.options,
+                "profile",
+                "--profile",
+                "profile",
+            )?;
             let result = send_socket_request(
                 &context.socket_path,
                 "browser.bookmark.add",
@@ -1787,9 +1855,13 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             reject_unknown_options(&parsed.options, &["profile"], "browser bookmark list")?;
             require_no_args(&parsed.positionals, "browser bookmark list")?;
             let mut params = Map::new();
-            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-                params.insert("profile".to_string(), Value::String(p.to_string()));
-            }
+            insert_optional_trimmed_string_param(
+                &mut params,
+                &parsed.options,
+                "profile",
+                "--profile",
+                "profile",
+            )?;
             let result = send_socket_request(
                 &context.socket_path,
                 "browser.bookmark.list",
@@ -1800,11 +1872,10 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "remove" => {
             let parsed = parse_flags(rest, &[]);
             reject_unknown_options(&parsed.options, &["profile"], "browser bookmark remove")?;
-            let url = parsed
-                .positionals
-                .first()
-                .ok_or_else(|| CliError::new("browser bookmark remove requires a <url>"))?
-                .clone();
+            let url = required_trimmed_arg(
+                parsed.positionals.first(),
+                "browser bookmark remove requires a <url>",
+            )?;
             if parsed.positionals.len() > 1 {
                 return Err(CliError::new(format!(
                     "browser bookmark remove: unexpected argument '{}'",
@@ -1813,9 +1884,13 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             }
             let mut params = Map::new();
             params.insert("url".to_string(), Value::String(url));
-            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
-                params.insert("profile".to_string(), Value::String(p.to_string()));
-            }
+            insert_optional_trimmed_string_param(
+                &mut params,
+                &parsed.options,
+                "profile",
+                "--profile",
+                "profile",
+            )?;
             let result = send_socket_request(
                 &context.socket_path,
                 "browser.bookmark.remove",
@@ -4147,6 +4222,10 @@ mod tests {
         args.iter().map(|value| (*value).to_string()).collect()
     }
 
+    fn os_strings(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
     fn assert_err_contains<T>(result: CliResult<T>, expected: &str) {
         match result {
             Ok(_) => panic!("expected error containing {expected:?}"),
@@ -5829,6 +5908,87 @@ mod tests {
     }
 
     #[test]
+    fn socket_cli_compat_aliases_route_to_canonical_methods() {
+        let requests = with_socket_server(
+            2,
+            |req| match req["method"].as_str() {
+                Some("surface.list") => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string(),
+                Some("surface.send_text") => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"sent": true},
+                })
+                .to_string(),
+                _ => json!({
+                    "id": req["id"],
+                    "ok": false,
+                    "error": {"code": "method_not_found", "message": "unexpected method"},
+                })
+                .to_string(),
+            },
+            |socket_path| {
+                let mut surface_args =
+                    os_strings(&["surface:list", "--workspace-id", "w1", "--socket"]);
+                surface_args.push(socket_path.as_os_str().to_os_string());
+                run_inner(surface_args).unwrap();
+
+                let mut send_text_args =
+                    os_strings(&["send_text", "hello", "--surface-id", "s1", "--socket"]);
+                send_text_args.push(socket_path.as_os_str().to_os_string());
+                run_inner(send_text_args).unwrap();
+            },
+        );
+
+        assert_eq!(requests[0]["method"], "surface.list");
+        assert_eq!(requests[0]["params"]["workspace_id"], "w1");
+        assert_eq!(requests[1]["method"], "surface.send_text");
+        assert_eq!(requests[1]["params"]["surface_id"], "s1");
+        assert_eq!(requests[1]["params"]["text"], "hello");
+    }
+
+    #[test]
+    fn browser_rejects_blank_required_args_before_socket_use() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        for (args, expected) in [
+            (
+                strings(&["open", "   ", "--workspace-id", "w1"]),
+                "browser open requires a URL",
+            ),
+            (
+                strings(&["navigate", "   "]),
+                "browser navigate requires a URL",
+            ),
+            (
+                strings(&["click", "s9", "   "]),
+                "browser click requires <surface-id> <ref>",
+            ),
+            (
+                strings(&["eval", "s9", "   "]),
+                "browser eval requires <surface-id> <script>",
+            ),
+            (
+                strings(&["profile", "create", "   "]),
+                "browser profile create requires a <name>",
+            ),
+            (
+                strings(&["history", "search", "   "]),
+                "browser history search requires a <query>",
+            ),
+            (
+                strings(&["bookmark", "add", "   "]),
+                "browser bookmark add requires a <url>",
+            ),
+        ] {
+            assert_err_contains(handle_browser(&ctx, args), expected);
+        }
+    }
+
+    #[test]
     fn browser_navigate_rejects_surface_id_flag() {
         let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
         assert_err_contains(
@@ -6234,6 +6394,44 @@ mod tests {
     }
 
     #[test]
+    fn browser_history_list_trims_profile_and_numeric_limit() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&["history", "list", "--profile", " Work ", "--limit", " 5 "]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.history.list");
+        assert_eq!(request["params"]["profile"], "Work");
+        assert_eq!(request["params"]["limit"], 5);
+    }
+
+    #[test]
+    fn browser_history_limit_requires_non_blank_number() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["history", "list", "--limit="])),
+            "--limit requires a value",
+        );
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["history", "list", "--limit", "bad"])),
+            "--limit must be a number",
+        );
+    }
+
+    #[test]
     fn browser_history_search_sends_query() {
         let request = with_socket_response(
             |req| {
@@ -6251,6 +6449,27 @@ mod tests {
         );
         assert_eq!(request["method"], "browser.history.search");
         assert_eq!(request["params"]["query"], "foo");
+    }
+
+    #[test]
+    fn browser_history_clear_sends_trimmed_profile() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"cleared": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["history", "clear", "--profile", " Work "]))
+                    .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.history.clear");
+        assert_eq!(request["params"]["profile"], "Work");
     }
 
     #[test]
@@ -6294,6 +6513,40 @@ mod tests {
     }
 
     #[test]
+    fn browser_bookmark_add_trims_url_title_and_profile() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"added": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "bookmark",
+                        "add",
+                        " https://example.com ",
+                        "--title",
+                        " Example ",
+                        "--profile",
+                        " Work ",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.bookmark.add");
+        assert_eq!(request["params"]["url"], "https://example.com");
+        assert_eq!(request["params"]["title"], "Example");
+        assert_eq!(request["params"]["profile"], "Work");
+    }
+
+    #[test]
     fn browser_bookmark_remove_sends_url() {
         let request = with_socket_response(
             |req| {
@@ -6315,5 +6568,45 @@ mod tests {
         );
         assert_eq!(request["method"], "browser.bookmark.remove");
         assert_eq!(request["params"]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn browser_bookmark_list_and_remove_trim_profile_and_url() {
+        let requests = with_socket_server(
+            2,
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": if req["method"] == "browser.bookmark.list" {
+                        json!([])
+                    } else {
+                        json!({"removed": true})
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["bookmark", "list", "--profile", " Work "]))
+                    .unwrap();
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "bookmark",
+                        "remove",
+                        " https://example.com ",
+                        "--profile",
+                        " Work ",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(requests[0]["method"], "browser.bookmark.list");
+        assert_eq!(requests[0]["params"]["profile"], "Work");
+        assert_eq!(requests[1]["method"], "browser.bookmark.remove");
+        assert_eq!(requests[1]["params"]["url"], "https://example.com");
+        assert_eq!(requests[1]["params"]["profile"], "Work");
     }
 }
