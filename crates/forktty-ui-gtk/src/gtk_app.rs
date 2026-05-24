@@ -5497,26 +5497,32 @@ fn close_active_surface(state: &SocketAppState) {
 }
 
 fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), TerminalError> {
-    let workspace = {
+    let surface = {
         let model = state
             .model
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
-        model.active_workspace()
+        let Some(workspace) = model.active_workspace() else {
+            return Ok(());
+        };
+        model.surface(&workspace.focused_surface_id).cloned()
     };
-    let Some(workspace) = workspace else {
+    let Some(surface) = surface else {
+        return Ok(());
+    };
+    if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
         return Ok(());
     };
     if state
         .terminal
         .surfaces()?
         .iter()
-        .any(|surface| surface.surface_id == workspace.focused_surface_id)
+        .any(|terminal_surface| terminal_surface.surface_id == surface.id)
     {
         return Ok(());
     }
-    state.terminal.spawn(SpawnRequest::for_workspace(
-        &workspace,
+    state.terminal.spawn(SpawnRequest::for_surface(
+        &surface,
         state.shell.clone(),
         state.socket_path.clone(),
     ))
@@ -8893,6 +8899,47 @@ mod tests {
         assert!(model.list_notifications().iter().any(|notification| {
             notification.title == "Close Pane Failed" && notification.body.contains("spawn failed")
         }));
+    }
+
+    #[test]
+    fn close_active_terminal_does_not_spawn_terminal_for_remaining_browser() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_path_buf();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, terminal_id, browser_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("project", &project_cwd);
+            let terminal_id = workspace.focused_surface_id.clone();
+            let browser = model
+                .open_browser(&workspace.id, "about:blank", SplitAxis::Horizontal)
+                .unwrap();
+            assert!(model.focus_surface(&terminal_id));
+            (workspace.id, terminal_id, browser.id)
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        close_active_surface(&state);
+
+        let model = model.lock().unwrap();
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(workspace.focused_surface_id, browser_id);
+        let model_surfaces = model.list_surfaces(Some(&workspace_id));
+        assert_eq!(model_surfaces.len(), 1);
+        assert_eq!(model_surfaces[0].id, browser_id);
+        assert!(matches!(
+            model_surfaces[0].kind,
+            forktty_core::SurfaceKind::Browser { .. }
+        ));
+        assert!(terminal.surfaces().unwrap().is_empty());
+        assert!(terminal.sent_text(&terminal_id).is_err());
     }
 
     #[test]
