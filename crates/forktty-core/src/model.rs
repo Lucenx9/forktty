@@ -626,6 +626,21 @@ impl WorkspaceModel {
         true
     }
 
+    /// Update a browser surface's URL. Returns false for terminals or missing ids.
+    pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
+        match self.surfaces.get_mut(surface_id) {
+            Some(surface) => match &mut surface.kind {
+                SurfaceKind::Browser { url: current } => {
+                    *current = url.to_string();
+                    surface.title = browser_title_for(url);
+                    true
+                }
+                SurfaceKind::Terminal => false,
+            },
+            None => false,
+        }
+    }
+
     pub fn prepare_root_surface_replacement(&mut self, surface_id: &str) -> Option<Surface> {
         let surface = self.surfaces.get(surface_id)?.clone();
         let (workspace_id, working_dir) = {
@@ -2933,6 +2948,29 @@ mod tests {
         let leaves = leaf_surface_ids(&model.workspaces[&ws.id].pane_tree);
         assert!(leaves.contains(&first));
         assert!(leaves.contains(&browser.id));
+    }
+
+    #[test]
+    fn set_surface_url_updates_only_browser_surfaces() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let terminal = first_leaf_surface_id(&model.workspaces[&ws.id].pane_tree).unwrap();
+        let browser = model
+            .open_browser(&ws.id, "https://a.com", SplitAxis::Horizontal)
+            .unwrap();
+
+        assert!(model.set_surface_url(&browser.id, "https://b.com"));
+        assert_eq!(
+            model.surface(&browser.id).unwrap().kind,
+            SurfaceKind::Browser {
+                url: "https://b.com".to_string()
+            }
+        );
+        // title also refreshes
+        assert_eq!(model.surface(&browser.id).unwrap().title, "b.com");
+        // terminal + missing rejected
+        assert!(!model.set_surface_url(&terminal, "https://b.com"));
+        assert!(!model.set_surface_url("nope", "https://b.com"));
     }
 
     #[test]
