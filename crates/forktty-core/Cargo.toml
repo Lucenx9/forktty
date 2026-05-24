@@ -10,7 +10,6 @@ repository.workspace = true
 description = "Core ForkTTY workspace, pane, config, session, notification, worktree, and socket protocol models"
 
 [dependencies]
-async-channel = { workspace = true }
 chrono.workspace = true
 dirs.workspace = true
 git2.workspace = true
