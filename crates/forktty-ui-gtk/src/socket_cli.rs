@@ -1423,7 +1423,7 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 
 fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &["surface-id"], "browser navigate")?;
+    reject_unknown_options(&parsed.options, &[], "browser navigate")?;
     let (surface_id, url) = match parsed.positionals.as_slice() {
         [surface, url] => (surface.clone(), url.clone()),
         [url] => {
@@ -5420,5 +5420,17 @@ mod tests {
     fn browser_requires_subcommand() {
         let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
         assert_err_contains(handle_browser(&ctx, strings(&[])), "subcommand");
+    }
+
+    #[test]
+    fn browser_navigate_rejects_surface_id_flag() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(
+                &ctx,
+                strings(&["navigate", "--surface-id", "s9", "https://x.com"]),
+            ),
+            "browser navigate",
+        );
     }
 }
