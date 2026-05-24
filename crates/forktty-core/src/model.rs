@@ -25,6 +25,14 @@ pub struct Workspace {
     pub focused_surface_id: SurfaceId,
     #[serde(default)]
     pub needs_attention: bool,
+    /// Listening TCP ports of this workspace's terminal child processes.
+    /// Runtime-only: recomputed each refresh, never persisted to a session.
+    #[serde(default, skip_serializing)]
+    pub listening_ports: Vec<u16>,
+    /// Pull request linked to this workspace's branch, resolved via `gh`.
+    /// Runtime-only: refreshed in the background, never persisted to a session.
+    #[serde(default, skip_serializing)]
+    pub pr: Option<crate::pr::PrInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -193,6 +201,8 @@ impl WorkspaceModel {
             },
             focused_surface_id: surface_id,
             needs_attention: false,
+            listening_ports: Vec::new(),
+            pr: None,
         };
         self.surfaces.insert(surface.id.clone(), surface);
         self.workspace_order.push(id.clone());
@@ -276,6 +286,8 @@ impl WorkspaceModel {
         let mut workspaces = self.list_workspaces();
         for workspace in &mut workspaces {
             normalize_workspace_focus(workspace);
+            workspace.listening_ports.clear();
+            workspace.pr = None;
         }
         SessionData {
             version: SESSION_FORMAT_VERSION,
@@ -651,6 +663,34 @@ impl WorkspaceModel {
             return false;
         };
         surface.title = title.into();
+        true
+    }
+
+    /// Replace a workspace's listening-port hint. Returns `true` when the set of
+    /// ports actually changed, so callers can skip redundant UI refreshes.
+    pub fn set_listening_ports(&mut self, workspace_id: &str, mut ports: Vec<u16>) -> bool {
+        let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+            return false;
+        };
+        ports.sort_unstable();
+        ports.dedup();
+        if workspace.listening_ports == ports {
+            return false;
+        }
+        workspace.listening_ports = ports;
+        true
+    }
+
+    /// Replace a workspace's linked-PR hint. Returns `true` when it changed, so
+    /// callers can skip redundant UI refreshes.
+    pub fn set_pr(&mut self, workspace_id: &str, pr: Option<crate::pr::PrInfo>) -> bool {
+        let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+            return false;
+        };
+        if workspace.pr == pr {
+            return false;
+        }
+        workspace.pr = pr;
         true
     }
 
@@ -1421,6 +1461,61 @@ mod tests {
     }
 
     #[test]
+    fn set_listening_ports_sorts_dedupes_and_reports_change() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        assert!(model.set_listening_ports(&workspace.id, vec![8080, 3000, 3000]));
+        assert_eq!(
+            model.workspaces[&workspace.id].listening_ports,
+            vec![3000, 8080]
+        );
+        // Same set in a different order is not a change.
+        assert!(!model.set_listening_ports(&workspace.id, vec![8080, 3000]));
+        // Unknown workspace is a no-op.
+        assert!(!model.set_listening_ports("workspace-404", vec![1234]));
+    }
+
+    #[test]
+    fn set_pr_reports_change_only_on_difference() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let pr = crate::pr::PrInfo {
+            number: 42,
+            state: crate::pr::PrState::Open,
+            url: "u".to_string(),
+        };
+
+        assert!(model.set_pr(&workspace.id, Some(pr.clone())));
+        assert!(!model.set_pr(&workspace.id, Some(pr)));
+        assert!(model.set_pr(&workspace.id, None));
+        assert!(!model.set_pr("workspace-404", None));
+    }
+
+    #[test]
+    fn session_data_drops_runtime_sidebar_hints() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.set_listening_ports(&workspace.id, vec![8080]);
+        model.set_pr(
+            &workspace.id,
+            Some(crate::pr::PrInfo {
+                number: 42,
+                state: crate::pr::PrState::Open,
+                url: "https://github.com/o/r/pull/42".to_string(),
+            }),
+        );
+
+        let data = model.to_session_data();
+
+        assert!(data.workspaces[0].listening_ports.is_empty());
+        assert!(data.workspaces[0].pr.is_none());
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(!json.contains("listening_ports"));
+        assert!(!json.contains("\"pr\""));
+    }
+
+    #[test]
     fn split_surface_adds_second_surface_and_focuses_it() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -1511,6 +1606,8 @@ mod tests {
             },
             focused_surface_id: "surface-1".to_string(),
             needs_attention: false,
+            listening_ports: Vec::new(),
+            pr: None,
         };
         model.workspace_order.push(workspace.id.clone());
         model.workspaces.insert(workspace.id.clone(), workspace);

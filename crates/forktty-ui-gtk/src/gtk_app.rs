@@ -27,8 +27,11 @@ use libloading::Library;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CString;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -62,6 +65,8 @@ const SPLIT_VERTICAL_ACCEL: &str = "<Control><Shift>E";
 const RESTART_PANE_SHORTCUT: &str = "Ctrl+Shift+R";
 const RESTART_PANE_ACCEL: &str = "<Control><Shift>R";
 const EMPTY_LAYOUT_SIGNATURE: &str = "empty-layout";
+const GH_PR_VIEW_TIMEOUT: Duration = Duration::from_secs(8);
+const GH_PR_VIEW_MAX_STDOUT_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug)]
 enum GtkTerminalCommand {
@@ -317,6 +322,15 @@ struct VteController {
     pending_spawns: BTreeSet<String>,
     last_layout_signature: Option<String>,
     maximized_pane: bool,
+    /// Spawned child PID per surface, used to discover listening ports.
+    surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    next_spawn_token: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SurfacePid {
+    pid: i32,
+    spawn_token: u64,
 }
 
 impl VteController {
@@ -335,6 +349,8 @@ impl VteController {
             pending_spawns: BTreeSet::new(),
             last_layout_signature: None,
             maximized_pane: false,
+            surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
+            next_spawn_token: 0,
         }
     }
 
@@ -366,6 +382,7 @@ impl VteController {
                     detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
                 }
                 self.widgets.remove(&surface_id);
+                self.surface_pids.borrow_mut().remove(&surface_id);
                 self.rebuild_layout();
             }
         }
@@ -382,8 +399,19 @@ impl VteController {
         let spawn_state_for_error = self.state.clone();
         let spawn_state_for_ready = self.state.clone();
         let spawn_model_for_error = spawn_model.clone();
+        let spawn_pids = self.surface_pids.clone();
+        let spawn_pid_surface_id = request.surface_id.clone();
+        self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
+        let spawn_token = self.next_spawn_token;
         match spawn_vte_terminal_with_callback(&request, move |result| match result {
-            Ok(_) => {
+            Ok(pid) => {
+                spawn_pids.borrow_mut().insert(
+                    spawn_pid_surface_id.clone(),
+                    SurfacePid {
+                        pid: pid.0,
+                        spawn_token,
+                    },
+                );
                 if let Some(state) = &spawn_state_for_ready {
                     if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
                         eprintln!(
@@ -413,7 +441,13 @@ impl VteController {
                     );
                 }
                 apply_vte_appearance(&widget);
-                attach_vte_signal_handlers(&widget, &self.model, &request);
+                attach_vte_signal_handlers(
+                    &widget,
+                    &self.model,
+                    &request,
+                    &self.surface_pids,
+                    spawn_token,
+                );
                 let chrome = build_pane_chrome(
                     &request.surface_id,
                     &widget,
@@ -1334,6 +1368,8 @@ fn attach_vte_signal_handlers(
     widget: &VteTerminalWidget,
     model: &Arc<Mutex<WorkspaceModel>>,
     request: &SpawnRequest,
+    surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    spawn_token: u64,
 ) {
     let surface_id = request.surface_id.clone();
     let focus_model = model.clone();
@@ -1458,6 +1494,7 @@ fn attach_vte_signal_handlers(
     let surface_id = request.surface_id.clone();
     let workspace_id = request.workspace_id.clone();
     let exit_model = model.clone();
+    let exit_surface_pids = surface_pids.clone();
     // VTE emits child-exited exactly once in normal teardown but can in rare
     // cases (force-kill, fast respawn) fire twice. A single-shot latch keeps
     // the status + notification idempotent per surface.
@@ -1466,6 +1503,14 @@ fn attach_vte_signal_handlers(
         if exit_fired.replace(true) {
             return;
         }
+        let mut pids = exit_surface_pids.borrow_mut();
+        if matches!(
+            pids.get(&surface_id),
+            Some(entry) if entry.spawn_token == spawn_token
+        ) {
+            pids.remove(&surface_id);
+        }
+        drop(pids);
         if let Ok(mut model) = exit_model.lock() {
             if model.surface(&surface_id).is_none() {
                 return;
@@ -3455,6 +3500,37 @@ fn build_ui(app: &adw::Application) {
         refresh_notification_indicator(&notifications_for_timer, &state_for_notifications_timer);
         glib::ControlFlow::Continue
     });
+    let controller_for_ports = controller.clone();
+    let alive_for_ports_timer = ui_alive.clone();
+    let port_in_flight = Arc::new(AtomicBool::new(false));
+    let port_generation = Arc::new(AtomicU64::new(0));
+    glib::timeout_add_local(Duration::from_secs(3), move || {
+        if !alive_for_ports_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        refresh_listening_ports(
+            &controller_for_ports,
+            port_in_flight.clone(),
+            port_generation.clone(),
+        );
+        glib::ControlFlow::Continue
+    });
+    let pr_model = state.model.clone();
+    let pr_in_flight = Arc::new(AtomicBool::new(false));
+    let pr_model_for_timer = pr_model.clone();
+    let pr_in_flight_for_timer = pr_in_flight.clone();
+    let alive_for_pr_timer = ui_alive.clone();
+    glib::timeout_add_local(Duration::from_secs(30), move || {
+        if !alive_for_pr_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        if pr_lookup_enabled() {
+            spawn_pr_refresh(pr_model_for_timer.clone(), pr_in_flight_for_timer.clone());
+        } else {
+            clear_pr_hints(&pr_model_for_timer);
+        }
+        glib::ControlFlow::Continue
+    });
     install_session_autosave(&state);
 
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
@@ -3518,6 +3594,9 @@ fn build_ui(app: &adw::Application) {
     let state_for_bootstrap = state.clone();
     let controller_for_bootstrap = controller.clone();
     let sidebar_ui_for_bootstrap = sidebar_ui.clone();
+    let pr_model_for_bootstrap = state.model.clone();
+    let pr_in_flight_for_bootstrap = pr_in_flight.clone();
+    let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
     glib::idle_add_local_once(move || {
         if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, cwd) {
             eprintln!("Failed to restore workspace session: {err}");
@@ -3537,6 +3616,9 @@ fn build_ui(app: &adw::Application) {
             &controller_for_bootstrap,
             true,
         );
+        if enable_pr_lookup_on_startup {
+            spawn_pr_refresh(pr_model_for_bootstrap, pr_in_flight_for_bootstrap);
+        }
         start_socket_server(state_for_bootstrap.clone());
     });
 }
@@ -3560,8 +3642,15 @@ fn settings_apply_callback(
             &config.appearance.sidebar_position,
         );
         sidebar_shell.set_visible(config.appearance.sidebar_visible);
-        for widget in controller.borrow().widgets.values() {
-            apply_vte_appearance(widget);
+        let model = {
+            let controller = controller.borrow();
+            for widget in controller.widgets.values() {
+                apply_vte_appearance(widget);
+            }
+            controller.model.clone()
+        };
+        if !config.general.enable_pr_lookup {
+            clear_pr_hints(&model);
         }
     })
 }
@@ -3714,6 +3803,215 @@ fn save_session_from_state(state: &SocketAppState) {
     if let Err(err) = session::save_session(&data) {
         eprintln!("Failed to save GTK session: {err}");
     }
+}
+
+/// Recompute each workspace's listening-port hint from its surfaces' child PIDs.
+/// Runs on a slow cadence; the sidebar refresh timer renders the updated model.
+fn refresh_listening_ports(
+    controller: &Rc<RefCell<VteController>>,
+    in_flight: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
+) {
+    let (model, targets) = {
+        let controller = controller.borrow();
+        let model = controller.model.clone();
+        let Ok(model_guard) = model.lock() else {
+            return;
+        };
+        let live_surface_ids = model_guard
+            .list_surfaces(None)
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<BTreeSet<_>>();
+        let mut surface_pids = controller.surface_pids.borrow_mut();
+        surface_pids.retain(|surface_id, _| live_surface_ids.contains(surface_id));
+        let surface_pids = surface_pids.clone();
+        let targets = model_guard
+            .list_workspaces()
+            .into_iter()
+            .map(|workspace| {
+                let roots = model_guard
+                    .list_surfaces(Some(&workspace.id))
+                    .iter()
+                    .filter_map(|surface| surface_pids.get(&surface.id).map(|entry| entry.pid))
+                    .collect::<Vec<_>>();
+                (workspace.id, roots)
+            })
+            .collect::<Vec<_>>();
+        drop(model_guard);
+        (model, targets)
+    };
+    if targets.iter().all(|(_, roots)| roots.is_empty()) {
+        generation.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut model) = model.lock() {
+            for (workspace_id, _) in targets {
+                model.set_listening_ports(&workspace_id, Vec::new());
+            }
+        }
+        return;
+    }
+    if in_flight.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let scan_generation = generation.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        let proc_root = Path::new("/proc");
+        let results = targets
+            .into_iter()
+            .map(|(workspace_id, roots)| {
+                let ports = if roots.is_empty() {
+                    Vec::new()
+                } else {
+                    forktty_core::ports::listening_ports(&roots, proc_root)
+                        .into_iter()
+                        .collect()
+                };
+                (workspace_id, ports)
+            })
+            .collect::<Vec<_>>();
+        glib::MainContext::default().invoke(move || {
+            if generation.load(Ordering::SeqCst) == scan_generation {
+                if let Ok(mut model) = model.lock() {
+                    for (workspace_id, ports) in results {
+                        model.set_listening_ports(&workspace_id, ports);
+                    }
+                }
+            }
+            in_flight.store(false, Ordering::SeqCst);
+        });
+    });
+}
+
+struct AtomicBoolReset {
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for AtomicBoolReset {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::SeqCst);
+    }
+}
+
+fn pr_lookup_enabled() -> bool {
+    config::load_config()
+        .map(|config| config.general.enable_pr_lookup)
+        .unwrap_or(false)
+}
+
+fn clear_pr_hints(model: &Arc<Mutex<WorkspaceModel>>) {
+    let Ok(mut model) = model.lock() else {
+        return;
+    };
+    let workspace_ids = model
+        .list_workspaces()
+        .into_iter()
+        .map(|workspace| workspace.id)
+        .collect::<Vec<_>>();
+    for workspace_id in workspace_ids {
+        model.set_pr(&workspace_id, None);
+    }
+}
+
+fn trusted_command_path(program: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(program))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn wait_with_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+fn child_stdout(mut child: std::process::Child) -> Option<String> {
+    let stdout = child.stdout.take()?;
+    let mut buffer = String::new();
+    stdout
+        .take(GH_PR_VIEW_MAX_STDOUT_BYTES)
+        .read_to_string(&mut buffer)
+        .ok()?;
+    Some(buffer)
+}
+
+fn run_gh_pr_view(dir: &Path) -> Option<String> {
+    let gh = trusted_command_path("gh")?;
+    let mut child = Command::new(gh)
+        .args(["pr", "view", "--json", "number,state,isDraft,url"])
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let status = wait_with_timeout(&mut child, GH_PR_VIEW_TIMEOUT)?;
+    if !status.success() {
+        return None;
+    }
+    child_stdout(child)
+}
+
+/// Kick off a background PR refresh unless one is already running.
+fn spawn_pr_refresh(model: Arc<Mutex<WorkspaceModel>>, in_flight: Arc<AtomicBool>) {
+    if in_flight.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let _reset = AtomicBoolReset { flag: in_flight };
+        refresh_pull_requests(model);
+    });
+}
+
+/// Resolve each workspace's linked PR via `gh`, writing results into the shared
+/// model. `gh` makes a network call, so this runs on a worker thread, never the
+/// GTK main loop.
+fn refresh_pull_requests(model: Arc<Mutex<WorkspaceModel>>) {
+    if !pr_lookup_enabled() {
+        clear_pr_hints(&model);
+        return;
+    }
+    let targets: Vec<(String, PathBuf)> = match model.lock() {
+        Ok(model) => model
+            .list_workspaces()
+            .into_iter()
+            .map(|workspace| (workspace.id, workspace.working_dir))
+            .collect(),
+        Err(_) => return,
+    };
+    for (workspace_id, working_dir) in targets {
+        let pr = resolve_pr(&working_dir);
+        if !pr_lookup_enabled() {
+            clear_pr_hints(&model);
+            return;
+        }
+        if let Ok(mut model) = model.lock() {
+            model.set_pr(&workspace_id, pr);
+        }
+    }
+}
+
+/// Run `gh pr view` in `dir` and parse the result. Returns `None` when there is
+/// no PR for the checked-out branch, `gh` is absent, or `dir` is not a GitHub
+/// checkout.
+fn resolve_pr(dir: &Path) -> Option<forktty_core::pr::PrInfo> {
+    let stdout = run_gh_pr_view(dir)?;
+    forktty_core::pr::parse_pr_view(&stdout)
 }
 
 fn install_session_autosave(state: &SocketAppState) {
@@ -4517,7 +4815,19 @@ fn workspace_meta_line(workspace: &forktty_core::Workspace) -> String {
             parts.push(format!("wt:{worktree}"));
         }
     }
+    if let Some(pr) = workspace.pr.as_ref() {
+        parts.push(pr.summary());
+    }
     parts.push(compact_path(&workspace.working_dir));
+    if !workspace.listening_ports.is_empty() {
+        let ports = workspace
+            .listening_ports
+            .iter()
+            .map(|port| format!(":{port}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(ports);
+    }
     parts.join(" · ")
 }
 
@@ -6976,6 +7286,12 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
         &loaded.general.worktree_layout,
     );
     worktree_group.add(&worktree_layout_row);
+    let pr_lookup = adw::SwitchRow::builder()
+        .title("Linked PR lookup")
+        .subtitle("Use the GitHub CLI to show PR status for workspace branches.")
+        .active(loaded.general.enable_pr_lookup)
+        .build();
+    worktree_group.add(&pr_lookup);
     automation_page.add(&worktree_group);
 
     let notification_group = adw::PreferencesGroup::builder()
@@ -7223,6 +7539,20 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
             }
         }
     });
+    pr_lookup.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            let mut next = current.borrow().clone();
+            next.general.enable_pr_lookup = row.is_active();
+            persist_settings_change(&dialog, &current, &on_apply, next, "PR lookup updated.");
+        }
+    });
     notification_command.connect_apply({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -7301,6 +7631,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
             let worktree_layout_for_reset = worktree_layout.clone();
+            let pr_lookup_for_reset = pr_lookup.clone();
             let notification_command_for_reset = notification_command.clone();
             let desktop_notifications_for_reset = desktop_notifications.clone();
             let notification_sound_for_reset = notification_sound.clone();
@@ -7330,6 +7661,7 @@ fn show_settings_dialog(parent: &adw::ApplicationWindow, on_apply: SettingsApply
                     sidebar_visible_for_reset.set_active(defaults.appearance.sidebar_visible);
                     let _ =
                         worktree_layout_for_reset.set_active_id(Some(&defaults.general.worktree_layout));
+                    pr_lookup_for_reset.set_active(defaults.general.enable_pr_lookup);
                     notification_command_for_reset.set_text(&defaults.general.notification_command);
                     desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
                     notification_sound_for_reset.set_active(defaults.notifications.sound);

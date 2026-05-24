@@ -47,6 +47,8 @@ pub struct GeneralConfig {
     #[serde(default = "default_worktree_layout")]
     pub worktree_layout: String,
     #[serde(default)]
+    pub enable_pr_lookup: bool,
+    #[serde(default)]
     pub notification_command: String,
 }
 
@@ -103,6 +105,7 @@ impl Default for GeneralConfig {
             theme_source: default_theme_source(),
             shell: default_shell(),
             worktree_layout: default_worktree_layout(),
+            enable_pr_lookup: false,
             notification_command: String::new(),
         }
     }
@@ -507,6 +510,7 @@ mod tests {
         assert_eq!(config.appearance.scrollback_lines, 20_000);
         assert!(config.appearance.terminal_audible_bell);
         assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_SYSTEM);
+        assert!(!config.general.enable_pr_lookup);
     }
 
     #[test]
@@ -566,6 +570,7 @@ mod tests {
             shell = "/bin/sh"
             theme_source = " Dark "
             worktree_layout = " SIBLING "
+            enable_pr_lookup = true
 
             [appearance]
             sidebar_position = " Right "
@@ -580,6 +585,7 @@ mod tests {
 
         assert_eq!(config.general.theme_source, "dark");
         assert_eq!(config.general.worktree_layout, "sibling");
+        assert!(config.general.enable_pr_lookup);
         assert_eq!(config.appearance.sidebar_position, "right");
         assert_eq!(config.appearance.terminal_renderer, "vte");
         assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_TOKYO_NIGHT);
@@ -740,6 +746,24 @@ mod tests {
     }
 
     #[test]
+    fn pr_lookup_defaults_to_disabled_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert!(!config.general.enable_pr_lookup);
+    }
+
+    #[test]
     fn scrollback_lines_are_bounded() {
         let mut config = AppConfig::default();
         config.general.shell = "/bin/sh".to_string();
@@ -756,10 +780,12 @@ mod tests {
         let path = dir.path().join("config.toml");
         let mut config = AppConfig::default();
         config.appearance.sidebar_visible = false;
+        config.general.enable_pr_lookup = true;
         let toml_str = toml::to_string(&config).unwrap();
         std::fs::write(&path, toml_str).unwrap();
         let loaded = load_config_from_path(&path).unwrap();
         assert!(!loaded.appearance.sidebar_visible);
+        assert!(loaded.general.enable_pr_lookup);
     }
 
     #[test]

@@ -18,6 +18,8 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Recursive split-pane rendering through GTK paned containers.
 - [x] Surface split, focus, close, workspace select, workspace create, and workspace close.
 - [x] Sidebar refresh from the Rust model with active/unread/worktree/metadata state.
+- [x] Listening-TCP-port hints in the sidebar, auto-detected from each workspace's pane child-process tree via `/proc`.
+- [x] Linked-PR hints in the sidebar (`#number state`), resolved per branch via `gh` on a background thread.
 - [x] Command palette, notification panel, settings dialog, and worktree dialog.
 
 ### Git Worktrees
