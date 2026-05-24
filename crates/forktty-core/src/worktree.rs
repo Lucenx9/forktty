@@ -107,6 +107,60 @@ pub struct WorktreeInfo {
     pub status: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedWorktreeRemoval {
+    repo_git_dir: PathBuf,
+    worktree_name: String,
+    branch: String,
+    wt_path: Option<PathBuf>,
+}
+
+impl PreparedWorktreeRemoval {
+    pub fn worktree_name(&self) -> &str {
+        &self.worktree_name
+    }
+
+    pub fn finish(self, delete_branch: bool) -> Result<(), WorktreeError> {
+        let repo = Repository::open(&self.repo_git_dir)?;
+        let wt = repo
+            .find_worktree(&self.worktree_name)
+            .map_err(|_| WorktreeError::NotFound(self.worktree_name.clone()))?;
+        if let Some(wt_path) = &self.wt_path {
+            match std::fs::symlink_metadata(wt_path) {
+                Ok(_) => {
+                    let verified =
+                        verify_linked_worktree_path(&repo, &self.worktree_name, wt.path())?;
+                    if &verified != wt_path {
+                        return Err(WorktreeError::WorktreeMetadataMismatch {
+                            name: self.worktree_name.clone(),
+                        });
+                    }
+                    let wt_repo = Repository::open(wt_path).map_err(|_| {
+                        WorktreeError::NotARepo(wt_path.to_string_lossy().to_string())
+                    })?;
+                    if has_uncommitted_changes(&wt_repo)? {
+                        return Err(WorktreeError::WorktreeDirty(self.worktree_name.clone()));
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true).working_tree(true);
+        wt.prune(Some(&mut opts))?;
+        if let Some(wt_path) = self.wt_path.filter(|path| path.exists()) {
+            std::fs::remove_dir_all(&wt_path)?;
+        }
+        if delete_branch && !self.branch.is_empty() {
+            if let Ok(mut branch) = repo.find_branch(&self.branch, BranchType::Local) {
+                let _ = branch.delete();
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn create(
     repo_path: &str,
     branch_name: &str,
@@ -198,6 +252,13 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
 }
 
 pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
+    prepare_remove(repo_path, selector)?.finish(delete_branch)
+}
+
+pub fn prepare_remove(
+    repo_path: &str,
+    selector: &str,
+) -> Result<PreparedWorktreeRemoval, WorktreeError> {
     let repo = open_worktree_admin_repo(repo_path)?;
     let selector = validate_worktree_name(selector).map_err(WorktreeError::InvalidName)?;
     let worktree_name = resolve_worktree_name(&repo, selector)?;
@@ -228,18 +289,12 @@ pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<()
     } else {
         None
     };
-    let mut opts = git2::WorktreePruneOptions::new();
-    opts.valid(true).working_tree(true);
-    wt.prune(Some(&mut opts))?;
-    if let Some(wt_path) = wt_path.filter(|path| path.exists()) {
-        std::fs::remove_dir_all(&wt_path)?;
-    }
-    if delete_branch && !branch.is_empty() {
-        if let Ok(mut branch) = repo.find_branch(&branch, BranchType::Local) {
-            let _ = branch.delete();
-        }
-    }
-    Ok(())
+    Ok(PreparedWorktreeRemoval {
+        repo_git_dir: repo.path().to_path_buf(),
+        worktree_name,
+        branch,
+        wt_path,
+    })
 }
 
 pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
@@ -908,6 +963,28 @@ mod tests {
         assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
 
         remove(dir.path().to_str().unwrap(), "feature/one", true).unwrap();
+        assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepare_remove_does_not_prune_until_finish() {
+        let dir = make_repo();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "feature/prepared-remove",
+            "nested",
+        )
+        .unwrap();
+        let prepared = prepare_remove(dir.path().to_str().unwrap(), "feature/prepared-remove")
+            .expect("remove preflight succeeds");
+
+        assert_eq!(prepared.worktree_name(), info.worktree_name);
+        assert!(Path::new(&info.path).exists());
+        assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
+
+        prepared.finish(true).unwrap();
+
+        assert!(!Path::new(&info.path).exists());
         assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
     }
 
