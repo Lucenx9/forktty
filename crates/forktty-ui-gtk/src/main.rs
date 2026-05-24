@@ -4,6 +4,9 @@ mod socket_cli;
 #[cfg(feature = "gtk-vte")]
 mod gtk_app;
 
+#[cfg(feature = "browser")]
+mod browser_pane;
+
 use std::process::ExitCode;
 
 fn main() -> ExitCode {

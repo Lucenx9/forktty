@@ -63,6 +63,8 @@ Usage:
   forktty ping
   forktty capabilities [--json]
   forktty events [--no-replay]
+  forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] <url>
+  forktty browser navigate [<surface-id>] <url>
 ";
 
 #[derive(Debug)]
@@ -374,6 +376,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "ping" => handle_ping(&context, args),
         "capabilities" => handle_capabilities(&context, args),
         "events" => handle_events(&context, args),
+        "browser" => handle_browser(&context, args),
         "help" => {
             print!("{HELP_TEXT}");
             Ok(())
@@ -1342,6 +1345,113 @@ fn surface_id_from_workspace_list(workspaces: &Value) -> Option<String> {
     string_field(active, "focused_surface_id")
         .or_else(|| string_field(active, "focusedSurfaceId"))
         .map(str::to_string)
+}
+
+fn resolve_active_workspace_id(context: &CliContext) -> CliResult<String> {
+    let workspaces = send_socket_request(&context.socket_path, "workspace.list", json!({}))?;
+    active_workspace_id_from_list(&workspaces).ok_or_else(|| {
+        CliError::new("browser open requires --workspace-id (no active workspace found)")
+    })
+}
+
+fn active_workspace_id_from_list(workspaces: &Value) -> Option<String> {
+    let items = workspaces.as_array()?;
+    let active = items
+        .iter()
+        .find(|w| w.get("active").and_then(Value::as_bool).unwrap_or(false))
+        .or_else(|| items.first())?;
+    string_field(active, "id").map(str::to_string)
+}
+
+fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut iter = args.into_iter();
+    let sub = iter.next().unwrap_or_default();
+    let rest: Vec<String> = iter.collect();
+    match sub.as_str() {
+        "open" => browser_open(context, rest),
+        "navigate" => browser_navigate(context, rest),
+        "" => Err(CliError::new(
+            "browser requires a subcommand: open | navigate",
+        )),
+        other => Err(CliError::new(format!(
+            "browser: unknown subcommand {other}"
+        ))),
+    }
+}
+
+fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["workspace-id", "axis"], "browser open")?;
+    let url = parsed
+        .positionals
+        .first()
+        .ok_or_else(|| CliError::new("browser open requires a URL"))?
+        .clone();
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "browser open: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let workspace_id =
+        match non_blank_string_option(&parsed.options, "workspace-id", "--workspace-id")? {
+            Some(id) => id.to_string(),
+            None => resolve_active_workspace_id(context)?,
+        };
+    let mut params = Map::new();
+    params.insert("url".to_string(), Value::String(url));
+    params.insert("workspace_id".to_string(), Value::String(workspace_id));
+    if let Some(axis) = non_blank_string_option(&parsed.options, "axis", "--axis")? {
+        if !matches!(axis, "horizontal" | "vertical") {
+            return Err(CliError::new(
+                "Invalid --axis: expected horizontal or vertical",
+            ));
+        }
+        params.insert("axis".to_string(), Value::String(axis.to_string()));
+    }
+    let result = send_socket_request(&context.socket_path, "browser.open", Value::Object(params))?;
+    if context.json {
+        print_json(&result)
+    } else {
+        println!(
+            "Opened browser surface {}",
+            string_field(&result, "id").unwrap_or("(unknown)")
+        );
+        Ok(())
+    }
+}
+
+fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "browser navigate")?;
+    let (surface_id, url) = match parsed.positionals.as_slice() {
+        [surface, url] => (surface.clone(), url.clone()),
+        [url] => {
+            let surface = resolve_focused_surface_id(context)?
+                .ok_or_else(|| CliError::new("browser navigate requires a surface id"))?;
+            (surface, url.clone())
+        }
+        [] => {
+            return Err(CliError::new(
+                "browser navigate requires [surface-id] <url>",
+            ))
+        }
+        _ => return Err(CliError::new("browser navigate: too many arguments")),
+    };
+    let mut params = Map::new();
+    params.insert("surface_id".to_string(), Value::String(surface_id));
+    params.insert("url".to_string(), Value::String(url));
+    let result = send_socket_request(
+        &context.socket_path,
+        "browser.navigate",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        println!("Navigated");
+        Ok(())
+    }
 }
 
 fn handle_worktree_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -3691,6 +3801,34 @@ mod tests {
         handle.join().unwrap()
     }
 
+    /// Serves a fixed number of requests, each on its own connection (the CLI
+    /// opens a fresh connection per `send_socket_request`). The responder maps a
+    /// request to a response string; every received request is returned in order.
+    fn with_socket_server(
+        request_count: usize,
+        responder: impl Fn(&Value) -> String + Send + 'static,
+        test: impl FnOnce(&Path),
+    ) -> Vec<Value> {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let handle = thread::spawn(move || {
+            let mut requests = Vec::with_capacity(request_count);
+            for _ in 0..request_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(line.trim()).unwrap();
+                stream.write_all(responder(&request).as_bytes()).unwrap();
+                requests.push(request);
+            }
+            requests
+        });
+        test(&socket_path);
+        handle.join().unwrap()
+    }
+
     fn test_context() -> CliContext {
         CliContext {
             json: true,
@@ -5251,5 +5389,186 @@ mod tests {
                 );
             },
         );
+    }
+
+    #[test]
+    fn browser_open_sends_browser_open_with_url_and_workspace() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id":"s9","kind":{"type":"browser","url":"https://example.com"}},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&["open", "example.com", "--workspace-id", "w1"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.open");
+        assert_eq!(request["params"]["url"], "example.com");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn browser_navigate_sends_browser_navigate_with_explicit_surface() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"navigated": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["navigate", "s9", "https://rust-lang.org"]))
+                    .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.navigate");
+        assert_eq!(request["params"]["surface_id"], "s9");
+        assert_eq!(request["params"]["url"], "https://rust-lang.org");
+    }
+
+    #[test]
+    fn browser_rejects_unknown_subcommand() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(handle_browser(&ctx, strings(&["frobnicate"])), "browser");
+    }
+
+    #[test]
+    fn browser_requires_subcommand() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(handle_browser(&ctx, strings(&[])), "subcommand");
+    }
+
+    #[test]
+    fn browser_navigate_rejects_surface_id_flag() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(
+                &ctx,
+                strings(&["navigate", "--surface-id", "s9", "https://x.com"]),
+            ),
+            "browser navigate",
+        );
+    }
+
+    #[test]
+    fn browser_open_resolves_active_workspace_when_id_omitted() {
+        let requests = with_socket_server(
+            2,
+            |req| match req["method"].as_str() {
+                Some("workspace.list") => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [
+                        { "id": "ws-idle", "active": false },
+                        { "id": "ws-active", "active": true }
+                    ],
+                })
+                .to_string(),
+                _ => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id":"s1","kind":{"type":"browser","url":"https://example.com"}},
+                })
+                .to_string(),
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["open", "example.com"])).unwrap();
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
+        assert_eq!(requests[1]["method"], "browser.open");
+        assert_eq!(requests[1]["params"]["workspace_id"], "ws-active");
+        assert_eq!(requests[1]["params"]["url"], "example.com");
+    }
+
+    #[test]
+    fn browser_navigate_resolves_focused_surface_when_id_omitted() {
+        let requests = with_socket_server(
+            2,
+            |req| match req["method"].as_str() {
+                Some("workspace.list") => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [
+                        { "id": "a", "active": false, "focused_surface_id": "surface-a" },
+                        { "id": "b", "active": true, "focused_surface_id": "surface-b" }
+                    ],
+                })
+                .to_string(),
+                _ => json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"navigated": true},
+                })
+                .to_string(),
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["navigate", "https://rust-lang.org"])).unwrap();
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
+        assert_eq!(requests[1]["method"], "browser.navigate");
+        assert_eq!(requests[1]["params"]["surface_id"], "surface-b");
+        assert_eq!(requests[1]["params"]["url"], "https://rust-lang.org");
+    }
+
+    #[test]
+    fn browser_open_errors_when_no_active_workspace() {
+        let requests = with_socket_server(
+            1,
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                assert_err_contains(
+                    handle_browser(&ctx, strings(&["open", "example.com"])),
+                    "no active workspace",
+                );
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
+    }
+
+    #[test]
+    fn browser_navigate_errors_when_no_focused_surface() {
+        let requests = with_socket_server(
+            1,
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                assert_err_contains(
+                    handle_browser(&ctx, strings(&["navigate", "https://x.com"])),
+                    "surface id",
+                );
+            },
+        );
+        assert_eq!(requests[0]["method"], "workspace.list");
     }
 }

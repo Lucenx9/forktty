@@ -36,6 +36,7 @@ pub enum ModelEvent {
     SurfaceAdded {
         id: String,
         workspace_id: String,
+        kind: SurfaceSnapKind,
     },
     SurfaceRemoved {
         id: String,
@@ -48,6 +49,11 @@ pub enum ModelEvent {
     SurfaceTitleChanged {
         id: String,
         title: String,
+    },
+    /// A browser surface navigated to a new URL.
+    SurfaceUrlChanged {
+        id: String,
+        url: String,
     },
     /// A status entry changed. `value` is `None` when the key was cleared.
     StatusChanged {
@@ -80,6 +86,16 @@ pub enum ModelEvent {
     },
 }
 
+/// Serializable surface-kind tag carried in events (mirrors model `SurfaceKind`
+/// without the per-kind payload, which events carry separately).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceSnapKind {
+    #[default]
+    Terminal,
+    Browser,
+}
+
 /// Per-workspace fields tracked for diffing.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WsSnap {
@@ -96,6 +112,8 @@ pub struct WsSnap {
 pub struct SurfSnap {
     pub workspace_id: String,
     pub title: String,
+    pub kind: SurfaceSnapKind,
+    pub url: Option<String>,
 }
 
 /// Per-notification fields tracked for edge-triggered emission.
@@ -132,11 +150,17 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
             progress.insert(entry.key, (entry.value, entry.total));
         }
         for surface in model.list_surfaces(Some(&workspace.id)) {
+            let (kind, url) = match surface.kind {
+                crate::model::SurfaceKind::Terminal => (SurfaceSnapKind::Terminal, None),
+                crate::model::SurfaceKind::Browser { url } => (SurfaceSnapKind::Browser, Some(url)),
+            };
             surfaces.insert(
                 surface.id,
                 SurfSnap {
                     workspace_id: surface.workspace_id,
                     title: surface.title,
+                    kind,
+                    url,
                 },
             );
         }
@@ -208,6 +232,7 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             events.push(ModelEvent::SurfaceAdded {
                 id: id.clone(),
                 workspace_id: surf.workspace_id.clone(),
+                kind: surf.kind,
             });
         }
     }
@@ -250,8 +275,8 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
         }
     }
 
-    // Surface title changes. New surfaces are diffed against an empty title so a
-    // titled surface advertises its title on replay too.
+    // Surface title and URL changes. New surfaces are diffed against an empty
+    // default so a titled/browsed surface advertises its state on replay too.
     let default_surf = SurfSnap::default();
     for (id, next_surf) in &next.surfaces {
         let prev_surf = prev.surfaces.get(id).unwrap_or(&default_surf);
@@ -260,6 +285,14 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
                 id: id.clone(),
                 title: next_surf.title.clone(),
             });
+        }
+        if let Some(url) = &next_surf.url {
+            if prev_surf.url.as_deref() != Some(url.as_str()) {
+                events.push(ModelEvent::SurfaceUrlChanged {
+                    id: id.clone(),
+                    url: url.clone(),
+                });
+            }
         }
     }
 
@@ -402,6 +435,8 @@ mod tests {
             SurfSnap {
                 workspace_id: "w1".into(),
                 title: "old".into(),
+                kind: SurfaceSnapKind::Terminal,
+                url: None,
             },
         );
         let mut next = prev.clone();
@@ -413,12 +448,15 @@ mod tests {
             SurfSnap {
                 workspace_id: "w1".into(),
                 title: "two".into(),
+                kind: SurfaceSnapKind::Terminal,
+                url: None,
             },
         );
         let events = diff(&prev, &next);
         assert!(events.contains(&ModelEvent::SurfaceAdded {
             id: "s2".into(),
             workspace_id: "w1".into(),
+            kind: SurfaceSnapKind::Terminal,
         }));
         assert!(events.contains(&ModelEvent::SurfaceFocused {
             workspace_id: "w1".into(),
@@ -438,6 +476,8 @@ mod tests {
             SurfSnap {
                 workspace_id: "w1".into(),
                 title: "t".into(),
+                kind: SurfaceSnapKind::Terminal,
+                url: None,
             },
         );
         let next = Snapshot::default();
@@ -551,12 +591,15 @@ mod tests {
             SurfSnap {
                 workspace_id: "w1".into(),
                 title: "editor".into(),
+                kind: SurfaceSnapKind::Terminal,
+                url: None,
             },
         );
         let events = diff(&prev, &next);
         assert!(events.contains(&ModelEvent::SurfaceAdded {
             id: "s1".into(),
             workspace_id: "w1".into(),
+            kind: SurfaceSnapKind::Terminal,
         }));
         assert!(events.contains(&ModelEvent::SurfaceTitleChanged {
             id: "s1".into(),
@@ -579,6 +622,49 @@ mod tests {
         assert!(events.contains(&ModelEvent::PrChanged {
             workspace_id: "w1".into(),
             pr: Some("#7 OPEN".into()),
+        }));
+    }
+
+    #[test]
+    fn browser_surface_added_carries_kind_and_url_changes_emit_event() {
+        let mut prev = Snapshot::default();
+        prev.surfaces.insert(
+            "s1".into(),
+            SurfSnap {
+                workspace_id: "w1".into(),
+                title: "a.com".into(),
+                kind: SurfaceSnapKind::Browser,
+                url: Some("https://a.com".into()),
+            },
+        );
+        let mut next = prev.clone();
+        next.surfaces.get_mut("s1").unwrap().url = Some("https://b.com".into());
+
+        let events = diff(&prev, &next);
+        assert!(events.contains(&ModelEvent::SurfaceUrlChanged {
+            id: "s1".into(),
+            url: "https://b.com".into(),
+        }));
+
+        let mut added = Snapshot::default();
+        added.surfaces.insert(
+            "s2".into(),
+            SurfSnap {
+                workspace_id: "w1".into(),
+                title: "c.com".into(),
+                kind: SurfaceSnapKind::Browser,
+                url: Some("https://c.com".into()),
+            },
+        );
+        let add_events = diff(&Snapshot::default(), &added);
+        assert!(add_events.contains(&ModelEvent::SurfaceAdded {
+            id: "s2".into(),
+            workspace_id: "w1".into(),
+            kind: SurfaceSnapKind::Browser,
+        }));
+        assert!(add_events.contains(&ModelEvent::SurfaceUrlChanged {
+            id: "s2".into(),
+            url: "https://c.com".into(),
         }));
     }
 

@@ -35,6 +35,18 @@ pub struct Workspace {
     pub pr: Option<crate::pr::PrInfo>,
 }
 
+/// What a surface renders. Defaults to `Terminal` so sessions persisted
+/// before this field existed load every surface as a terminal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SurfaceKind {
+    #[default]
+    Terminal,
+    Browser {
+        url: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Surface {
     pub id: SurfaceId,
@@ -46,6 +58,8 @@ pub struct Surface {
     pub unread: bool,
     #[serde(default)]
     pub needs_attention: bool,
+    #[serde(default)]
+    pub kind: SurfaceKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -187,6 +201,7 @@ impl WorkspaceModel {
             title: String::from("shell"),
             unread: false,
             needs_attention: false,
+            kind: SurfaceKind::Terminal,
         };
         let workspace = Workspace {
             id: id.clone(),
@@ -231,6 +246,13 @@ impl WorkspaceModel {
 
     pub fn restore_session(&mut self, data: SessionData) {
         *self = WorkspaceModel::new();
+        // Persisted per-surface state (kind/url). Surfaces absent here — e.g.
+        // every surface in a pre-browser session — default to Terminal below.
+        let mut persisted_surfaces: BTreeMap<SurfaceId, Surface> = data
+            .surfaces
+            .into_iter()
+            .map(|surface| (surface.id.clone(), surface))
+            .collect();
         let active_id = data
             .active_workspace_id
             .or_else(|| {
@@ -258,13 +280,25 @@ impl WorkspaceModel {
                 }
             }
             for surface_id in leaf_ids {
-                let surface = Surface {
-                    id: surface_id,
-                    workspace_id: workspace.id.clone(),
-                    cwd: workspace.working_dir.clone(),
-                    title: String::from("shell"),
-                    unread: false,
-                    needs_attention: false,
+                // Recover the persisted kind/title (e.g. a browser pane's url)
+                // when present; otherwise fall back to a default terminal so
+                // pre-browser sessions and missing entries keep working.
+                let surface = match persisted_surfaces.remove(&surface_id) {
+                    Some(mut persisted) => {
+                        persisted.workspace_id = workspace.id.clone();
+                        persisted.unread = false;
+                        persisted.needs_attention = false;
+                        persisted
+                    }
+                    None => Surface {
+                        id: surface_id,
+                        workspace_id: workspace.id.clone(),
+                        cwd: workspace.working_dir.clone(),
+                        title: String::from("shell"),
+                        unread: false,
+                        needs_attention: false,
+                        kind: SurfaceKind::Terminal,
+                    },
                 };
                 self.next_surface = self.next_surface.max(numeric_suffix(&surface.id));
                 self.surfaces.insert(surface.id.clone(), surface);
@@ -289,10 +323,20 @@ impl WorkspaceModel {
             workspace.listening_ports.clear();
             workspace.pr = None;
         }
+        // Only non-terminal surfaces need to be persisted explicitly: terminal
+        // surfaces are the default and are reconstructed from the pane tree.
+        // This keeps sessions written without browser panes byte-identical.
+        let surfaces = self
+            .surfaces
+            .values()
+            .filter(|surface| !matches!(surface.kind, SurfaceKind::Terminal))
+            .cloned()
+            .collect();
         SessionData {
             version: SESSION_FORMAT_VERSION,
             workspaces,
             active_workspace_id: self.active_workspace_id(),
+            surfaces,
         }
     }
 
@@ -401,6 +445,7 @@ impl WorkspaceModel {
                                 title: String::from("shell"),
                                 unread: false,
                                 needs_attention: false,
+                                kind: SurfaceKind::Terminal,
                             },
                         );
                         changed = true;
@@ -498,6 +543,44 @@ impl WorkspaceModel {
     }
 
     pub fn split_surface(&mut self, surface_id: &str, axis: SplitAxis) -> Option<Surface> {
+        self.split_with(
+            surface_id,
+            axis,
+            SurfaceKind::Terminal,
+            String::from("shell"),
+        )
+    }
+
+    /// Split the workspace's focused surface into a new browser pane.
+    pub fn open_browser(
+        &mut self,
+        workspace_id: &str,
+        url: &str,
+        axis: SplitAxis,
+    ) -> Option<Surface> {
+        let focused = self
+            .workspaces
+            .get(workspace_id)?
+            .focused_surface_id
+            .clone();
+        let title = browser_title_for(url);
+        self.split_with(
+            &focused,
+            axis,
+            SurfaceKind::Browser {
+                url: url.to_string(),
+            },
+            title,
+        )
+    }
+
+    fn split_with(
+        &mut self,
+        surface_id: &str,
+        axis: SplitAxis,
+        kind: SurfaceKind,
+        title: String,
+    ) -> Option<Surface> {
         let source = self.surfaces.get(surface_id)?.clone();
         // Pre-validate the workspace still owns this surface in its pane tree
         // before allocating an id, so failure paths don't leak monotonic ids.
@@ -513,9 +596,10 @@ impl WorkspaceModel {
             id: new_id.clone(),
             workspace_id: source.workspace_id.clone(),
             cwd: source.cwd.clone(),
-            title: String::from("shell"),
+            title,
             unread: false,
             needs_attention: false,
+            kind,
         };
         let workspace = self
             .workspaces
@@ -570,6 +654,21 @@ impl WorkspaceModel {
         true
     }
 
+    /// Update a browser surface's URL. Returns false for terminals or missing ids.
+    pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
+        match self.surfaces.get_mut(surface_id) {
+            Some(surface) => match &mut surface.kind {
+                SurfaceKind::Browser { url: current } => {
+                    *current = url.to_string();
+                    surface.title = browser_title_for(url);
+                    true
+                }
+                SurfaceKind::Terminal => false,
+            },
+            None => false,
+        }
+    }
+
     pub fn prepare_root_surface_replacement(&mut self, surface_id: &str) -> Option<Surface> {
         let surface = self.surfaces.get(surface_id)?.clone();
         let (workspace_id, working_dir) = {
@@ -592,6 +691,7 @@ impl WorkspaceModel {
             title: String::from("shell"),
             unread: false,
             needs_attention: false,
+            kind: SurfaceKind::Terminal,
         })
     }
 
@@ -623,6 +723,7 @@ impl WorkspaceModel {
                     title: String::from("shell"),
                     unread: false,
                     needs_attention: false,
+                    kind: SurfaceKind::Terminal,
                 }
             }
         };
@@ -1349,6 +1450,44 @@ fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
     match node {
         PaneNode::Leaf { surface_id } => Some(surface_id.clone()),
         PaneNode::Split { children, .. } => children.iter().find_map(first_leaf_surface_id),
+    }
+}
+
+/// Derive a browser pane title from its URL host, falling back to "browser".
+/// Returns true if `s` begins with a valid URI scheme followed by `://`.
+///
+/// A scheme matches `^[a-zA-Z][a-zA-Z0-9+.-]*://` per RFC 3986. This deliberately
+/// only inspects the *leading* portion so a query/path containing `://`
+/// (e.g. `example.com/?next=https://x`) is not mistaken for an already-schemed
+/// URL.
+pub fn has_uri_scheme(s: &str) -> bool {
+    let Some(idx) = s.find("://") else {
+        return false;
+    };
+    let scheme = &s[..idx];
+    !scheme.is_empty()
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+}
+
+fn browser_title_for(url: &str) -> String {
+    // Only http(s)-style URLs with an authority get a host-based title;
+    // schemes like about:, data:, javascript: fall back.
+    let Some((_, after_scheme)) = url.split_once("://") else {
+        return "browser".to_string();
+    };
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    // Strip userinfo (user:pass@) so credentials never appear in the title.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, h)| h)
+        .trim();
+    if host.is_empty() {
+        "browser".to_string()
+    } else {
+        host.to_string()
     }
 }
 
@@ -2533,6 +2672,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
 
@@ -2622,6 +2762,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
 
@@ -2771,6 +2912,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
         // Also inject a surface tied to a no-longer-present workspace.
@@ -2784,6 +2926,7 @@ mod tests {
                 title: String::from("shell"),
                 unread: false,
                 needs_attention: false,
+                kind: SurfaceKind::Terminal,
             },
         );
 
@@ -2813,5 +2956,121 @@ mod tests {
         assert_eq!(restored.list_surfaces(None).len(), 2);
         assert!(restored.surface(&split.id).is_some());
         assert_eq!(restored.to_session_data().workspaces[0].name, "main");
+    }
+
+    #[test]
+    fn surface_without_kind_field_deserializes_as_terminal() {
+        // Sessions persisted before SurfaceKind existed have no `kind` key.
+        let json = r#"{
+            "id": "s1",
+            "workspace_id": "w1",
+            "cwd": "/tmp",
+            "title": "shell",
+            "unread": false,
+            "needs_attention": false
+        }"#;
+        let surface: Surface = serde_json::from_str(json).unwrap();
+        assert_eq!(surface.kind, SurfaceKind::Terminal);
+    }
+
+    #[test]
+    fn open_browser_adds_browser_surface_splits_and_focuses() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let first = first_leaf_surface_id(&model.workspaces[&ws.id].pane_tree).unwrap();
+
+        let browser = model
+            .open_browser(&ws.id, "https://example.com", SplitAxis::Horizontal)
+            .expect("browser surface created");
+
+        assert_eq!(
+            browser.kind,
+            SurfaceKind::Browser {
+                url: "https://example.com".to_string()
+            }
+        );
+        assert_eq!(browser.title, "example.com");
+        assert_eq!(model.workspaces[&ws.id].focused_surface_id, browser.id);
+        let leaves = leaf_surface_ids(&model.workspaces[&ws.id].pane_tree);
+        assert!(leaves.contains(&first));
+        assert!(leaves.contains(&browser.id));
+    }
+
+    #[test]
+    fn set_surface_url_updates_only_browser_surfaces() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let terminal = first_leaf_surface_id(&model.workspaces[&ws.id].pane_tree).unwrap();
+        let browser = model
+            .open_browser(&ws.id, "https://a.com", SplitAxis::Horizontal)
+            .unwrap();
+
+        assert!(model.set_surface_url(&browser.id, "https://b.com"));
+        assert_eq!(
+            model.surface(&browser.id).unwrap().kind,
+            SurfaceKind::Browser {
+                url: "https://b.com".to_string()
+            }
+        );
+        // title also refreshes
+        assert_eq!(model.surface(&browser.id).unwrap().title, "b.com");
+        // terminal + missing rejected
+        assert!(!model.set_surface_url(&terminal, "https://b.com"));
+        assert!(!model.set_surface_url("nope", "https://b.com"));
+    }
+
+    #[test]
+    fn browser_title_for_extracts_host_and_falls_back() {
+        assert_eq!(browser_title_for("https://example.com"), "example.com");
+        assert_eq!(
+            browser_title_for("https://example.com/path?q=1#frag"),
+            "example.com"
+        );
+        assert_eq!(
+            browser_title_for("http://user:pass@example.com/"),
+            "example.com"
+        );
+        assert_eq!(browser_title_for("about:blank"), "browser");
+        assert_eq!(browser_title_for("data:text/html,hi"), "browser");
+        assert_eq!(browser_title_for("https://"), "browser");
+    }
+
+    #[test]
+    fn has_uri_scheme_detects_only_leading_scheme() {
+        assert!(!has_uri_scheme("example.com"));
+        assert!(has_uri_scheme("https://x"));
+        // A `://` inside the query must not be mistaken for a scheme.
+        assert!(!has_uri_scheme("example.com/?next=https://x"));
+        assert!(has_uri_scheme("ftp://h"));
+        assert!(has_uri_scheme("custom+scheme.1-2://h"));
+        // Empty scheme, non-alpha leading char, and no `://` are all rejected.
+        assert!(!has_uri_scheme("://x"));
+        assert!(!has_uri_scheme("1http://x"));
+        assert!(!has_uri_scheme("noscheme"));
+    }
+
+    #[test]
+    fn restore_session_preserves_browser_surface_kind() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("ws", "/tmp");
+        model.open_browser(&workspace.id, "https://example.com", SplitAxis::Vertical);
+        let browser_id = model
+            .list_surfaces(Some(&workspace.id))
+            .into_iter()
+            .find(|s| matches!(s.kind, SurfaceKind::Browser { .. }))
+            .map(|s| s.id)
+            .expect("browser surface present");
+
+        let data = model.to_session_data();
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let surface = restored.surface(&browser_id).expect("surface restored");
+        assert_eq!(
+            surface.kind,
+            SurfaceKind::Browser {
+                url: "https://example.com".to_string()
+            }
+        );
     }
 }

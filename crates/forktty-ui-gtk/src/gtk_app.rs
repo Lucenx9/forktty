@@ -325,6 +325,8 @@ struct VteController {
     /// Spawned child PID per surface, used to discover listening ports.
     surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
     next_spawn_token: u64,
+    #[cfg(feature = "browser")]
+    browser_panes: Rc<RefCell<BTreeMap<String, Rc<crate::browser_pane::BrowserPaneWidget>>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -351,6 +353,8 @@ impl VteController {
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
             next_spawn_token: 0,
+            #[cfg(feature = "browser")]
+            browser_panes: Rc::new(RefCell::new(BTreeMap::new())),
         }
     }
 
@@ -383,6 +387,8 @@ impl VteController {
                 }
                 self.widgets.remove(&surface_id);
                 self.surface_pids.borrow_mut().remove(&surface_id);
+                #[cfg(feature = "browser")]
+                self.browser_panes.borrow_mut().remove(&surface_id);
                 self.rebuild_layout();
             }
         }
@@ -476,6 +482,26 @@ impl VteController {
 
     fn rebuild_layout(&mut self) {
         self.spawn_active_surfaces_if_needed();
+        // Drop browser panes whose surfaces were removed from the model so the
+        // webviews don't linger after a model-driven (e.g. socket) close.
+        #[cfg(feature = "browser")]
+        {
+            let live_surface_ids = self
+                .model
+                .lock()
+                .ok()
+                .map(|model| {
+                    model
+                        .list_surfaces(None)
+                        .into_iter()
+                        .map(|surface| surface.id)
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default();
+            self.browser_panes
+                .borrow_mut()
+                .retain(|surface_id, _| live_surface_ids.contains(surface_id));
+        }
         for chrome in self.chromes.values() {
             detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
         }
@@ -510,6 +536,13 @@ impl VteController {
         self.container.append(&widget);
         if let Some(widget) = self.widgets.get(&focused_surface_id) {
             queue_widget_focus(widget.clone().upcast());
+        } else {
+            // Browser panes are not in self.widgets; hand keyboard focus to the
+            // pane's focus target so keyboard-only nav reaches the browser.
+            #[cfg(feature = "browser")]
+            if let Some(pane) = self.browser_panes.borrow().get(&focused_surface_id) {
+                queue_widget_focus(pane.focus_target());
+            }
         }
         self.last_layout_signature = Some(signature);
     }
@@ -651,6 +684,12 @@ impl VteController {
                 .collect::<Vec<_>>()
         };
         for (surface, auto_spawn_blocked) in surfaces {
+            // Browser surfaces are rendered by browser_panes and never get a
+            // terminal backend; spawning a PTY for them would leak a hidden
+            // shell process and emit bogus terminal status/port/close events.
+            if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
+                continue;
+            }
             if auto_spawn_blocked {
                 continue;
             }
@@ -695,6 +734,23 @@ impl VteController {
                 );
             }
         }
+        // Browser navigation only mutates a surface's url (same layout structure),
+        // so the layout signature is unchanged and rebuild_layout does not fire.
+        // Push the latest url into the live webview on each refresh tick instead,
+        // and drop panes for surfaces that no longer exist to avoid leaking them.
+        #[cfg(feature = "browser")]
+        self.browser_panes.borrow_mut().retain(|surface_id, pane| {
+            match model.surface(surface_id).map(|s| &s.kind) {
+                Some(forktty_core::SurfaceKind::Browser { url }) => {
+                    // Safe to call every tick: BrowserPaneWidget edge-triggers on the
+                    // last *requested* url, so an unchanged url is a no-op and user
+                    // navigations (which only move the committed uri) are not reset.
+                    pane.load_uri(url);
+                    true
+                }
+                _ => false,
+            }
+        });
     }
 
     fn widget_for_pane(&self, node: &PaneNode, workspace_id: &str) -> gtk::Widget {
@@ -720,7 +776,7 @@ impl VteController {
         on_resize: SplitResizeCallback,
     ) -> gtk::Widget {
         match node {
-            PaneNode::Leaf { surface_id } => self.terminal_pane_widget(surface_id),
+            PaneNode::Leaf { surface_id } => self.pane_widget_for(surface_id),
             PaneNode::Split {
                 axis,
                 children,
@@ -736,6 +792,66 @@ impl VteController {
                 })
             }
         }
+    }
+
+    fn pane_widget_for(&self, surface_id: &str) -> gtk::Widget {
+        let kind = self
+            .model
+            .lock()
+            .ok()
+            .and_then(|model| model.surface(surface_id).map(|s| s.kind.clone()));
+        match kind {
+            #[cfg(feature = "browser")]
+            Some(forktty_core::SurfaceKind::Browser { url }) => {
+                self.browser_pane_widget(surface_id, &url)
+            }
+            #[cfg(not(feature = "browser"))]
+            Some(forktty_core::SurfaceKind::Browser { .. }) => {
+                browser_unavailable_placeholder(surface_id).upcast()
+            }
+            _ => self.terminal_pane_widget(surface_id),
+        }
+    }
+
+    #[cfg(feature = "browser")]
+    fn browser_pane_widget(&self, surface_id: &str, url: &str) -> gtk::Widget {
+        if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
+            // Widget self-guards on the last requested url; calling unconditionally
+            // is harmless and avoids the committed-uri divergence problem.
+            pane.load_uri(url);
+            return pane.widget();
+        }
+        let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(url));
+        // Address-bar Enter navigates via the model so socket + manual share one path.
+        let model = self.model.clone();
+        let id = surface_id.to_string();
+        pane.connect_address_activate(move |text| {
+            if let Ok(mut m) = model.lock() {
+                let normalized = if forktty_core::has_uri_scheme(&text) {
+                    text
+                } else {
+                    format!("https://{text}")
+                };
+                m.set_surface_url(&id, &normalized);
+            }
+        });
+        // Keep model focus in sync when the browser pane gains focus, mirroring
+        // the VTE has-focus handler, so focus-driven split/close target this pane.
+        {
+            let focus_model = self.model.clone();
+            let focus_id = surface_id.to_string();
+            pane.connect_focus_in(move || {
+                if let Ok(mut m) = focus_model.lock() {
+                    let _ = m.focus_surface(&focus_id);
+                    let _ = m.mark_surface_unread(&focus_id, false);
+                }
+            });
+        }
+        let widget = pane.widget();
+        self.browser_panes
+            .borrow_mut()
+            .insert(surface_id.to_string(), pane);
+        widget
     }
 
     fn terminal_pane_widget(&self, surface_id: &str) -> gtk::Widget {
@@ -764,6 +880,7 @@ impl VteController {
                         title: "Terminal".to_string(),
                         unread: false,
                         needs_attention: false,
+                        kind: forktty_core::SurfaceKind::Terminal,
                     },
                     false,
                 )
@@ -2927,6 +3044,17 @@ struct SurfacePlaceholderDetails {
     title: &'static str,
     description: String,
     can_restart: bool,
+}
+
+#[cfg(not(feature = "browser"))]
+fn browser_unavailable_placeholder(surface_id: &str) -> gtk::Box {
+    let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    b.set_hexpand(true);
+    b.set_vexpand(true);
+    b.append(&gtk::Label::new(Some(&format!(
+        "Browser pane ({surface_id}) — built without the `browser` feature"
+    ))));
+    b
 }
 
 fn missing_surface_placeholder(
