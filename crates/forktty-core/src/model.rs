@@ -1412,11 +1412,16 @@ fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
 
 /// Derive a browser pane title from its URL host, falling back to "browser".
 fn browser_title_for(url: &str) -> String {
-    let without_scheme = url.split("://").nth(1).unwrap_or(url);
-    let host = without_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
+    // Only http(s)-style URLs with an authority get a host-based title;
+    // schemes like about:, data:, javascript: fall back.
+    let Some((_, after_scheme)) = url.split_once("://") else {
+        return "browser".to_string();
+    };
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    // Strip userinfo (user:pass@) so credentials never appear in the title.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, h)| h)
         .trim();
     if host.is_empty() {
         "browser".to_string()
@@ -2923,9 +2928,26 @@ mod tests {
                 url: "https://example.com".to_string()
             }
         );
+        assert_eq!(browser.title, "example.com");
         assert_eq!(model.workspaces[&ws.id].focused_surface_id, browser.id);
         let leaves = leaf_surface_ids(&model.workspaces[&ws.id].pane_tree);
         assert!(leaves.contains(&first));
         assert!(leaves.contains(&browser.id));
+    }
+
+    #[test]
+    fn browser_title_for_extracts_host_and_falls_back() {
+        assert_eq!(browser_title_for("https://example.com"), "example.com");
+        assert_eq!(
+            browser_title_for("https://example.com/path?q=1#frag"),
+            "example.com"
+        );
+        assert_eq!(
+            browser_title_for("http://user:pass@example.com/"),
+            "example.com"
+        );
+        assert_eq!(browser_title_for("about:blank"), "browser");
+        assert_eq!(browser_title_for("data:text/html,hi"), "browser");
+        assert_eq!(browser_title_for("https://"), "browser");
     }
 }
