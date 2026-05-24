@@ -12,6 +12,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Direct Unix socket JSON-RPC dispatch without a frontend bridge.
 - [x] Native socket CLI and agent hook installer in the `forktty` binary over the socket API.
 - [x] `events.subscribe` NDJSON change stream and `system.capabilities` discovery, with `forktty events`/`forktty capabilities` CLI.
+- [x] Browser pane SP1: WebKitGTK6 pane kind + `browser.open`/`browser.navigate` + in-pane address bar (behind the `browser` cargo feature).
 
 ### Workspaces and Panes
 
