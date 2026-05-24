@@ -518,6 +518,12 @@ impl VteController {
             self.browser_panes
                 .borrow_mut()
                 .retain(|surface_id, _| live_surface_ids.contains(surface_id));
+            // Cached browser widgets are reused across rebuilds; detach them from
+            // their previous parent first, or set_start/end_child asserts
+            // (gtk_widget_get_parent(child) == NULL) when re-inserting.
+            for pane in self.browser_panes.borrow().values() {
+                detach_widget(&pane.widget());
+            }
         }
         for chrome in self.chromes.values() {
             detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
