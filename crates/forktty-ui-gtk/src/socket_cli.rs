@@ -1610,12 +1610,7 @@ fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             reject_unknown_options(&parsed.options, &[], "browser profile create")?;
             let name = match parsed.positionals.as_slice() {
                 [] => return Err(CliError::new("browser profile create requires a <name>")),
-                [_, _, extra, ..] => {
-                    return Err(CliError::new(format!(
-                        "browser profile create: unexpected argument '{extra}'"
-                    )))
-                }
-                [_, extra] => {
+                [_, extra, ..] => {
                     return Err(CliError::new(format!(
                         "browser profile create: unexpected argument '{extra}'"
                     )))
@@ -5935,5 +5930,107 @@ mod tests {
         );
         assert_eq!(request["method"], "browser.reload");
         assert_eq!(request["params"]["surface_id"], "s9");
+    }
+
+    #[test]
+    fn browser_profile_list_sends_profile_list() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["profile", "list"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.profile.list");
+        assert_eq!(request["params"], json!({}));
+    }
+
+    #[test]
+    fn browser_profile_create_sends_display_name() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id": "p1", "display_name": "Work"},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["profile", "create", "Work"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.profile.create");
+        assert_eq!(request["params"]["display_name"], "Work");
+    }
+
+    #[test]
+    fn browser_profile_create_missing_name_returns_error() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["profile", "create"])),
+            "browser profile create requires a <name>",
+        );
+    }
+
+    #[test]
+    fn browser_profile_delete_sends_id() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"deleted": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["profile", "delete", "p-abc123"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.profile.delete");
+        assert_eq!(request["params"]["id"], "p-abc123");
+    }
+
+    #[test]
+    fn browser_open_with_profile_includes_profile_param() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id": "s1", "kind": {"type": "browser", "url": "https://example.com"}},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "open",
+                        "--workspace-id",
+                        "w1",
+                        "--profile",
+                        "Work",
+                        "https://example.com",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.open");
+        assert_eq!(request["params"]["url"], "https://example.com");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["profile"], "Work");
     }
 }
