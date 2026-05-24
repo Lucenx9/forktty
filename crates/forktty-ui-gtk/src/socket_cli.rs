@@ -1406,8 +1406,10 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             Some("Reloaded"),
         ),
         "profile" => browser_profile(context, rest),
+        "history" => browser_history(context, rest),
+        "bookmark" => browser_bookmark(context, rest),
         "" => Err(CliError::new(
-            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile",
+            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile | history | bookmark",
         )),
         other => Err(CliError::new(format!(
             "browser: unknown subcommand {other}"
@@ -1648,6 +1650,184 @@ fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         )),
         other => Err(CliError::new(format!(
             "browser profile: unknown subcommand {other}"
+        ))),
+    }
+}
+
+fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut iter = args.into_iter();
+    let sub = iter.next().unwrap_or_default();
+    let rest: Vec<String> = iter.collect();
+    match sub.as_str() {
+        "list" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(
+                &parsed.options,
+                &["profile", "limit"],
+                "browser history list",
+            )?;
+            require_no_args(&parsed.positionals, "browser history list")?;
+            let mut params = Map::new();
+            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+                params.insert("profile".to_string(), Value::String(p.to_string()));
+            }
+            if let Some(n) = string_option(&parsed.options, "limit", "--limit")? {
+                let num: u64 = n
+                    .parse()
+                    .map_err(|_| CliError::new("--limit must be a number"))?;
+                params.insert("limit".to_string(), Value::Number(num.into()));
+            }
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.history.list",
+                Value::Object(params),
+            )?;
+            print_json(&result)
+        }
+        "search" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(
+                &parsed.options,
+                &["profile", "limit"],
+                "browser history search",
+            )?;
+            let query = parsed
+                .positionals
+                .first()
+                .ok_or_else(|| CliError::new("browser history search requires a <query>"))?
+                .clone();
+            if parsed.positionals.len() > 1 {
+                return Err(CliError::new(format!(
+                    "browser history search: unexpected argument '{}'",
+                    parsed.positionals[1]
+                )));
+            }
+            let mut params = Map::new();
+            params.insert("query".to_string(), Value::String(query));
+            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+                params.insert("profile".to_string(), Value::String(p.to_string()));
+            }
+            if let Some(n) = string_option(&parsed.options, "limit", "--limit")? {
+                let num: u64 = n
+                    .parse()
+                    .map_err(|_| CliError::new("--limit must be a number"))?;
+                params.insert("limit".to_string(), Value::Number(num.into()));
+            }
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.history.search",
+                Value::Object(params),
+            )?;
+            print_json(&result)
+        }
+        "clear" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &["profile"], "browser history clear")?;
+            require_no_args(&parsed.positionals, "browser history clear")?;
+            let mut params = Map::new();
+            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+                params.insert("profile".to_string(), Value::String(p.to_string()));
+            }
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.history.clear",
+                Value::Object(params),
+            )?;
+            print_json(&result)
+        }
+        "" => Err(CliError::new(
+            "browser history requires a subcommand: list | search <query> | clear",
+        )),
+        other => Err(CliError::new(format!(
+            "browser history: unknown subcommand {other}"
+        ))),
+    }
+}
+
+fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let mut iter = args.into_iter();
+    let sub = iter.next().unwrap_or_default();
+    let rest: Vec<String> = iter.collect();
+    match sub.as_str() {
+        "add" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(
+                &parsed.options,
+                &["title", "profile"],
+                "browser bookmark add",
+            )?;
+            let url = parsed
+                .positionals
+                .first()
+                .ok_or_else(|| CliError::new("browser bookmark add requires a <url>"))?
+                .clone();
+            if parsed.positionals.len() > 1 {
+                return Err(CliError::new(format!(
+                    "browser bookmark add: unexpected argument '{}'",
+                    parsed.positionals[1]
+                )));
+            }
+            let mut params = Map::new();
+            params.insert("url".to_string(), Value::String(url));
+            if let Some(t) = non_blank_string_option(&parsed.options, "title", "--title")? {
+                params.insert("title".to_string(), Value::String(t.to_string()));
+            }
+            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+                params.insert("profile".to_string(), Value::String(p.to_string()));
+            }
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.bookmark.add",
+                Value::Object(params),
+            )?;
+            print_json(&result)
+        }
+        "list" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &["profile"], "browser bookmark list")?;
+            require_no_args(&parsed.positionals, "browser bookmark list")?;
+            let mut params = Map::new();
+            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+                params.insert("profile".to_string(), Value::String(p.to_string()));
+            }
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.bookmark.list",
+                Value::Object(params),
+            )?;
+            print_json(&result)
+        }
+        "remove" => {
+            let parsed = parse_flags(rest, &[]);
+            reject_unknown_options(&parsed.options, &["profile"], "browser bookmark remove")?;
+            let url = parsed
+                .positionals
+                .first()
+                .ok_or_else(|| CliError::new("browser bookmark remove requires a <url>"))?
+                .clone();
+            if parsed.positionals.len() > 1 {
+                return Err(CliError::new(format!(
+                    "browser bookmark remove: unexpected argument '{}'",
+                    parsed.positionals[1]
+                )));
+            }
+            let mut params = Map::new();
+            params.insert("url".to_string(), Value::String(url));
+            if let Some(p) = non_blank_string_option(&parsed.options, "profile", "--profile")? {
+                params.insert("profile".to_string(), Value::String(p.to_string()));
+            }
+            let result = send_socket_request(
+                &context.socket_path,
+                "browser.bookmark.remove",
+                Value::Object(params),
+            )?;
+            print_json(&result)
+        }
+        "" => Err(CliError::new(
+            "browser bookmark requires a subcommand: add <url> | list | remove <url>",
+        )),
+        other => Err(CliError::new(format!(
+            "browser bookmark: unknown subcommand {other}"
         ))),
     }
 }
@@ -6032,5 +6212,108 @@ mod tests {
         assert_eq!(request["params"]["url"], "https://example.com");
         assert_eq!(request["params"]["workspace_id"], "w1");
         assert_eq!(request["params"]["profile"], "Work");
+    }
+
+    #[test]
+    fn browser_history_list_sends_correct_method() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["history", "list"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.history.list");
+    }
+
+    #[test]
+    fn browser_history_search_sends_query() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(&ctx, strings(&["history", "search", "foo"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.history.search");
+        assert_eq!(request["params"]["query"], "foo");
+    }
+
+    #[test]
+    fn browser_history_search_missing_query_returns_error() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["history", "search"])),
+            "browser history search requires a <query>",
+        );
+    }
+
+    #[test]
+    fn browser_bookmark_add_sends_url_and_title() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"added": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&[
+                        "bookmark",
+                        "add",
+                        "https://example.com",
+                        "--title",
+                        "Example",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.bookmark.add");
+        assert_eq!(request["params"]["url"], "https://example.com");
+        assert_eq!(request["params"]["title"], "Example");
+    }
+
+    #[test]
+    fn browser_bookmark_remove_sends_url() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"removed": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_browser(
+                    &ctx,
+                    strings(&["bookmark", "remove", "https://example.com"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "browser.bookmark.remove");
+        assert_eq!(request["params"]["url"], "https://example.com");
     }
 }
