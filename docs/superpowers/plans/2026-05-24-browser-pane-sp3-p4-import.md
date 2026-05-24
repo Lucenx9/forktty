@@ -446,7 +446,7 @@ pub use plan::{resolve_default_plan, resolve_separate_profiles_plan};
 
 - [ ] **Step 7: Build + test**
 
-```
+```shell
 cargo test -p forktty-import plan
 cargo clippy -p forktty-import -- -D warnings
 cargo fmt -p forktty-import
@@ -725,7 +725,7 @@ pub fn read_chromium_cookies(db: &Path, key: &[u8; 16]) -> rusqlite::Result<(Vec
 
 - [ ] **Step 5: Run tests + lint**
 
-```
+```shell
 cargo test -p forktty-import cookies
 cargo clippy -p forktty-import -- -D warnings
 cargo clippy -p forktty-import --features keyring -- -D warnings
@@ -1032,7 +1032,7 @@ mod tests {
 
 - [ ] **Step 4: Full crate test + lint**
 
-```
+```shell
 cargo test -p forktty-import
 cargo clippy -p forktty-import -- -D warnings
 cargo clippy -p forktty-import --features keyring -- -D warnings
@@ -1051,7 +1051,7 @@ git commit -m "feat(import): import engine orchestration (SP3 P4)"
 
 ## Final verification (after all tasks)
 
-```
+```shell
 cargo test -p forktty-import
 cargo build -p forktty-import
 cargo build -p forktty-import --features keyring

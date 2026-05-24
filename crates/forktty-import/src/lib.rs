@@ -21,7 +21,7 @@ pub use sources::{discover, discover_chromium_family, discover_firefox};
 
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// All data read from a single source profile.
 pub struct ImportedData {
@@ -61,9 +61,9 @@ impl From<io::Error> for ImportError {
     }
 }
 
-/// Copies only the main sqlite file; WAL sidecars (`-wal`/`-shm`) are not copied,
-/// so recently-committed-but-not-checkpointed rows may be absent. Acceptable for a
-/// best-effort import. The copy avoids the exclusive lock a running browser holds.
+/// Copies a sqlite database, including WAL sidecars when present. The copy avoids
+/// the exclusive lock a running browser can hold while still seeing recent rows
+/// that have not checkpointed from `-wal` into the main database file.
 ///
 /// If `src` is absent, returns `Ok(default)` (missing file → treat as empty).
 fn read_via_copy<T, F>(src: &Path, default: T, f: F) -> Result<T, ImportError>
@@ -75,7 +75,31 @@ where
     }
     let tmp = tempfile::NamedTempFile::new().map_err(ImportError::from)?;
     std::fs::copy(src, tmp.path()).map_err(ImportError::from)?;
-    f(tmp.path())
+    let copied_sidecars = copy_sqlite_sidecars(src, tmp.path())?;
+    let result = f(tmp.path());
+    for sidecar in copied_sidecars {
+        let _ = std::fs::remove_file(sidecar);
+    }
+    result
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
+fn copy_sqlite_sidecars(src: &Path, dst: &Path) -> Result<Vec<PathBuf>, ImportError> {
+    let mut copied = Vec::new();
+    for suffix in ["-wal", "-shm"] {
+        let src_sidecar = sqlite_sidecar_path(src, suffix);
+        if src_sidecar.exists() {
+            let dst_sidecar = sqlite_sidecar_path(dst, suffix);
+            std::fs::copy(&src_sidecar, &dst_sidecar).map_err(ImportError::from)?;
+            copied.push(dst_sidecar);
+        }
+    }
+    Ok(copied)
 }
 
 /// Read Firefox bookmarks, treating a missing `moz_bookmarks` table as empty.
@@ -271,5 +295,29 @@ mod tests {
             result.is_err(),
             "corrupt places.sqlite should propagate an error, not return empty"
         );
+    }
+
+    #[test]
+    fn read_via_copy_includes_wal_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("History");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE urls (url TEXT, title TEXT, visit_count INTEGER);
+             INSERT INTO urls VALUES ('https://wal.test/','WAL',7);",
+        )
+        .unwrap();
+        assert!(sqlite_sidecar_path(&db, "-wal").exists());
+
+        let visits = read_via_copy(&db, vec![], |p| {
+            read_chromium_history(p).map_err(ImportError::from)
+        })
+        .unwrap();
+        assert_eq!(visits.len(), 1);
+        assert_eq!(visits[0].url, "https://wal.test/");
+        assert_eq!(visits[0].visit_count, 7);
+
+        drop(conn);
     }
 }

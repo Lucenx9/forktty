@@ -38,6 +38,25 @@ fn ini_get<'a>(section: &'a [(String, String)], key: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
+fn scan_firefox_profiles(root: &Path) -> Vec<SourceProfile> {
+    let mut profiles = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && path.join("cookies.sqlite").exists() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                profiles.push(SourceProfile {
+                    family: BrowserFamily::Firefox,
+                    display_name: name,
+                    path: path.to_string_lossy().into_owned(),
+                    is_default: false,
+                });
+            }
+        }
+    }
+    profiles
+}
+
 /// Discover Firefox profiles under `root` (typically `~/.mozilla/firefox`).
 /// Returns `None` if `root` does not exist.
 pub fn discover_firefox(root: &Path) -> Option<SourceBrowser> {
@@ -93,25 +112,13 @@ pub fn discover_firefox(root: &Path) -> Option<SourceBrowser> {
                 is_default,
             });
         }
-        profiles
-    } else {
-        // Fallback: scan subdirs containing cookies.sqlite
-        let mut profiles = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path.join("cookies.sqlite").exists() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    profiles.push(SourceProfile {
-                        family: BrowserFamily::Firefox,
-                        display_name: name,
-                        path: path.to_string_lossy().into_owned(),
-                        is_default: false,
-                    });
-                }
-            }
+        if profiles.is_empty() {
+            scan_firefox_profiles(root)
+        } else {
+            profiles
         }
-        profiles
+    } else {
+        scan_firefox_profiles(root)
     };
 
     if profiles.is_empty() {
@@ -305,6 +312,23 @@ mod tests {
         fs::create_dir_all(ff.join("xyz.default")).unwrap();
         fs::write(ff.join("xyz.default/cookies.sqlite"), b"x").unwrap();
         // No profiles.ini written → fallback scan path
+        let browser = discover_firefox(&ff).unwrap();
+        assert_eq!(browser.profiles.len(), 1);
+        assert_eq!(browser.profiles[0].display_name, "xyz.default");
+        assert!(!browser.profiles[0].is_default);
+    }
+
+    #[test]
+    fn discover_firefox_fallback_scan_with_unusable_ini() {
+        let dir = tempfile::tempdir().unwrap();
+        let ff = dir.path().join(".mozilla/firefox");
+        fs::create_dir_all(ff.join("xyz.default")).unwrap();
+        fs::write(ff.join("xyz.default/cookies.sqlite"), b"x").unwrap();
+        fs::write(
+            ff.join("profiles.ini"),
+            "[General]\nStartWithLastProfile=1\n",
+        )
+        .unwrap();
         let browser = discover_firefox(&ff).unwrap();
         assert_eq!(browser.profiles.len(), 1);
         assert_eq!(browser.profiles[0].display_name, "xyz.default");
