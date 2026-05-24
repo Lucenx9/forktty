@@ -7,7 +7,7 @@ All notable changes to ForkTTY are documented here.
 ### Added
 - Added `events.subscribe` NDJSON streaming and `system.capabilities` discovery, with `forktty events` and `forktty capabilities` CLI entry points.
 - Added an optional source-build browser-pane path behind the `browser` feature: WebKitGTK6 pane surfaces, socket/CLI open/navigate/snapshot/click/fill/eval/back/forward/reload verbs, GUI open/close controls, persistent per-profile WebKit sessions, and browser profile CRUD.
-- Added per-profile browser history and bookmark stores plus `browser.history.*` / `browser.bookmark.*` socket verbs; CLI mirrors and GTK address-bar/history integration remain follow-up work.
+- Added per-profile browser history and bookmark stores plus `browser.history.*` / `browser.bookmark.*` socket verbs and `forktty browser history|bookmark` CLI mirrors; GTK address-bar/history integration remains follow-up work.
 
 ### Documentation
 - Audited Markdown docs against the current Rust workspace, scripts, feature gates, socket methods, browser profile/storage behavior, packaging flow, and support links.

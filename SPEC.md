@@ -206,9 +206,9 @@ Browser profile metadata is stored in:
 
 Each profile has a directory under `browser_profiles/<id>/` containing WebKit
 data/cache/cookies. `forktty-core` also contains pure per-profile
-`HistoryStore` and `BookmarkStore` implementations, and the socket exposes
-history/bookmark list/search/clear/add/remove methods over those stores. CLI
-mirrors, visit recording, and GTK address-bar completion are not wired yet.
+`HistoryStore` and `BookmarkStore` implementations. The socket and CLI expose
+history/bookmark list/search/clear/add/remove methods over those stores. Visit
+recording and GTK address-bar completion are not wired yet.
 
 ## Worktree Behavior
 

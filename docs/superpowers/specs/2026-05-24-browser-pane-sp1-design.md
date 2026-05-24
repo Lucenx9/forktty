@@ -19,7 +19,7 @@ It is split into sub-projects, each with its own spec → plan → ship cycle:
   `fill`, `eval`, element refs. The agent-browser core. Builds the socket→GTK
   command channel (also used by socket-driven back/reload).
 - **SP3** — Persistence, profiles, history/bookmarks, and import. P1/P2 and the
-  P3 core/socket pieces are now implemented; P3 CLI/GTK wiring and P4 import
+  P3 core/socket/CLI pieces are now implemented; P3 GTK wiring and P4 import
   remain deferred.
 
 ## Goal (SP1)

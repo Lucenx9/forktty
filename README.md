@@ -290,7 +290,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
-- Optional browser-pane source build with WebKitGTK6 panes, scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, and history/bookmark socket stores.
+- Optional browser-pane source build with WebKitGTK6 panes, scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, and history/bookmark socket plus CLI access.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
 ## Configuration
@@ -356,7 +356,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Full theme customization, multi-window, persistent scrollback, browser history/bookmark CLI/UI, and browser import from external browsers are backlog items.
+- Full theme customization, multi-window, persistent scrollback, browser history/bookmark GTK UI integration, and browser import from external browsers are backlog items.
 - Browser panes are an opt-in source-build feature today; the packaged alpha artifacts are built with the GTK/VTE terminal feature set.
 
 ## Troubleshooting

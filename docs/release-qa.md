@@ -154,7 +154,7 @@ terminal feature set.
 - `forktty browser navigate <surface-id> https://www.rust-lang.org` — updates the pane and address bar.
 - `forktty browser snapshot <surface-id>` — returns JSON from the injected page driver.
 - `forktty browser back <surface-id>`, `forward`, and `reload` reach the GTK WebView command channel.
-- Raw socket calls for `browser.bookmark.add` / `browser.bookmark.list` and `browser.history.list` return structured JSON against the Default profile. CLI mirrors are not implemented yet.
+- `forktty browser bookmark add https://example.com --title Example`, `forktty browser bookmark list`, and `forktty browser history list` return structured JSON against the Default profile.
 - Close the browser pane with its in-pane close button and confirm the same close confirmation/path as terminal panes.
 
 ## Session Restore Smoke

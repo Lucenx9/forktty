@@ -5,8 +5,8 @@ Gap feature: #3 in `docs/cmux-gap-features.md` (Built-in browser pane, scriptabl
 Builds on SP1 (`2026-05-24-browser-pane-sp1-design.md`, merged to `main`).
 
 Status: implemented on `main` and later extended by SP3 profiles. P1/P2 and the
-core P3 history/bookmark stores are now present; external browser import and P3
-socket/CLI/GTK history wiring remain backlog.
+core P3 history/bookmark stores and CLI mirrors are now present; external browser
+import and P3 GTK history wiring remain backlog.
 
 ## Goal
 

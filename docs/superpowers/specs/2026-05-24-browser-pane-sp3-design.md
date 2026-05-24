@@ -7,8 +7,8 @@ and SP2 (scriptable verbs snapshot/click/fill/eval, socket→GTK command channel
 both merged to `main`.
 
 Current implementation status on `main`: P1 persistence and P2 profiles are
-implemented; P3 has the pure core history/bookmark stores plus socket verbs;
-P3 CLI mirrors/GTK wiring and P4 import are still backlog. WebKit/GTK browser code
+implemented; P3 has the pure core history/bookmark stores plus socket verbs and
+CLI mirrors; P3 GTK wiring and P4 import are still backlog. WebKit/GTK browser code
 is behind the existing `browser` cargo feature, while the pure core profile and
 history/bookmark stores compile unconditionally.
 
@@ -42,7 +42,7 @@ other browsers; importing saved passwords (cookies/history/bookmarks only).
 |-------|----------|--------------|----------|
 | P1 Persistence | per-profile persistent `NetworkSession`; one fixed Default profile | no | none |
 | P2 Profiles | `ProfileId` on `Browser` surface; profile CRUD + per-pane binding | yes | `uuid` (if not present) |
-| P3 History+bookmarks | per-profile history/bookmark stores and socket verbs are implemented; CLI mirrors and address completion remain pending | no | `rusqlite` |
+| P3 History+bookmarks | per-profile history/bookmark stores, socket verbs, and CLI mirrors are implemented; address completion remains pending | no | `rusqlite` |
 | P4 Import wizard | read+decrypt Firefox/Chromium data; plan resolver; GTK wizard | no | `soup`, `rusqlite`, `aes`/`cbc`, `pbkdf2`/`sha2`, `secret-service` |
 
 Each phase's "Out of scope until next phase" is implicit in the table: e.g. P1 ships a
@@ -418,8 +418,8 @@ would be depended on by `forktty-ui-gtk` under `browser`.
 1. **P1** persistence: `browser_session.rs`; switch `WebView::new()` → builder + session.
 2. **P2** profiles: core `ProfileId`/`Browser.profile`/`ProfileStore`; socket+CLI verbs;
    thread profile through `open_browser` and pane construction.
-3. **P3** history+bookmarks: `browser_history.rs` and socket verbs are implemented;
-   visit recording, CLI mirrors, and address-bar completion remain pending.
+3. **P3** history+bookmarks: `browser_history.rs`, socket verbs, and CLI mirrors
+   are implemented; visit recording and address-bar completion remain pending.
 4. **P4** import: `forktty-import` crate (discovery/decrypt/plan, headless-tested);
    socket+CLI; `import_wizard.rs` GTK UI.
 

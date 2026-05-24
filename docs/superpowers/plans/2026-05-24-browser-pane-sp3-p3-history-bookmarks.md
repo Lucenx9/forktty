@@ -2,10 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Current status on `main`:** Tasks 1-3 are implemented
+**Current status on `main`:** Tasks 1-4 are implemented
 (`browser_history.rs`, `HistoryStore`, `BookmarkStore`, and
-`browser.history.*` / `browser.bookmark.*` socket verbs). Task 4 CLI mirrors
-and Task 5 GTK visit recording/address completion remain pending.
+`browser.history.*` / `browser.bookmark.*` socket verbs, plus
+`forktty browser history|bookmark` CLI mirrors). Task 5 GTK visit
+recording/address completion remains pending.
 
 **Goal:** Per-profile visited-URL history and bookmarks, queryable over the socket/CLI and surfaced as browser-pane address-bar completion.
 
@@ -17,7 +18,7 @@ and Task 5 GTK visit recording/address completion remain pending.
 - `history.sqlite` — table `visits(url TEXT PRIMARY KEY, title TEXT, visit_count INTEGER, last_visit_us INTEGER)`
 - `bookmarks.json` — `[{ "url", "title", "added_at" }]`
 
-**Feature gating note:** The stores are pure (no webkit), so — like P2's `ProfileStore` — they compile unconditionally in core. The socket history/bookmark verbs are wired in current `main` and do not require the `browser` feature. CLI mirrors are not wired yet. Visit recording and `EntryCompletion` (Task 5) remain GTK/`browser`-gated.
+**Feature gating note:** The stores are pure (no webkit), so — like P2's `ProfileStore` — they compile unconditionally in core. The socket history/bookmark verbs and CLI mirrors are wired in current `main` and do not require the `browser` feature. Visit recording and `EntryCompletion` (Task 5) remain GTK/`browser`-gated.
 
 ---
 
@@ -39,7 +40,7 @@ and Task 5 GTK visit recording/address completion remain pending.
 - Modify: `crates/forktty-core/Cargo.toml`
 - Modify: `crates/forktty-core/src/lib.rs:13` (add `pub mod`), `:32` area (re-export)
 
-- [ ] **Step 1: Add the rusqlite dependency**
+- [x] **Step 1: Add the rusqlite dependency**
 
 In `Cargo.toml` `[workspace.dependencies]` (`/home/simone/forktty/Cargo.toml`) add:
 
@@ -53,7 +54,7 @@ In `crates/forktty-core/Cargo.toml` `[dependencies]` add (alphabetical, after `n
 rusqlite.workspace = true
 ```
 
-- [ ] **Step 2: Write the failing tests** (append at the bottom of the new file's `#[cfg(test)] mod tests`)
+- [x] **Step 2: Write the failing tests** (append at the bottom of the new file's `#[cfg(test)] mod tests`)
 
 Create `crates/forktty-core/src/browser_history.rs` with the test module first:
 
@@ -145,12 +146,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `cargo test -p forktty-core browser_history -- --nocapture`
 Expected: FAIL (no `HistoryStore` / module not declared).
 
-- [ ] **Step 4: Implement the store** (prepend above the test module in the same file)
+- [x] **Step 4: Implement the store** (prepend above the test module in the same file)
 
 ```rust
 //! Browser-pane history + bookmarks (SP3 P3). Pure (no GTK/webkit): both the GTK
@@ -326,7 +327,7 @@ impl HistoryStore {
 }
 ```
 
-- [ ] **Step 5: Declare the module + re-export**
+- [x] **Step 5: Declare the module + re-export**
 
 In `crates/forktty-core/src/lib.rs`, add after `pub mod browser_cmd;` (keep alphabetical-ish with siblings):
 
@@ -342,12 +343,12 @@ pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, V
 
 (`Bookmark`/`BookmarkStore` are added in Task 2; declaring the re-export now will fail to compile until Task 2 — so for THIS task, re-export only `{HistoryError, HistoryStore, Visit}` and widen it in Task 2.)
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `cargo test -p forktty-core browser_history`
 Expected: PASS (7 tests).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A crates/forktty-core Cargo.toml
@@ -362,7 +363,7 @@ git commit -m "feat(core): per-profile browser history store (SP3 P3)"
 - Modify: `crates/forktty-core/src/browser_history.rs`
 - Modify: `crates/forktty-core/src/lib.rs` (widen the re-export)
 
-- [ ] **Step 1: Write the failing tests** (add to the `tests` module)
+- [x] **Step 1: Write the failing tests** (add to the `tests` module)
 
 ```rust
     fn bm_store() -> (tempfile::TempDir, BookmarkStore) {
@@ -425,12 +426,12 @@ git commit -m "feat(core): per-profile browser history store (SP3 P3)"
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p forktty-core browser_history`
 Expected: FAIL (`BookmarkStore` undefined).
 
-- [ ] **Step 3: Implement `BookmarkStore`** (add to `browser_history.rs`, above the test module)
+- [x] **Step 3: Implement `BookmarkStore`** (add to `browser_history.rs`, above the test module)
 
 ```rust
 /// A saved bookmark.
@@ -530,18 +531,18 @@ impl BookmarkStore {
 }
 ```
 
-- [ ] **Step 4: Widen the re-export** in `crates/forktty-core/src/lib.rs`:
+- [x] **Step 4: Widen the re-export** in `crates/forktty-core/src/lib.rs`:
 
 ```rust
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test -p forktty-core browser_history`
 Expected: PASS (12 tests total).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A crates/forktty-core
@@ -563,7 +564,7 @@ Verbs to add (all functional regardless of `browser` feature — the stores are 
 - `browser.bookmark.list { profile? }` → `[Bookmark]`
 - `browser.bookmark.remove { url, profile? }` → `{ "removed": bool }`
 
-- [ ] **Step 1: Add `METHODS` entries** (keep the list sorted; insert in order):
+- [x] **Step 1: Add `METHODS` entries** (keep the list sorted; insert in order):
 
 ```rust
     "browser.bookmark.add",
@@ -579,7 +580,7 @@ Verbs to add (all functional regardless of `browser` feature — the stores are 
 ```
 (after `"browser.fill"` / before `"browser.forward"` — verify final order is lexicographic).
 
-- [ ] **Step 2: Add a profile-resolution helper** near `profiles_store()` (~line 1645). Reuses the existing store to map an optional `profile` param (id or name) to a `ProfileId`, defaulting to `Default`:
+- [x] **Step 2: Add a profile-resolution helper** near `profiles_store()` (~line 1645). Reuses the existing store to map an optional `profile` param (id or name) to a `ProfileId`, defaulting to `Default`:
 
 ```rust
 /// Resolve an optional `profile` param (id or display name) to a `ProfileId`.
@@ -600,7 +601,7 @@ fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, Disp
 }
 ```
 
-- [ ] **Step 3: Add the verb arms** (after the `"browser.profile.delete"` arm, before `"surface.focus"`). Use a small `optional_usize_param` inline. History/bookmark IO maps errors to `DispatchError::Other`:
+- [x] **Step 3: Add the verb arms** (after the `"browser.profile.delete"` arm, before `"surface.focus"`). Use a small `optional_usize_param` inline. History/bookmark IO maps errors to `DispatchError::Other`:
 
 ```rust
         "browser.history.list" => {
@@ -675,7 +676,7 @@ fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, Disp
         }
 ```
 
-- [ ] **Step 4: Write socket tests** (bottom of `lib.rs`, in the existing `#[cfg(test)]` block). They must isolate `data_local_dir()` with the SAME `EnvGuard` + `#[serial_test::serial]` pattern P2 introduced (see `browser_profile_create_list_then_open_with_profile`). Set `XDG_DATA_HOME` to a tempdir, drive verbs through `dispatch`, assert round-trips:
+- [x] **Step 4: Write socket tests** (bottom of `lib.rs`, in the existing `#[cfg(test)]` block). They must isolate `data_local_dir()` with the SAME `EnvGuard` + `#[serial_test::serial]` pattern P2 introduced (see `browser_profile_create_list_then_open_with_profile`). Set `XDG_DATA_HOME` to a tempdir, drive verbs through `dispatch`, assert round-trips:
 
 ```rust
     #[tokio::test]
@@ -717,12 +718,12 @@ fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, Disp
 
 > Note for the implementer: match the EXACT names of the existing test harness builder (`test_state` / equivalent) and `EnvGuard` constructor used by the P2 test `browser_profile_create_list_then_open_with_profile`. Read that test first and copy its setup verbatim; do not invent new helpers. Also confirm `capabilities_lists_only_dispatchable_methods` still passes with the new `METHODS` entries.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cargo test -p forktty-socket browser_` and `cargo test -p forktty-socket capabilities`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A crates/forktty-socket
@@ -736,7 +737,7 @@ git commit -m "feat(socket): browser history + bookmark verbs (SP3 P3)"
 **Files:**
 - Modify: `crates/forktty-ui-gtk/src/socket_cli.rs` (HELP_TEXT ~line 75; `handle_browser` match ~line 1376; new fns; tests at bottom)
 
-- [ ] **Step 1: Add HELP_TEXT lines** after the `profile delete` line (~line 77):
+- [x] **Step 1: Add HELP_TEXT lines** after the `profile delete` line (~line 77):
 
 ```
   forktty browser history list [--profile <id|name>] [--limit <n>]
@@ -747,7 +748,7 @@ git commit -m "feat(socket): browser history + bookmark verbs (SP3 P3)"
   forktty browser bookmark remove <url> [--profile <id|name>]
 ```
 
-- [ ] **Step 2: Add dispatch arms** in `handle_browser` (after `"profile" => browser_profile(...)`):
+- [x] **Step 2: Add dispatch arms** in `handle_browser` (after `"profile" => browser_profile(...)`):
 
 ```rust
         "history" => browser_history(context, rest),
@@ -755,7 +756,7 @@ git commit -m "feat(socket): browser history + bookmark verbs (SP3 P3)"
 ```
 And extend the "requires a subcommand" / unknown-subcommand error string to include `history | bookmark`.
 
-- [ ] **Step 3: Implement `browser_history` + `browser_bookmark`** following the EXACT structure of the existing `browser_profile` fn (read it first — same `parse_options`, `non_blank_string_option`, `send_socket_request`, JSON-printing helpers). Sketch:
+- [x] **Step 3: Implement `browser_history` + `browser_bookmark`** following the EXACT structure of the existing `browser_profile` fn (read it first — same `parse_options`, `non_blank_string_option`, `send_socket_request`, JSON-printing helpers). Sketch:
 
 ```rust
 fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -791,14 +792,14 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 
 > The implementer must match the real helper names in this file (e.g. how `browser_profile` splits its subcommand, parses options, and prints JSON results). Do NOT introduce a `split_subcommand`/`print_json_or` if the file already has differently-named equivalents — use the existing ones.
 
-- [ ] **Step 4: Add CLI tests** mirroring the 5 existing `browser_profile` CLI tests that use the `with_socket_response` harness. Cover: `history list` sends `browser.history.list`; `history search foo` sends the query; `bookmark add <url> --title X` sends url+title; `bookmark remove <url>`; and an arg-validation error (e.g. `history search` with no query → error, no socket call).
+- [x] **Step 4: Add CLI tests** mirroring the 5 existing `browser_profile` CLI tests that use the `with_socket_response` harness. Cover: `history list` sends `browser.history.list`; `history search foo` sends the query; `bookmark add <url> --title X` sends url+title; `bookmark remove <url>`; and an arg-validation error (e.g. `history search` with no query → error, no socket call).
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cargo test -p forktty-ui-gtk --features gtk-vte socket_cli` (CLI tests do not need the browser feature)
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A crates/forktty-ui-gtk/src/socket_cli.rs
