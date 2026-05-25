@@ -842,16 +842,11 @@ impl VteController {
         }
     }
 
-    /// Build a leaf widget with a per-pane tab strip for leaves with >1 tab.
-    /// The active terminal is shown below an `adw::TabBar` whose backing
-    /// `adw::TabView` is kept off-tree (selector-only pattern).
+    /// Build a compact per-pane tab strip for leaves with >1 tab.
     fn leaf_widget_with_tabstrip(&self, tabs: &[String], active: usize) -> gtk::Widget {
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.set_hexpand(true);
         outer.set_vexpand(true);
-
-        // Build off-tree TabView as a backing store for TabBar.
-        let tab_view = adw::TabView::new();
 
         // Collect surface titles from model.
         let titles: Vec<String> = {
@@ -867,84 +862,65 @@ impl VteController {
                 .collect()
         };
 
-        // Add a page per tab.  Page children are empty boxes (off-tree viewer).
-        let pages: Vec<adw::TabPage> = tabs
-            .iter()
-            .zip(titles.iter())
-            .map(|(id, title)| {
-                let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-                let page = tab_view.append(&dummy);
-                page.set_title(title);
-                // Store surface id in the page keyword so we can retrieve it.
-                // We use the keyword as a stringified index placeholder and
-                // look up by position instead.
-                let _ = id; // used via position index below
-                page
-            })
-            .collect();
+        let tabstrip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tabstrip.add_css_class("pane-tabstrip");
 
-        // Select the active page.
-        if active < pages.len() {
-            tab_view.set_selected_page(&pages[active]);
-        }
-
-        // Build and pack the TabBar.
-        let tab_bar = adw::TabBar::new();
-        tab_bar.set_view(Some(&tab_view));
-        tab_bar.set_autohide(false);
-        tab_bar.add_css_class("pane-tabbar");
-        outer.append(&tab_bar);
-
-        // Show the real terminal widget for the active tab.
-        let active_id = &tabs[active];
-        let pane_widget = self.pane_widget_for(active_id);
-        outer.append(&pane_widget);
-
-        // Wire tab selection: user clicks a tab → select_tab in model.
-        let model_for_sel = self.model.clone();
-        let tabs_for_sel: Vec<String> = tabs.to_vec();
-        let syncing = Rc::new(Cell::new(false));
-        let syncing_for_sel = syncing.clone();
-        tab_view.connect_selected_page_notify(move |tv| {
-            if syncing_for_sel.get() {
-                return;
+        for (idx, (surface_id, title)) in tabs.iter().zip(titles.iter()).enumerate() {
+            let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            tab.add_css_class("pane-tab");
+            tab.set_valign(gtk::Align::Center);
+            tab.set_tooltip_text(Some(title));
+            if idx == active {
+                tab.add_css_class("active");
             }
-            let Some(page) = tv.selected_page() else {
-                return;
-            };
-            let idx = tv.page_position(&page) as usize;
-            let Some(id) = tabs_for_sel.get(idx) else {
-                return;
-            };
-            syncing_for_sel.set(true);
-            if let Ok(mut m) = model_for_sel.lock() {
-                let _ = m.select_tab(id);
-            }
-            syncing_for_sel.set(false);
-        });
 
-        // Wire tab close button (×): close the surface.
-        let model_for_close = self.model.clone();
-        let state_for_close = self.state.clone();
-        let parent_for_close = self.parent_window.clone();
-        let tabs_for_close: Vec<String> = tabs.to_vec();
-        tab_view.connect_close_page(move |_tv, page| {
-            let idx = _tv.page_position(page) as usize;
-            let Some(id) = tabs_for_close.get(idx) else {
-                return glib::Propagation::Proceed;
-            };
-            // Check whether this is the last tab in the leaf.
-            let is_last = tabs_for_close.len() == 1;
-            if is_last {
-                // Use the same confirmation dialog as the pane close button.
-                if let Some(state) = &state_for_close {
-                    show_close_pane_confirmation(&parent_for_close, state, id);
+            let label = gtk::Label::builder()
+                .label(title)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .max_width_chars(18)
+                .single_line_mode(true)
+                .build();
+            label.add_css_class("pane-tab-label");
+
+            let select = gtk::Button::builder().has_frame(false).build();
+            select.add_css_class("flat");
+            select.add_css_class("pane-tab-select");
+            select.set_child(Some(&label));
+            select.set_tooltip_text(Some(title));
+            set_accessible_button_text(&select, &format!("Select tab {title}"), None);
+
+            let model_for_select = self.model.clone();
+            let select_id = surface_id.clone();
+            select.connect_clicked(move |_| {
+                if let Ok(mut m) = model_for_select.lock() {
+                    let _ = m.select_tab(&select_id);
                 }
-            } else {
-                // Non-last tab: close without confirmation.
-                let id = id.clone();
+            });
+
+            let close = gtk::Button::builder()
+                .icon_name("window-close-symbolic")
+                .has_frame(false)
+                .build();
+            close.add_css_class("flat");
+            close.add_css_class("pane-tab-close");
+            close.set_tooltip_text(Some("Close Tab"));
+            set_accessible_button_text(&close, "Close Tab", None);
+
+            let model_for_close = self.model.clone();
+            let state_for_close = self.state.clone();
+            let parent_for_close = self.parent_window.clone();
+            let close_id = surface_id.clone();
+            let is_last_tab = tabs.len() == 1;
+            close.connect_clicked(move |_| {
+                if is_last_tab {
+                    if let Some(state) = &state_for_close {
+                        show_close_pane_confirmation(&parent_for_close, state, &close_id);
+                    }
+                    return;
+                }
                 if let Some(state) = &state_for_close {
-                    match state.terminal.close(&id) {
+                    match state.terminal.close(&close_id) {
                         Ok(()) | Err(TerminalError::NotFound(_)) => {}
                         Err(err) => {
                             eprintln!("Failed to close tab terminal: {err}");
@@ -952,15 +928,23 @@ impl VteController {
                     }
                 }
                 if let Ok(mut m) = model_for_close.lock() {
-                    let _ = m.close_surface(&id);
+                    let _ = m.close_surface(&close_id);
                 }
                 if let Some(state) = &state_for_close {
                     save_session_from_state(state);
                 }
-            }
-            // Always inhibit default TabView removal; model drives the rebuild.
-            glib::Propagation::Stop
-        });
+            });
+
+            tab.append(&select);
+            tab.append(&close);
+            tabstrip.append(&tab);
+        }
+        outer.append(&tabstrip);
+
+        // Show the real terminal widget for the active tab.
+        let active_id = &tabs[active.min(tabs.len().saturating_sub(1))];
+        let pane_widget = self.pane_widget_for(active_id);
+        outer.append(&pane_widget);
 
         outer.upcast()
     }
