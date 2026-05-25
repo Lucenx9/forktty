@@ -869,7 +869,9 @@ impl VteController {
             let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
             tab.add_css_class("pane-tab");
             tab.set_valign(gtk::Align::Center);
-            tab.set_tooltip_text(Some(title));
+            if title.chars().count() > 18 {
+                tab.set_tooltip_text(Some(title));
+            }
             if idx == active {
                 tab.add_css_class("active");
             }
@@ -887,7 +889,9 @@ impl VteController {
             select.add_css_class("flat");
             select.add_css_class("pane-tab-select");
             select.set_child(Some(&label));
-            select.set_tooltip_text(Some(title));
+            if title.chars().count() > 18 {
+                select.set_tooltip_text(Some(title));
+            }
             set_accessible_button_text(&select, &format!("Select tab {title}"), None);
 
             let model_for_select = self.model.clone();

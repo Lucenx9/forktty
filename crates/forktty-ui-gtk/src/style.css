@@ -806,7 +806,7 @@ popover.ft-workspace-popover contents {
   margin: 0 3px 0 0;
   padding: 0 2px 0 6px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 4px 4px 0 0;
   background: transparent;
   color: var(--ft-text-muted);
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
@@ -818,10 +818,11 @@ popover.ft-workspace-popover contents {
 }
 
 .pane-tab.active {
-  background: alpha(var(--ft-accent), 0.12);
-  border-color: alpha(var(--ft-accent), 0.24);
+  background: alpha(var(--window-fg-color), 0.07);
+  border-color: alpha(var(--window-fg-color), 0.08);
+  border-bottom-color: transparent;
   color: var(--ft-text-strong);
-  box-shadow: inset 0 -1px 0 var(--ft-accent);
+  box-shadow: inset 0 -2px 0 var(--ft-accent);
 }
 
 .pane-tab-select {
@@ -859,7 +860,7 @@ popover.ft-workspace-popover contents {
   background: transparent;
   box-shadow: none;
   color: var(--ft-text-faint);
-  opacity: 0.45;
+  opacity: 0;
   transition: background-color 90ms ease-out, color 90ms ease-out, opacity 90ms ease-out;
 }
 
@@ -869,7 +870,7 @@ popover.ft-workspace-popover contents {
 
 .pane-tab:hover .pane-tab-close,
 .pane-tab.active .pane-tab-close {
-  opacity: 0.78;
+  opacity: 0.62;
 }
 
 .pane-tab-close:hover {
