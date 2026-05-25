@@ -33,7 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            appstream
+            libwebkitgtk-6.0-dev appstream
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -55,10 +55,10 @@ jobs:
         run: cargo test --workspace
 
       - name: Rust clippy
-        run: cargo clippy --workspace --features gtk-vte -- -D warnings
+        run: cargo clippy --workspace --features browser -- -D warnings
 
-      - name: GTK/VTE build
-        run: cargo build -p forktty-ui-gtk --features gtk-vte
+      - name: Full GTK/browser build
+        run: cargo build -p forktty-ui-gtk --features browser
 
       - name: Validate desktop entry
         run: desktop-file-validate packaging/linux/forktty.desktop
@@ -96,7 +96,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            appstream curl
+            libwebkitgtk-6.0-dev appstream curl
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable

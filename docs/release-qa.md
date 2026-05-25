@@ -9,28 +9,20 @@ package regressions that unit tests cannot see.
 cargo fmt --all --check
 cargo run -p xtask -- check
 cargo test --workspace
-cargo test -p forktty-ui-gtk --features gtk-vte
-cargo clippy --workspace --features gtk-vte -- -D warnings
-cargo build -p forktty-ui-gtk --features gtk-vte
+cargo test -p forktty-ui-gtk --features browser
+cargo clippy --workspace --features browser -- -D warnings
+cargo build -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```
 
-When browser-pane code changed and WebKitGTK 6 development files are
-available, also run:
-
-```bash
-cargo build -p forktty-ui-gtk --features browser
-cargo test -p forktty-ui-gtk --features browser browser_pane
-```
-
 ## Manual Runtime Smoke
 
 - Start from a clean config/session directory.
-- Launch with `cargo run -p forktty-ui-gtk --features gtk-vte`.
+- Launch with `cargo run -p forktty-ui-gtk --features browser`.
 - Confirm the app opens a usable terminal in the current directory.
-- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --features gtk-vte`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
+- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --features browser`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
 - Split right and split down until at least three panes exist.
 - Move focus between panes with keyboard shortcuts and pointer clicks.
 - Copy and paste with `Ctrl+Shift+C` / `Ctrl+Shift+V`.
@@ -62,7 +54,7 @@ Run these after starting the GTK app so the daemon is listening on the
 default socket. Useful for catching protocol regressions without
 rebuilding.
 
-- Before starting the app, run `forktty ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features gtk-vte`, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
+- Before starting the app, run `forktty ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features browser`, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
 - Launch with `FORKTTY_SOCKET_PATH=" "` and confirm the app still binds the default socket path instead of disabling automation.
 - Launch with `FORKTTY_SOCKET_PATH=relative.sock` and confirm both the app and
   `forktty ping` ignore the relative env value and use the default socket path.
@@ -141,11 +133,7 @@ rebuilding.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"workspace-missing","key":"agent:test","label":"Test","value":"Running"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"not_found"`.
 - `python3 -c 'import json,sys; sys.stdout.write(json.dumps({"id":"x","method":"surface.send_text","params":{"surface_id":"main:1","text":"x"*300000}})+"\n")' | nc -U "$XDG_RUNTIME_DIR/forktty.sock"` — response includes `"code":"payload_too_large"` (the 256 KiB `surface.send_text` cap).
 
-## Optional Browser Feature Smoke
-
-Run this only from a source build compiled with `--features browser`;
-the current `.deb` and AppImage packaging scripts build the GTK/VTE
-terminal feature set.
+## Browser Pane Smoke
 
 - Launch with `cargo run -p forktty-ui-gtk --features browser`.
 - `forktty browser profile list` — returns the built-in Default profile.

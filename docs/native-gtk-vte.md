@@ -7,22 +7,21 @@ ForkTTY's primary runtime is Rust + GTK4/libadwaita + VTE.
 - `forktty-core`: workspace model, pane tree, config, session v2, notifications, worktree operations, socket protocol types, browser profiles, and browser history/bookmark stores.
 - `forktty-terminal`: `TerminalBackend` trait, headless test backend, and VTE adapter.
 - `forktty-socket`: Tokio Unix socket server with direct JSON-RPC dispatch.
-- `forktty-ui-gtk`: GTK4/libadwaita UI, VTE terminal panes, sidebar, dialogs, settings, notifications, quake mode, socket CLI, hook installer, and optional WebKitGTK6 browser panes.
+- `forktty-ui-gtk`: GTK4/libadwaita UI, VTE terminal panes, WebKitGTK6 browser panes, sidebar, dialogs, settings, notifications, quake mode, socket CLI, and hook installer.
 
 ## Build
 
 ```bash
-cargo run -p forktty-ui-gtk --features gtk-vte
-cargo build -p forktty-ui-gtk --features gtk-vte --release
+cargo run -p forktty-ui-gtk --features browser
+cargo build -p forktty-ui-gtk --features browser --release
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```
 
-Browser panes are source-build only in the current packaging flow. With
-WebKitGTK 6 development files installed:
+For a terminal-only development build on systems without WebKitGTK:
 
 ```bash
-cargo run -p forktty-ui-gtk --features browser
+cargo run -p forktty-ui-gtk --features gtk-vte
 ```
 
 The AppImage target is experimental and intended for alpha smoke testing
@@ -48,7 +47,7 @@ Debian/Ubuntu-style names:
 - `libadwaita-1-dev`
 - `libvte-2.91-gtk4-dev`
 - `desktop-file-utils`
-- WebKitGTK 6 development files for `--features browser`
+- WebKitGTK 6 development files
 
 Fedora-style names:
 
@@ -59,7 +58,7 @@ Fedora-style names:
 - `libadwaita-devel`
 - `vte291-gtk4-devel`
 - `desktop-file-utils`
-- WebKitGTK 6 development files for `--features browser`
+- WebKitGTK 6 development files
 
 Arch-style names:
 
@@ -69,7 +68,7 @@ Arch-style names:
 - `libadwaita`
 - `vte4`
 - `desktop-file-utils`
-- WebKitGTK 6 development files for `--features browser`
+- WebKitGTK 6 development files
 
 ForkTTY currently requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. `gtk4-layer-shell` is optional and only improves quake/dropdown placement on supported Wayland compositors.
 
@@ -80,7 +79,7 @@ ForkTTY currently requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubunt
 - Prompt/metadata detection uses VTE shell integration signals and a bounded visible-tail prompt fallback.
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.
-- Optional browser panes store per-profile WebKit data under `~/.local/share/forktty/browser_profiles/<id>/`; the packaged alpha artifacts are built with `gtk-vte`, not `browser`.
+- Browser panes store per-profile WebKit data under `~/.local/share/forktty/browser_profiles/<id>/`.
 
 ## Verification
 

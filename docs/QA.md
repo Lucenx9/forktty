@@ -16,11 +16,9 @@ and VTE 0.76+, which matches Ubuntu 24.04 LTS and newer distro packages.
 | Fedora                   | Current stable                         | `dnf`           |
 | Arch / CachyOS / Manjaro | Rolling                                | `pacman`        |
 
-Other distros are best-effort: they should work if libadwaita 1.4+ and
-VTE 0.76+ are available, but they are not part of the release gate.
-The optional browser-pane feature additionally requires WebKitGTK 6
-development/runtime packages and is tested from source builds; packaged
-alpha artifacts currently use the GTK/VTE terminal feature set.
+Other distros are best-effort: they should work if libadwaita 1.4+,
+VTE 0.76+, and WebKitGTK 6 are available, but they are not part of the
+release gate.
 
 ## Display server coverage
 
@@ -42,8 +40,8 @@ should be one of:
 | Area                                  | Ubuntu / Debian (Wayland) | Ubuntu / Debian (X11) | Fedora (Wayland) | Arch / CachyOS (Wayland) |
 | ------------------------------------- | ------------------------- | --------------------- | ---------------- | ------------------------ |
 | Install dependencies (per README)     |                           |                       |                  |                          |
-| `cargo build -p forktty-ui-gtk --features gtk-vte` |              |                       |                  |                          |
-| Optional: `cargo build -p forktty-ui-gtk --features browser` |    |                       |                  |                          |
+| `cargo build -p forktty-ui-gtk --features browser` |              |                       |                  |                          |
+| Terminal-only build: `cargo build -p forktty-ui-gtk --features gtk-vte` | |                 |                  |                          |
 | `bash scripts/build-deb.sh`           |                           |                       |                  | n/a                      |
 | `bash scripts/build-appimage.sh`      |                           |                       |                  |                          |
 | `dpkg -i target/packaging/deb/forktty_*.deb` |                    |                       | n/a              | n/a                      |
@@ -67,7 +65,7 @@ should be one of:
 | Corrupted config quarantined          |                           |                       |                  |                          |
 | Corrupted session quarantined         |                           |                       |                  |                          |
 | Settings dialog: change shell, theme  |                           |                       |                  |                          |
-| Optional browser pane smoke (`--features browser`) |               |                       |                  |                          |
+| Browser pane smoke (`--features browser`) |                        |                       |                  |                          |
 
 ## Negative / hardening checks
 

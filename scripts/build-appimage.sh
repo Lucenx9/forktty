@@ -14,6 +14,9 @@ BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
   "libvte-2.91-gtk4.so"
+  "libwebkitgtk-6.0.so"
+  "libjavascriptcoregtk-6.0.so"
+  "libsoup-3.0.so"
 )
 
 if [[ -z "$VERSION" ]]; then
@@ -139,7 +142,7 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --features gtk-vte --release
+cargo build -p forktty-ui-gtk --features browser --release
 
 rm -rf "$APPDIR" "$APPIMAGE_PATH"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$APPDIR/usr/bin/forktty"
