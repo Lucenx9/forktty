@@ -3624,7 +3624,7 @@ mod tests {
         assert!(orig_tabs.contains(&tab2.id));
         // The second child is the new split surface.
         let new_tabs = children[1].leaf_tabs().expect("second child is leaf");
-        assert_eq!(new_tabs, &[new_split.id.clone()]);
+        assert_eq!(new_tabs, std::slice::from_ref(&new_split.id));
         // Focus is on the new split surface.
         assert_eq!(workspace.focused_surface_id, new_split.id);
     }

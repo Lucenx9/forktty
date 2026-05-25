@@ -719,13 +719,9 @@ impl VteController {
             // shell process and emit bogus terminal status/port/close events.
             // Ssh surfaces rewrite the request to launch ssh <host>; this is
             // what respawns restored remote workspaces on session restore.
-            let base = SpawnRequest::for_surface(
-                &surface,
-                state.shell.clone(),
-                state.socket_path.clone(),
-            );
-            let Some(request) =
-                forktty_socket::spawn_request_for_surface_kind(base, &surface.kind)
+            let base =
+                SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
+            let Some(request) = forktty_socket::spawn_request_for_surface_kind(base, &surface.kind)
             else {
                 continue;
             };
