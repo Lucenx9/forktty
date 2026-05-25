@@ -1698,6 +1698,14 @@ fn dedupe_font_family_names(raw_names: impl IntoIterator<Item = String>) -> Vec<
     names.into_iter().collect()
 }
 
+fn terminal_focus_click_should_claim(
+    terminal_has_focus: bool,
+    model_focused_surface_id: Option<&str>,
+    surface_id: &str,
+) -> bool {
+    !terminal_has_focus || model_focused_surface_id.is_some_and(|focused| focused != surface_id)
+}
+
 fn attach_vte_signal_handlers(
     widget: &VteTerminalWidget,
     model: &Arc<Mutex<WorkspaceModel>>,
@@ -1718,6 +1726,35 @@ fn attach_vte_signal_handlers(
             terminal.remove_css_class("focused-terminal");
         }
     });
+
+    let surface_id = request.surface_id.clone();
+    let focus_click_model = model.clone();
+    let focus_click = gtk::GestureClick::new();
+    focus_click.set_button(gtk::gdk::BUTTON_PRIMARY);
+    focus_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let widget_for_focus_click = widget.clone();
+    focus_click.connect_pressed(move |gesture, _n_press, _x, _y| {
+        let model_focused_surface_id = focus_click_model
+            .lock()
+            .ok()
+            .and_then(|model| model.active_workspace())
+            .map(|workspace| workspace.focused_surface_id);
+        if !terminal_focus_click_should_claim(
+            widget_for_focus_click.has_focus(),
+            model_focused_surface_id.as_deref(),
+            &surface_id,
+        ) {
+            return;
+        }
+
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        widget_for_focus_click.grab_focus();
+        if let Ok(mut model) = focus_click_model.lock() {
+            let _ = model.focus_surface(&surface_id);
+            let _ = model.mark_surface_unread(&surface_id, false);
+        }
+    });
+    widget.add_controller(focus_click);
 
     let surface_id = request.surface_id.clone();
     let title_model = model.clone();
@@ -10161,6 +10198,26 @@ mod tests {
             socket_path_from_env(Some("relative.sock".to_string())),
             default_socket_path()
         );
+    }
+
+    #[test]
+    fn terminal_focus_click_claims_when_terminal_needs_focus() {
+        assert!(!terminal_focus_click_should_claim(
+            true,
+            Some("pane-1"),
+            "pane-1"
+        ));
+        assert!(terminal_focus_click_should_claim(
+            false,
+            Some("pane-1"),
+            "pane-1"
+        ));
+        assert!(terminal_focus_click_should_claim(
+            true,
+            Some("pane-2"),
+            "pane-1"
+        ));
+        assert!(!terminal_focus_click_should_claim(true, None, "pane-1"));
     }
 
     #[test]
