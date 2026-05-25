@@ -327,8 +327,18 @@ struct VteController {
     /// Spawned child PID per surface, used to discover listening ports.
     surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
     next_spawn_token: u64,
+    pane_tab_strips: Rc<RefCell<Vec<PaneTabStrip>>>,
     #[cfg(feature = "browser")]
     browser_panes: Rc<RefCell<BTreeMap<String, Rc<crate::browser_pane::BrowserPaneWidget>>>>,
+}
+
+#[derive(Clone)]
+struct PaneTabStrip {
+    tabs: Vec<String>,
+    stack: gtk::Stack,
+    tab_widgets: Vec<gtk::Box>,
+    labels: Vec<gtk::Label>,
+    select_buttons: Vec<gtk::Button>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,6 +380,7 @@ impl VteController {
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
             next_spawn_token: 0,
+            pane_tab_strips: Rc::new(RefCell::new(Vec::new())),
             #[cfg(feature = "browser")]
             browser_panes: Rc::new(RefCell::new(BTreeMap::new())),
         }
@@ -528,6 +539,7 @@ impl VteController {
         for chrome in self.chromes.values() {
             detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
         }
+        self.pane_tab_strips.borrow_mut().clear();
         while let Some(child) = self.container.first_child() {
             self.container.remove(&child);
         }
@@ -555,16 +567,7 @@ impl VteController {
             chrome.single_pane_actions.set_sensitive(single_pane);
         }
         self.container.append(&widget);
-        if let Some(widget) = self.widgets.get(&focused_surface_id) {
-            queue_widget_focus(widget.clone().upcast());
-        } else {
-            // Browser panes are not in self.widgets; hand keyboard focus to the
-            // pane's focus target so keyboard-only nav reaches the browser.
-            #[cfg(feature = "browser")]
-            if let Some(pane) = self.browser_panes.borrow().get(&focused_surface_id) {
-                queue_widget_focus(pane.focus_target());
-            }
-        }
+        self.queue_focus_for_surface(&focused_surface_id);
         self.last_layout_signature = Some(signature);
     }
 
@@ -656,6 +659,32 @@ impl VteController {
         };
         reset_and_redraw_terminal(&widget);
         true
+    }
+
+    fn queue_focus_for_surface(&self, surface_id: &str) {
+        if let Some(widget) = self.widgets.get(surface_id) {
+            queue_widget_focus(widget.clone().upcast());
+            return;
+        }
+        // Browser panes are not in self.widgets; hand keyboard focus to the
+        // pane's focus target so keyboard-only nav reaches the browser.
+        #[cfg(feature = "browser")]
+        if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
+            queue_widget_focus(pane.focus_target());
+        }
+    }
+
+    fn sync_model_focus_to_ui(&mut self) {
+        self.ensure_layout_current();
+        if let Some(surface_id) = self
+            .model
+            .lock()
+            .ok()
+            .and_then(|model| model.active_workspace())
+            .map(|workspace| workspace.focused_surface_id)
+        {
+            self.queue_focus_for_surface(&surface_id);
+        }
     }
 
     fn ensure_layout_current(&mut self) {
@@ -756,6 +785,7 @@ impl VteController {
                 );
             }
         }
+        self.refresh_tab_strips(&model);
         // Browser navigation only mutates a surface's url (same layout structure),
         // so the layout signature is unchanged and rebuild_layout does not fire.
         // Push the latest url into the live webview on each refresh tick instead,
@@ -773,6 +803,46 @@ impl VteController {
                 _ => false,
             }
         });
+    }
+
+    fn refresh_tab_strips(&self, model: &WorkspaceModel) {
+        let Some(workspace) = model.active_workspace() else {
+            return;
+        };
+        for strip in self.pane_tab_strips.borrow().iter() {
+            let Some(active_id) = active_tab_for_tabs(&workspace.pane_tree, &strip.tabs) else {
+                continue;
+            };
+            let previous_visible = strip
+                .stack
+                .visible_child_name()
+                .map(|name| name.to_string());
+            if previous_visible.as_deref() != Some(active_id.as_str()) {
+                strip.stack.set_visible_child_name(active_id.as_str());
+                self.queue_focus_for_surface(&active_id);
+            }
+            for (idx, surface_id) in strip.tabs.iter().enumerate() {
+                if let Some(tab) = strip.tab_widgets.get(idx) {
+                    if surface_id == &active_id {
+                        tab.add_css_class("active");
+                    } else {
+                        tab.remove_css_class("active");
+                    }
+                    update_tab_tooltip(tab, model.surface(surface_id).map(surface_title));
+                }
+                if let Some(label) = strip.labels.get(idx) {
+                    let title = model
+                        .surface(surface_id)
+                        .map(surface_title)
+                        .unwrap_or_else(|| "Terminal".to_string());
+                    label.set_label(&title);
+                    if let Some(select) = strip.select_buttons.get(idx) {
+                        update_tab_tooltip(select, Some(title.clone()));
+                        set_accessible_button_text(select, &format!("Select tab {title}"), None);
+                    }
+                }
+            }
+        }
     }
 
     fn widget_for_pane(&self, node: &PaneNode, workspace_id: &str) -> gtk::Widget {
@@ -864,14 +934,15 @@ impl VteController {
 
         let tabstrip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tabstrip.add_css_class("pane-tabstrip");
+        let mut tab_widgets = Vec::with_capacity(tabs.len());
+        let mut labels = Vec::with_capacity(tabs.len());
+        let mut select_buttons = Vec::with_capacity(tabs.len());
 
         for (idx, (surface_id, title)) in tabs.iter().zip(titles.iter()).enumerate() {
             let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
             tab.add_css_class("pane-tab");
             tab.set_valign(gtk::Align::Center);
-            if title.chars().count() > 18 {
-                tab.set_tooltip_text(Some(title));
-            }
+            update_tab_tooltip(&tab, Some(title.clone()));
             if idx == active {
                 tab.add_css_class("active");
             }
@@ -889,9 +960,7 @@ impl VteController {
             select.add_css_class("flat");
             select.add_css_class("pane-tab-select");
             select.set_child(Some(&label));
-            if title.chars().count() > 18 {
-                select.set_tooltip_text(Some(title));
-            }
+            update_tab_tooltip(&select, Some(title.clone()));
             set_accessible_button_text(&select, &format!("Select tab {title}"), None);
 
             let model_for_select = self.model.clone();
@@ -942,13 +1011,33 @@ impl VteController {
             tab.append(&select);
             tab.append(&close);
             tabstrip.append(&tab);
+            tab_widgets.push(tab);
+            labels.push(label);
+            select_buttons.push(select);
         }
         outer.append(&tabstrip);
 
-        // Show the real terminal widget for the active tab.
+        // Keep tab children mounted and switch the visible child in-place so a
+        // tab change does not rebuild the surrounding split tree.
+        let stack = gtk::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.set_transition_type(gtk::StackTransitionType::None);
+        for surface_id in tabs {
+            let pane_widget = self.pane_widget_for(surface_id);
+            stack.add_named(&pane_widget, Some(surface_id.as_str()));
+        }
         let active_id = &tabs[active.min(tabs.len().saturating_sub(1))];
-        let pane_widget = self.pane_widget_for(active_id);
-        outer.append(&pane_widget);
+        stack.set_visible_child_name(active_id.as_str());
+        outer.append(&stack);
+
+        self.pane_tab_strips.borrow_mut().push(PaneTabStrip {
+            tabs: tabs.to_vec(),
+            stack,
+            tab_widgets,
+            labels,
+            select_buttons,
+        });
 
         outer.upcast()
     }
@@ -1407,6 +1496,14 @@ fn update_pane_chrome(chrome: &PaneChrome, surface: &Surface, active: bool) {
     chrome.focus_marker.set_visible(active);
 }
 
+fn update_tab_tooltip(widget: &impl IsA<gtk::Widget>, title: Option<String>) {
+    if let Some(title) = title.filter(|title| title.chars().count() > 18) {
+        widget.set_tooltip_text(Some(&title));
+    } else {
+        widget.set_tooltip_text(None);
+    }
+}
+
 fn active_layout_snapshot(
     model: &Arc<Mutex<WorkspaceModel>>,
 ) -> Option<(String, PaneNode, String, String)> {
@@ -1414,10 +1511,7 @@ fn active_layout_snapshot(
     let workspace = model.active_workspace()?;
     let mut structure = String::new();
     layout_structure_signature(&workspace.pane_tree, &mut structure);
-    let signature = format!(
-        "{}:{}:focus({})",
-        workspace.id, structure, workspace.focused_surface_id
-    );
+    let signature = format!("{}:{structure}", workspace.id);
     Some((
         signature,
         workspace.pane_tree,
@@ -1428,14 +1522,11 @@ fn active_layout_snapshot(
 
 fn layout_structure_signature(node: &PaneNode, out: &mut String) {
     match node {
-        PaneNode::Leaf { tabs, active } => {
+        PaneNode::Leaf { tabs, .. } => {
             out.push_str("L(");
             for (i, id) in tabs.iter().enumerate() {
                 if i > 0 {
                     out.push('|');
-                }
-                if i == *active {
-                    out.push('*');
                 }
                 out.push_str(id);
             }
@@ -1453,6 +1544,18 @@ fn layout_structure_signature(node: &PaneNode, out: &mut String) {
             }
             out.push(')');
         }
+    }
+}
+
+fn active_tab_for_tabs(node: &PaneNode, target_tabs: &[String]) -> Option<String> {
+    match node {
+        PaneNode::Leaf { tabs, active } if tabs.as_slice() == target_tabs => {
+            tabs.get(*active).or_else(|| tabs.first()).cloned()
+        }
+        PaneNode::Leaf { .. } => None,
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .find_map(|child| active_tab_for_tabs(child, target_tabs)),
     }
 }
 
@@ -3311,6 +3414,8 @@ fn detach_widget(widget: &gtk::Widget) {
         }
     } else if let Ok(container) = parent.clone().downcast::<gtk::Box>() {
         container.remove(widget);
+    } else if let Ok(stack) = parent.clone().downcast::<gtk::Stack>() {
+        stack.remove(widget);
     } else {
         widget.unparent();
     }
@@ -4714,7 +4819,7 @@ fn install_actions(
         let controller = controller.clone();
         move || {
             focus_relative_pane(&state, -1);
-            controller.borrow_mut().rebuild_layout();
+            controller.borrow_mut().sync_model_focus_to_ui();
         }
     });
     add_action(app, "focus-next-pane", {
@@ -4722,7 +4827,7 @@ fn install_actions(
         let controller = controller.clone();
         move || {
             focus_relative_pane(&state, 1);
-            controller.borrow_mut().rebuild_layout();
+            controller.borrow_mut().sync_model_focus_to_ui();
         }
     });
     add_action(app, "toggle-maximize-pane", {
@@ -6316,7 +6421,7 @@ fn show_command_palette_with_query(
         move || {
             focus_relative_pane(&state, -1);
             if let Some(controller) = &controller {
-                controller.borrow_mut().rebuild_layout();
+                controller.borrow_mut().sync_model_focus_to_ui();
             }
             dialog.close();
         }
@@ -6328,7 +6433,7 @@ fn show_command_palette_with_query(
         move || {
             focus_relative_pane(&state, 1);
             if let Some(controller) = &controller {
-                controller.borrow_mut().rebuild_layout();
+                controller.borrow_mut().sync_model_focus_to_ui();
             }
             dialog.close();
         }
@@ -10108,7 +10213,7 @@ mod tests {
     }
 
     #[test]
-    fn active_layout_signature_changes_when_model_focus_changes() {
+    fn active_layout_signature_ignores_model_focus_changes() {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let (first_surface_id, second_surface_id) = {
             let mut model = model.lock().unwrap();
@@ -10124,9 +10229,39 @@ mod tests {
         assert!(model.lock().unwrap().focus_surface(&first_surface_id));
         let after = active_layout_snapshot(&model).unwrap().0;
 
-        assert_ne!(before, after);
-        assert!(before.contains(&format!("focus({second_surface_id})")));
-        assert!(after.contains(&format!("focus({first_surface_id})")));
+        assert_eq!(before, after);
+        assert!(before.contains(&first_surface_id));
+        assert!(before.contains(&second_surface_id));
+        assert!(!before.contains("focus("));
+    }
+
+    #[test]
+    fn active_layout_signature_ignores_active_tab_changes() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (first_surface_id, second_surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let first_surface_id = workspace.focused_surface_id.clone();
+            let second = model.add_tab(&first_surface_id).unwrap();
+            (first_surface_id, second.id)
+        };
+        let before = active_layout_snapshot(&model).unwrap().0;
+
+        assert!(model.lock().unwrap().select_tab(&first_surface_id));
+        let after = active_layout_snapshot(&model).unwrap().0;
+        let workspace = model.lock().unwrap().active_workspace().unwrap();
+
+        assert_eq!(before, after);
+        assert!(before.contains(&first_surface_id));
+        assert!(before.contains(&second_surface_id));
+        assert!(!before.contains('*'));
+        assert_eq!(
+            active_tab_for_tabs(
+                &workspace.pane_tree,
+                &[first_surface_id.clone(), second_surface_id]
+            ),
+            Some(first_surface_id)
+        );
     }
 
     #[test]
