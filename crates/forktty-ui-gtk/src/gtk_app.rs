@@ -3536,7 +3536,7 @@ fn install_gtk_runtime_defaults() {
 
 fn build_ui(app: &adw::Application) {
     register_app_icon();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let startup_dir = default_startup_workspace_dir();
     let (app_config, config_load_warning) = match config::load_config_with_recovery() {
         Ok((config, recovery)) => (
             config,
@@ -3987,7 +3987,7 @@ fn build_ui(app: &adw::Application) {
     let pr_in_flight_for_bootstrap = pr_in_flight.clone();
     let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
     glib::idle_add_local_once(move || {
-        if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, cwd) {
+        if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, startup_dir) {
             eprintln!("Failed to restore workspace session: {err}");
             create_global_notification(
                 &state_for_bootstrap,
@@ -4010,6 +4010,14 @@ fn build_ui(app: &adw::Application) {
         }
         start_socket_server(state_for_bootstrap.clone());
     });
+}
+
+fn default_startup_workspace_dir() -> PathBuf {
+    default_startup_workspace_dir_from(dirs::home_dir(), std::env::current_dir().ok())
+}
+
+fn default_startup_workspace_dir_from(home: Option<PathBuf>, current: Option<PathBuf>) -> PathBuf {
+    home.or(current).unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn settings_apply_callback(
@@ -10152,6 +10160,25 @@ mod tests {
         assert_eq!(
             socket_path_from_env(Some("relative.sock".to_string())),
             default_socket_path()
+        );
+    }
+
+    #[test]
+    fn startup_workspace_prefers_home_over_launch_directory() {
+        assert_eq!(
+            default_startup_workspace_dir_from(
+                Some(PathBuf::from("/home/tester")),
+                Some(PathBuf::from("/tmp/launch-dir")),
+            ),
+            PathBuf::from("/home/tester")
+        );
+        assert_eq!(
+            default_startup_workspace_dir_from(None, Some(PathBuf::from("/tmp/launch-dir"))),
+            PathBuf::from("/tmp/launch-dir")
+        );
+        assert_eq!(
+            default_startup_workspace_dir_from(None, None),
+            PathBuf::from("/")
         );
     }
 
