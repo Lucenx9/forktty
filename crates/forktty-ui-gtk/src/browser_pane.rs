@@ -54,17 +54,32 @@ pub struct BrowserPaneWidget {
 impl BrowserPaneWidget {
     pub fn new(profile_id: &str, initial_url: &str) -> Self {
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        container.add_css_class("browser-pane");
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        bar.add_css_class("browser-toolbar");
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
         let forward = gtk::Button::from_icon_name("go-next-symbolic");
         let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
         let address = gtk::Entry::new();
         address.set_hexpand(true);
         address.set_text(initial_url);
+        address.add_css_class("browser-address");
+        address.set_tooltip_text(Some("Address"));
+        address.update_property(&[gtk::accessible::Property::Label("Address")]);
         let close = gtk::Button::from_icon_name("window-close-symbolic");
-        close.set_tooltip_text(Some("Close Pane"));
         close.add_css_class("pane-close-action");
+        for (button, label) in [
+            (&back, "Back"),
+            (&forward, "Forward"),
+            (&reload, "Reload"),
+            (&close, "Close Pane"),
+        ] {
+            button.add_css_class("flat");
+            button.add_css_class("browser-action");
+            button.set_tooltip_text(Some(label));
+            button.update_property(&[gtk::accessible::Property::Label(label)]);
+        }
         bar.append(&back);
         bar.append(&forward);
         bar.append(&reload);

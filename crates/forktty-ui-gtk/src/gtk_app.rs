@@ -978,12 +978,10 @@ impl VteController {
         let model = self.model.clone();
         let id = surface_id.to_string();
         pane.connect_address_activate(move |text| {
+            let Some(normalized) = forktty_core::normalize_browser_url(&text) else {
+                return;
+            };
             if let Ok(mut m) = model.lock() {
-                let normalized = if forktty_core::has_uri_scheme(&text) {
-                    text
-                } else {
-                    format!("https://{text}")
-                };
                 m.set_surface_url(&id, &normalized);
             }
         });
@@ -1112,6 +1110,7 @@ fn build_pane_chrome(
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     actions.add_css_class("terminal-pane-actions");
+    actions.set_can_target(false);
     let split_h = pane_action_button("view-dual-symbolic", "Split Right (Ctrl+Shift+H)");
     let split_v = pane_action_button(
         "view-paged-symbolic",
@@ -1233,6 +1232,7 @@ fn build_pane_chrome(
     {
         let actions_for_enter = actions.clone();
         motion.connect_enter(move |_, _, _| {
+            actions_for_enter.set_can_target(true);
             actions_for_enter.add_css_class("revealed");
         });
     }
@@ -1240,6 +1240,7 @@ fn build_pane_chrome(
         let actions_for_leave = actions.clone();
         motion.connect_leave(move |_| {
             actions_for_leave.remove_css_class("revealed");
+            actions_for_leave.set_can_target(false);
         });
     }
     header.add_controller(motion);

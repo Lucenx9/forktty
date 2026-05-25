@@ -1673,6 +1673,22 @@ pub fn has_uri_scheme(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
 }
 
+/// Normalize a user-entered browser URL.
+///
+/// Whitespace-only input is rejected. Bare domains and paths get an `https://`
+/// prefix; URLs accepted by `has_uri_scheme` are preserved after trimming.
+pub fn normalize_browser_url(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if has_uri_scheme(trimmed) {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("https://{trimmed}"))
+    }
+}
+
 fn browser_title_for(url: &str) -> String {
     // Only http(s)-style URLs with an authority get a host-based title;
     // schemes like about:, data:, javascript: fall back.
@@ -3374,6 +3390,23 @@ mod tests {
         assert!(!has_uri_scheme("://x"));
         assert!(!has_uri_scheme("1http://x"));
         assert!(!has_uri_scheme("noscheme"));
+    }
+
+    #[test]
+    fn normalize_browser_url_trims_and_defaults_to_https() {
+        assert_eq!(
+            normalize_browser_url(" example.com/path "),
+            Some("https://example.com/path".to_string())
+        );
+        assert_eq!(
+            normalize_browser_url("https://example.com"),
+            Some("https://example.com".to_string())
+        );
+        assert_eq!(
+            normalize_browser_url("custom+scheme.1-2://host"),
+            Some("custom+scheme.1-2://host".to_string())
+        );
+        assert_eq!(normalize_browser_url(" \t\n "), None);
     }
 
     #[test]

@@ -1849,22 +1849,18 @@ fn browser_cmd_error_to_dispatch(err: BrowserCmdError) -> DispatchError {
 }
 
 fn required_browser_url(params: &Value) -> Result<String, DispatchError> {
-    let raw = required_string_param(params, "url")?.trim();
-    if raw.is_empty() {
+    let raw = required_string_param(params, "url")?;
+    let Some(url) = forktty_core::normalize_browser_url(raw) else {
         return Err("Invalid parameter url: must not be empty".into());
-    }
-    if raw.len() > MAX_BROWSER_URL_BYTES {
+    };
+    if url.len() > MAX_BROWSER_URL_BYTES {
         return Err(DispatchError::PayloadTooLarge {
             field: "url",
             limit: MAX_BROWSER_URL_BYTES,
-            actual: raw.len(),
+            actual: url.len(),
         });
     }
-    if forktty_core::has_uri_scheme(raw) {
-        Ok(raw.to_string())
-    } else {
-        Ok(format!("https://{raw}"))
-    }
+    Ok(url)
 }
 
 fn profiles_store() -> Result<forktty_core::ProfileStore, DispatchError> {
@@ -6144,6 +6140,26 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, DispatchError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn browser_url_limit_applies_after_default_scheme() {
+        let (state, _backend) = test_state();
+        let created = dispatch(&state, "workspace.create", json!({"name": "w"}))
+            .await
+            .unwrap();
+        let ws_id = created["id"].as_str().unwrap();
+        let bare_url = "a".repeat(MAX_BROWSER_URL_BYTES - "https://".len() + 1);
+
+        let err = dispatch(
+            &state,
+            "browser.open",
+            json!({"workspace_id": ws_id, "url": bare_url}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "payload_too_large");
     }
 
     // --- SP2 browser scripting verbs ---------------------------------------
