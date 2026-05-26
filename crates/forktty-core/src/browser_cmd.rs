@@ -56,6 +56,8 @@ pub enum BrowserCmdError {
     NoWebView,
     /// A snapshot ref was not found (stale after navigation).
     RefNotFound,
+    /// A snapshot ref exists but cannot be interacted with (disabled, hidden, read-only, or wrong kind).
+    ElementNotInteractable,
     /// JavaScript threw or evaluation failed.
     JsError(String),
     /// The result exceeded [`MAX_BROWSER_RESULT_BYTES`].
@@ -71,6 +73,7 @@ impl std::fmt::Display for BrowserCmdError {
             BrowserCmdError::NotABrowser => f.write_str("surface is not a browser"),
             BrowserCmdError::NoWebView => f.write_str("no live web view for surface"),
             BrowserCmdError::RefNotFound => f.write_str("element ref not found"),
+            BrowserCmdError::ElementNotInteractable => f.write_str("element is not interactable"),
             BrowserCmdError::JsError(msg) => write!(f, "javascript error: {msg}"),
             BrowserCmdError::TooLarge => f.write_str("result too large"),
             BrowserCmdError::Internal(msg) => write!(f, "internal browser error: {msg}"),
@@ -117,6 +120,10 @@ mod tests {
         assert_eq!(
             BrowserCmdError::RefNotFound.to_string(),
             "element ref not found"
+        );
+        assert_eq!(
+            BrowserCmdError::ElementNotInteractable.to_string(),
+            "element is not interactable"
         );
         assert_eq!(
             BrowserCmdError::NotABrowser.to_string(),

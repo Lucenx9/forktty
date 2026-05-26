@@ -813,6 +813,9 @@ impl WorkspaceModel {
         match self.surfaces.get_mut(surface_id) {
             Some(surface) => match &mut surface.kind {
                 SurfaceKind::Browser { url: current, .. } => {
+                    if current == url {
+                        return false;
+                    }
                     *current = url.to_string();
                     surface.title = browser_title_for(url);
                     true
@@ -3348,6 +3351,7 @@ mod tests {
             .unwrap();
 
         assert!(model.set_surface_url(&browser.id, "https://b.com"));
+        assert!(!model.set_surface_url(&browser.id, "https://b.com"));
         assert_eq!(
             model.surface(&browser.id).unwrap().kind,
             SurfaceKind::Browser {

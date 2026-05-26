@@ -1838,6 +1838,9 @@ fn browser_cmd_error_to_dispatch(err: BrowserCmdError) -> DispatchError {
         BrowserCmdError::NotABrowser => DispatchError::NotFound("browser surface".to_string()),
         BrowserCmdError::NoWebView => DispatchError::NotFound("web view".to_string()),
         BrowserCmdError::RefNotFound => DispatchError::NotFound("element ref".to_string()),
+        BrowserCmdError::ElementNotInteractable => {
+            DispatchError::InvalidParam("element is not interactable".to_string())
+        }
         BrowserCmdError::TooLarge => DispatchError::PayloadTooLarge {
             field: "result",
             limit: forktty_core::MAX_BROWSER_RESULT_BYTES,
@@ -6297,6 +6300,37 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code(), "not_found");
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_fill_maps_not_interactable_reply() {
+        let (state, rx) = state_with_browser_channel();
+        let sid = open_browser_surface(&state).await;
+        let responder = tokio::spawn(async move {
+            let cmd = rx.recv().await.unwrap();
+            assert_eq!(
+                cmd.op,
+                forktty_core::BrowserOp::Fill {
+                    reference: "e1".to_string(),
+                    value: "hello".to_string(),
+                }
+            );
+            cmd.reply
+                .send(forktty_core::CmdResult::Err(
+                    forktty_core::BrowserCmdError::ElementNotInteractable,
+                ))
+                .unwrap();
+        });
+        let err = dispatch(
+            &state,
+            "browser.fill",
+            json!({"surface_id": sid, "ref": "e1", "value": "hello"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+        assert_eq!(err.to_string(), "element is not interactable");
         responder.await.unwrap();
     }
 

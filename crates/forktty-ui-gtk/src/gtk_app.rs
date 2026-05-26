@@ -788,19 +788,30 @@ impl VteController {
         self.refresh_tab_strips(&model);
         // Browser navigation only mutates a surface's url (same layout structure),
         // so the layout signature is unchanged and rebuild_layout does not fire.
-        // Push the latest url into the live webview on each refresh tick instead,
-        // and drop panes for surfaces that no longer exist to avoid leaking them.
+        // Clone browser targets before touching live WebViews, then release the
+        // model lock so WebKit load callbacks can safely sync redirects/clicks
+        // back into the model.
+        #[cfg(feature = "browser")]
+        let browser_targets = model
+            .list_surfaces(None)
+            .into_iter()
+            .filter_map(|surface| match surface.kind {
+                forktty_core::SurfaceKind::Browser { url, .. } => Some((surface.id, url)),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        drop(model);
+        // Push the latest url into the live webview on each refresh tick, and
+        // drop panes for surfaces that no longer exist to avoid leaking them.
         #[cfg(feature = "browser")]
         self.browser_panes.borrow_mut().retain(|surface_id, pane| {
-            match model.surface(surface_id).map(|s| &s.kind) {
-                Some(forktty_core::SurfaceKind::Browser { url, .. }) => {
-                    // Safe to call every tick: BrowserPaneWidget edge-triggers on the
-                    // last *requested* url, so an unchanged url is a no-op and user
-                    // navigations (which only move the committed uri) are not reset.
-                    pane.load_uri(url);
-                    true
-                }
-                _ => false,
+            if let Some(url) = browser_targets.get(surface_id) {
+                // Safe to call every tick: BrowserPaneWidget edge-triggers on the
+                // last *requested* url, so an unchanged url is a no-op.
+                pane.load_uri(url);
+                true
+            } else {
+                false
             }
         });
     }
@@ -1071,6 +1082,18 @@ impl VteController {
                 if let Ok(mut m) = focus_model.lock() {
                     let _ = m.focus_surface(&focus_id);
                     let _ = m.mark_surface_unread(&focus_id, false);
+                }
+            });
+        }
+        // Keep the model's browser URL in sync with WebKit commits caused by
+        // redirects, history buttons, or user link clicks. Without this, the
+        // periodic refresh path sees the old model URL and navigates back.
+        {
+            let url_model = self.model.clone();
+            let url_id = surface_id.to_string();
+            pane.connect_uri_committed(move |url| {
+                if let Ok(mut m) = url_model.lock() {
+                    let _ = m.set_surface_url(&url_id, &url);
                 }
             });
         }

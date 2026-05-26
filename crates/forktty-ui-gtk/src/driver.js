@@ -66,9 +66,19 @@
     );
   }
 
+  function isLiveElement(el) {
+    return !!(el && el.isConnected && document.contains(el));
+  }
+
+  function isClickable(el) {
+    if (!isLiveElement(el)) return false;
+    if (el.disabled || isHidden(el)) return false;
+    return typeof el.click === "function";
+  }
+
   function isFillable(el) {
-    if (!el || !el.isConnected || !document.contains(el)) return false;
-    if (el.disabled || isReadOnly(el)) return false;
+    if (!isLiveElement(el)) return false;
+    if (el.disabled || isReadOnly(el) || isHidden(el)) return false;
     return isTextInput(el) ||
       el instanceof HTMLTextAreaElement ||
       el instanceof HTMLSelectElement ||
@@ -114,6 +124,8 @@
     click: function (ref) {
       var el = refMap.get(ref);
       if (!el) throw new Error("ref-not-found");
+      if (!isLiveElement(el)) throw new Error("ref-not-found");
+      if (!isClickable(el)) throw new Error("ref-not-interactable");
       el.scrollIntoView({ block: "center" });
       el.click();
       return true;
@@ -121,7 +133,8 @@
     fill: function (ref, value) {
       var el = refMap.get(ref);
       if (!el) throw new Error("ref-not-found");
-      if (!isFillable(el)) throw new Error("ref-stale-or-not-fillable");
+      if (!isLiveElement(el)) throw new Error("ref-not-found");
+      if (!isFillable(el)) throw new Error("ref-not-interactable");
       el.focus();
       if (el.isContentEditable) {
         el.textContent = value;

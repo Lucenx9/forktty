@@ -35,6 +35,37 @@ pub fn fill_js(reference: &str, value: &str) -> String {
     )
 }
 
+#[derive(Clone)]
+struct BrowserPaneNavigation {
+    web_view: WebView,
+    address: gtk::Entry,
+    last_requested: std::rc::Rc<std::cell::RefCell<String>>,
+}
+
+type UriCommittedHandlers = std::rc::Rc<std::cell::RefCell<Vec<Box<dyn Fn(String)>>>>;
+
+impl BrowserPaneNavigation {
+    fn load_uri(&self, url: &str) {
+        if self.last_requested.borrow().as_str() == url {
+            return;
+        }
+        *self.last_requested.borrow_mut() = url.to_string();
+        self.update_address(url);
+        self.web_view.load_uri(url);
+    }
+
+    fn update_address(&self, url: &str) {
+        if self.address.text().as_str() != url {
+            self.address.set_text(url);
+        }
+    }
+
+    fn sync_committed_uri(&self, url: &str) {
+        *self.last_requested.borrow_mut() = url.to_string();
+        self.update_address(url);
+    }
+}
+
 /// A browser pane: an address bar (entry + back/forward/reload) above a WebView.
 ///
 /// Wired into the pane layout in a later task; unused until then.
@@ -47,7 +78,11 @@ pub struct BrowserPaneWidget {
     /// The last url this widget was *asked* to load. The reload guard
     /// edge-triggers on this, not on the WebView's committed `current_uri()`,
     /// which diverges due to WebKit normalization, redirects, and user clicks.
-    last_requested: std::cell::RefCell<String>,
+    last_requested: std::rc::Rc<std::cell::RefCell<String>>,
+    /// Callbacks fired for committed WebView URI changes (redirects, history
+    /// navigation, and in-page link clicks). GTK wires this back into the model
+    /// so periodic UI refreshes do not navigate the WebView back to a stale URL.
+    committed_uri_handlers: UriCommittedHandlers,
 }
 
 #[allow(dead_code)]
@@ -104,6 +139,14 @@ impl BrowserPaneWidget {
             );
             content_manager.add_script(&script);
         }
+
+        let navigation = BrowserPaneNavigation {
+            web_view: web_view.clone(),
+            address: address.clone(),
+            last_requested: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
+        };
+        let committed_uri_handlers: UriCommittedHandlers =
+            std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
 
         {
             let wv = web_view.clone();
@@ -164,13 +207,22 @@ impl BrowserPaneWidget {
         // Initial population.
         populate_completion(profile);
 
-        // Connect load-changed: record visits on Committed and refresh completion.
+        // Connect load-changed: sync the committed URI into the toolbar, record
+        // visits on Committed, and refresh completion. Updating last_requested
+        // here prevents later UI refresh ticks from reloading the stale model URL
+        // after redirects, history navigation, or in-page user clicks.
         {
             let populate = populate_completion;
+            let navigation = navigation.clone();
+            let committed_uri_handlers = committed_uri_handlers.clone();
             web_view.connect_load_changed(move |wv, event| {
                 if event == webkit6::LoadEvent::Committed {
                     if let Some(uri) = wv.uri() {
                         let u = uri.to_string();
+                        navigation.sync_committed_uri(&u);
+                        for handler in committed_uri_handlers.borrow().iter() {
+                            handler(u.clone());
+                        }
                         if is_recordable_url(&u) {
                             let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
                             if let Ok(store) = forktty_core::HistoryStore::for_profile(profile) {
@@ -219,7 +271,8 @@ impl BrowserPaneWidget {
             close,
             // Empty so the first load_uri(initial_url) below is not a no-op;
             // that single call populates last_requested and avoids a double-load.
-            last_requested: std::cell::RefCell::new(String::new()),
+            last_requested: navigation.last_requested.clone(),
+            committed_uri_handlers,
         };
         widget.load_uri(initial_url);
         widget
@@ -254,14 +307,12 @@ impl BrowserPaneWidget {
     }
 
     pub fn load_uri(&self, url: &str) {
-        if self.last_requested.borrow().as_str() == url {
-            return;
+        BrowserPaneNavigation {
+            web_view: self.web_view.clone(),
+            address: self.address.clone(),
+            last_requested: self.last_requested.clone(),
         }
-        *self.last_requested.borrow_mut() = url.to_string();
-        if self.address.text().as_str() != url {
-            self.address.set_text(url);
-        }
-        self.web_view.load_uri(url);
+        .load_uri(url);
     }
 
     pub fn current_uri(&self) -> Option<String> {
@@ -286,6 +337,12 @@ impl BrowserPaneWidget {
         self.address.connect_activate(move |_| {
             f(entry.text().to_string());
         });
+    }
+
+    /// Connect a callback fired after the WebView commits a URI. This includes
+    /// redirects, history navigation, and user-driven link clicks.
+    pub fn connect_uri_committed<F: Fn(String) + 'static>(&self, f: F) {
+        self.committed_uri_handlers.borrow_mut().push(Box::new(f));
     }
 
     /// Connect the close (×) button to a callback. The widget does not own the
@@ -321,6 +378,8 @@ impl BrowserPaneWidget {
                         let msg = err.to_string();
                         if msg.contains("ref-not-found") {
                             Err(BrowserCmdError::RefNotFound)
+                        } else if msg.contains("ref-not-interactable") {
+                            Err(BrowserCmdError::ElementNotInteractable)
                         } else {
                             Err(BrowserCmdError::JsError(msg))
                         }
@@ -350,7 +409,8 @@ mod tests {
         assert!(DRIVER_JS.contains("snapshot"));
         assert!(DRIVER_JS.contains("return root;"));
         assert!(!DRIVER_JS.contains("JSON.stringify(root)"));
-        assert!(DRIVER_JS.contains("ref-stale-or-not-fillable"));
+        assert!(DRIVER_JS.contains("ref-not-interactable"));
+        assert!(DRIVER_JS.contains("isLiveElement"));
     }
 
     #[test]
