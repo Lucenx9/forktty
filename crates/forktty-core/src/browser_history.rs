@@ -292,7 +292,7 @@ impl BookmarkStore {
             Ok(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
                 Ok(v) => v,
                 Err(_) => {
-                    let bak = path.with_extension("json.bak");
+                    let bak = unique_backup_path(path, "json.bak");
                     let _ = std::fs::write(&bak, &bytes);
                     Vec::new()
                 }
@@ -567,5 +567,30 @@ mod tests {
         // Original bytes preserved alongside as a .bak.
         let bak = path.with_extension("json.bak");
         assert!(bak.exists());
+    }
+
+    #[test]
+    fn bookmark_malformed_backup_does_not_overwrite_existing_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        let first_backup = path.with_extension("json.bak");
+        std::fs::write(&path, b"{ this is not valid json").unwrap();
+        std::fs::write(&first_backup, b"previous backup").unwrap();
+
+        let b = BookmarkStore::open(&path).unwrap();
+        assert!(b.list().is_empty());
+        assert_eq!(std::fs::read(&first_backup).unwrap(), b"previous backup");
+
+        let backup_count = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("bookmarks.json.bak")
+            })
+            .count();
+        assert_eq!(backup_count, 2);
     }
 }

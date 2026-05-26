@@ -100,6 +100,30 @@ fn default_meta() -> ProfileMeta {
     }
 }
 
+fn ensure_default_profile(profiles: &mut Vec<ProfileMeta>) {
+    let default_id = ProfileId::default();
+    let mut default_profile = None;
+    let mut others = Vec::with_capacity(profiles.len());
+
+    for mut profile in profiles.drain(..) {
+        if profile.id == default_id {
+            if default_profile.is_none() {
+                profile.is_default = true;
+                if profile.display_name.trim().is_empty() {
+                    profile.display_name = "Default".to_string();
+                }
+                default_profile = Some(profile);
+            }
+        } else {
+            profile.is_default = false;
+            others.push(profile);
+        }
+    }
+
+    profiles.push(default_profile.unwrap_or_else(default_meta));
+    profiles.append(&mut others);
+}
+
 fn unique_backup_path(path: &Path, extension: &str) -> PathBuf {
     let candidate = path.with_extension(extension);
     if !candidate.exists() {
@@ -134,9 +158,7 @@ impl ProfileStore {
             Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(ProfileError::Io(e.to_string())),
         };
-        if !profiles.iter().any(|p| p.is_default) {
-            profiles.insert(0, default_meta());
-        }
+        ensure_default_profile(&mut profiles);
         Ok(Self { path, profiles })
     }
 
@@ -346,5 +368,59 @@ mod tests {
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.list()[0].id, ProfileId::default());
         assert!(path.with_extension("json.bak").exists());
+    }
+
+    #[test]
+    fn load_inserts_well_known_default_even_if_other_profile_claims_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        let rogue = ProfileMeta {
+            id: ProfileId::new(),
+            display_name: "Rogue Default".to_string(),
+            created_at: 7,
+            is_default: true,
+        };
+        std::fs::write(&path, serde_json::to_vec(&vec![rogue.clone()]).unwrap()).unwrap();
+
+        let store = ProfileStore::load(path).unwrap();
+        let profiles = store.list();
+
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0].id, ProfileId::default());
+        assert!(profiles[0].is_default);
+        assert_eq!(profiles[1].id, rogue.id);
+        assert!(!profiles[1].is_default);
+    }
+
+    #[test]
+    fn load_promotes_existing_default_id_and_clears_other_default_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        let default = ProfileMeta {
+            id: ProfileId::default(),
+            display_name: "Default".to_string(),
+            created_at: 0,
+            is_default: false,
+        };
+        let work = ProfileMeta {
+            id: ProfileId::new(),
+            display_name: "Work".to_string(),
+            created_at: 8,
+            is_default: true,
+        };
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&vec![work.clone(), default]).unwrap(),
+        )
+        .unwrap();
+
+        let store = ProfileStore::load(path).unwrap();
+        let profiles = store.list();
+
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0].id, ProfileId::default());
+        assert!(profiles[0].is_default);
+        assert_eq!(profiles[1].id, work.id);
+        assert!(!profiles[1].is_default);
     }
 }
