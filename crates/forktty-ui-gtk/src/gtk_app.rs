@@ -664,13 +664,13 @@ impl VteController {
     fn queue_focus_for_surface(&self, surface_id: &str) {
         if let Some(widget) = self.widgets.get(surface_id) {
             queue_widget_focus(widget.clone().upcast());
-            return;
-        }
-        // Browser panes are not in self.widgets; hand keyboard focus to the
-        // pane's focus target so keyboard-only nav reaches the browser.
-        #[cfg(feature = "browser")]
-        if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
-            queue_widget_focus(pane.focus_target());
+        } else {
+            // Browser panes are not in self.widgets; hand keyboard focus to the
+            // pane's focus target so keyboard-only nav reaches the browser.
+            #[cfg(feature = "browser")]
+            if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
+                queue_widget_focus(pane.focus_target());
+            }
         }
     }
 

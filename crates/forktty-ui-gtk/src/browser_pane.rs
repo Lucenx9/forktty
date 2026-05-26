@@ -12,7 +12,17 @@ use forktty_core::BrowserCmdError;
 
 /// Return `true` only for `http://` and `https://` URLs — the ones worth recording in history.
 fn is_recordable_url(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
+    has_url_scheme(url, "http://") || has_url_scheme(url, "https://")
+}
+
+fn has_url_scheme(url: &str, scheme: &str) -> bool {
+    url.get(..scheme.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+}
+
+fn sync_history_buttons(web_view: &WebView, back: &gtk::Button, forward: &gtk::Button) {
+    back.set_sensitive(web_view.can_go_back());
+    forward.set_sensitive(web_view.can_go_forward());
 }
 
 /// The scripting driver injected into every page (SP2).
@@ -96,6 +106,8 @@ impl BrowserPaneWidget {
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
         let forward = gtk::Button::from_icon_name("go-next-symbolic");
         let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
+        back.set_sensitive(false);
+        forward.set_sensitive(false);
         let address = gtk::Entry::new();
         address.set_hexpand(true);
         address.set_text(initial_url);
@@ -124,6 +136,7 @@ impl BrowserPaneWidget {
         let session = crate::browser_session::session_for(profile_id);
         let web_view = WebView::builder().network_session(&session).build();
         web_view.set_vexpand(true);
+        sync_history_buttons(&web_view, &back, &forward);
 
         {
             use webkit6::{UserContentInjectedFrames, UserScript, UserScriptInjectionTime};
@@ -150,11 +163,21 @@ impl BrowserPaneWidget {
 
         {
             let wv = web_view.clone();
-            back.connect_clicked(move |_| wv.go_back());
+            let back_button = back.clone();
+            let forward_button = forward.clone();
+            back.connect_clicked(move |_| {
+                wv.go_back();
+                sync_history_buttons(&wv, &back_button, &forward_button);
+            });
         }
         {
             let wv = web_view.clone();
-            forward.connect_clicked(move |_| wv.go_forward());
+            let back_button = back.clone();
+            let forward_button = forward.clone();
+            forward.connect_clicked(move |_| {
+                wv.go_forward();
+                sync_history_buttons(&wv, &back_button, &forward_button);
+            });
         }
         {
             let wv = web_view.clone();
@@ -213,9 +236,12 @@ impl BrowserPaneWidget {
         // after redirects, history navigation, or in-page user clicks.
         {
             let populate = populate_completion;
+            let back_button = back.clone();
+            let forward_button = forward.clone();
             let navigation = navigation.clone();
             let committed_uri_handlers = committed_uri_handlers.clone();
             web_view.connect_load_changed(move |wv, event| {
+                sync_history_buttons(wv, &back_button, &forward_button);
                 if event == webkit6::LoadEvent::Committed {
                     if let Some(uri) = wv.uri() {
                         let u = uri.to_string();
@@ -398,6 +424,8 @@ mod tests {
     fn only_http_urls_are_recordable() {
         assert!(is_recordable_url("https://a.test/"));
         assert!(is_recordable_url("http://a.test/"));
+        assert!(is_recordable_url("HTTPS://a.test/"));
+        assert!(is_recordable_url("Http://a.test/"));
         assert!(!is_recordable_url("about:blank"));
         assert!(!is_recordable_url(""));
         assert!(!is_recordable_url("data:text/html,x"));
