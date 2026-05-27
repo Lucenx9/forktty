@@ -1623,16 +1623,16 @@ fn terminal_colors_for_config(config: &config::AppConfig) -> &'static TerminalCo
 }
 
 const FORKTTY_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#111318",
-    foreground: "#d7dce8",
-    bold: "#f1f4f8",
-    cursor: "#d7dce8",
-    cursor_foreground: "#111318",
-    highlight: "#303641",
-    highlight_foreground: "#f1f4f8",
+    background: "#181818",
+    foreground: "#d7d7d7",
+    bold: "#f0f0f0",
+    cursor: "#d7d7d7",
+    cursor_foreground: "#181818",
+    highlight: "#2d3340",
+    highlight_foreground: "#eeeeee",
     ansi: [
-        "#2b3038", "#ff6b6b", "#7ddc91", "#e4c56f", "#7aa2f7", "#c792ea", "#67d7e5", "#d7dce8",
-        "#555d6c", "#ff8585", "#95e6a8", "#edd486", "#9bbcff", "#d6a6f2", "#86e4ee", "#f1f4f8",
+        "#2a2a2a", "#d36b6b", "#7ca982", "#c8a75d", "#6f8fbf", "#a083b8", "#6da7b3", "#d7d7d7",
+        "#5f5f5f", "#e07a7a", "#8bb892", "#d7b86f", "#83a4d4", "#b493c8", "#80b7c1", "#f0f0f0",
     ],
 };
 
@@ -3742,17 +3742,12 @@ fn build_ui(app: &adw::Application) {
     let brand_cursor = gtk::Label::builder().label("_").xalign(0.0).build();
     brand_cursor.add_css_class("app-brand-name");
     brand_cursor.add_css_class("app-brand-cursor");
-    let brand_alpha_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    brand_alpha_dot.add_css_class("app-brand-tag-dot");
-    brand_alpha_dot.set_valign(gtk::Align::Center);
-    brand_alpha_dot.set_size_request(5, 5);
-    let brand_alpha_label = gtk::Label::builder().label("ALPHA").build();
+    let brand_alpha_label = gtk::Label::builder().label("alpha").build();
     brand_alpha_label.add_css_class("app-brand-tag-label");
     let brand_alpha = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     brand_alpha.add_css_class("app-brand-tag");
     brand_alpha.set_valign(gtk::Align::Center);
     brand_alpha.set_tooltip_text(Some("Pre-release build"));
-    brand_alpha.append(&brand_alpha_dot);
     brand_alpha.append(&brand_alpha_label);
     brand_wordmark.append(&brand_name);
     brand_wordmark.append(&brand_cursor);
@@ -10369,11 +10364,11 @@ mod tests {
         config.general.theme_source = "light".to_string();
         config.appearance.terminal_theme = config::TERMINAL_THEME_SYSTEM.to_string();
 
-        assert_eq!(terminal_colors_for_config(&config).background, "#111318");
+        assert_eq!(terminal_colors_for_config(&config).background, "#181818");
 
         config.general.theme_source = "dark".to_string();
 
-        assert_eq!(terminal_colors_for_config(&config).background, "#111318");
+        assert_eq!(terminal_colors_for_config(&config).background, "#181818");
     }
 
     #[test]

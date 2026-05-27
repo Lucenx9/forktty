@@ -5,54 +5,51 @@
  * -------------------------------------------------------------------------- */
 
 :root {
-  --ft-bg-0: var(--shade-color);
-  --ft-bg-1: var(--window-bg-color);
-  --ft-bg-2: var(--view-bg-color);
-  --ft-bg-3: var(--card-bg-color);
-  --ft-bg-4: alpha(var(--window-fg-color), 0.08);
-  --ft-bg-overlay: var(--popover-bg-color);
+  --ft-bg-0: #141414;
+  --ft-bg-1: #181818;
+  --ft-bg-2: #1b1b1b;
+  --ft-bg-3: #232323;
+  --ft-bg-4: #282828;
+  --ft-bg-overlay: #202020;
 
-  --ft-pane-bg: shade(var(--ft-bg-1), 0.82);
-  --ft-pane-header: shade(var(--ft-bg-1), 0.96);
-  --ft-pane-header-active: shade(var(--ft-bg-1), 1.04);
+  --ft-pane-bg: #181818;
+  --ft-pane-header: #1b1b1b;
+  --ft-pane-header-active: #1f1f1f;
 
-  --ft-border-subtle: var(--border-color);
-  --ft-border: var(--border-color);
-  --ft-border-strong: var(--headerbar-border-color);
+  --ft-border-subtle: #292929;
+  --ft-border: #303030;
+  --ft-border-strong: #3a3a3a;
 
-  --ft-text-strong: var(--window-fg-color);
-  --ft-text: alpha(var(--window-fg-color), 0.85);
-  --ft-text-muted: alpha(var(--window-fg-color), 0.60);
-  --ft-text-faint: alpha(var(--window-fg-color), 0.40);
+  --ft-text-strong: #d7d7d7;
+  --ft-text: #b7b7b7;
+  --ft-text-muted: #8a8a8a;
+  --ft-text-faint: #626262;
   --dim-opacity: 0.82;
 
-  --ft-accent: var(--accent-color);
-  --ft-accent-hover: var(--accent-bg-color);
-  --ft-accent-strong: var(--accent-color);
-  --ft-accent-soft: alpha(var(--window-fg-color), 0.07);
-  --ft-accent-soft-2: alpha(var(--window-fg-color), 0.10);
-  --ft-accent-fg: var(--accent-fg-color);
-  --ft-brand-purple: #8f98a8;
+  --ft-accent: #6f8fbf;
+  --ft-accent-hover: #7fa0d0;
+  --ft-accent-strong: #8aa9d6;
+  --ft-accent-soft: #242a33;
+  --ft-accent-soft-2: #2a3140;
+  --ft-accent-fg: #0f1115;
+  --ft-brand-purple: #7f8792;
 
-  --ft-selection-bg: alpha(var(--window-fg-color), 0.055);
-  --ft-selection-bg-hover: alpha(var(--window-fg-color), 0.085);
-  --ft-selection-border: alpha(var(--window-fg-color), 0.11);
-  --ft-selection-rail: alpha(var(--ft-accent), 0.70);
-  --ft-selection-rail-strong: alpha(var(--ft-accent), 0.88);
+  --ft-selection-bg: #222222;
+  --ft-selection-bg-hover: #282828;
+  --ft-selection-border: transparent;
+  --ft-selection-rail: #5e7fae;
+  --ft-selection-rail-strong: #6f8fbf;
 
-  --ft-warning: var(--warning-color);
-  --ft-warning-soft: alpha(var(--warning-color), 0.14);
-  --ft-error: var(--error-color);
-  --ft-error-soft: alpha(var(--error-color), 0.14);
-  --ft-success: var(--success-color);
-  --ft-success-soft: alpha(var(--success-color), 0.14);
-  --ft-info: alpha(var(--window-fg-color), 0.72);
-  --ft-info-soft: alpha(var(--window-fg-color), 0.075);
+  --ft-warning: #c8a75d;
+  --ft-warning-soft: #2c2619;
+  --ft-error: #d36b6b;
+  --ft-error-soft: #2f1f1f;
+  --ft-success: #7ca982;
+  --ft-success-soft: #1f2a22;
+  --ft-info: #9a9a9a;
+  --ft-info-soft: #252525;
 
-  /* Theme-aware shadow tint. shade-color is provided by libadwaita and reads
-   * darker in light themes, near-transparent in dark themes — safer than
-   * hardcoded black for box-shadows. */
-  --ft-shadow: var(--shade-color);
+  --ft-shadow: #000000;
 }
 
 /* --------------------------------------------------------------------------
@@ -69,8 +66,8 @@ entry:focus-visible,
 .status-location:focus-visible,
 .app-header-title:focus-visible,
 .sidebar-add:focus-visible {
-  outline: 2px solid var(--ft-accent);
-  outline-offset: 2px;
+  outline: 1px solid var(--ft-accent);
+  outline-offset: 1px;
 }
 
 window {
@@ -87,9 +84,9 @@ window {
  * -------------------------------------------------------------------------- */
 
 .app-header {
-  min-height: 36px;
-  padding: 0 5px;
-  background: var(--ft-bg-2);
+  min-height: 31px;
+  padding: 0 4px;
+  background: var(--ft-bg-1);
   color: var(--ft-text);
   border-bottom: 1px solid var(--ft-border-subtle);
   box-shadow: none;
@@ -100,14 +97,14 @@ window {
 }
 
 .app-brand {
-  min-height: 28px;
-  margin: 0 4px 0 0;
-  padding: 0 6px 0 2px;
+  min-height: 26px;
+  margin: 0 3px 0 0;
+  padding: 0 6px 0 1px;
   color: var(--ft-text);
 }
 
 .app-brand-logo {
-  opacity: 0.95;
+  opacity: 0.58;
 }
 
 .app-brand-wordmark {
@@ -115,35 +112,28 @@ window {
 }
 
 .app-brand-name {
-  color: var(--ft-text-strong);
-  font-size: 0.90em;
-  font-weight: 700;
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
+  font-weight: 600;
 }
 
 .app-brand-cursor {
   color: var(--ft-brand-purple);
 }
 
-/* Pre-release tag chip beside the brand name. Kept neutral so the header
- * does not compete with pane focus and workspace selection. */
 .app-brand-tag {
-  margin-left: 6px;
-  padding: 2px 8px;
-  min-height: 18px;
-  border-radius: 999px;
-  background: alpha(var(--window-fg-color), 0.07);
-  color: var(--ft-text-muted);
-}
-
-.app-brand-tag-dot {
-  border-radius: 50%;
-  background: alpha(var(--window-fg-color), 0.42);
+  margin-left: 5px;
+  padding: 0;
+  min-height: 16px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ft-text-faint);
 }
 
 .app-brand-tag-label {
-  font-size: 0.72em;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: 0.70em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .app-header-title-spacer {
@@ -151,14 +141,14 @@ window {
 }
 
 .app-header-title {
-  min-height: 26px;
-  padding: 1px 9px;
+  min-height: 24px;
+  padding: 0 8px;
   background: transparent;
   border: 0;
-  border-radius: 6px;
-  color: var(--ft-text);
-  font-size: 0.92em;
-  font-weight: 600;
+  border-radius: 4px;
+  color: var(--ft-text-muted);
+  font-size: 0.86em;
+  font-weight: 500;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
@@ -173,12 +163,12 @@ window {
 }
 
 .app-header .header-action {
-  min-width: 28px;
-  min-height: 28px;
-  margin: 0 1px;
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0;
   padding: 0;
   color: var(--ft-text-muted);
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -186,7 +176,7 @@ window {
 }
 
 .app-header .header-action image {
-  -gtk-icon-size: 15px;
+  -gtk-icon-size: 14px;
 }
 
 .app-header .header-action:hover {
@@ -225,19 +215,19 @@ window {
 
 .app-header .header-action-separator {
   min-width: 1px;
-  min-height: 16px;
-  margin: 0 8px 0 6px;
+  min-height: 14px;
+  margin: 0 7px 0 6px;
   background: var(--ft-border-subtle);
-  opacity: 0.9;
+  opacity: 0.75;
 }
 
 .app-header button.titlebutton {
-  min-width: 28px;
-  min-height: 28px;
-  margin: 0 2px;
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0 1px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--ft-text-muted);
   box-shadow: none;
@@ -245,7 +235,7 @@ window {
 }
 
 .app-header button.titlebutton image {
-  -gtk-icon-size: 14px;
+  -gtk-icon-size: 13px;
 }
 
 .app-header button.titlebutton:hover {
@@ -277,8 +267,8 @@ popover.ft-context-menu contents {
   padding: 7px;
   background: var(--ft-bg-overlay);
   border: 1px solid var(--ft-border-strong);
-  border-radius: 8px;
-  box-shadow: 0 12px 34px var(--shade-color);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px alpha(var(--ft-shadow), 0.42);
   min-width: 248px;
 }
 
@@ -375,26 +365,26 @@ popover.ft-context-menu contents {
 }
 
 .sidebar-header {
-  min-height: 32px;
-  padding: 0 9px 0 11px;
+  min-height: 30px;
+  padding: 0 8px 0 10px;
   border-bottom: 1px solid var(--ft-border-subtle);
 }
 
 .sidebar-section-label {
   color: var(--ft-text-faint);
-  font-weight: 700;
-  font-size: 0.78em;
-  letter-spacing: 0.06em;
+  font-weight: 600;
+  font-size: 0.72em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .sidebar-add {
-  min-width: 26px;
-  min-height: 26px;
+  min-width: 22px;
+  min-height: 22px;
   padding: 0;
-  border-radius: 6px;
-  color: var(--ft-text);
-  background: alpha(var(--window-fg-color), 0.05);
+  border-radius: 4px;
+  color: var(--ft-text-muted);
+  background: transparent;
   border: 0;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
@@ -414,13 +404,13 @@ popover.ft-context-menu contents {
 }
 
 .navigation-sidebar {
-  padding: 7px 8px;
+  padding: 5px 6px;
   background: transparent;
   color: var(--ft-text);
 }
 
 .navigation-sidebar row {
-  border-radius: 7px;
+  border-radius: 4px;
   margin: 0;
   background: transparent;
   padding: 0;
@@ -446,12 +436,12 @@ popover.ft-context-menu contents {
 /* Workspace cards */
 
 .workspace-card {
-  min-height: 46px;
-  padding: 8px 10px 8px 13px;
-  margin: 1px 2px;
-  border-radius: 7px;
+  min-height: 38px;
+  padding: 6px 8px 6px 10px;
+  margin: 0;
+  border-radius: 4px;
   background: transparent;
-  border: 1px solid transparent;
+  border: 0;
   transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
@@ -461,8 +451,7 @@ popover.ft-context-menu contents {
 
 .workspace-row.active .workspace-card {
   background: var(--ft-selection-bg);
-  border-color: var(--ft-selection-border);
-  box-shadow: inset 3px 0 0 var(--ft-selection-rail);
+  box-shadow: inset 2px 0 0 var(--ft-selection-rail);
 }
 
 .workspace-row.active:hover .workspace-card {
@@ -470,15 +459,14 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.needs-attention .workspace-card {
-  box-shadow: inset 3px 0 0 var(--ft-warning);
+  box-shadow: inset 2px 0 0 var(--ft-warning);
 }
 
 /* Active + needs-attention: keep active selection subtle and swap the rail to
  * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
   background: var(--ft-selection-bg);
-  border-color: alpha(var(--ft-warning), 0.32);
-  box-shadow: inset 3px 0 0 var(--ft-warning);
+  box-shadow: inset 2px 0 0 var(--ft-warning);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
@@ -487,12 +475,12 @@ popover.ft-context-menu contents {
 
 .workspace-name {
   color: var(--ft-text-strong);
-  font-weight: 600;
-  font-size: 0.95em;
+  font-weight: 560;
+  font-size: 0.90em;
 }
 
 .workspace-name-line {
-  min-height: 20px;
+  min-height: 18px;
 }
 
 .workspace-row.active .workspace-name {
@@ -500,11 +488,11 @@ popover.ft-context-menu contents {
 }
 
 .workspace-status-badge {
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 0.68em;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.66em;
+  font-weight: 600;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -539,7 +527,7 @@ popover.ft-context-menu contents {
 
 .workspace-meta {
   color: var(--ft-text-muted);
-  font-size: 0.84em;
+  font-size: 0.78em;
 }
 
 .workspace-summary {
@@ -549,16 +537,16 @@ popover.ft-context-menu contents {
 
 .workspace-count {
   color: var(--ft-text-muted);
-  font-size: 0.78em;
-  font-weight: 600;
+  font-size: 0.74em;
+  font-weight: 500;
 }
 
 .workspace-count-badge {
-  padding: 2px 7px;
-  min-width: 22px;
-  border-radius: 999px;
-  background: alpha(var(--window-fg-color), 0.08);
-  color: var(--ft-text);
+  padding: 0 2px;
+  min-width: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ft-text-muted);
 }
 
 .workspace-count-icon {
@@ -567,8 +555,8 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-count-badge {
-  background: var(--ft-selection-bg-hover);
-  color: var(--ft-text);
+  background: transparent;
+  color: var(--ft-text-muted);
 }
 
 /* Sidebar empty state */
@@ -592,24 +580,23 @@ popover.ft-context-menu contents {
 
 .sidebar-keycap,
 .keycap {
-  padding: 2px 7px;
-  border-radius: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
   color: var(--ft-text-muted);
   background: var(--ft-bg-3);
   border: 1px solid var(--ft-border-subtle);
-  border-bottom: 1px solid var(--ft-border);
   font-size: 0.74em;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .app-status-bar {
-  min-height: 28px;
-  padding: 2px 14px;
-  background: var(--ft-bg-0);
+  min-height: 24px;
+  padding: 1px 12px;
+  background: var(--ft-bg-1);
   border-top: 1px solid var(--ft-border);
-  box-shadow: inset 0 1px 0 0 alpha(var(--window-fg-color), 0.04);
+  box-shadow: none;
   color: var(--ft-text);
-  font-size: 0.82em;
+  font-size: 0.78em;
 }
 
 .status-location {
@@ -624,9 +611,9 @@ popover.ft-context-menu contents {
 }
 
 .app-status-bar .keycap {
-  min-height: 20px;
-  padding: 1px 8px;
-  font-size: 0.76em;
+  min-height: 18px;
+  padding: 0 6px;
+  font-size: 0.74em;
 }
 
 .status-shortcut {
@@ -664,8 +651,8 @@ popover.ft-workspace-popover contents {
   padding: 7px;
   background: var(--ft-bg-overlay);
   border: 1px solid var(--ft-border-strong);
-  border-radius: 8px;
-  box-shadow: 0 12px 34px var(--shade-color);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px alpha(var(--ft-shadow), 0.42);
 }
 
 .ft-workspace-popover-list {
@@ -759,7 +746,7 @@ popover.ft-workspace-popover contents {
 .terminal-pane {
   background: var(--ft-pane-bg);
   border: 1px solid var(--ft-border-subtle);
-  border-top: 2px solid transparent;
+  border-top: 1px solid transparent;
   transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
@@ -776,8 +763,8 @@ popover.ft-workspace-popover contents {
 }
 
 .terminal-pane-header {
-  min-height: 24px;
-  padding: 0 8px;
+  min-height: 22px;
+  padding: 0 7px;
   background: var(--ft-pane-header);
   border-bottom: 1px solid var(--ft-border-subtle);
   color: var(--ft-text-muted);
@@ -798,17 +785,17 @@ popover.ft-workspace-popover contents {
 .pane-tabstrip {
   background: var(--ft-pane-header);
   border-bottom: 1px solid var(--ft-border-subtle);
-  min-height: 28px;
-  padding: 2px 6px 2px 8px;
+  min-height: 25px;
+  padding: 1px 5px 1px 7px;
 }
 
 .pane-tab {
   min-width: 72px;
-  min-height: 22px;
-  margin: 0 3px 0 0;
+  min-height: 21px;
+  margin: 0 2px 0 0;
   padding: 0 2px 0 6px;
   border: 1px solid transparent;
-  border-radius: 4px 4px 0 0;
+  border-radius: 3px;
   background: transparent;
   color: var(--ft-text-muted);
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
@@ -820,11 +807,11 @@ popover.ft-workspace-popover contents {
 }
 
 .pane-tab.active {
-  background: alpha(var(--window-fg-color), 0.07);
-  border-color: alpha(var(--window-fg-color), 0.08);
+  background: var(--ft-selection-bg);
+  border-color: transparent;
   border-bottom-color: transparent;
   color: var(--ft-text-strong);
-  box-shadow: inset 0 -2px 0 var(--ft-selection-rail);
+  box-shadow: inset 0 -1px 0 var(--ft-selection-rail);
 }
 
 .pane-tab-select {
@@ -899,17 +886,17 @@ popover.ft-workspace-popover contents {
 
 .terminal-pane-title {
   color: var(--ft-text-muted);
-  font-size: 0.82em;
+  font-size: 0.78em;
 }
 
 .terminal-pane.active .terminal-pane-title {
   color: var(--ft-text-strong);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .terminal-pane-cwd {
   color: var(--ft-text-faint);
-  font-size: 0.78em;
+  font-size: 0.74em;
 }
 
 /* Inactive attention panes already carry a 2px warning border on top.
@@ -986,27 +973,27 @@ popover.ft-workspace-popover contents {
 }
 
 .single-pane-actions {
-  margin: 8px 10px 0 0;
-  padding: 4px;
-  border: 1px solid var(--ft-border-subtle);
-  border-radius: 6px;
-  background: alpha(var(--ft-bg-2), 0.82);
-  box-shadow: 0 1px 4px alpha(var(--ft-shadow), 0.45);
-  opacity: 0.5;
+  margin: 6px 8px 0 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.42;
   transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .single-pane-actions:hover,
 .single-pane-actions:focus-within {
   opacity: 1;
-  background: alpha(var(--ft-bg-2), 0.98);
-  border-color: alpha(var(--window-fg-color), 0.16);
-  box-shadow: 0 2px 8px alpha(var(--ft-shadow), 0.65);
+  background: alpha(var(--ft-bg-3), 0.72);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .single-pane-actions .terminal-pane-action {
-  min-width: 24px;
-  min-height: 24px;
+  min-width: 22px;
+  min-height: 22px;
 }
 
 /* Browser panes reuse the terminal surface tokens so mixed terminal/browser
