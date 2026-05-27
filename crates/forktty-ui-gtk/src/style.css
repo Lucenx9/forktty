@@ -785,15 +785,16 @@ popover.ft-workspace-popover contents {
   min-height: 21px;
   margin: 0 2px 0 0;
   padding: 0 2px 0 6px;
-  border: 1px solid transparent;
+  border: 1px solid var(--ft-border-subtle);
   border-radius: 3px;
-  background: transparent;
+  background: var(--ft-bg-0);
   color: var(--ft-text-muted);
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
 }
 
 .pane-tab:hover {
-  background: alpha(var(--window-fg-color), 0.05);
+  background: var(--ft-bg-2);
+  border-color: var(--ft-border);
   color: var(--ft-text);
 }
 
@@ -867,10 +868,22 @@ popover.ft-workspace-popover contents {
   opacity: 1;
 }
 
-.pane-tab-select:focus-visible,
+/* Keyboard focus only: `:focus-visible` never matches mouse clicks, so the ring
+ * can't get stuck after clicking a tab. The select button is hexpand, so its
+ * ring spans the whole tab interior instead of hugging the label. The generic
+ * button focus border is cleared so it doesn't draw a second tight box. */
+.pane-tab-select:focus-visible {
+  outline: 2px solid var(--ft-accent);
+  outline-offset: -2px;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .pane-tab-close:focus-visible {
   outline: 2px solid var(--ft-accent);
   outline-offset: 1px;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .pane-tab.active .pane-tab-select {
