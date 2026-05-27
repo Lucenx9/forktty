@@ -456,27 +456,29 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-card {
-  background: var(--ft-accent);
-  border-color: transparent;
+  background: alpha(var(--ft-accent), 0.14);
+  border-color: alpha(var(--ft-accent), 0.22);
+  box-shadow: inset 3px 0 0 var(--ft-accent);
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: var(--ft-accent-hover);
+  background: alpha(var(--ft-accent), 0.20);
 }
 
 .workspace-row.needs-attention .workspace-card {
   box-shadow: inset 3px 0 0 var(--ft-warning);
 }
 
-/* Active + needs-attention: solid warning fill replaces the accent pill so
- * urgency reads at a glance without stacking colours. */
+/* Active + needs-attention: keep active selection subtle and swap the rail to
+ * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
-  background: var(--ft-warning);
-  border-color: transparent;
+  background: alpha(var(--ft-accent), 0.14);
+  border-color: alpha(var(--ft-warning), 0.32);
+  box-shadow: inset 3px 0 0 var(--ft-warning);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: shade(var(--ft-warning), 1.08);
+  background: alpha(var(--ft-accent), 0.20);
 }
 
 .workspace-name {
@@ -490,16 +492,7 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-name {
-  color: var(--ft-accent-fg);
-}
-
-/* Solid accent (or warning) pill: meta text and chips switch to translucent
- * white so they stay legible on the filled background. */
-.workspace-row.active .workspace-meta,
-.workspace-row.active .workspace-summary,
-.workspace-row.active .workspace-count,
-.workspace-row.active .workspace-count-icon {
-  color: alpha(var(--ft-accent-fg), 0.78);
+  color: var(--ft-text-strong);
 }
 
 .workspace-status-badge {
@@ -570,16 +563,8 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-count-badge {
-  background: alpha(var(--ft-accent-fg), 0.18);
-  color: var(--ft-accent-fg);
-}
-
-/* Status badges sit on the filled pill now; give them a translucent white
- * chip instead of their accent-tinted soft fill which would vanish. */
-.workspace-row.active .workspace-status-badge {
-  color: var(--ft-accent-fg);
-  background: alpha(var(--ft-accent-fg), 0.20);
-  box-shadow: none;
+  background: alpha(var(--ft-accent), 0.16);
+  color: var(--ft-text);
 }
 
 /* Sidebar empty state */
