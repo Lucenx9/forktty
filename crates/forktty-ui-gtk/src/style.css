@@ -55,6 +55,46 @@
   --ft-shadow: var(--shade-color);
 }
 
+.app-root.ft-light {
+  --ft-bg-0: #e7e9ee;
+  --ft-bg-1: #f7f8fa;
+  --ft-bg-2: #f1f3f5;
+  --ft-bg-3: #e9ecef;
+  --ft-bg-4: #e4e7eb;
+  --ft-bg-overlay: #ffffff;
+
+  --ft-pane-bg: #f6f7f9;
+  --ft-pane-header: #edf0f3;
+  --ft-pane-header-active: #f1f3f5;
+
+  --ft-border-subtle: #d7dce3;
+  --ft-border: #c8ced7;
+  --ft-border-strong: #aeb7c3;
+
+  --ft-text-strong: #1f2328;
+  --ft-text: #30363d;
+  --ft-text-muted: #66707c;
+  --ft-text-faint: #8b949e;
+
+  --ft-accent: #7257a5;
+  --ft-accent-hover: #604897;
+  --ft-accent-strong: #604897;
+  --ft-accent-soft: #e6e8ed;
+  --ft-accent-soft-2: #dde1e7;
+  --ft-accent-fg: #ffffff;
+  --ft-brand-purple: #68707d;
+
+  --ft-selection-bg: #edeff2;
+  --ft-selection-bg-hover: #e5e8ed;
+  --ft-selection-border: #d0d5dd;
+  --ft-selection-rail: #8b6bc1;
+  --ft-selection-rail-strong: #7d61b2;
+
+  --ft-info: #59636f;
+  --ft-info-soft: #e8ebef;
+  --ft-shadow: #9aa4b2;
+}
+
 /* --------------------------------------------------------------------------
  * Base
  * -------------------------------------------------------------------------- */

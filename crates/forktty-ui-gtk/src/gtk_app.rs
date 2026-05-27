@@ -1708,16 +1708,16 @@ const GRUVBOX_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
 };
 
 const LIGHT_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#fbfbfe",
-    foreground: "#24292f",
-    bold: "#0b0d12",
-    cursor: "#0969da",
+    background: "#f6f7f9",
+    foreground: "#1f2328",
+    bold: "#0b0f14",
+    cursor: "#3f6ecf",
     cursor_foreground: "#ffffff",
-    highlight: "#dbeafe",
-    highlight_foreground: "#111827",
+    highlight: "#d8e0eb",
+    highlight_foreground: "#161b22",
     ansi: [
         "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#1b7c83", "#57606a",
-        "#6e7781", "#a40e26", "#116329", "#7d4e00", "#0550ae", "#6639ba", "#0a6971", "#24292f",
+        "#6e7781", "#a40e26", "#116329", "#7d4e00", "#0550ae", "#6639ba", "#0a6971", "#1f2328",
     ],
 };
 
@@ -3936,6 +3936,7 @@ fn build_ui(app: &adw::Application) {
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
+    set_color_variant_class(&content, &app_config);
     content.append(&header);
     content.append(&paned);
     content.append(&status_bar);
@@ -4098,6 +4099,7 @@ fn build_ui(app: &adw::Application) {
 
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
     let settings_apply = settings_apply_callback(
+        &content,
         &paned,
         &sidebar_shell,
         &terminal_stack_for_settings,
@@ -4200,17 +4202,20 @@ fn default_startup_workspace_dir_from(home: Option<PathBuf>, current: Option<Pat
 }
 
 fn settings_apply_callback(
+    content: &gtk::Box,
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
     terminal_stack: &gtk::Box,
     controller: &Rc<RefCell<VteController>>,
 ) -> SettingsApplyCallback {
+    let content = content.clone();
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
     let terminal_stack = terminal_stack.clone();
     let controller = controller.clone();
     Rc::new(move |config| {
         apply_color_scheme(config);
+        set_color_variant_class(&content, config);
         apply_sidebar_position(
             &paned,
             &sidebar_shell,
@@ -4308,6 +4313,16 @@ fn apply_color_scheme(config: &config::AppConfig) {
         _ => adw::ColorScheme::Default,
     };
     adw::StyleManager::default().set_color_scheme(scheme);
+}
+
+fn set_color_variant_class(widget: &impl IsA<gtk::Widget>, config: &config::AppConfig) {
+    widget.remove_css_class("ft-light");
+    widget.remove_css_class("ft-dark");
+    if terminal_prefers_dark_palette(config) {
+        widget.add_css_class("ft-dark");
+    } else {
+        widget.add_css_class("ft-light");
+    }
 }
 
 fn is_executable_shell(shell: &str) -> bool {
@@ -10430,7 +10445,7 @@ mod tests {
         config.general.theme_source = "light".to_string();
         config.appearance.terminal_theme = config::TERMINAL_THEME_SYSTEM.to_string();
 
-        assert_eq!(terminal_colors_for_config(&config).background, "#fbfbfe");
+        assert_eq!(terminal_colors_for_config(&config).background, "#f6f7f9");
 
         config.general.theme_source = "dark".to_string();
 
