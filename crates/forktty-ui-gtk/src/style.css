@@ -456,30 +456,27 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-card {
-  background: alpha(var(--ft-accent), 0.16);
+  background: var(--ft-accent);
   border-color: transparent;
-  box-shadow: inset 3px 0 0 var(--ft-accent);
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: alpha(var(--ft-accent), 0.20);
+  background: var(--ft-accent-hover);
 }
 
 .workspace-row.needs-attention .workspace-card {
   box-shadow: inset 3px 0 0 var(--ft-warning);
 }
 
-/* Active + needs-attention: keep the active accent fill, swap the rail to
- * warning. Avoid stacking a yellow background on top of the accent — the
- * badge and rail already carry the urgency. */
+/* Active + needs-attention: solid warning fill replaces the accent pill so
+ * urgency reads at a glance without stacking colours. */
 .workspace-row.active.needs-attention .workspace-card {
-  box-shadow: inset 3px 0 0 var(--ft-warning);
-  background: alpha(var(--ft-accent), 0.16);
+  background: var(--ft-warning);
   border-color: transparent;
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: alpha(var(--ft-accent), 0.20);
+  background: shade(var(--ft-warning), 1.08);
 }
 
 .workspace-name {
@@ -493,7 +490,16 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-name {
-  color: var(--ft-text-strong);
+  color: var(--ft-accent-fg);
+}
+
+/* Solid accent (or warning) pill: meta text and chips switch to translucent
+ * white so they stay legible on the filled background. */
+.workspace-row.active .workspace-meta,
+.workspace-row.active .workspace-summary,
+.workspace-row.active .workspace-count,
+.workspace-row.active .workspace-count-icon {
+  color: alpha(var(--ft-accent-fg), 0.78);
 }
 
 .workspace-status-badge {
@@ -564,8 +570,16 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-count-badge {
-  background: alpha(var(--ft-accent), 0.16);
-  color: var(--ft-text);
+  background: alpha(var(--ft-accent-fg), 0.18);
+  color: var(--ft-accent-fg);
+}
+
+/* Status badges sit on the filled pill now; give them a translucent white
+ * chip instead of their accent-tinted soft fill which would vanish. */
+.workspace-row.active .workspace-status-badge {
+  color: var(--ft-accent-fg);
+  background: alpha(var(--ft-accent-fg), 0.20);
+  box-shadow: none;
 }
 
 /* Sidebar empty state */
