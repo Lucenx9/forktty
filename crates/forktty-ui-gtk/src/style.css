@@ -442,7 +442,7 @@ popover.ft-context-menu contents {
 
 .workspace-row.active .workspace-card {
   background: var(--ft-selection-bg);
-  box-shadow: inset 2px 0 0 var(--ft-selection-rail);
+  box-shadow: inset 2px 0 0 var(--ft-text-muted);
 }
 
 .workspace-row.active:hover .workspace-card {
@@ -736,13 +736,13 @@ popover.ft-workspace-popover contents {
 
 .terminal-pane {
   background: var(--ft-pane-bg);
-  border: 1px solid var(--ft-border-subtle);
-  border-top: 1px solid transparent;
+  border: 0;
+  border-top: 2px solid transparent;
   transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .terminal-pane.active {
-  border-top-color: var(--ft-selection-rail-strong);
+  border-top-color: alpha(var(--window-fg-color), 0.28);
 }
 
 .terminal-pane:focus-visible {
@@ -774,7 +774,7 @@ popover.ft-workspace-popover contents {
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
 .pane-tabstrip {
-  background: var(--ft-pane-header);
+  background: var(--ft-bg-0);
   border-bottom: 1px solid var(--ft-border-subtle);
   min-height: 25px;
   padding: 1px 5px 1px 7px;
@@ -797,12 +797,14 @@ popover.ft-workspace-popover contents {
   color: var(--ft-text);
 }
 
+/* Cursor-style: active tab bg matches the terminal body below so the tab
+ * reads as connected to its content, marked by a thin accent on the TOP edge
+ * rather than a bottom underline. */
 .pane-tab.active {
-  background: var(--ft-selection-bg);
+  background: var(--ft-pane-bg);
   border-color: transparent;
-  border-bottom-color: transparent;
   color: var(--ft-text-strong);
-  box-shadow: inset 0 -1px 0 var(--ft-selection-rail);
+  box-shadow: inset 0 2px 0 var(--ft-selection-rail);
 }
 
 .pane-tab-select {
@@ -1135,6 +1137,45 @@ checkbutton:focus-visible {
   border-radius: 4px;
 }
 
+/* Switches and checks adopt ForkTTY's warm accent instead of libadwaita's
+ * default blue/purple, so every toggle matches the rest of the chrome. */
+switch {
+  background: var(--ft-bg-4);
+  border: 1px solid var(--ft-border);
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+switch:checked {
+  background: var(--ft-accent);
+  border-color: transparent;
+}
+
+switch slider {
+  background: var(--ft-text-strong);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px alpha(var(--ft-shadow), 0.35);
+}
+
+switch:checked slider {
+  background: var(--ft-accent-fg);
+}
+
+switch:focus-visible {
+  outline: 2px solid var(--ft-accent);
+  outline-offset: 2px;
+}
+
+checkbutton check:checked,
+checkbutton check:indeterminate,
+check:checked,
+check:indeterminate,
+radio:checked {
+  background: var(--ft-accent);
+  border-color: transparent;
+  color: var(--ft-accent-fg);
+}
+
 /* --------------------------------------------------------------------------
  * Buttons
  * -------------------------------------------------------------------------- */
@@ -1377,6 +1418,28 @@ preferenceswindow preferencesgroup > box > .header > label.title {
 preferenceswindow preferencesgroup > box > .header > label.description {
   color: var(--ft-text-muted);
   font-size: 0.86em;
+}
+
+/* Flatten Adwaita's boxed-list cards into flat rows separated by hairline
+ * dividers (Zed/Cursor settings style) instead of a raised rounded card. */
+preferenceswindow .boxed-list {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+preferenceswindow .boxed-list > row {
+  background: transparent;
+  border-radius: 0;
+  border-bottom: 1px solid var(--ft-border-subtle);
+}
+
+preferenceswindow .boxed-list > row:last-child {
+  border-bottom: 0;
+}
+
+preferenceswindow .boxed-list > row:hover {
+  background: alpha(var(--window-fg-color), 0.03);
 }
 
 .ft-form-row {
