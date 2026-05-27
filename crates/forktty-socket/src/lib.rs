@@ -289,40 +289,54 @@ pub fn bind_socket_listener(
 ) -> io::Result<StdUnixListener> {
     let socket_path = socket_path.as_ref();
     prepare_socket_parent(socket_path, enforce_private_parent)?;
-    match fs::symlink_metadata(socket_path) {
-        Ok(metadata) => {
-            if !metadata.file_type().is_socket() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AddrInUse,
-                    format!(
-                        "refusing to replace non-socket path at {}",
-                        socket_path.display()
-                    ),
-                ));
-            }
-            match inspect_existing_socket(socket_path) {
-                ExistingSocketOccupant::ForkTTY => {
+    // Removing a stale socket and re-binding is not atomic: a racing ForkTTY
+    // start can recreate the path between `remove_file` and `bind`, surfacing a
+    // bare `AddrInUse`. Re-inspect once on that error so the occupant is
+    // reported accurately instead of as a confusing bind failure.
+    let mut reclaimed_stale = false;
+    let listener = loop {
+        match fs::symlink_metadata(socket_path) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_socket() {
                     return Err(io::Error::new(
                         io::ErrorKind::AddrInUse,
                         format!(
-                            "another ForkTTY instance is already using {}",
+                            "refusing to replace non-socket path at {}",
                             socket_path.display()
                         ),
                     ));
                 }
-                ExistingSocketOccupant::Other => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AddrInUse,
-                        format!("socket path {} is already in use", socket_path.display()),
-                    ));
+                match inspect_existing_socket(socket_path) {
+                    ExistingSocketOccupant::ForkTTY => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AddrInUse,
+                            format!(
+                                "another ForkTTY instance is already using {}",
+                                socket_path.display()
+                            ),
+                        ));
+                    }
+                    ExistingSocketOccupant::Other => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::AddrInUse,
+                            format!("socket path {} is already in use", socket_path.display()),
+                        ));
+                    }
+                    ExistingSocketOccupant::Stale => fs::remove_file(socket_path)?,
                 }
-                ExistingSocketOccupant::Stale => fs::remove_file(socket_path)?,
             }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
         }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err),
-    }
-    let listener = StdUnixListener::bind(socket_path)?;
+        match StdUnixListener::bind(socket_path) {
+            Ok(listener) => break listener,
+            Err(err) if err.kind() == io::ErrorKind::AddrInUse && !reclaimed_stale => {
+                reclaimed_stale = true;
+                continue;
+            }
+            Err(err) => return Err(err),
+        }
+    };
     listener.set_nonblocking(true)?;
     if let Err(err) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600)) {
         let _ = fs::remove_file(socket_path);

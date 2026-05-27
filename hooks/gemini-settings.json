@@ -7,7 +7,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini session-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -19,7 +19,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini prompt-submit || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -31,7 +31,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini pre-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -43,7 +43,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini post-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -55,7 +55,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -67,7 +67,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini notification || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -79,7 +79,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini pre-compact || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }
@@ -91,7 +91,7 @@
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini session-end || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
-            "timeout": 5000
+            "timeout": 30000
           }
         ]
       }

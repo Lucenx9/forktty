@@ -182,6 +182,11 @@ struct AgentSpec {
 // round-trip while still leaving headroom over the socket request budget.
 const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
 
+// Gemini CLI treats the hook `timeout` field as milliseconds (default 60000).
+// Mirror the 30s budget used for Codex/Claude so a slow local socket round-trip
+// does not kill a Gemini hook sooner than the other providers.
+const GEMINI_HOOK_ENTRY_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
+
 const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionStart",
@@ -262,42 +267,42 @@ const GEMINI_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionStart",
         hook_event_name: "session-start",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "BeforeAgent",
         hook_event_name: "prompt-submit",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "BeforeTool",
         hook_event_name: "pre-tool",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "AfterTool",
         hook_event_name: "post-tool",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "AfterAgent",
         hook_event_name: "stop",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "Notification",
         hook_event_name: "notification",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "PreCompress",
         hook_event_name: "pre-compact",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
         event_name: "SessionEnd",
         hook_event_name: "session-end",
-        timeout: 5000,
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
 ];
 
@@ -5983,6 +5988,24 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn gemini_hook_timeouts_are_milliseconds_matching_shared_budget() {
+        // Gemini CLI treats `timeout` as milliseconds (default 60000), unlike
+        // Codex/Claude which use seconds. The installer must emit the shared
+        // 30s budget expressed in ms so a Gemini hook is not killed sooner
+        // than the other providers, and never regresses to the bare `30`
+        // that would mean 30ms.
+        assert_eq!(GEMINI_HOOK_ENTRY_TIMEOUT_MS, 30_000);
+        let spec = agent_spec("gemini").unwrap();
+        for entry in spec.hook_entries {
+            assert_eq!(
+                entry.timeout, GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+                "gemini {} entry must encode timeout in milliseconds",
+                entry.event_name
+            );
         }
     }
 

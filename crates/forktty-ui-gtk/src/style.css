@@ -1044,6 +1044,7 @@ popover.ft-workspace-popover contents {
 .browser-action:disabled:hover {
   color: var(--ft-text-faint);
   background: transparent;
+  cursor: not-allowed;
 }
 
 .browser-address {
