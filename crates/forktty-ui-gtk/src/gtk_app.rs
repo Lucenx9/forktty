@@ -1618,10 +1618,24 @@ fn terminal_colors_for_config(config: &config::AppConfig) -> &'static TerminalCo
         config::TERMINAL_THEME_TOKYO_NIGHT => &TOKYO_NIGHT_TERMINAL_COLORS,
         config::TERMINAL_THEME_DRACULA => &DRACULA_TERMINAL_COLORS,
         config::TERMINAL_THEME_GRUVBOX_DARK => &GRUVBOX_DARK_TERMINAL_COLORS,
-        _ if terminal_prefers_dark_palette(config) => &CATPPUCCIN_MOCHA_TERMINAL_COLORS,
+        _ if terminal_prefers_dark_palette(config) => &FORKTTY_DARK_TERMINAL_COLORS,
         _ => &LIGHT_TERMINAL_COLORS,
     }
 }
+
+const FORKTTY_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
+    background: "#111318",
+    foreground: "#d7dce8",
+    bold: "#f1f4f8",
+    cursor: "#d7dce8",
+    cursor_foreground: "#111318",
+    highlight: "#303641",
+    highlight_foreground: "#f1f4f8",
+    ansi: [
+        "#2b3038", "#ff6b6b", "#7ddc91", "#e4c56f", "#7aa2f7", "#c792ea", "#67d7e5", "#d7dce8",
+        "#555d6c", "#ff8585", "#95e6a8", "#edd486", "#9bbcff", "#d6a6f2", "#86e4ee", "#f1f4f8",
+    ],
+};
 
 const CATPPUCCIN_MOCHA_TERMINAL_COLORS: TerminalColors = TerminalColors {
     background: "#1e1e2e",
@@ -10420,7 +10434,7 @@ mod tests {
 
         config.general.theme_source = "dark".to_string();
 
-        assert_eq!(terminal_colors_for_config(&config).background, "#1e1e2e");
+        assert_eq!(terminal_colors_for_config(&config).background, "#111318");
     }
 
     #[test]

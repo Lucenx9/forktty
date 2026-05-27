@@ -9,12 +9,12 @@
   --ft-bg-1: var(--window-bg-color);
   --ft-bg-2: var(--view-bg-color);
   --ft-bg-3: var(--card-bg-color);
-  --ft-bg-4: var(--active-toggle-bg-color);
+  --ft-bg-4: alpha(var(--window-fg-color), 0.08);
   --ft-bg-overlay: var(--popover-bg-color);
 
-  --ft-pane-bg: shade(var(--ft-bg-1), 0.94);
-  --ft-pane-header: shade(var(--ft-bg-1), 1.06);
-  --ft-pane-header-active: shade(var(--ft-bg-1), 1.22);
+  --ft-pane-bg: shade(var(--ft-bg-1), 0.82);
+  --ft-pane-header: shade(var(--ft-bg-1), 0.96);
+  --ft-pane-header-active: shade(var(--ft-bg-1), 1.04);
 
   --ft-border-subtle: var(--border-color);
   --ft-border: var(--border-color);
@@ -29,10 +29,16 @@
   --ft-accent: var(--accent-color);
   --ft-accent-hover: var(--accent-bg-color);
   --ft-accent-strong: var(--accent-color);
-  --ft-accent-soft: var(--active-toggle-bg-color);
-  --ft-accent-soft-2: var(--active-toggle-bg-color);
+  --ft-accent-soft: alpha(var(--window-fg-color), 0.07);
+  --ft-accent-soft-2: alpha(var(--window-fg-color), 0.10);
   --ft-accent-fg: var(--accent-fg-color);
-  --ft-brand-purple: #a78bfa;
+  --ft-brand-purple: #8f98a8;
+
+  --ft-selection-bg: alpha(var(--window-fg-color), 0.055);
+  --ft-selection-bg-hover: alpha(var(--window-fg-color), 0.085);
+  --ft-selection-border: alpha(var(--window-fg-color), 0.11);
+  --ft-selection-rail: alpha(var(--ft-accent), 0.70);
+  --ft-selection-rail-strong: alpha(var(--ft-accent), 0.88);
 
   --ft-warning: var(--warning-color);
   --ft-warning-soft: alpha(var(--warning-color), 0.14);
@@ -40,8 +46,8 @@
   --ft-error-soft: alpha(var(--error-color), 0.14);
   --ft-success: var(--success-color);
   --ft-success-soft: alpha(var(--success-color), 0.14);
-  --ft-info: var(--accent-color);
-  --ft-info-soft: alpha(var(--accent-color), 0.14);
+  --ft-info: alpha(var(--window-fg-color), 0.72);
+  --ft-info-soft: alpha(var(--window-fg-color), 0.075);
 
   /* Theme-aware shadow tint. shade-color is provided by libadwaita and reads
    * darker in light themes, near-transparent in dark themes — safer than
@@ -118,20 +124,20 @@ window {
   color: var(--ft-brand-purple);
 }
 
-/* Pre-release tag chip beside the brand name. Tinted with the brand
- * accent so it reads as part of the product mark, not a neutral chip. */
+/* Pre-release tag chip beside the brand name. Kept neutral so the header
+ * does not compete with pane focus and workspace selection. */
 .app-brand-tag {
   margin-left: 6px;
   padding: 2px 8px;
   min-height: 18px;
   border-radius: 999px;
-  background: alpha(var(--ft-accent), 0.18);
-  color: var(--ft-text);
+  background: alpha(var(--window-fg-color), 0.07);
+  color: var(--ft-text-muted);
 }
 
 .app-brand-tag-dot {
   border-radius: 50%;
-  background: var(--ft-accent);
+  background: alpha(var(--window-fg-color), 0.42);
 }
 
 .app-brand-tag-label {
@@ -242,15 +248,13 @@ window {
   -gtk-icon-size: 14px;
 }
 
-/* Min/max share the brand accent tint on hover so the header reads as
- * one coherent surface (alpha pill, active pane border, hover here). */
 .app-header button.titlebutton:hover {
-  background: alpha(var(--ft-accent), 0.14);
+  background: alpha(var(--window-fg-color), 0.075);
   color: var(--ft-text-strong);
 }
 
 .app-header button.titlebutton:active {
-  background: alpha(var(--ft-accent), 0.22);
+  background: alpha(var(--window-fg-color), 0.12);
   color: var(--ft-text-strong);
 }
 
@@ -456,13 +460,13 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-card {
-  background: alpha(var(--ft-accent), 0.14);
-  border-color: alpha(var(--ft-accent), 0.22);
-  box-shadow: inset 3px 0 0 var(--ft-accent);
+  background: var(--ft-selection-bg);
+  border-color: var(--ft-selection-border);
+  box-shadow: inset 3px 0 0 var(--ft-selection-rail);
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: alpha(var(--ft-accent), 0.20);
+  background: var(--ft-selection-bg-hover);
 }
 
 .workspace-row.needs-attention .workspace-card {
@@ -472,13 +476,13 @@ popover.ft-context-menu contents {
 /* Active + needs-attention: keep active selection subtle and swap the rail to
  * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
-  background: alpha(var(--ft-accent), 0.14);
+  background: var(--ft-selection-bg);
   border-color: alpha(var(--ft-warning), 0.32);
   box-shadow: inset 3px 0 0 var(--ft-warning);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: alpha(var(--ft-accent), 0.20);
+  background: var(--ft-selection-bg-hover);
 }
 
 .workspace-name {
@@ -563,7 +567,7 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.active .workspace-count-badge {
-  background: alpha(var(--ft-accent), 0.16);
+  background: var(--ft-selection-bg-hover);
   color: var(--ft-text);
 }
 
@@ -685,15 +689,14 @@ popover.ft-workspace-popover contents {
   border-color: var(--ft-accent);
 }
 
-/* Echo the sidebar card's "active" treatment: accent rail on the left
- * and a soft accent fill so the current workspace pops in this list too. */
+/* Echo the sidebar card's active treatment: neutral fill with a small accent rail. */
 .ft-workspace-popover-row.active {
-  background: alpha(var(--ft-accent), 0.16);
-  box-shadow: inset 3px 0 0 var(--ft-accent);
+  background: var(--ft-selection-bg);
+  box-shadow: inset 3px 0 0 var(--ft-selection-rail);
 }
 
 .ft-workspace-popover-row.active:hover {
-  background: alpha(var(--ft-accent), 0.22);
+  background: var(--ft-selection-bg-hover);
 }
 
 .ft-workspace-popover-row-inner {
@@ -739,7 +742,7 @@ popover.ft-workspace-popover contents {
 
 .terminal-stage {
   padding: 0;
-  background: var(--ft-bg-1);
+  background: var(--ft-bg-0);
 }
 
 .terminal-stage paned > separator {
@@ -750,7 +753,7 @@ popover.ft-workspace-popover contents {
 }
 
 .terminal-stage paned > separator:hover {
-  background: alpha(var(--ft-accent), 0.45);
+  background: alpha(var(--window-fg-color), 0.24);
 }
 
 .terminal-pane {
@@ -761,7 +764,7 @@ popover.ft-workspace-popover contents {
 }
 
 .terminal-pane.active {
-  border-top-color: var(--ft-accent);
+  border-top-color: var(--ft-selection-rail-strong);
 }
 
 .terminal-pane:focus-visible {
@@ -783,7 +786,7 @@ popover.ft-workspace-popover contents {
 .terminal-pane.active .terminal-pane-header {
   background: var(--ft-pane-header-active);
   color: var(--ft-text-strong);
-  border-bottom-color: alpha(var(--ft-accent), 0.42);
+  border-bottom-color: alpha(var(--window-fg-color), 0.11);
 }
 
 .terminal-pane.needs-attention .terminal-pane-header {
@@ -821,7 +824,7 @@ popover.ft-workspace-popover contents {
   border-color: alpha(var(--window-fg-color), 0.08);
   border-bottom-color: transparent;
   color: var(--ft-text-strong);
-  box-shadow: inset 0 -2px 0 var(--ft-accent);
+  box-shadow: inset 0 -2px 0 var(--ft-selection-rail);
 }
 
 .pane-tab-select {
@@ -997,7 +1000,7 @@ popover.ft-workspace-popover contents {
 .single-pane-actions:focus-within {
   opacity: 1;
   background: alpha(var(--ft-bg-2), 0.98);
-  border-color: alpha(var(--ft-accent), 0.55);
+  border-color: alpha(var(--window-fg-color), 0.16);
   box-shadow: 0 2px 8px alpha(var(--ft-shadow), 0.65);
 }
 
@@ -1366,14 +1369,14 @@ window.ft-dialog,
  *     section dividers instead of blurring into the first row. */
 preferenceswindow viewswitcher button:checked,
 preferenceswindow viewswitcher button.checked {
-  background: alpha(var(--ft-accent), 0.18);
+  background: var(--ft-selection-bg);
   color: var(--ft-text-strong);
-  box-shadow: inset 0 -2px 0 0 var(--ft-accent);
+  box-shadow: inset 0 -2px 0 0 var(--ft-selection-rail);
 }
 
 preferenceswindow viewswitcher button:checked:hover,
 preferenceswindow viewswitcher button.checked:hover {
-  background: alpha(var(--ft-accent), 0.24);
+  background: var(--ft-selection-bg-hover);
 }
 
 preferenceswindow preferencesgroup > box > .header {
@@ -1491,12 +1494,12 @@ preferenceswindow preferencesgroup > box > .header > label.description {
 }
 
 .command-list row:selected {
-  background: alpha(var(--ft-accent), 0.16);
-  box-shadow: inset 3px 0 0 var(--ft-accent);
+  background: var(--ft-selection-bg);
+  box-shadow: inset 3px 0 0 var(--ft-selection-rail);
 }
 
 .command-list row:selected:hover {
-  background: alpha(var(--ft-accent), 0.22);
+  background: var(--ft-selection-bg-hover);
 }
 
 .command-list row:selected button.flat {
