@@ -804,8 +804,9 @@ popover.ft-workspace-popover contents {
 .pane-tab.active {
   background: var(--ft-pane-bg);
   border-color: transparent;
+  border-top-color: var(--ft-selection-rail);
   color: var(--ft-text-strong);
-  box-shadow: inset 0 2px 0 var(--ft-selection-rail);
+  box-shadow: inset 0 1px 0 var(--ft-selection-rail);
 }
 
 .pane-tab-select {
