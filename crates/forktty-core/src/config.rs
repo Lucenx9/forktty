@@ -276,12 +276,9 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             "general.shell must be an absolute path to an executable file: {shell}"
         )));
     }
-    if !matches!(
-        config.general.theme_source.as_str(),
-        "auto" | "light" | "dark"
-    ) {
+    if config.general.theme_source.as_str() != "dark" {
         return Err(ConfigError::Invalid(
-            "general.theme_source must be one of: auto, light, dark".to_string(),
+            "general.theme_source must be 'dark'".to_string(),
         ));
     }
     if !matches!(
@@ -338,9 +335,8 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     if config.general.shell.trim().is_empty() {
         config.general.shell = default_shell();
     }
-    config.general.theme_source =
-        normalize_config_choice(&config.general.theme_source, &["auto", "light", "dark"])
-            .unwrap_or_else(default_theme_source);
+    config.general.theme_source = normalize_config_choice(&config.general.theme_source, &["dark"])
+        .unwrap_or_else(default_theme_source);
     config.general.worktree_layout = normalize_config_choice(
         &config.general.worktree_layout,
         &["nested", "sibling", "outer-nested"],
@@ -443,7 +439,7 @@ pub fn format_config_recovery_warning(recovery: &ConfigRecovery) -> String {
 }
 
 fn default_theme_source() -> String {
-    "auto".to_string()
+    "dark".to_string()
 }
 fn default_shell() -> String {
     default_shell_from_env(std::env::var("SHELL").ok())
@@ -601,6 +597,25 @@ mod tests {
         let error = validate_config(&config).unwrap_err();
 
         assert!(error.to_string().contains("theme_source"));
+    }
+
+    #[test]
+    fn loaded_config_normalizes_legacy_light_theme_to_dark() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+            theme_source = "light"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.general.theme_source, "dark");
     }
 
     #[test]

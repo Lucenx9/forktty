@@ -1618,8 +1618,7 @@ fn terminal_colors_for_config(config: &config::AppConfig) -> &'static TerminalCo
         config::TERMINAL_THEME_TOKYO_NIGHT => &TOKYO_NIGHT_TERMINAL_COLORS,
         config::TERMINAL_THEME_DRACULA => &DRACULA_TERMINAL_COLORS,
         config::TERMINAL_THEME_GRUVBOX_DARK => &GRUVBOX_DARK_TERMINAL_COLORS,
-        _ if terminal_prefers_dark_palette(config) => &FORKTTY_DARK_TERMINAL_COLORS,
-        _ => &LIGHT_TERMINAL_COLORS,
+        _ => &FORKTTY_DARK_TERMINAL_COLORS,
     }
 }
 
@@ -1707,20 +1706,6 @@ const GRUVBOX_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
     ],
 };
 
-const LIGHT_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#f6f7f9",
-    foreground: "#1f2328",
-    bold: "#0b0f14",
-    cursor: "#3f6ecf",
-    cursor_foreground: "#ffffff",
-    highlight: "#d8e0eb",
-    highlight_foreground: "#161b22",
-    ansi: [
-        "#24292f", "#cf222e", "#1a7f37", "#9a6700", "#0969da", "#8250df", "#1b7c83", "#57606a",
-        "#6e7781", "#a40e26", "#116329", "#7d4e00", "#0550ae", "#6639ba", "#0a6971", "#1f2328",
-    ],
-};
-
 fn apply_terminal_colors(widget: &VteTerminalWidget, colors: &TerminalColors) {
     let foreground = rgba(colors.foreground);
     let background = rgba(colors.background);
@@ -1742,15 +1727,6 @@ fn apply_terminal_colors(widget: &VteTerminalWidget, colors: &TerminalColors) {
 fn reset_and_redraw_terminal(widget: &VteTerminalWidget) {
     widget.reset(true, true);
     vte_send_text(widget, "\x0c");
-}
-
-fn terminal_prefers_dark_palette(config: &config::AppConfig) -> bool {
-    let source = config.general.theme_source.trim().to_ascii_lowercase();
-    match source.as_str() {
-        "light" => false,
-        "dark" => true,
-        _ => adw::StyleManager::default().is_dark(),
-    }
 }
 
 fn terminal_font_description(
@@ -3936,7 +3912,6 @@ fn build_ui(app: &adw::Application) {
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
-    set_color_variant_class(&content, &app_config);
     content.append(&header);
     content.append(&paned);
     content.append(&status_bar);
@@ -4099,7 +4074,6 @@ fn build_ui(app: &adw::Application) {
 
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
     let settings_apply = settings_apply_callback(
-        &content,
         &paned,
         &sidebar_shell,
         &terminal_stack_for_settings,
@@ -4202,20 +4176,17 @@ fn default_startup_workspace_dir_from(home: Option<PathBuf>, current: Option<Pat
 }
 
 fn settings_apply_callback(
-    content: &gtk::Box,
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
     terminal_stack: &gtk::Box,
     controller: &Rc<RefCell<VteController>>,
 ) -> SettingsApplyCallback {
-    let content = content.clone();
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
     let terminal_stack = terminal_stack.clone();
     let controller = controller.clone();
     Rc::new(move |config| {
         apply_color_scheme(config);
-        set_color_variant_class(&content, config);
         apply_sidebar_position(
             &paned,
             &sidebar_shell,
@@ -4300,29 +4271,8 @@ fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
         .unwrap_or_else(default_socket_path)
 }
 
-fn apply_color_scheme(config: &config::AppConfig) {
-    let scheme = match config
-        .general
-        .theme_source
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "light" => adw::ColorScheme::ForceLight,
-        "dark" => adw::ColorScheme::ForceDark,
-        _ => adw::ColorScheme::Default,
-    };
-    adw::StyleManager::default().set_color_scheme(scheme);
-}
-
-fn set_color_variant_class(widget: &impl IsA<gtk::Widget>, config: &config::AppConfig) {
-    widget.remove_css_class("ft-light");
-    widget.remove_css_class("ft-dark");
-    if terminal_prefers_dark_palette(config) {
-        widget.add_css_class("ft-dark");
-    } else {
-        widget.add_css_class("ft-light");
-    }
+fn apply_color_scheme(_config: &config::AppConfig) {
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
 }
 
 fn is_executable_shell(shell: &str) -> bool {
@@ -7927,18 +7877,11 @@ fn show_settings_dialog(
         .build();
     let theme_group = adw::PreferencesGroup::builder()
         .title("Theme")
-        .description("Controls the GTK chrome and VTE palette.")
+        .description("ForkTTY uses a dark-only interface; terminal palettes remain configurable.")
         .build();
-    let (theme_source_row, theme_source) = settings_combo_row(
-        "Color scheme",
-        "Use the system preference or force a light/dark app theme.",
-        &[("auto", "System"), ("light", "Light"), ("dark", "Dark")],
-        &loaded.general.theme_source,
-    );
-    theme_group.add(&theme_source_row);
     let (terminal_theme_row, terminal_theme) = settings_combo_row(
         "Terminal theme",
-        "System follows the app color scheme; named themes use fixed dark palettes.",
+        "System uses ForkTTY's neutral dark palette; named themes use fixed dark palettes.",
         TERMINAL_THEME_ITEMS,
         &loaded.appearance.terminal_theme,
     );
@@ -8154,22 +8097,6 @@ fn show_settings_dialog(
             persist_settings_change(&dialog, &current, &on_apply, next, "Terminal bell updated.");
         }
     });
-    theme_source.connect_changed({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |combo| {
-            if suppress_updates.get() {
-                return;
-            }
-            if let Some(theme) = combo.active_id() {
-                let mut next = current.borrow().clone();
-                next.general.theme_source = theme.to_string();
-                persist_settings_change(&dialog, &current, &on_apply, next, "Theme applied.");
-            }
-        }
-    });
     terminal_theme.connect_changed({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -8358,7 +8285,6 @@ fn show_settings_dialog(
             let font_size_for_reset = font_size.clone();
             let scrollback_lines_for_reset = scrollback_lines.clone();
             let terminal_audible_bell_for_reset = terminal_audible_bell.clone();
-            let theme_source_for_reset = theme_source.clone();
             let terminal_theme_for_reset = terminal_theme.clone();
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
@@ -8383,8 +8309,6 @@ fn show_settings_dialog(
                         .set_value(i64::from(defaults.appearance.scrollback_lines));
                     terminal_audible_bell_for_reset
                         .set_active(defaults.appearance.terminal_audible_bell);
-                    let _ =
-                        theme_source_for_reset.set_active_id(Some(&defaults.general.theme_source));
                     let _ = terminal_theme_for_reset
                         .set_active_id(Some(&defaults.appearance.terminal_theme));
                     let _ =
@@ -10440,12 +10364,12 @@ mod tests {
     }
 
     #[test]
-    fn terminal_theme_system_follows_color_scheme() {
+    fn terminal_theme_system_uses_dark_palette() {
         let mut config = config::AppConfig::default();
         config.general.theme_source = "light".to_string();
         config.appearance.terminal_theme = config::TERMINAL_THEME_SYSTEM.to_string();
 
-        assert_eq!(terminal_colors_for_config(&config).background, "#f6f7f9");
+        assert_eq!(terminal_colors_for_config(&config).background, "#111318");
 
         config.general.theme_source = "dark".to_string();
 
@@ -10453,7 +10377,7 @@ mod tests {
     }
 
     #[test]
-    fn named_terminal_theme_overrides_light_color_scheme() {
+    fn named_terminal_theme_overrides_system_palette() {
         let mut config = config::AppConfig::default();
         config.general.theme_source = "light".to_string();
         config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
