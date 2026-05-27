@@ -10,11 +10,9 @@ repository.workspace = true
 description = "Headless browser-data import engine for ForkTTY (Firefox + Chromium cookies/history/bookmarks)"
 
 [features]
-# Off by default: the v11 Secret Service path needs D-Bus. v10 "peanuts" is always available.
-# NOTE: secret-service 4.x is async-only (zbus) and fails to compile in environments
-# without async_lock/async_io. The keyring feature gate is kept for API compatibility
-# but chromium_v11_key is a stub (returns None) until an async integration boundary exists.
-keyring = []
+# Off by default for the headless crate: the v11 Secret Service path needs a
+# session D-Bus/keyring at runtime. v10 "peanuts" is always available.
+keyring = ["dep:secret-service"]
 
 [dependencies]
 aes.workspace = true
@@ -24,6 +22,7 @@ forktty-core = { path = "../forktty-core" }
 hmac.workspace = true
 pbkdf2.workspace = true
 rusqlite.workspace = true
+secret-service = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true

@@ -6,16 +6,48 @@ use std::path::Path;
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use rusqlite::{types::ValueRef, Connection, OpenFlags};
 
-use crate::model::ImportedCookie;
+use crate::model::{BrowserFamily, ImportedCookie};
 
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
-/// The Linux Chromium `v10` key: PBKDF2-HMAC-SHA1("peanuts", "saltysalt", 1, 16B).
-pub fn chromium_v10_key() -> [u8; 16] {
+/// Keys used by Linux Chromium-family cookie encryption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChromiumCookieKeys {
+    pub v10: [u8; 16],
+    pub v11: Option<[u8; 16]>,
+}
+
+impl ChromiumCookieKeys {
+    pub fn v10_only() -> Self {
+        Self {
+            v10: chromium_v10_key(),
+            v11: None,
+        }
+    }
+
+    pub async fn for_family(family: BrowserFamily) -> Self {
+        let v11 = match family.safe_storage_label() {
+            Some(label) => chromium_v11_key(label).await,
+            None => None,
+        };
+        Self {
+            v10: chromium_v10_key(),
+            v11,
+        }
+    }
+}
+
+/// Derive the Chromium Linux AES key from a Safe Storage password.
+pub fn chromium_key_from_password(password: &[u8]) -> [u8; 16] {
     let mut key = [0u8; 16];
-    pbkdf2::pbkdf2::<hmac::Hmac<sha1::Sha1>>(b"peanuts", b"saltysalt", 1, &mut key)
+    pbkdf2::pbkdf2::<hmac::Hmac<sha1::Sha1>>(password, b"saltysalt", 1, &mut key)
         .expect("pbkdf2 into a 16-byte buffer never fails");
     key
+}
+
+/// The Linux Chromium `v10` key: PBKDF2-HMAC-SHA1("peanuts", "saltysalt", 1, 16B).
+pub fn chromium_v10_key() -> [u8; 16] {
+    chromium_key_from_password(b"peanuts")
 }
 
 fn decrypt_chromium_value_bytes(blob: &[u8], key: &[u8; 16]) -> Option<Vec<u8>> {
@@ -46,9 +78,15 @@ pub fn decrypt_chromium_value(blob: &[u8], key: &[u8; 16]) -> Option<String> {
 
 fn decrypt_chromium_cookie_value(
     blob: &[u8],
-    key: &[u8; 16],
+    keys: &ChromiumCookieKeys,
     db_version: Option<i64>,
 ) -> Option<String> {
+    let prefix = blob.get(0..3)?;
+    let key = match prefix {
+        b"v10" => &keys.v10,
+        b"v11" => keys.v11.as_ref()?,
+        _ => return None,
+    };
     let pt = decrypt_chromium_value_bytes(blob, key)?;
 
     // Chromium cookie DB version 24+ prepends SHA256(host_key) to the encrypted
@@ -68,20 +106,42 @@ fn decrypt_chromium_cookie_value(
 ///
 /// Requires D-Bus + unlocked keyring at runtime. Returns `None` on any error
 /// (missing D-Bus, locked keyring, item not found) so callers fall back to v10.
-///
-/// # Note
-/// secret-service 4.x is async-only (zbus-based). Wiring a full async executor
-/// here would impose a tokio dependency on the import crate; instead this is a
-/// best-effort stub returning `None` with a TODO. Callers that want v11 support
-/// should run the async path themselves using the `secret-service` crate directly.
 #[cfg(feature = "keyring")]
-pub fn chromium_v11_key(_label: &str) -> Option<[u8; 16]> {
-    // TODO: secret-service 4.x is async-only (zbus). Wiring a blocking wrapper
-    // requires either a dedicated tokio runtime or an async caller context.
-    // Until the import engine has an async boundary, this returns None and the
-    // caller falls back to chromium_v10_key(). Track in:
-    // https://github.com/Lucenx9/forktty (follow-up after engine integration).
+pub async fn chromium_v11_key(label: &str) -> Option<[u8; 16]> {
+    chromium_safe_storage_secret(label)
+        .await
+        .ok()
+        .map(|password| chromium_key_from_password(&password))
+}
+
+#[cfg(not(feature = "keyring"))]
+pub async fn chromium_v11_key(_label: &str) -> Option<[u8; 16]> {
     None
+}
+
+#[cfg(feature = "keyring")]
+async fn chromium_safe_storage_secret(label: &str) -> Result<Vec<u8>, secret_service::Error> {
+    use std::collections::HashMap;
+
+    use secret_service::{EncryptionType, SecretService};
+
+    let service = SecretService::connect(EncryptionType::Dh).await?;
+    let items = service.search_items(HashMap::new()).await?;
+
+    for item in &items.unlocked {
+        if item.get_label().await? == label {
+            return item.get_secret().await;
+        }
+    }
+
+    for item in &items.locked {
+        if item.get_label().await? == label {
+            item.unlock().await?;
+            return item.get_secret().await;
+        }
+    }
+
+    Err(secret_service::Error::NoResult)
 }
 
 fn open_ro(path: &Path) -> rusqlite::Result<Connection> {
@@ -119,6 +179,20 @@ pub fn read_chromium_cookies(
     db: &Path,
     key: &[u8; 16],
 ) -> rusqlite::Result<(Vec<ImportedCookie>, usize)> {
+    read_chromium_cookies_with_keys(
+        db,
+        &ChromiumCookieKeys {
+            v10: *key,
+            v11: None,
+        },
+    )
+}
+
+/// Read Chromium-family cookies with prefix-aware v10/v11 keys.
+pub fn read_chromium_cookies_with_keys(
+    db: &Path,
+    keys: &ChromiumCookieKeys,
+) -> rusqlite::Result<(Vec<ImportedCookie>, usize)> {
     let conn = open_ro(db)?;
     let db_version = chromium_cookie_db_version(&conn)?;
     let mut stmt = conn.prepare(
@@ -140,7 +214,7 @@ pub fn read_chromium_cookies(
         let value = if enc.is_empty() {
             plain
         } else {
-            match decrypt_chromium_cookie_value(&enc, key, db_version) {
+            match decrypt_chromium_cookie_value(&enc, keys, db_version) {
                 Some(v) => v,
                 None => {
                     skipped += 1;
@@ -195,8 +269,8 @@ fn chromium_cookie_db_version(conn: &Connection) -> rusqlite::Result<Option<i64>
 mod tests {
     use super::*;
 
-    // A v10 Chromium blob = b"v10" || AES-128-CBC(key, IV=16 spaces, PKCS7(plaintext)).
-    fn make_v10_blob(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+    // A Chromium blob = version || AES-128-CBC(key, IV=16 spaces, PKCS7(plaintext)).
+    fn make_chromium_blob(version: &[u8; 3], key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
         use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
         type Enc = cbc::Encryptor<aes::Aes128>;
         let iv = [0x20u8; 16];
@@ -207,9 +281,13 @@ mod tests {
             .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
             .unwrap()
             .to_vec();
-        let mut out = b"v10".to_vec();
+        let mut out = version.to_vec();
         out.extend_from_slice(&ct);
         out
+    }
+
+    fn make_v10_blob(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+        make_chromium_blob(b"v10", key, plaintext)
     }
 
     #[test]
@@ -320,6 +398,64 @@ mod tests {
         assert_eq!(skipped, 0);
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].value, "tok");
+    }
+
+    #[test]
+    fn read_chromium_cookies_decrypts_v11_with_safe_storage_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("Cookies");
+        let v11_key = chromium_key_from_password(b"safe-storage-secret");
+        let blob = make_chromium_blob(b"v11", &v11_key, b"modern-token");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cookies (
+                 host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+                 path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cookies VALUES ('.a.test','sid','',?1,'/',0,0,0)",
+            rusqlite::params![blob],
+        )
+        .unwrap();
+        drop(conn);
+
+        let keys = ChromiumCookieKeys {
+            v10: chromium_v10_key(),
+            v11: Some(v11_key),
+        };
+        let (cookies, skipped) = read_chromium_cookies_with_keys(&db, &keys).unwrap();
+
+        assert_eq!(skipped, 0);
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].value, "modern-token");
+    }
+
+    #[test]
+    fn read_chromium_cookies_skips_v11_when_keyring_key_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("Cookies");
+        let v11_key = chromium_key_from_password(b"safe-storage-secret");
+        let blob = make_chromium_blob(b"v11", &v11_key, b"modern-token");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cookies (
+                 host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+                 path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cookies VALUES ('.a.test','sid','',?1,'/',0,0,0)",
+            rusqlite::params![blob],
+        )
+        .unwrap();
+        drop(conn);
+
+        let (cookies, skipped) =
+            read_chromium_cookies_with_keys(&db, &ChromiumCookieKeys::v10_only()).unwrap();
+
+        assert!(cookies.is_empty());
+        assert_eq!(skipped, 1);
     }
 
     #[test]

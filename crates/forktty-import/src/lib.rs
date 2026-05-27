@@ -10,7 +10,9 @@ pub mod plan;
 pub mod sources;
 
 pub use cookies::{
-    chromium_v10_key, decrypt_chromium_value, read_chromium_cookies, read_firefox_cookies,
+    chromium_key_from_password, chromium_v10_key, chromium_v11_key, decrypt_chromium_value,
+    read_chromium_cookies, read_chromium_cookies_with_keys, read_firefox_cookies,
+    ChromiumCookieKeys,
 };
 pub use history::{
     read_chromium_bookmarks, read_chromium_history, read_firefox_bookmarks, read_firefox_history,
@@ -127,7 +129,21 @@ impl ImportEngine {
         let base = Path::new(&profile.path);
 
         if profile.family.is_chromium() {
-            Self::read_chromium(base)
+            Self::read_chromium(base, &ChromiumCookieKeys::v10_only())
+        } else {
+            Self::read_firefox(base)
+        }
+    }
+
+    /// Async import entrypoint. Chromium-family profiles use the Secret Service
+    /// keyring path for v11 cookies when available, then read SQLite files via
+    /// the same copied-database path as the synchronous API.
+    pub async fn read_source_async(profile: &SourceProfile) -> Result<ImportedData, ImportError> {
+        let base = Path::new(&profile.path);
+
+        if profile.family.is_chromium() {
+            let keys = ChromiumCookieKeys::for_family(profile.family).await;
+            Self::read_chromium(base, &keys)
         } else {
             Self::read_firefox(base)
         }
@@ -164,15 +180,16 @@ impl ImportEngine {
         })
     }
 
-    fn read_chromium(base: &Path) -> Result<ImportedData, ImportError> {
+    fn read_chromium(
+        base: &Path,
+        cookie_keys: &ChromiumCookieKeys,
+    ) -> Result<ImportedData, ImportError> {
         let cookies_path = base.join("Cookies");
         let history_path = base.join("History");
         let bookmarks_path = base.join("Bookmarks");
 
-        let key = chromium_v10_key();
-
         let (cookies, skipped) = read_via_copy(&cookies_path, (vec![], 0usize), |p| {
-            read_chromium_cookies(p, &key).map_err(ImportError::from)
+            read_chromium_cookies_with_keys(p, cookie_keys).map_err(ImportError::from)
         })?;
 
         let visits = read_via_copy(&history_path, vec![], |p| {

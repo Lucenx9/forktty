@@ -13,7 +13,7 @@ description = "ForkTTY Unix socket JSON-RPC server"
 async-channel = { workspace = true }
 dirs.workspace = true
 forktty-core = { path = "../forktty-core" }
-forktty-import = { path = "../forktty-import" }
+forktty-import = { path = "../forktty-import", features = ["keyring"] }
 forktty-terminal = { path = "../forktty-terminal" }
 git2.workspace = true
 libc.workspace = true

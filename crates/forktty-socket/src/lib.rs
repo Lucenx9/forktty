@@ -1038,8 +1038,8 @@ pub async fn dispatch(
             Ok(json!({ "removed": removed }))
         }
         "browser.import.discover" => Ok(browser_import_discover_json()),
-        "browser.import.preview" => browser_import_preview(&params),
-        "browser.import.run" => browser_import_run(state, &params),
+        "browser.import.preview" => browser_import_preview(&params).await,
+        "browser.import.run" => browser_import_run(state, &params).await,
         "pane.new_tab" => {
             let surface_id = required_surface_id(&params)?;
             let surface = {
@@ -2101,14 +2101,15 @@ fn browser_import_counts_json(counts: BrowserImportCounts) -> Value {
     })
 }
 
-fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> {
+async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> {
     let include = browser_import_selection(params)?;
     let selected = browser_import_selected_sources(params)?;
     let mut total = BrowserImportCounts::default();
     let mut source_rows = Vec::new();
 
     for source in selected {
-        let data = forktty_import::ImportEngine::read_source(&source)
+        let data = forktty_import::ImportEngine::read_source_async(&source)
+            .await
             .map_err(|err| DispatchError::Other(err.to_string()))?;
         let counts = browser_import_counts_from_data(&data, include);
         total.add(counts);
@@ -2275,15 +2276,20 @@ fn browser_import_prepare_destination(
     }
 }
 
-fn browser_import_run(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+async fn browser_import_run(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
     let include = browser_import_selection(params)?;
     let selected = browser_import_selected_sources(params)?;
-    let _profile_store_guard = state
-        .profile_store_lock
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?;
-    let mut store = profiles_store()?;
-    let plan = browser_import_plan_from_params(params, &selected, &store)?;
+    let plan = {
+        let _profile_store_guard = state
+            .profile_store_lock
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let store = profiles_store()?;
+        browser_import_plan_from_params(params, &selected, &store)?
+    };
     let mode = plan.mode;
 
     let mut total_read = BrowserImportCounts::default();
@@ -2292,8 +2298,14 @@ fn browser_import_run(state: &SocketAppState, params: &Value) -> Result<Value, D
     let mut entries_json = Vec::new();
 
     for entry in plan.entries {
-        let (profile_id, display_name, created) =
-            browser_import_prepare_destination(&mut store, &entry.destination)?;
+        let (profile_id, display_name, created) = {
+            let _profile_store_guard = state
+                .profile_store_lock
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let mut store = profiles_store()?;
+            browser_import_prepare_destination(&mut store, &entry.destination)?
+        };
         let history_store = if include.history {
             Some(
                 forktty_core::HistoryStore::for_profile(profile_id)
@@ -2317,7 +2329,8 @@ fn browser_import_run(state: &SocketAppState, params: &Value) -> Result<Value, D
         let mut entry_sources = Vec::new();
 
         for source in entry.sources {
-            let data = forktty_import::ImportEngine::read_source(&source)
+            let data = forktty_import::ImportEngine::read_source_async(&source)
+                .await
                 .map_err(|err| DispatchError::Other(err.to_string()))?;
             let read_counts = browser_import_counts_from_data(&data, include);
             entry_read.add(read_counts);
@@ -6146,6 +6159,15 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(navigated["navigated"], json!(true));
+
+        let same_url = dispatch(
+            &state,
+            "browser.navigate",
+            json!({"surface_id": surface_id, "url": "https://other.com"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(same_url["navigated"], json!(true));
 
         // navigate on a non-browser surface errors.
         let term = created["focused_surface_id"].as_str().unwrap();

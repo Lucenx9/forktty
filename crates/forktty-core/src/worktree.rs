@@ -241,7 +241,7 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
     let repo = open_repo(repo_path)?;
     let names = repo.worktrees()?;
     let mut result = Vec::new();
-    for name in names.iter().flatten() {
+    for name in names.iter().filter_map(|name| name.ok().flatten()) {
         if let Ok(wt) = repo.find_worktree(name) {
             let wt_path = wt.path().to_path_buf();
             let branch = get_registered_worktree_branch(&repo, name, &wt_path);
@@ -321,7 +321,7 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
         let head_ref_name = repo
             .head()?
             .name()
-            .ok_or(WorktreeError::HeadHasNoName)?
+            .map_err(|_| WorktreeError::HeadHasNoName)?
             .to_string();
         let mut reference = repo.find_reference(&head_ref_name)?;
         reference.set_target(
@@ -492,7 +492,7 @@ fn get_worktree_branch(worktree_path: &Path) -> String {
         .and_then(|repo| {
             repo.head()
                 .ok()
-                .and_then(|head| head.shorthand().map(String::from))
+                .and_then(|head| head.shorthand().ok().map(String::from))
         })
         .unwrap_or_default()
 }
@@ -564,7 +564,11 @@ fn resolve_worktree_name(repo: &Repository, selector: &str) -> Result<String, Wo
     if repo.find_worktree(selector).is_ok() {
         return Ok(selector.to_string());
     }
-    for name in repo.worktrees()?.iter().flatten() {
+    for name in repo
+        .worktrees()?
+        .iter()
+        .filter_map(|name| name.ok().flatten())
+    {
         if let Ok(wt) = repo.find_worktree(name) {
             if get_registered_worktree_branch(repo, name, wt.path()) == selector {
                 return Ok(name.to_string());
@@ -578,7 +582,11 @@ fn find_worktree_by_branch(
     repo: &Repository,
     branch_name: &str,
 ) -> Result<Option<(String, PathBuf)>, WorktreeError> {
-    for name in repo.worktrees()?.iter().flatten() {
+    for name in repo
+        .worktrees()?
+        .iter()
+        .filter_map(|name| name.ok().flatten())
+    {
         let Ok(wt) = repo.find_worktree(name) else {
             continue;
         };
@@ -805,7 +813,12 @@ fn is_nested_worktree_path(repo_workdir: &Path, wt_path: &Path) -> bool {
 fn worktree_exists(repo: &Repository, name: &str) -> bool {
     repo.worktrees()
         .ok()
-        .map(|names| names.iter().flatten().any(|existing| existing == name))
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|existing| existing.ok().flatten())
+                .any(|existing| existing == name)
+        })
         .unwrap_or(false)
 }
 

@@ -808,13 +808,14 @@ impl WorkspaceModel {
         true
     }
 
-    /// Update a browser surface's URL. Returns false for terminals, SSH surfaces, or missing ids.
+    /// Update a browser surface's URL. Same-URL navigation is a successful no-op.
+    /// Returns false for terminals, SSH surfaces, or missing ids.
     pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
         match self.surfaces.get_mut(surface_id) {
             Some(surface) => match &mut surface.kind {
                 SurfaceKind::Browser { url: current, .. } => {
                     if current == url {
-                        return false;
+                        return true;
                     }
                     *current = url.to_string();
                     surface.title = browser_title_for(url);
@@ -3351,7 +3352,7 @@ mod tests {
             .unwrap();
 
         assert!(model.set_surface_url(&browser.id, "https://b.com"));
-        assert!(!model.set_surface_url(&browser.id, "https://b.com"));
+        assert!(model.set_surface_url(&browser.id, "https://b.com"));
         assert_eq!(
             model.surface(&browser.id).unwrap().kind,
             SurfaceKind::Browser {
