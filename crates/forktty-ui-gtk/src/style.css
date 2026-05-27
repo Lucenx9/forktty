@@ -84,8 +84,8 @@ window {
  * -------------------------------------------------------------------------- */
 
 .app-header {
-  min-height: 31px;
-  padding: 0 4px;
+  min-height: 30px;
+  padding: 0 3px;
   background: var(--ft-bg-1);
   color: var(--ft-text);
   border-bottom: 1px solid var(--ft-border-subtle);
@@ -97,14 +97,14 @@ window {
 }
 
 .app-brand {
-  min-height: 26px;
-  margin: 0 3px 0 0;
-  padding: 0 6px 0 1px;
+  min-height: 24px;
+  margin: 0 2px 0 0;
+  padding: 0 8px 0 2px;
   color: var(--ft-text);
 }
 
 .app-brand-logo {
-  opacity: 0.58;
+  opacity: 0.50;
 }
 
 .app-brand-wordmark {
@@ -113,27 +113,8 @@ window {
 
 .app-brand-name {
   color: var(--ft-text-muted);
-  font-size: 0.86em;
-  font-weight: 600;
-}
-
-.app-brand-cursor {
-  color: var(--ft-brand-purple);
-}
-
-.app-brand-tag {
-  margin-left: 5px;
-  padding: 0;
-  min-height: 16px;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ft-text-faint);
-}
-
-.app-brand-tag-label {
-  font-size: 0.70em;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 0.82em;
+  font-weight: 560;
 }
 
 .app-header-title-spacer {
@@ -215,16 +196,21 @@ window {
 
 .app-header .header-action-separator {
   min-width: 1px;
-  min-height: 14px;
-  margin: 0 7px 0 6px;
+  min-height: 13px;
+  margin: 0 6px;
   background: var(--ft-border-subtle);
-  opacity: 0.75;
+  opacity: 0.62;
 }
 
-.app-header button.titlebutton {
-  min-width: 24px;
-  min-height: 24px;
+.app-header windowcontrols {
   margin: 0 1px;
+}
+
+.app-header button.titlebutton,
+.app-header windowcontrols button {
+  min-width: 22px;
+  min-height: 22px;
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -234,27 +220,32 @@ window {
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
-.app-header button.titlebutton image {
-  -gtk-icon-size: 13px;
+.app-header button.titlebutton image,
+.app-header windowcontrols button image {
+  -gtk-icon-size: 12px;
 }
 
-.app-header button.titlebutton:hover {
+.app-header button.titlebutton:hover,
+.app-header windowcontrols button:hover {
   background: alpha(var(--window-fg-color), 0.075);
   color: var(--ft-text-strong);
 }
 
-.app-header button.titlebutton:active {
+.app-header button.titlebutton:active,
+.app-header windowcontrols button:active {
   background: alpha(var(--window-fg-color), 0.12);
   color: var(--ft-text-strong);
 }
 
 /* Close keeps the destructive red tint — convention beats coherence. */
-.app-header button.titlebutton.close:hover {
+.app-header button.titlebutton.close:hover,
+.app-header windowcontrols button.close:hover {
   background: var(--ft-error-soft);
   color: var(--ft-error);
 }
 
-.app-header button.titlebutton.close:active {
+.app-header button.titlebutton.close:active,
+.app-header windowcontrols button.close:active {
   background: alpha(var(--ft-error), 0.32);
   color: var(--ft-error);
 }
