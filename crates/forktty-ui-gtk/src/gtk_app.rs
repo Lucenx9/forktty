@@ -1628,7 +1628,7 @@ const FORKTTY_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
     bold: "#f0f0f0",
     cursor: "#d7d7d7",
     cursor_foreground: "#181818",
-    highlight: "#2d3340",
+    highlight: "#3a2a1f",
     highlight_foreground: "#eeeeee",
     ansi: [
         "#2a2a2a", "#d36b6b", "#7ca982", "#c8a75d", "#6f8fbf", "#a083b8", "#6da7b3", "#d7d7d7",

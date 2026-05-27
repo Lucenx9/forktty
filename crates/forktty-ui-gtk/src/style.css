@@ -26,19 +26,19 @@
   --ft-text-faint: #626262;
   --dim-opacity: 0.82;
 
-  --ft-accent: #6f8fbf;
-  --ft-accent-hover: #7fa0d0;
-  --ft-accent-strong: #8aa9d6;
-  --ft-accent-soft: #242a33;
-  --ft-accent-soft-2: #2a3140;
-  --ft-accent-fg: #0f1115;
-  --ft-brand-purple: #7f8792;
+  --ft-accent: #e88745;
+  --ft-accent-hover: #f09a58;
+  --ft-accent-strong: #f2a464;
+  --ft-accent-soft: #30251d;
+  --ft-accent-soft-2: #3a2b20;
+  --ft-accent-fg: #17110c;
+  --ft-brand-purple: #a7784d;
 
   --ft-selection-bg: #222222;
   --ft-selection-bg-hover: #282828;
   --ft-selection-border: transparent;
-  --ft-selection-rail: #5e7fae;
-  --ft-selection-rail-strong: #6f8fbf;
+  --ft-selection-rail: #c9793f;
+  --ft-selection-rail-strong: #e88745;
 
   --ft-warning: #c8a75d;
   --ft-warning-soft: #2c2619;
