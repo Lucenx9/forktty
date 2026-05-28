@@ -1188,7 +1188,7 @@ fn build_pane_chrome(
 
     let attention_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     attention_dot.add_css_class("pane-attention-dot");
-    attention_dot.set_size_request(6, 6);
+    attention_dot.set_size_request(4, 4);
     attention_dot.set_valign(gtk::Align::Center);
     attention_dot.set_visible(false);
     attention_dot.update_property(&[gtk::accessible::Property::Label("Pane needs attention")]);
@@ -1239,7 +1239,7 @@ fn build_pane_chrome(
     terminal_overlay.set_vexpand(true);
     terminal_overlay.set_child(Some(widget));
 
-    let single_pane_actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let single_pane_actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     single_pane_actions.add_css_class("single-pane-actions");
     single_pane_actions.set_halign(gtk::Align::End);
     single_pane_actions.set_valign(gtk::Align::Start);
@@ -8408,7 +8408,7 @@ fn settings_number_row(
     entry.add_css_class("settings-number-entry");
     gtk::prelude::EntryExt::set_alignment(&entry, 1.0);
 
-    let decrement = gtk::Button::with_label("-");
+    let decrement = gtk::Button::with_label("\u{2212}");
     decrement.add_css_class("settings-number-button");
     decrement.set_tooltip_text(Some("Decrease"));
     set_accessible_button_text(&decrement, "Decrease", None);
@@ -8533,7 +8533,7 @@ fn show_browser_import_dialog(parent: &adw::ApplicationWindow, state: &SocketApp
         .label("Source profiles")
         .xalign(0.0)
         .build();
-    source_title.add_css_class("settings-row-title");
+    source_title.add_css_class("ft-section-title");
     let source_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let loading = gtk::Label::builder()
         .label("Searching local browser profiles...")
@@ -8549,7 +8549,7 @@ fn show_browser_import_dialog(parent: &adw::ApplicationWindow, state: &SocketApp
         .build();
 
     let include_title = gtk::Label::builder().label("Data").xalign(0.0).build();
-    include_title.add_css_class("settings-row-title");
+    include_title.add_css_class("ft-section-title");
     let include_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let include_history = gtk::CheckButton::with_label("History");
     include_history.set_active(true);
@@ -8568,7 +8568,7 @@ fn show_browser_import_dialog(parent: &adw::ApplicationWindow, state: &SocketApp
         .label("Destination")
         .xalign(0.0)
         .build();
-    destination_title.add_css_class("settings-row-title");
+    destination_title.add_css_class("ft-section-title");
     let destination_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let destination = gtk::ComboBoxText::new();
     destination.set_hexpand(true);
