@@ -13,6 +13,7 @@ pub(super) fn attach_vte_signal_handlers(
     model: &Arc<Mutex<WorkspaceModel>>,
     request: &SpawnRequest,
     surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    state: Option<SocketAppState>,
     spawn_token: u64,
 ) {
     let surface_id = request.surface_id.clone();
@@ -168,6 +169,7 @@ pub(super) fn attach_vte_signal_handlers(
     let workspace_id = request.workspace_id.clone();
     let exit_model = model.clone();
     let exit_surface_pids = surface_pids.clone();
+    let exit_state = state;
     // VTE emits child-exited exactly once in normal teardown but can in rare
     // cases (force-kill, fast respawn) fire twice. A single-shot latch keeps
     // the status + notification idempotent per surface.
@@ -181,6 +183,14 @@ pub(super) fn attach_vte_signal_handlers(
             return;
         }
         drop(pids);
+        if let Some(state) = &exit_state {
+            match state.terminal.mark_surface_not_ready(&surface_id) {
+                Ok(()) | Err(TerminalError::NotFound(_)) => {}
+                Err(err) => {
+                    eprintln!("Failed to mark terminal surface not ready {surface_id}: {err}")
+                }
+            }
+        }
         if let Ok(mut model) = exit_model.lock() {
             if model.surface(&surface_id).is_none() {
                 return;

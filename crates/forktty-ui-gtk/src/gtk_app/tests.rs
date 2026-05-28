@@ -190,6 +190,23 @@ fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
 }
 
 #[test]
+fn gtk_backend_rejects_send_text_after_surface_exits() {
+    let (tx, _rx) = mpsc::channel();
+    let backend = GtkVteBackend::new(tx);
+    backend.spawn(test_spawn_request()).unwrap();
+    backend.mark_surface_ready("surface-1").unwrap();
+    backend.send_text("surface-1", "echo ok\n").unwrap();
+
+    backend.mark_surface_not_ready("surface-1").unwrap();
+
+    let err = backend
+        .send_text("surface-1", "echo after-exit\n")
+        .unwrap_err();
+    assert!(matches!(err, TerminalError::NotReady(surface) if surface == "surface-1"));
+    assert_eq!(backend.surfaces().unwrap().len(), 1);
+}
+
+#[test]
 fn child_exit_pid_removal_ignores_stale_spawn_tokens() {
     let mut pids = BTreeMap::new();
     pids.insert(

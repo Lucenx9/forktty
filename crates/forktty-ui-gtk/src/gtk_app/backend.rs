@@ -172,6 +172,22 @@ impl TerminalBackend for GtkVteBackend {
         Ok(())
     }
 
+    fn mark_surface_not_ready(&self, surface_id: &str) -> Result<(), TerminalError> {
+        if !self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .contains_key(surface_id)
+        {
+            return Err(TerminalError::NotFound(surface_id.to_string()));
+        }
+        self.ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(surface_id);
+        Ok(())
+    }
+
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.surfaces
             .lock()

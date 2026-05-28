@@ -62,7 +62,7 @@ pub(super) fn refresh_sidebar(
         set_accessible_button_text(
             &ui.workspace_title,
             &format!("Active workspace: {name}"),
-            None,
+            Some("Ctrl+Shift+P"),
         );
         ui.workspace_title.set_sensitive(true);
     } else {
@@ -82,10 +82,11 @@ pub(super) fn refresh_sidebar(
             ui.status_location
                 .set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
         }
-        ui.status_location
-            .update_property(&[gtk::accessible::Property::Label(&format!(
-                "Workspace location: {label}"
-            ))]);
+        set_accessible_button_text(
+            &ui.status_location,
+            &format!("Workspace location: {label}"),
+            Some("Ctrl+Shift+P"),
+        );
         ui.status_location.set_sensitive(true);
     } else {
         ui.status_location_label.set_label("");

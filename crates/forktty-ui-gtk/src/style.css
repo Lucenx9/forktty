@@ -597,7 +597,7 @@ popover.ft-context-menu contents {
   color: var(--ft-text-strong);
   font-size: 0.85em;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   border-radius: 5px;
 }
 
@@ -1650,7 +1650,7 @@ preferenceswindow .boxed-list > row:hover {
   min-height: 14px;
   margin: -6px -8px 0 0;
   box-shadow: 0 0 0 1.5px var(--ft-bg-0);
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 
 .notification-open {

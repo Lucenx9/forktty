@@ -212,6 +212,8 @@ pub(super) fn build_ui(app: &adw::Application) {
         .label("")
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
+        .max_width_chars(42)
+        .single_line_mode(true)
         .build();
     pane_status.add_css_class("pane-status");
     let palette_hint = gtk::Button::builder()

@@ -182,6 +182,7 @@ impl VteController {
                     &self.model,
                     &request,
                     &self.surface_pids,
+                    self.state.clone(),
                     spawn_token,
                 );
                 let chrome = build_pane_chrome(
