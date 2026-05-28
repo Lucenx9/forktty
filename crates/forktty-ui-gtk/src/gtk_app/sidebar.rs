@@ -10,9 +10,9 @@ pub(super) struct SidebarWorkspaceRow {
 
 #[derive(Clone)]
 pub(super) struct WorkspaceStatusBadge {
-    label: &'static str,
-    tooltip: &'static str,
-    class_name: &'static str,
+    pub(super) label: &'static str,
+    pub(super) tooltip: &'static str,
+    pub(super) class_name: &'static str,
 }
 
 pub(super) struct SidebarSnapshot {
@@ -29,7 +29,9 @@ pub(super) struct SidebarUi {
     pub(super) sidebar: gtk::ListBox,
     pub(super) parent_window: adw::ApplicationWindow,
     pub(super) workspace_title: gtk::Button,
+    pub(super) workspace_title_label: gtk::Label,
     pub(super) status_location: gtk::Button,
+    pub(super) status_location_label: gtk::Label,
     pub(super) pane_status: gtk::Label,
     pub(super) last_signature: Rc<RefCell<Option<String>>>,
     pub(super) context_menu_open: Rc<Cell<bool>>,
@@ -54,7 +56,7 @@ pub(super) fn refresh_sidebar(
 ) {
     let snapshot = sidebar_snapshot(state);
     if let Some(name) = snapshot.active_workspace_name.as_deref() {
-        ui.workspace_title.set_label(name);
+        ui.workspace_title_label.set_label(name);
         ui.workspace_title
             .set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
         set_accessible_button_text(
@@ -64,14 +66,14 @@ pub(super) fn refresh_sidebar(
         );
         ui.workspace_title.set_sensitive(true);
     } else {
-        ui.workspace_title.set_label("No workspace");
+        ui.workspace_title_label.set_label("No workspace");
         ui.workspace_title
             .set_tooltip_text(Some("No active workspace"));
         set_accessible_button_text(&ui.workspace_title, "No active workspace", None);
         ui.workspace_title.set_sensitive(false);
     }
     if let Some(label) = snapshot.active_status_label.as_deref() {
-        ui.status_location.set_label(label);
+        ui.status_location_label.set_label(label);
         if let Some(path) = snapshot.active_full_path.as_deref() {
             ui.status_location.set_tooltip_text(Some(&format!(
                 "Switch workspace (Ctrl+Shift+P)\nFull path: {path}"
@@ -86,7 +88,7 @@ pub(super) fn refresh_sidebar(
             ))]);
         ui.status_location.set_sensitive(true);
     } else {
-        ui.status_location.set_label("");
+        ui.status_location_label.set_label("");
         ui.status_location
             .set_tooltip_text(Some("No active workspace location"));
         ui.status_location
@@ -627,31 +629,20 @@ pub(super) fn workspace_status_badge(
     latest_attention_notification: Option<&NotificationItem>,
 ) -> Option<WorkspaceStatusBadge> {
     if let Some(notification) = latest_attention_notification {
-        return Some(match notification.kind {
-            NotificationKind::Error => WorkspaceStatusBadge {
-                label: "Error",
-                tooltip: "Error reported in this workspace",
-                class_name: "error",
-            },
-            NotificationKind::Prompt => WorkspaceStatusBadge {
+        if notification.kind == NotificationKind::Prompt {
+            return Some(WorkspaceStatusBadge {
                 label: "Input",
                 tooltip: "Needs input",
                 class_name: "needs-input",
-            },
-            NotificationKind::Info | NotificationKind::Custom => WorkspaceStatusBadge {
-                label: "Alert",
-                tooltip: "Attention",
-                class_name: "attention",
-            },
-        });
-    }
-
-    if workspace.needs_attention {
-        return Some(WorkspaceStatusBadge {
-            label: "Alert",
-            tooltip: "Attention",
-            class_name: "attention",
-        });
+            });
+        }
+        if notification.kind == NotificationKind::Error {
+            return Some(WorkspaceStatusBadge {
+                label: "Error",
+                tooltip: "Error reported in this workspace",
+                class_name: "error",
+            });
+        }
     }
 
     if statuses.iter().any(status_entry_suggests_error) {
@@ -667,6 +658,14 @@ pub(super) fn workspace_status_badge(
             label: "Exited",
             tooltip: "Process exited",
             class_name: "exited",
+        });
+    }
+
+    if latest_attention_notification.is_some() || workspace.needs_attention {
+        return Some(WorkspaceStatusBadge {
+            label: "Alert",
+            tooltip: "Attention",
+            class_name: "attention",
         });
     }
 

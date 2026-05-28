@@ -552,6 +552,57 @@ fn focus_workspace_keeps_previous_workspace_when_spawn_fails() {
 }
 
 #[test]
+fn focus_workspace_does_not_respawn_failed_surface_until_restart() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (failed_workspace_id, failed_surface_id, active_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let failed_workspace = model.create_workspace("failed", &project_cwd);
+        let failed_workspace_id = failed_workspace.id.clone();
+        let failed_surface_id = failed_workspace.focused_surface_id.clone();
+        model.set_status(
+            &failed_workspace_id,
+            surface_status_key(&failed_surface_id),
+            "Terminal",
+            "Spawn failed: /bin/missing-shell",
+            Some("red".to_string()),
+        );
+        let active_workspace = model.create_workspace("active", &project_cwd);
+        (
+            failed_workspace_id,
+            failed_surface_id,
+            active_workspace.focused_surface_id,
+        )
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    assert!(focus_workspace(&state, &failed_workspace_id));
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(failed_workspace_id.as_str())
+    );
+    assert!(!model.list_notifications().iter().any(|notification| {
+        notification.title == "Workspace Switch Failed"
+            && notification.body.contains("missing-shell")
+    }));
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, active_surface_id);
+    assert_ne!(backend_surfaces[0].surface_id, failed_surface_id);
+}
+
+#[test]
 fn close_active_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -781,6 +832,56 @@ fn detects_exited_terminal_status_for_sidebar_badge() {
 
     assert!(status_entry_suggests_exited(&status));
     assert!(!status_entry_suggests_error(&status));
+}
+
+#[test]
+fn sidebar_badge_keeps_error_ahead_of_info_attention() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let notification = model.create_notification(
+        "Heads up",
+        "Background task finished",
+        NotificationKind::Info,
+        Some(workspace.id.clone()),
+        None,
+    );
+    let workspace = model.list_workspaces().remove(0);
+    let status = StatusEntry {
+        key: surface_status_key(&workspace.focused_surface_id),
+        label: "Terminal".to_string(),
+        value: "Spawn failed: /bin/missing".to_string(),
+        color: Some("red".to_string()),
+    };
+
+    let badge = workspace_status_badge(&workspace, &[status], &[], Some(&notification)).unwrap();
+
+    assert_eq!(badge.label, "Error");
+    assert_eq!(badge.class_name, "error");
+}
+
+#[test]
+fn sidebar_badge_keeps_prompt_ahead_of_error_status() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let notification = model.create_notification(
+        "Continue?",
+        "",
+        NotificationKind::Prompt,
+        Some(workspace.id.clone()),
+        Some(workspace.focused_surface_id.clone()),
+    );
+    let workspace = model.list_workspaces().remove(0);
+    let status = StatusEntry {
+        key: surface_status_key(&workspace.focused_surface_id),
+        label: "Terminal".to_string(),
+        value: "Spawn failed: /bin/missing".to_string(),
+        color: Some("red".to_string()),
+    };
+
+    let badge = workspace_status_badge(&workspace, &[status], &[], Some(&notification)).unwrap();
+
+    assert_eq!(badge.label, "Input");
+    assert_eq!(badge.class_name, "needs-input");
 }
 
 #[test]

@@ -64,7 +64,16 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_start(&brand);
     header.pack_start(&brand_separator);
 
-    let workspace_title = gtk::Button::builder().label("").has_frame(false).build();
+    let workspace_title_label = gtk::Label::builder()
+        .label("")
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .max_width_chars(36)
+        .single_line_mode(true)
+        .build();
+    let workspace_title = gtk::Button::builder()
+        .child(&workspace_title_label)
+        .has_frame(false)
+        .build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");
     workspace_title.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
@@ -182,7 +191,17 @@ pub(super) fn build_ui(app: &adw::Application) {
 
     let status_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     status_bar.add_css_class("app-status-bar");
-    let status_location = gtk::Button::builder().label("").has_frame(false).build();
+    let status_location_label = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .max_width_chars(56)
+        .single_line_mode(true)
+        .build();
+    let status_location = gtk::Button::builder()
+        .child(&status_location_label)
+        .has_frame(false)
+        .build();
     status_location.add_css_class("flat");
     status_location.add_css_class("status-location");
     status_location.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
@@ -290,7 +309,9 @@ pub(super) fn build_ui(app: &adw::Application) {
         sidebar: sidebar.clone(),
         parent_window: window.clone(),
         workspace_title: workspace_title.clone(),
+        workspace_title_label: workspace_title_label.clone(),
         status_location: status_location.clone(),
+        status_location_label: status_location_label.clone(),
         pane_status: pane_status.clone(),
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),

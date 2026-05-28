@@ -32,6 +32,10 @@ pub(super) fn select_workspace_with_terminal(
         (selected.id, previous_active_id)
     };
 
+    if active_focused_surface_blocks_auto_spawn(state)? {
+        return Ok(true);
+    }
+
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         if previous_active_id.as_deref() != Some(selected_id.as_str()) {
             if let Some(previous_active_id) = previous_active_id.as_deref() {
@@ -44,6 +48,21 @@ pub(super) fn select_workspace_with_terminal(
     }
 
     Ok(true)
+}
+
+fn active_focused_surface_blocks_auto_spawn(state: &SocketAppState) -> Result<bool, TerminalError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| TerminalError::LockPoisoned)?;
+    let Some(workspace) = model.active_workspace() else {
+        return Ok(false);
+    };
+    let statuses = model.list_status(&workspace.id);
+    Ok(surface_status_blocks_auto_spawn(
+        &statuses,
+        &workspace.focused_surface_id,
+    ))
 }
 
 pub(super) fn build_workspace_context_menu(

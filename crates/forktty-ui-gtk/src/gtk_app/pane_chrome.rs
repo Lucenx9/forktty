@@ -296,6 +296,7 @@ pub(super) fn record_terminal_spawn_failure(
     workspace_id: &str,
     surface_id: &str,
     message: &str,
+    notification_dispatch: bool,
 ) {
     if let Ok(mut model) = model.lock() {
         let value = if message.trim().is_empty() {
@@ -322,7 +323,9 @@ pub(super) fn record_terminal_spawn_failure(
             Some(workspace_id.to_string()),
             Some(surface_id.to_string()),
         );
-        dispatch_notification_with_loaded_config(&notification);
+        if notification_dispatch {
+            dispatch_notification_with_loaded_config(&notification);
+        }
     }
 }
 

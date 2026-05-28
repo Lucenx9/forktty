@@ -166,6 +166,7 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
             &surface.workspace_id,
             &surface.id,
             &err.to_string(),
+            state.notification_dispatch,
         );
         return false;
     }

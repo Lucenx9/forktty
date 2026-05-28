@@ -160,6 +160,9 @@ impl VteController {
                     &spawn_workspace_id,
                     &spawn_surface_id,
                     &err.to_string(),
+                    spawn_state_for_error
+                        .as_ref()
+                        .is_none_or(|state| state.notification_dispatch),
                 );
                 if let Some(state) = &spawn_state_for_error {
                     let _ = state.terminal.close(&spawn_surface_id);
@@ -197,6 +200,9 @@ impl VteController {
                     &request.workspace_id,
                     &request.surface_id,
                     &err.to_string(),
+                    self.state
+                        .as_ref()
+                        .is_none_or(|state| state.notification_dispatch),
                 );
                 if let Some(state) = &self.state {
                     let _ = state.terminal.close(&request.surface_id);
@@ -463,6 +469,7 @@ impl VteController {
                     &workspace_id,
                     &surface_id,
                     &err.to_string(),
+                    state.notification_dispatch,
                 );
             }
         }

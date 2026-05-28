@@ -269,7 +269,9 @@ pub(super) fn create_global_notification(
 ) {
     if let Ok(mut model) = state.model.lock() {
         let notification = model.create_notification(title, body, kind, None, None);
-        dispatch_notification_with_loaded_config(&notification);
+        if state.notification_dispatch {
+            dispatch_notification_with_loaded_config(&notification);
+        }
     }
 }
 
@@ -290,6 +292,8 @@ pub(super) fn create_local_notification(state: &SocketAppState, title: &str, bod
             Some(workspace_id),
             Some(surface_id),
         );
-        dispatch_notification_with_loaded_config(&notification);
+        if state.notification_dispatch {
+            dispatch_notification_with_loaded_config(&notification);
+        }
     }
 }
