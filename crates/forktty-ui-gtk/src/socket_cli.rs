@@ -59,6 +59,7 @@ Usage:
   forktty notifications [--json]
   forktty clear-notifications
   forktty hooks setup [codex] [claude] [gemini] [opencode]
+  forktty hooks remove [codex] [claude] [gemini] [opencode]
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
@@ -3050,6 +3051,7 @@ fn sanitize_for_terminal(value: &str) -> String {
 fn handle_hooks(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     match args.first().map(String::as_str) {
         Some("setup") => handle_hooks_setup(context, args[1..].to_vec()),
+        Some("remove") | Some("uninstall") => handle_hooks_remove(context, args[1..].to_vec()),
         Some("doctor") => handle_hooks_doctor(context, args[1..].to_vec()),
         Some("test") => handle_hooks_test(context, args[1..].to_vec()),
         _ => handle_hook_event(context, args),
@@ -3120,11 +3122,90 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
     Ok(())
 }
 
+fn handle_hooks_remove(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &["dry-run"]);
+    reject_unknown_options(&parsed.options, &["dry-run"], "hooks remove")?;
+    let Some(dry_run) = bool_option(&parsed.options, "dry-run") else {
+        return Err(CliError::new(
+            "hooks remove: --dry-run must be true or false",
+        ));
+    };
+    let agents = supported_agents(&parsed.positionals)?;
+    let current_launcher = stable_hook_launcher_path();
+
+    let mut plans = Vec::new();
+    for spec in agents {
+        plans.push(build_hook_remove_plan(spec, current_launcher.as_deref())?);
+    }
+
+    let mut summaries = Vec::new();
+    for plan in plans {
+        let mut backup_path = None;
+        if plan.changed && !dry_run {
+            match &plan.action {
+                HookRemoveAction::Write(content) => {
+                    let write_path = hook_config_write_path(&plan.config_path)?;
+                    ensure_parent_dir(&write_path)?;
+                    backup_path = backup_file(&write_path)?;
+                    atomic_write_file(&write_path, content.as_bytes())?;
+                }
+                HookRemoveAction::DeleteFile => {
+                    backup_path = backup_file(&plan.config_path)?;
+                    fs::remove_file(&plan.config_path)?;
+                }
+                HookRemoveAction::None => {}
+            }
+        }
+        summaries.push(json!({
+            "agent": plan.spec.key,
+            "configPath": plan.config_path,
+            "changed": plan.changed,
+            "backupPath": backup_path,
+            "dryRun": dry_run,
+        }));
+    }
+
+    if context.json {
+        return print_json(&Value::Array(summaries));
+    }
+    for summary in summaries {
+        let agent = summary["agent"].as_str().unwrap_or("agent");
+        let config_path = summary["configPath"].as_str().unwrap_or("");
+        let changed = summary["changed"].as_bool().unwrap_or(false);
+        let dry_run = summary["dryRun"].as_bool().unwrap_or(false);
+        let verb = if changed && dry_run {
+            "would remove"
+        } else if changed {
+            "removed"
+        } else {
+            "not installed"
+        };
+        println!("{agent}: {verb} at {config_path}");
+        if let Some(backup) = summary["backupPath"].as_str() {
+            println!("  backup: {backup}");
+        }
+    }
+    Ok(())
+}
+
 struct HookSetupPlan {
     spec: &'static AgentSpec,
     config_path: PathBuf,
     changed: bool,
     content: String,
+}
+
+enum HookRemoveAction {
+    Write(String),
+    DeleteFile,
+    None,
+}
+
+struct HookRemovePlan {
+    spec: &'static AgentSpec,
+    config_path: PathBuf,
+    changed: bool,
+    action: HookRemoveAction,
 }
 
 fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult<HookSetupPlan> {
@@ -3149,6 +3230,46 @@ fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult
                 config_path,
                 changed,
                 content,
+            })
+        }
+    }
+}
+
+fn build_hook_remove_plan(
+    spec: &'static AgentSpec,
+    current_launcher: Option<&Path>,
+) -> CliResult<HookRemovePlan> {
+    let config_path = (spec.config_path)();
+    match spec.install_kind {
+        HookInstallKind::JsonConfig => {
+            let existing = read_agent_config(spec, &config_path)?;
+            let (changed, config) = remove_hook_config(&existing, spec, current_launcher)?;
+            let action = if changed {
+                HookRemoveAction::Write(format!("{}\n", serde_json::to_string_pretty(&config)?))
+            } else {
+                HookRemoveAction::None
+            };
+            Ok(HookRemovePlan {
+                spec,
+                config_path,
+                changed,
+                action,
+            })
+        }
+        HookInstallKind::OpenCodePlugin => {
+            let existing = read_opencode_plugin_file(spec, &config_path)?;
+            let changed = existing
+                .as_deref()
+                .is_some_and(|text| text.contains(OPENCODE_PLUGIN_TAG));
+            Ok(HookRemovePlan {
+                spec,
+                config_path,
+                changed,
+                action: if changed {
+                    HookRemoveAction::DeleteFile
+                } else {
+                    HookRemoveAction::None
+                },
             })
         }
     }
@@ -3323,6 +3444,63 @@ fn merge_hook_config(
     Ok((changed, Value::Object(config)))
 }
 
+fn remove_hook_config(
+    existing: &Value,
+    spec: &AgentSpec,
+    current_launcher: Option<&Path>,
+) -> CliResult<(bool, Value)> {
+    let mut config = existing.as_object().cloned().unwrap_or_default();
+    let Some(hooks) = config.get("hooks").and_then(Value::as_object).cloned() else {
+        return Ok((false, Value::Object(config)));
+    };
+    let mut next_hooks = hooks.clone();
+    let mut changed = false;
+
+    for entry_spec in spec.hook_entries {
+        let Some(existing_entries) = hooks
+            .get(entry_spec.event_name)
+            .and_then(Value::as_array)
+            .cloned()
+        else {
+            continue;
+        };
+        let next_command = current_launcher
+            .map(|launcher| build_hook_shell_command(launcher, spec, entry_spec.hook_event_name))
+            .unwrap_or_default();
+        let filtered = existing_entries
+            .iter()
+            .filter(|entry| {
+                !is_forktty_managed_entry(entry)
+                    && !is_legacy_forktty_hook_command(
+                        entry,
+                        spec,
+                        entry_spec.hook_event_name,
+                        &next_command,
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if filtered == existing_entries {
+            continue;
+        }
+        changed = true;
+        if filtered.is_empty() {
+            next_hooks.remove(entry_spec.event_name);
+        } else {
+            next_hooks.insert(entry_spec.event_name.to_string(), Value::Array(filtered));
+        }
+    }
+
+    if changed {
+        if next_hooks.is_empty() {
+            config.remove("hooks");
+        } else {
+            config.insert("hooks".to_string(), Value::Object(next_hooks));
+        }
+    }
+    Ok((changed, Value::Object(config)))
+}
+
 fn is_forktty_managed_entry(entry: &Value) -> bool {
     entry.get("forkttySource").and_then(Value::as_str) == Some(FORKTTY_HOOK_TAG)
 }
@@ -3344,7 +3522,7 @@ fn is_legacy_forktty_hook_command(
             return false;
         };
         let suffix = format!(" hooks {} {}", spec.key, event);
-        command == next_command
+        (!next_command.is_empty() && command == next_command)
             || (command.contains(&suffix)
                 && (command.contains("forktty.mjs") || command.contains(spec.disabled_env)))
     })
@@ -3736,6 +3914,48 @@ fn describe_launcher_check(
         "installedLauncher": installed,
         "currentLauncher": current,
     })
+}
+
+#[cfg(feature = "gtk-vte")]
+pub(crate) fn hook_setup_reminder_message() -> Option<String> {
+    let current_launcher = stable_hook_launcher_path();
+    let statuses = AGENTS
+        .iter()
+        .map(|spec| {
+            let config_path = (spec.config_path)();
+            describe_launcher_check(spec, &config_path, current_launcher.as_deref())
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("not_installed")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    hook_setup_reminder_message_for_statuses(statuses.iter().map(String::as_str))
+}
+
+fn hook_setup_reminder_message_for_statuses<'a>(
+    statuses: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let statuses = statuses.into_iter().collect::<Vec<_>>();
+    let installed = statuses
+        .iter()
+        .any(|status| matches!(*status, "ok" | "stale" | "current_launcher_unknown"));
+    let stale = statuses
+        .iter()
+        .any(|status| matches!(*status, "stale" | "current_launcher_unknown"));
+    if stale {
+        Some(
+            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Gemini, and OpenCode can publish status, progress, and notifications."
+                .to_string(),
+        )
+    } else if !installed {
+        Some(
+            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Gemini, and OpenCode to status, progress, and notifications."
+                .to_string(),
+        )
+    } else {
+        None
+    }
 }
 
 fn extract_launcher_from_opencode_plugin(text: &str) -> Option<String> {
@@ -6169,6 +6389,98 @@ mod tests {
     }
 
     #[test]
+    fn hook_remove_deletes_only_forktty_managed_entries_and_plugins() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        let home_s = dir.path().display().to_string();
+        let codex_home_s = codex_home.display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("HOME", Some(&home_s)),
+                ("OPENCODE_CONFIG_DIR", None),
+            ],
+            || {
+                let context = test_context();
+                handle_hooks_setup(&context, strings(&["codex", "opencode"])).unwrap();
+                let codex_path = codex_home.join("hooks.json");
+                let opencode_path = dir
+                    .path()
+                    .join(".config/opencode")
+                    .join("plugins/forktty.generated.js");
+                let mut codex = read_json(&codex_path);
+                codex["hooks"]["SessionStart"] = json!([
+                    {
+                        "hooks": [{
+                            "type": "command",
+                            "command": "custom-wrapper hooks codex session-start"
+                        }]
+                    },
+                    codex["hooks"]["SessionStart"][0].clone()
+                ]);
+                atomic_write_file(
+                    &codex_path,
+                    format!("{}\n", serde_json::to_string_pretty(&codex).unwrap()).as_bytes(),
+                )
+                .unwrap();
+
+                handle_hooks_remove(&context, strings(&["codex", "opencode"])).unwrap();
+
+                let codex = read_json(&codex_path);
+                let entries = codex["hooks"]["SessionStart"].as_array().unwrap();
+                assert_eq!(entries.len(), 1);
+                assert_eq!(
+                    entries[0]["hooks"][0]["command"],
+                    Value::String("custom-wrapper hooks codex session-start".to_string())
+                );
+                assert!(codex["hooks"].get("PreToolUse").is_none());
+                assert!(!opencode_path.exists());
+
+                handle_hooks_remove(&context, strings(&["codex", "opencode"])).unwrap();
+                assert!(opencode_path
+                    .parent()
+                    .unwrap()
+                    .read_dir()
+                    .unwrap()
+                    .any(|entry| entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .contains(".bak-")));
+            },
+        );
+    }
+
+    #[test]
+    fn hook_remove_dry_run_and_option_errors_do_not_write_configs() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        let codex_home_s = codex_home.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[("CODEX_HOME", Some(&codex_home_s)), ("HOME", Some(&home_s))],
+            || {
+                let context = test_context();
+                handle_hooks_setup(&context, strings(&["codex"])).unwrap();
+                let codex_path = codex_home.join("hooks.json");
+                let before = fs::read_to_string(&codex_path).unwrap();
+
+                handle_hooks_remove(&context, strings(&["--dry-run", "codex"])).unwrap();
+                assert_eq!(fs::read_to_string(&codex_path).unwrap(), before);
+
+                assert_err_contains(
+                    handle_hooks_remove(&context, strings(&["--dry-run=yes", "codex"])),
+                    "hooks remove: --dry-run must be true or false",
+                );
+                assert_err_contains(
+                    handle_hooks_remove(&context, strings(&["--dryrun", "codex"])),
+                    "hooks remove: unknown option --dryrun",
+                );
+            },
+        );
+    }
+
+    #[test]
     fn hook_setup_dry_run_and_option_errors_do_not_write_configs() {
         let dir = tempfile::tempdir().unwrap();
         let codex_home = dir.path().join("codex");
@@ -6495,6 +6807,24 @@ mod tests {
         let check =
             describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
         assert_eq!(check["status"], Value::String("not_installed".to_string()));
+    }
+
+    #[test]
+    fn hook_setup_reminder_only_prompts_when_all_missing_or_stale() {
+        assert!(
+            hook_setup_reminder_message_for_statuses(["not_installed", "not_installed"])
+                .unwrap()
+                .contains("Install ForkTTY agent hooks")
+        );
+        assert!(hook_setup_reminder_message_for_statuses(["ok", "not_installed"]).is_none());
+        assert!(hook_setup_reminder_message_for_statuses(["ok", "stale"])
+            .unwrap()
+            .contains("Refresh ForkTTY agent hooks"));
+        assert!(
+            hook_setup_reminder_message_for_statuses(["current_launcher_unknown"])
+                .unwrap()
+                .contains("Refresh ForkTTY agent hooks")
+        );
     }
 
     #[test]

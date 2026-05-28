@@ -454,6 +454,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         controller_for_bootstrap
             .borrow_mut()
             .ensure_layout_current();
+        show_hook_setup_reminder(&state_for_bootstrap);
         refresh_sidebar(
             &sidebar_ui_for_bootstrap,
             &state_for_bootstrap,
@@ -635,6 +636,17 @@ pub(super) fn restore_or_bootstrap_workspaces(
             );
             bootstrap_default_workspace(state, cwd)
         }
+    }
+}
+
+pub(super) fn show_hook_setup_reminder(state: &SocketAppState) {
+    if let Some(body) = crate::socket_cli::hook_setup_reminder_message() {
+        create_global_notification(
+            state,
+            "Agent Hooks Available",
+            &body,
+            NotificationKind::Info,
+        );
     }
 }
 

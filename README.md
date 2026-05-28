@@ -248,9 +248,12 @@ Install hook templates for Codex, Claude Code, Gemini CLI, and OpenCode:
 forktty hooks setup                       # install all supported agents
 forktty hooks setup codex                 # install just one
 forktty hooks setup codex claude --dry-run
+forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
 ```
 
-`--dry-run` prints the would-be diff without touching disk.
+`--dry-run` prints the would-be diff without touching disk. `hooks remove`
+removes only ForkTTY-managed entries/plugins and leaves unrelated agent hooks in
+place.
 
 The installer merges commands into the agent's own config file:
 
@@ -264,6 +267,9 @@ The installer merges commands into the agent's own config file:
 When `HOME` is overridden, the `~` defaults are resolved under that home
 directory. Existing configs are written atomically (tmp + rename) and a
 timestamped `.bak-*` backup is created when content changes.
+
+On app startup, ForkTTY shows a reminder notification when no ForkTTY-managed
+agent hooks are installed, or when installed hooks point at a stale launcher.
 
 Diagnose and exercise installed hooks:
 

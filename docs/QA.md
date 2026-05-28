@@ -58,7 +58,7 @@ should be one of:
 | Notifications appear (desktop + panel)|                           |                       |                  |                          |
 | Quake mode toggle                     |                           |                       |                  |                          |
 | Socket: `forktty ping`                |                           |                       |                  |                          |
-| Socket: hooks setup (codex/claude/gemini/opencode) |               |                       |                  |                          |
+| Socket: hooks setup/remove (codex/claude/gemini/opencode) |        |                       |                  |                          |
 | Worktree: create / attach / status    |                           |                       |                  |                          |
 | Worktree: merge / remove              |                           |                       |                  |                          |
 | Session restore after restart         |                           |                       |                  |                          |

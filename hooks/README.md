@@ -23,12 +23,19 @@ binary moves. `--dry-run` prints the would-be diff without touching disk:
 ```bash
 forktty hooks setup --dry-run
 forktty hooks setup codex --dry-run
+forktty hooks remove codex --dry-run
 ```
 
 Each setup run writes the agent config or generated plugin atomically
 (tmp + rename) and, when content changes, leaves a timestamped `.bak-*`
 backup next to the original. The OpenCode file is intentionally generated
 under its plugins directory so `opencode.json` does not need to be edited.
+`forktty hooks remove` deletes only ForkTTY-managed entries or the generated
+OpenCode plugin; custom hook commands are preserved.
+
+When the GTK app starts and no ForkTTY-managed hooks are installed, it creates
+an in-app notification suggesting `forktty hooks setup`. If installed hooks
+point at an old launcher path, the reminder asks you to refresh them.
 
 ## Inspect and exercise installed hooks
 

@@ -189,6 +189,9 @@ rebuilding.
 - `forktty hooks setup codex codex` — updates Codex once and prints one Codex summary, without creating redundant backups.
 - `forktty hooks setup` (first run) — creates/updates all supported agent configs/plugins, prints `updated` and a backup path.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini`, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
+- `forktty hooks remove codex --dry-run` — prints `would remove` and leaves the Codex config unchanged.
+- `forktty hooks remove codex opencode` — removes only ForkTTY-managed Codex entries and the generated OpenCode plugin, preserving unrelated hook commands.
+- Launch the GTK app with no ForkTTY-managed hooks installed — it shows an Agent Hooks Available notification that suggests `forktty hooks setup`; if at least one provider is already configured and current, missing optional providers do not nag.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 - `forktty hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.

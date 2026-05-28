@@ -17,6 +17,7 @@ USAGE:
     forktty                 Launch the GTK app (default).
     forktty doctor          Print a local diagnostics report and exit.
     forktty hooks setup     Install Codex, Claude Code, Gemini, and OpenCode hooks.
+    forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty ping            Check the ForkTTY socket daemon.
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
