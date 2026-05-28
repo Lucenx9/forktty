@@ -7174,6 +7174,14 @@ fn open_worktree_from_gtk(
         return Err(err);
     }
     save_session_from_state(state);
+    if let Some(warning) = &info.setup_warning {
+        create_global_notification(
+            state,
+            "Worktree Setup Hook Failed",
+            warning,
+            NotificationKind::Error,
+        );
+    }
     Ok(())
 }
 

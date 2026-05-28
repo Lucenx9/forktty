@@ -28,7 +28,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
-- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, WebKitGTK6 browser panes, split panes, session restore, notifications, command palette, settings, and quake mode.
+- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode, plus experimental WebKitGTK6 browser panes behind the `browser` feature.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
 
 ## Install
@@ -290,7 +290,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
-- WebKitGTK6 browser panes with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, and history/bookmark socket plus CLI access.
+- Experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, and history/bookmark socket plus CLI access.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
 ## Configuration

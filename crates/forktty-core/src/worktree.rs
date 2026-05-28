@@ -105,6 +105,13 @@ pub struct WorktreeInfo {
     pub worktree_name: String,
     #[serde(default)]
     pub status: String,
+    /// Non-fatal warning emitted when the `.forktty/setup` hook failed.
+    ///
+    /// `create`/`attach` deliberately keep going when the setup hook fails, so
+    /// this field carries the reason for callers (CLI, socket, GTK) to surface
+    /// instead of the failure being lost to stderr only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_warning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -194,10 +201,10 @@ pub fn create(
         }
         return Err(err.into());
     }
-    if let Err(err) = run_hook(&wt_path.to_string_lossy(), "setup") {
-        eprintln!("ForkTTY setup hook failed for {}: {err}", wt_path.display());
-    }
-    Ok(info(branch, wt_path, worktree_name))
+    let setup_warning = run_setup_hook_advisory(&wt_path);
+    let mut info = info(branch, wt_path, worktree_name);
+    info.setup_warning = setup_warning;
+    Ok(info)
 }
 
 pub fn attach(
@@ -213,13 +220,10 @@ pub fn attach(
     let branch_ref = branch.into_reference();
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
     if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, &branch)? {
-        if let Err(err) = run_hook(&existing_path.to_string_lossy(), "setup") {
-            eprintln!(
-                "ForkTTY setup hook failed for {}: {err}",
-                existing_path.display()
-            );
-        }
-        return Ok(info(branch, existing_path, existing_name));
+        let setup_warning = run_setup_hook_advisory(&existing_path);
+        let mut info = info(branch, existing_path, existing_name);
+        info.setup_warning = setup_warning;
+        return Ok(info);
     }
     let workdir = repo.workdir().ok_or(WorktreeError::BareRepo)?;
     let worktree_name = derive_worktree_name(&repo, branch_name);
@@ -231,10 +235,10 @@ pub fn attach(
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
     repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
-    if let Err(err) = run_hook(&wt_path.to_string_lossy(), "setup") {
-        eprintln!("ForkTTY setup hook failed for {}: {err}", wt_path.display());
-    }
-    Ok(info(branch, wt_path, worktree_name))
+    let setup_warning = run_setup_hook_advisory(&wt_path);
+    let mut info = info(branch, wt_path, worktree_name);
+    info.setup_warning = setup_warning;
+    Ok(info)
 }
 
 pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
@@ -475,6 +479,23 @@ fn info(branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
         branch,
         worktree_name,
         status,
+        setup_warning: None,
+    }
+}
+
+/// Runs the `setup` hook for a freshly created/attached worktree.
+///
+/// Setup hook failure is advisory: it never aborts the worktree operation. The
+/// failure is logged to stderr and returned as a structured warning so callers
+/// can make it visible (e.g. as a notification) instead of losing it.
+fn run_setup_hook_advisory(wt_path: &Path) -> Option<String> {
+    match run_hook(&wt_path.to_string_lossy(), "setup") {
+        Ok(_) => None,
+        Err(err) => {
+            let message = format!("setup hook failed for {}: {err}", wt_path.display());
+            eprintln!("ForkTTY {message}");
+            Some(message)
+        }
     }
 }
 
@@ -1345,6 +1366,55 @@ mod tests {
 
         assert!(Path::new(&info.path).exists());
         assert_eq!(info.branch, "setup-fails");
+        let warning = info
+            .setup_warning
+            .expect("failed setup hook should surface a structured warning");
+        assert!(
+            warning.contains("setup hook failed"),
+            "warning should explain the failure: {warning}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_setup_hook_leaves_no_warning() {
+        let dir = make_repo();
+        let marker = dir.path().join("setup-ok-marker");
+        commit_file(
+            dir.path(),
+            ".forktty/setup",
+            &executable_hook_script(&marker, "ok"),
+        );
+
+        let info = create(dir.path().to_str().unwrap(), "setup-ok", "nested").unwrap();
+
+        assert!(info.setup_warning.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_setup_hook_leaves_no_warning() {
+        let dir = make_repo();
+
+        let info = create(dir.path().to_str().unwrap(), "no-hook", "nested").unwrap();
+
+        assert!(info.setup_warning.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failing_setup_hook_on_attach_is_advisory() {
+        let dir = make_repo();
+        commit_file(dir.path(), ".forktty/setup", "#!/bin/sh\nexit 9\n");
+        create_branch(dir.path(), "attach-setup-fails");
+
+        let info = attach(dir.path().to_str().unwrap(), "attach-setup-fails", "nested").unwrap();
+
+        assert!(Path::new(&info.path).exists());
+        let warning = info
+            .setup_warning
+            .expect("failed setup hook should surface a structured warning on attach");
+        assert!(warning.contains("setup hook failed"), "{warning}");
     }
 
     #[cfg(unix)]

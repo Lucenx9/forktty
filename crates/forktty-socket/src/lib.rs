@@ -601,12 +601,14 @@ pub async fn dispatch(
                     );
                 }
             };
+            notify_worktree_setup_warning(state, &workspace.id, info.setup_warning.as_deref())?;
             Ok(json!({
                 "id": workspace.id,
                 "name": info.name,
                 "path": info.path,
                 "branch": info.branch,
                 "worktree_name": info.worktree_name,
+                "setup_warning": info.setup_warning,
             }))
         }
         "worktree.attach" => {
@@ -615,12 +617,14 @@ pub async fn dispatch(
             let layout = worktree_layout();
             let info = worktree::attach(&cwd, name, &layout).map_err(DispatchError::from)?;
             let workspace = open_worktree_workspace(state, &info).await?;
+            notify_worktree_setup_warning(state, &workspace.id, info.setup_warning.as_deref())?;
             Ok(json!({
                 "id": workspace.id,
                 "name": info.name,
                 "path": info.path,
                 "branch": info.branch,
                 "worktree_name": info.worktree_name,
+                "setup_warning": info.setup_warning,
             }))
         }
         "worktree.remove" => {
@@ -1329,6 +1333,35 @@ fn ensure_max_text_size(field: &'static str, value: &str) -> Result<(), Dispatch
             limit: MAX_METADATA_TEXT_BYTES,
             actual: value.len(),
         });
+    }
+    Ok(())
+}
+
+/// Surfaces a non-fatal worktree `setup` hook failure as a workspace-scoped
+/// error notification so it is visible in the UI instead of only on stderr.
+fn notify_worktree_setup_warning(
+    state: &SocketAppState,
+    workspace_id: &str,
+    warning: Option<&str>,
+) -> Result<(), DispatchError> {
+    let Some(warning) = warning else {
+        return Ok(());
+    };
+    let item = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.create_notification(
+            "Worktree Setup Hook Failed",
+            warning,
+            NotificationKind::Error,
+            Some(workspace_id.to_string()),
+            None,
+        )
+    };
+    if state.notification_dispatch {
+        dispatch_notification_with_loaded_config(&item);
     }
     Ok(())
 }
@@ -3418,6 +3451,28 @@ mod tests {
         dir
     }
 
+    #[cfg(unix)]
+    fn commit_failing_setup_hook(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let hook_dir = dir.join(".forktty");
+        fs::create_dir_all(&hook_dir).unwrap();
+        let hook_path = hook_dir.join("setup");
+        fs::write(&hook_path, "#!/bin/sh\nexit 9\n").unwrap();
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let repo = Repository::open(dir).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(".forktty/setup")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add hook", &tree, &[&parent])
+            .unwrap();
+    }
+
     fn probe_socket_with_response(response: &'static str) -> bool {
         use std::io::{BufRead as _, Write as _};
 
@@ -5321,6 +5376,52 @@ mod tests {
             backend.sent_text(&surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn worktree_create_surfaces_setup_hook_failure_as_warning_and_notification() {
+        let repo_dir = make_temp_repo();
+        commit_failing_setup_hook(repo_dir.path());
+        let (state, _backend) = test_state();
+        dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "repo", "workingDir": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+
+        let created = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": "topic/hook-fail", "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+
+        // The worktree is still created (setup hook failure is non-fatal)...
+        assert_eq!(created["branch"], "topic/hook-fail");
+        // ...but the failure is now visible as a structured warning.
+        let warning = created["setup_warning"].as_str().unwrap();
+        assert!(
+            warning.contains("setup hook failed"),
+            "warning should explain the failure: {warning}"
+        );
+
+        // ...and as a workspace-scoped error notification.
+        let workspace_id = created["id"].as_str().unwrap();
+        let notifications = dispatch(&state, "notification.list", json!({}))
+            .await
+            .unwrap();
+        let hook_notification = notifications
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["title"] == "Worktree Setup Hook Failed")
+            .expect("setup hook failure should produce a notification");
+        assert_eq!(hook_notification["workspace_id"], workspace_id);
+        assert_eq!(hook_notification["kind"], "error");
     }
 
     #[tokio::test]
