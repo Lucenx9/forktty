@@ -281,6 +281,55 @@ fn prompt_notification_records_live_surface() {
 }
 
 #[test]
+fn closed_surface_notification_is_not_openable() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_notification, surface_notification) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let split = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        let workspace_notification = model.create_notification(
+            "Workspace",
+            "Still open",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+        let surface_notification = model.create_notification(
+            "Pane",
+            "Now stale",
+            NotificationKind::Prompt,
+            Some(workspace.id),
+            Some(split.id.clone()),
+        );
+        model.close_surface(&split.id).unwrap();
+        (workspace_notification, surface_notification)
+    };
+
+    assert!(!notification_target_exists(&state, &surface_notification));
+    assert!(!open_notification_target(
+        &state,
+        None,
+        &surface_notification
+    ));
+    assert_eq!(
+        latest_openable_notification(&state)
+            .expect("workspace notification should remain openable")
+            .id,
+        workspace_notification.id
+    );
+}
+
+#[test]
 fn close_active_workspace_keeps_a_terminal_when_closing_last_workspace() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();

@@ -7,22 +7,23 @@ pub(super) fn notification_target_exists(
     let Ok(model) = state.model.lock() else {
         return false;
     };
-    if notification
+    if let Some(surface_id) = notification.surface_id.as_deref() {
+        let Some(surface) = model.surface(surface_id) else {
+            return false;
+        };
+        return notification
+            .workspace_id
+            .as_deref()
+            .is_none_or(|workspace_id| workspace_id == surface.workspace_id);
+    }
+    notification
         .workspace_id
         .as_deref()
         .is_some_and(|workspace_id| {
             model
-                .list_workspaces()
-                .iter()
-                .any(|workspace| workspace.id == workspace_id)
+                .workspace_id_for(WorkspaceSelector::Id(workspace_id))
+                .is_some()
         })
-    {
-        return true;
-    }
-    notification
-        .surface_id
-        .as_deref()
-        .is_some_and(|surface_id| model.surface(surface_id).is_some())
 }
 
 pub(super) fn latest_openable_notification(state: &SocketAppState) -> Option<NotificationItem> {
@@ -86,12 +87,26 @@ pub(super) fn open_notification_target(
             return false;
         };
         let surface_id = notification.surface_id.clone();
-        let workspace_id = notification.workspace_id.clone().or_else(|| {
-            surface_id
+        let workspace_id = if let Some(surface_id) = surface_id.as_deref() {
+            let Some(surface) = model.surface(surface_id) else {
+                return false;
+            };
+            if notification
+                .workspace_id
                 .as_deref()
-                .and_then(|surface_id| model.surface(surface_id))
-                .map(|surface| surface.workspace_id.clone())
-        });
+                .is_some_and(|workspace_id| workspace_id != surface.workspace_id)
+            {
+                return false;
+            }
+            Some(surface.workspace_id.clone())
+        } else {
+            notification
+                .workspace_id
+                .as_deref()
+                .and_then(|workspace_id| {
+                    model.workspace_id_for(WorkspaceSelector::Id(workspace_id))
+                })
+        };
         (workspace_id, surface_id)
     };
     let Some(workspace_id) = workspace_id else {
