@@ -332,8 +332,11 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
 }
 
 fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
-    if config.general.shell.trim().is_empty() {
+    let shell = config.general.shell.trim();
+    if shell.is_empty() {
         config.general.shell = default_shell();
+    } else {
+        config.general.shell = shell.to_string();
     }
     config.general.theme_source = normalize_config_choice(&config.general.theme_source, &["dark"])
         .unwrap_or_else(default_theme_source);
@@ -359,6 +362,12 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     if config.appearance.font_size == 0 {
         config.appearance.font_size = default_font_size();
     }
+    // Clamp hand-edited numeric ranges so an out-of-bounds value normalizes like
+    // the `font_size == 0` guard above and the enum fields, instead of failing
+    // validation and quarantining the entire config on load. The bounds match
+    // `validate_config` so the normalized result always passes validation.
+    config.appearance.font_size = config.appearance.font_size.clamp(8, 64);
+    config.appearance.scrollback_lines = config.appearance.scrollback_lines.min(500_000);
     config
 }
 
@@ -589,6 +598,24 @@ mod tests {
     }
 
     #[test]
+    fn loaded_config_trims_shell_path_from_manual_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = " /bin/sh "
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.general.shell, "/bin/sh");
+    }
+
+    #[test]
     fn saved_config_rejects_invalid_theme_source() {
         let mut config = AppConfig::default();
         config.general.shell = "/bin/sh".to_string();
@@ -776,6 +803,49 @@ mod tests {
         let config = load_config_from_path(&path).unwrap();
 
         assert!(!config.general.enable_pr_lookup);
+    }
+
+    #[test]
+    fn loaded_config_clamps_out_of_range_numeric_fields_instead_of_quarantining() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+            worktree_layout = "sibling"
+
+            [appearance]
+            font_size = 999
+            scrollback_lines = 9000000
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        // Out-of-range numerics are clamped on load rather than failing
+        // validation and quarantining the whole config.
+        assert_eq!(config.appearance.font_size, 64);
+        assert_eq!(config.appearance.scrollback_lines, 500_000);
+        // Unrelated fields survive instead of being reset to defaults.
+        assert_eq!(config.general.worktree_layout, "sibling");
+    }
+
+    #[test]
+    fn loaded_config_clamps_small_font_size_up_to_minimum() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[general]\nshell = \"/bin/sh\"\n\n[appearance]\nfont_size = 3\n",
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.appearance.font_size, 8);
     }
 
     #[test]

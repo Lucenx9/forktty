@@ -1644,35 +1644,50 @@ fn resolve_required_existing_dir_param(
     keys: &[&str],
     missing_param: &'static str,
 ) -> Result<PathBuf, DispatchError> {
-    for key in keys {
-        let Some(value) = params.get(*key) else {
-            continue;
-        };
-        let raw = value
-            .as_str()
-            .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
-        if raw.trim().is_empty() {
-            return Err(format!("Invalid parameter {key}: path must not be empty").into());
-        }
-        return canonical_existing_dir(Path::new(raw), key).map_err(DispatchError::from);
+    let found = keys
+        .iter()
+        .filter_map(|key| params.get(*key).map(|value| (*key, value)))
+        .collect::<Vec<_>>();
+    if found.len() > 1 {
+        return Err(format!(
+            "Ambiguous path parameter: cannot combine {}",
+            format_param_names(found.iter().map(|(key, _)| *key))
+        )
+        .into());
     }
-    Err(DispatchError::MissingParam(missing_param))
+    let Some((key, value)) = found.first() else {
+        return Err(DispatchError::MissingParam(missing_param));
+    };
+    let raw = value
+        .as_str()
+        .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
+    if raw.trim().is_empty() {
+        return Err(format!("Invalid parameter {key}: path must not be empty").into());
+    }
+    canonical_existing_dir(Path::new(raw), key).map_err(DispatchError::from)
 }
 
 fn resolve_existing_dir_param(params: &Value, keys: &[&str]) -> Result<PathBuf, String> {
-    for key in keys {
-        let Some(value) = params.get(*key) else {
-            continue;
-        };
-        let raw = value
-            .as_str()
-            .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
-        if raw.trim().is_empty() {
-            return Err(format!("Invalid parameter {key}: path must not be empty"));
-        }
-        return canonical_existing_dir(Path::new(raw), key);
+    let found = keys
+        .iter()
+        .filter_map(|key| params.get(*key).map(|value| (*key, value)))
+        .collect::<Vec<_>>();
+    if found.len() > 1 {
+        return Err(format!(
+            "Ambiguous path parameter: cannot combine {}",
+            format_param_names(found.iter().map(|(key, _)| *key))
+        ));
     }
-    Ok(fallback_cwd())
+    let Some((key, value)) = found.first() else {
+        return Ok(fallback_cwd());
+    };
+    let raw = value
+        .as_str()
+        .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
+    if raw.trim().is_empty() {
+        return Err(format!("Invalid parameter {key}: path must not be empty"));
+    }
+    canonical_existing_dir(Path::new(raw), key)
 }
 
 fn canonical_existing_dir(path: &Path, key: &str) -> Result<PathBuf, String> {
@@ -6049,6 +6064,35 @@ mod tests {
         let missing = dir.path().join("missing");
         let error = resolve_cwd_param(&json!({"cwd": missing})).unwrap_err();
         assert!(error.contains("cannot resolve path"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_directory_param_aliases() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+
+        let workspace_error = resolve_workspace_cwd_param(&json!({
+            "workingDir": first.path(),
+            "cwd": second.path(),
+        }))
+        .unwrap_err();
+
+        assert!(workspace_error.contains("Ambiguous path parameter"));
+        assert!(workspace_error.contains("workingDir and cwd"));
+
+        let repo_error = resolve_required_existing_dir_param(
+            &json!({
+                "path": first.path(),
+                "cwd": second.path(),
+            }),
+            &["path", "cwd"],
+            "path or cwd",
+        )
+        .unwrap_err();
+
+        assert_eq!(repo_error.code(), "error");
+        assert!(repo_error.to_string().contains("Ambiguous path parameter"));
+        assert!(repo_error.to_string().contains("path and cwd"));
     }
 
     #[tokio::test]
