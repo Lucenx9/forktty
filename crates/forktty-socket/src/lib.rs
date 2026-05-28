@@ -2378,6 +2378,36 @@ fn browser_import_prepare_destination(
     }
 }
 
+fn rollback_browser_import_created_profile(
+    state: &SocketAppState,
+    profile_id: forktty_core::ProfileId,
+) -> Result<(), String> {
+    {
+        let _profile_store_guard = state
+            .profile_store_lock
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let mut store = profiles_store().map_err(|err| err.to_string())?;
+        store.delete(&profile_id).map_err(|err| err.to_string())?;
+    }
+
+    if let Some(profile_dir) = forktty_core::browser_history::history_path(profile_id)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    {
+        match fs::remove_dir_all(&profile_dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "profile data cleanup failed for {}: {err}",
+                    profile_dir.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn browser_import_run(
     state: &SocketAppState,
     params: &Value,
@@ -2400,6 +2430,17 @@ async fn browser_import_run(
     let mut entries_json = Vec::new();
 
     for entry in plan.entries {
+        let mut source_data = Vec::new();
+        for source in entry.sources {
+            let data = forktty_import::ImportEngine::read_source_async_with_selection(
+                &source,
+                include.read_selection(),
+            )
+            .await
+            .map_err(|err| DispatchError::Other(err.to_string()))?;
+            source_data.push((source, data));
+        }
+
         let (profile_id, display_name, created) = {
             let _profile_store_guard = state
                 .profile_store_lock
@@ -2408,77 +2449,101 @@ async fn browser_import_run(
             let mut store = profiles_store()?;
             browser_import_prepare_destination(&mut store, &entry.destination)?
         };
-        let history_store = if include.history {
-            Some(
-                forktty_core::HistoryStore::for_profile(profile_id)
-                    .map_err(|err| DispatchError::Other(err.to_string()))?,
-            )
-        } else {
-            None
-        };
-        let mut bookmark_store = if include.bookmarks {
-            Some(
-                forktty_core::BookmarkStore::for_profile(profile_id)
-                    .map_err(|err| DispatchError::Other(err.to_string()))?,
-            )
-        } else {
-            None
-        };
+        let entry_result: Result<
+            (Value, BrowserImportCounts, BrowserImportCounts, usize),
+            DispatchError,
+        > = (|| {
+            let history_store = if include.history {
+                Some(
+                    forktty_core::HistoryStore::for_profile(profile_id)
+                        .map_err(|err| DispatchError::Other(err.to_string()))?,
+                )
+            } else {
+                None
+            };
+            let mut bookmark_store = if include.bookmarks {
+                Some(
+                    forktty_core::BookmarkStore::for_profile(profile_id)
+                        .map_err(|err| DispatchError::Other(err.to_string()))?,
+                )
+            } else {
+                None
+            };
 
-        let mut entry_read = BrowserImportCounts::default();
-        let mut entry_written = BrowserImportCounts::default();
-        let mut entry_unsupported_cookies = 0usize;
-        let mut entry_sources = Vec::new();
+            let mut entry_read = BrowserImportCounts::default();
+            let mut entry_written = BrowserImportCounts::default();
+            let mut entry_unsupported_cookies = 0usize;
+            let mut entry_sources = Vec::new();
 
-        for source in entry.sources {
-            let data = forktty_import::ImportEngine::read_source_async_with_selection(
-                &source,
-                include.read_selection(),
-            )
-            .await
-            .map_err(|err| DispatchError::Other(err.to_string()))?;
-            let read_counts = browser_import_counts_from_data(&data, include);
-            entry_read.add(read_counts);
-            entry_sources.push(browser_import_profile_json(&source));
+            for (source, data) in source_data {
+                let read_counts = browser_import_counts_from_data(&data, include);
+                entry_read.add(read_counts);
+                entry_sources.push(browser_import_profile_json(&source));
 
-            if let Some(history_store) = &history_store {
-                for visit in &data.visits {
-                    history_store
-                        .import_visit(&visit.url, &visit.title, visit.visit_count)
-                        .map_err(|err| DispatchError::Other(err.to_string()))?;
-                    entry_written.history += 1;
+                if let Some(history_store) = &history_store {
+                    for visit in &data.visits {
+                        history_store
+                            .import_visit(&visit.url, &visit.title, visit.visit_count)
+                            .map_err(|err| DispatchError::Other(err.to_string()))?;
+                        entry_written.history += 1;
+                    }
+                }
+
+                if let Some(bookmark_store) = bookmark_store.as_mut() {
+                    for bookmark in &data.bookmarks {
+                        bookmark_store
+                            .add(&bookmark.url, &bookmark.title)
+                            .map_err(|err| DispatchError::Other(err.to_string()))?;
+                        entry_written.bookmarks += 1;
+                    }
+                }
+
+                if include.cookies {
+                    entry_unsupported_cookies += data.result.cookies;
                 }
             }
 
-            if let Some(bookmark_store) = bookmark_store.as_mut() {
-                for bookmark in &data.bookmarks {
-                    bookmark_store
-                        .add(&bookmark.url, &bookmark.title)
-                        .map_err(|err| DispatchError::Other(err.to_string()))?;
-                    entry_written.bookmarks += 1;
-                }
-            }
+            let entry_json = json!({
+                "destination": browser_import_profile_meta_json(profile_id, &display_name, created),
+                "sources": entry_sources,
+                "read": browser_import_counts_json(entry_read),
+                "written": browser_import_counts_json(entry_written),
+                "cookies": {
+                    "read": entry_read.cookies,
+                    "written": 0,
+                    "unsupported": entry_unsupported_cookies,
+                    "skipped": entry_read.skipped,
+                },
+            });
+            Ok((
+                entry_json,
+                entry_read,
+                entry_written,
+                entry_unsupported_cookies,
+            ))
+        })();
 
-            if include.cookies {
-                entry_unsupported_cookies += data.result.cookies;
+        let (entry_json, entry_read, entry_written, entry_unsupported_cookies) = match entry_result
+        {
+            Ok(result) => result,
+            Err(err) => {
+                if created {
+                    if let Err(cleanup_err) =
+                        rollback_browser_import_created_profile(state, profile_id)
+                    {
+                        return Err(DispatchError::Other(format!(
+                            "{err}; created profile cleanup failed: {cleanup_err}"
+                        )));
+                    }
+                }
+                return Err(err);
             }
-        }
+        };
 
         total_read.add(entry_read);
         total_written.add(entry_written);
         total_unsupported_cookies += entry_unsupported_cookies;
-        entries_json.push(json!({
-            "destination": browser_import_profile_meta_json(profile_id, &display_name, created),
-            "sources": entry_sources,
-            "read": browser_import_counts_json(entry_read),
-            "written": browser_import_counts_json(entry_written),
-            "cookies": {
-                "read": entry_read.cookies,
-                "written": 0,
-                "unsupported": entry_unsupported_cookies,
-                "skipped": entry_read.skipped,
-            },
-        }));
+        entries_json.push(entry_json);
     }
 
     Ok(json!({
@@ -7155,6 +7220,40 @@ mod tests {
         .unwrap_err();
         assert_eq!(corrupt.code(), "error");
         assert!(corrupt.to_string().contains("import database error"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_import_run_does_not_create_profile_for_unreadable_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+        let source = create_corrupt_firefox_import_source(&home, "corrupt-create");
+        let source_id = browser_import_source_id(&source);
+        let (state, _backend) = test_state();
+
+        let err = dispatch(
+            &state,
+            "browser.import.run",
+            json!({
+                "sources": [source_id],
+                "destination": {"kind": "create", "display_name": "Should Roll Back"}
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "error");
+
+        let profiles = dispatch(&state, "browser.profile.list", json!({}))
+            .await
+            .unwrap();
+        assert!(!profiles
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|profile| { profile["display_name"] == json!("Should Roll Back") }));
     }
 
     #[tokio::test]
