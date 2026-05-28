@@ -1420,6 +1420,22 @@ fn terminal_theme_presets_use_expected_ansi_values() {
 }
 
 #[test]
+fn settings_number_value_uses_last_valid_value_for_invalid_text() {
+    assert_eq!(settings_number_value_from_text("abc", 8, 64, 14), 14);
+    assert_eq!(
+        settings_number_value_from_text("   ", 0, 500_000, 20_000),
+        20_000
+    );
+}
+
+#[test]
+fn settings_number_value_clamps_parsed_and_fallback_values() {
+    assert_eq!(settings_number_value_from_text("999", 8, 64, 14), 64);
+    assert_eq!(settings_number_value_from_text("1", 8, 64, 14), 8);
+    assert_eq!(settings_number_value_from_text("bad", 8, 64, 999), 64);
+}
+
+#[test]
 fn command_palette_search_matches_labels_and_shortcuts() {
     let copy = command_search_text("Copy", Some("Ctrl+Shift+C"));
     let shortcuts = command_search_text("Keyboard Shortcuts", Some("F1"));

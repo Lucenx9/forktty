@@ -592,6 +592,7 @@ pub(super) struct SettingsNumberControl {
     entry: gtk::Entry,
     decrement: gtk::Button,
     increment: gtk::Button,
+    last_value: Rc<Cell<i64>>,
     min: i64,
     max: i64,
     step: i64,
@@ -599,22 +600,35 @@ pub(super) struct SettingsNumberControl {
 
 impl SettingsNumberControl {
     fn value(&self) -> i64 {
-        self.entry
-            .text()
-            .trim()
-            .parse::<i64>()
-            .unwrap_or(self.min)
-            .clamp(self.min, self.max)
+        settings_number_value_from_text(
+            &self.entry.text(),
+            self.min,
+            self.max,
+            self.last_value.get(),
+        )
     }
 
     fn set_value(&self, value: i64) {
-        self.entry
-            .set_text(&value.clamp(self.min, self.max).to_string());
+        let value = value.clamp(self.min, self.max);
+        self.last_value.set(value);
+        self.entry.set_text(&value.to_string());
     }
 
     fn stepped_value(&self, delta: i64) -> i64 {
         self.value().saturating_add(delta).clamp(self.min, self.max)
     }
+}
+
+pub(super) fn settings_number_value_from_text(
+    text: &str,
+    min: i64,
+    max: i64,
+    fallback: i64,
+) -> i64 {
+    text.trim()
+        .parse::<i64>()
+        .map(|value| value.clamp(min, max))
+        .unwrap_or_else(|_| fallback.clamp(min, max))
 }
 
 pub(super) fn settings_number_row(
@@ -627,13 +641,14 @@ pub(super) fn settings_number_row(
     width: i32,
 ) -> (adw::ActionRow, SettingsNumberControl) {
     let row = settings_action_row(title, subtitle);
+    let value = value.clamp(min, max);
     let control = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     control.add_css_class("settings-number-control");
     control.set_valign(gtk::Align::Center);
     control.set_halign(gtk::Align::End);
 
     let entry = gtk::Entry::builder()
-        .text(value.clamp(min, max).to_string())
+        .text(value.to_string())
         .width_request(width)
         .input_purpose(gtk::InputPurpose::Digits)
         .build();
@@ -662,6 +677,7 @@ pub(super) fn settings_number_row(
             entry,
             decrement,
             increment,
+            last_value: Rc::new(Cell::new(value)),
             min,
             max,
             step,
