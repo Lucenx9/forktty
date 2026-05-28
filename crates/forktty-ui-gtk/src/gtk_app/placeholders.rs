@@ -9,13 +9,38 @@ pub(super) struct SurfacePlaceholderDetails {
 
 #[cfg(not(feature = "browser"))]
 pub(super) fn browser_unavailable_placeholder(surface_id: &str) -> gtk::Box {
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    b.set_hexpand(true);
-    b.set_vexpand(true);
-    b.append(&gtk::Label::new(Some(&format!(
-        "Browser pane ({surface_id}) — built without the `browser` feature"
-    ))));
-    b
+    let pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    pane.set_hexpand(true);
+    pane.set_vexpand(true);
+    pane.add_css_class("terminal-pane");
+    pane.add_css_class("missing");
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.add_css_class("terminal-pane-header");
+    let title = gtk::Label::builder()
+        .label("Browser unavailable")
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    title.add_css_class("terminal-pane-title");
+    header.append(&title);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    body.add_css_class("terminal-placeholder");
+    body.set_hexpand(true);
+    body.set_vexpand(true);
+    let description = format!(
+        "Surface {surface_id} was restored as a browser pane, but this build was compiled without browser support."
+    );
+    body.append(&compact_status_page(
+        "web-browser-symbolic",
+        "Browser Feature Unavailable",
+        &description,
+    ));
+
+    pane.append(&header);
+    pane.append(&body);
+    pane
 }
 
 pub(super) fn missing_surface_placeholder(
