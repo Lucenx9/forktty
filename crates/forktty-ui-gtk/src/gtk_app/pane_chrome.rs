@@ -79,8 +79,10 @@ pub(super) fn build_pane_chrome(
         "view-paged-symbolic",
         &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
     );
+    let single_new_tab = pane_action_button("tab-new-symbolic", "New Tab (Ctrl+Shift+T)");
     single_pane_actions.append(&single_split_h);
     single_pane_actions.append(&single_split_v);
+    single_pane_actions.append(&single_new_tab);
     #[cfg(feature = "browser")]
     let single_open_browser = pane_action_button("web-browser-symbolic", "Open Browser Pane");
     #[cfg(feature = "browser")]
@@ -118,6 +120,11 @@ pub(super) fn build_pane_chrome(
                 split_active_surface(s, SplitAxis::Vertical)
             });
         });
+        let state_for_single_nt = state.clone();
+        let sid_single_nt = surface_id_owned.clone();
+        single_new_tab.connect_clicked(move |_| {
+            add_new_tab_surface(&state_for_single_nt, &sid_single_nt);
+        });
         #[cfg(feature = "browser")]
         {
             let state_for_browser = state.clone();
@@ -151,6 +158,7 @@ pub(super) fn build_pane_chrome(
         split_v.set_sensitive(false);
         single_split_h.set_sensitive(false);
         single_split_v.set_sensitive(false);
+        single_new_tab.set_sensitive(false);
         new_tab.set_sensitive(false);
         close.set_sensitive(false);
         #[cfg(feature = "browser")]
