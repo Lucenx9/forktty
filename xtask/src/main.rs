@@ -17,10 +17,9 @@ struct HookTemplate {
     entries: &'static [(&'static str, &'static str, u64)],
 }
 
-// Codex and Claude Code both treat `timeout` as seconds (Codex docs:
-// "Timeout: Integer in seconds; defaults to 600"; Claude Code hooks reference:
-// "timeout" is in seconds). Keep the installed templates aligned with the
-// native installer's HOOK_ENTRY_TIMEOUT_SECS.
+// Codex and Claude Code treat `timeout` as seconds, while Gemini CLI treats it
+// as milliseconds. Keep these repository templates aligned with the native
+// installer's hook timeout constants.
 const CODEX_ENTRIES: &[(&str, &str, u64)] = &[
     ("SessionStart", "session-start", 30),
     ("UserPromptSubmit", "prompt-submit", 30),
@@ -42,14 +41,14 @@ const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
 ];
 
 const GEMINI_ENTRIES: &[(&str, &str, u64)] = &[
-    ("SessionStart", "session-start", 5000),
-    ("BeforeAgent", "prompt-submit", 5000),
-    ("BeforeTool", "pre-tool", 5000),
-    ("AfterTool", "post-tool", 5000),
-    ("AfterAgent", "stop", 5000),
-    ("Notification", "notification", 5000),
-    ("PreCompress", "pre-compact", 5000),
-    ("SessionEnd", "session-end", 5000),
+    ("SessionStart", "session-start", 30000),
+    ("BeforeAgent", "prompt-submit", 30000),
+    ("BeforeTool", "pre-tool", 30000),
+    ("AfterTool", "post-tool", 30000),
+    ("AfterAgent", "stop", 30000),
+    ("Notification", "notification", 30000),
+    ("PreCompress", "pre-compact", 30000),
+    ("SessionEnd", "session-end", 30000),
 ];
 
 const TEMPLATES: &[HookTemplate] = &[
