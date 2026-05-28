@@ -261,7 +261,10 @@ fn collect_report() -> DoctorReport {
         "Config",
     );
 
-    let data_root = dirs::data_dir().map(|d| d.join("forktty"));
+    // Match the directory the app actually uses for its data/session files
+    // (`forktty_core::session` and the browser session use `data_local_dir`),
+    // so doctor diagnoses the same path that gets read/written on launch.
+    let data_root = dirs::data_local_dir().map(|d| d.join("forktty"));
     let data_dir = describe_followed_path("data dir", data_root.clone());
     let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
     let session = describe_session_path(session_path);

@@ -103,19 +103,25 @@ pub fn read_chromium_bookmarks(path: &Path) -> std::io::Result<Vec<ImportedBookm
     };
     let mut out = Vec::new();
     if let Some(roots) = value.get("roots").and_then(|r| r.as_object()) {
+        // The node cap is a guard against a hostile/oversized Bookmarks file, so
+        // it must bound the total walk across every root, not reset per root.
+        let mut visited = 0usize;
         for root_node in roots.values() {
-            collect_chromium_bookmarks(root_node, &mut out);
+            collect_chromium_bookmarks(root_node, &mut out, &mut visited);
         }
     }
     Ok(out)
 }
 
-fn collect_chromium_bookmarks(node: &serde_json::Value, out: &mut Vec<ImportedBookmark>) {
+fn collect_chromium_bookmarks(
+    node: &serde_json::Value,
+    out: &mut Vec<ImportedBookmark>,
+    visited: &mut usize,
+) {
     let mut stack = vec![node];
-    let mut visited = 0usize;
     while let Some(node) = stack.pop() {
-        visited += 1;
-        if visited > MAX_CHROMIUM_BOOKMARK_NODES {
+        *visited += 1;
+        if *visited > MAX_CHROMIUM_BOOKMARK_NODES {
             break;
         }
         if node.get("type").and_then(|t| t.as_str()) == Some("url") {
@@ -235,5 +241,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bms = read_chromium_bookmarks(&dir.path().join("Bookmarks")).unwrap();
         assert!(bms.is_empty());
+    }
+
+    #[test]
+    fn chromium_bookmark_node_cap_is_global_across_roots() {
+        // Two roots, each just over half the cap. With the cap reset per root a
+        // hostile file would walk roots*cap nodes; the cap must bound the total.
+        let half = MAX_CHROMIUM_BOOKMARK_NODES / 2 + 100;
+        let node = r#"{"type":"url","name":"b","url":"https://x.test/"}"#;
+        let children = vec![node; half].join(",");
+        let root = format!(r#"{{"children":[{children}]}}"#);
+        let json = format!(r#"{{"roots":{{"bookmark_bar":{root},"other":{root}}}}}"#);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        fs::write(&path, json).unwrap();
+
+        let bms = read_chromium_bookmarks(&path).unwrap();
+
+        assert!(
+            bms.len() <= MAX_CHROMIUM_BOOKMARK_NODES,
+            "node cap must be global across roots, got {}",
+            bms.len()
+        );
     }
 }
