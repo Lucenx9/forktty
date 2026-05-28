@@ -1,0 +1,453 @@
+use super::*;
+
+#[derive(Clone, Copy)]
+pub(super) enum StatusKind {
+    Success,
+    Error,
+}
+
+pub(super) fn labeled_icon_button_parts(
+    icon_name: &str,
+    label: &str,
+) -> (gtk::Button, gtk::Image, gtk::Label) {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_halign(gtk::Align::Center);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    let label_widget = gtk::Label::new(Some(label));
+    content.append(&icon);
+    content.append(&label_widget);
+    let button = gtk::Button::builder().child(&content).build();
+    set_accessible_button_text(&button, label, None);
+    (button, icon, label_widget)
+}
+
+pub(super) fn apply_dialog_chrome(dialog: &gtk::Window) {
+    let titlebar = gtk::HeaderBar::new();
+    titlebar.set_show_title_buttons(false);
+    titlebar.add_css_class("ft-dialog-titlebar");
+    titlebar.set_title_widget(Some(&gtk::Label::new(None)));
+    let close = gtk::Button::builder()
+        .icon_name("window-close-symbolic")
+        .tooltip_text("Close")
+        .build();
+    close.add_css_class("flat");
+    close.add_css_class("ft-dialog-close");
+    set_accessible_button_text(&close, "Close", Some("Esc"));
+    let dialog_for_close = dialog.clone();
+    close.connect_clicked(move |_| dialog_for_close.close());
+    titlebar.pack_end(&close);
+    dialog.set_titlebar(Some(&titlebar));
+}
+
+pub(super) fn restore_focus_after_hide<W>(dialog: &gtk::Window, parent: &W)
+where
+    W: IsA<gtk::Window>,
+{
+    let previous_focus: Option<gtk::Widget> = gtk::prelude::GtkWindowExt::focus(parent.as_ref());
+    dialog.connect_hide(move |_| {
+        if let Some(widget) = previous_focus.as_ref() {
+            if widget.root().is_some() {
+                widget.grab_focus();
+            }
+        }
+    });
+}
+
+pub(super) fn install_escape_close(window: &gtk::Window) {
+    let controller = gtk::EventControllerKey::new();
+    let window_for_close = window.clone();
+    controller.connect_key_pressed(move |_, key, _, modifiers| {
+        let is_close_shortcut =
+            key == gtk::gdk::Key::w && modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        if key == gtk::gdk::Key::Escape || is_close_shortcut {
+            window_for_close.close();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    window.add_controller(controller);
+}
+
+pub(super) fn show_destructive_confirmation<W, F>(
+    parent: &W,
+    title: &str,
+    body: &str,
+    confirm_label: &str,
+    on_confirm: F,
+) where
+    W: IsA<gtk::Window>,
+    F: Fn() + 'static,
+{
+    let dialog = gtk::Window::builder()
+        .title(title)
+        .transient_for(parent)
+        .modal(true)
+        .default_width(400)
+        .default_height(200)
+        .build();
+    dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
+    install_escape_close(&dialog);
+    restore_focus_after_hide(&dialog, parent);
+
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    header.add_css_class("ft-dialog-header");
+    let title_label = gtk::Label::builder().label(title).xalign(0.0).build();
+    title_label.add_css_class("ft-dialog-title");
+    header.append(&title_label);
+
+    let body_container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body_container.add_css_class("ft-dialog-body");
+    let body_label = gtk::Label::builder()
+        .label(body)
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    body_label.add_css_class("ft-dialog-confirm-body");
+    body_container.append(&body_label);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("ft-dialog-footer");
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    let cancel = gtk::Button::with_label("Cancel");
+    let confirm = gtk::Button::with_label(confirm_label);
+    confirm.add_css_class("destructive-action");
+    footer.append(&spacer);
+    footer.append(&cancel);
+    footer.append(&confirm);
+
+    let dialog_for_cancel = dialog.clone();
+    cancel.connect_clicked(move |_| dialog_for_cancel.close());
+    let dialog_for_confirm = dialog.clone();
+    confirm.connect_clicked(move |_| {
+        on_confirm();
+        dialog_for_confirm.close();
+    });
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&header);
+    content.append(&body_container);
+    content.append(&footer);
+    dialog.set_default_widget(Some(&cancel));
+    dialog.set_child(Some(&content));
+    dialog.present();
+    cancel.grab_focus();
+}
+
+pub(super) fn show_rename_workspace_dialog<W>(
+    parent: &W,
+    state: &SocketAppState,
+    workspace_id: &str,
+    current_name: &str,
+) where
+    W: IsA<gtk::Window>,
+{
+    let dialog = gtk::Window::builder()
+        .title("Rename Workspace")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(420)
+        .default_height(190)
+        .build();
+    dialog.add_css_class("ft-dialog");
+    apply_dialog_chrome(&dialog);
+    install_escape_close(&dialog);
+    restore_focus_after_hide(&dialog, parent);
+
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    header.add_css_class("ft-dialog-header");
+    let title = gtk::Label::builder()
+        .label("Rename Workspace")
+        .xalign(0.0)
+        .build();
+    title.add_css_class("ft-dialog-title");
+    let subtitle = gtk::Label::builder()
+        .label("Choose a short name that is easy to recognize in the sidebar and status bar.")
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    subtitle.add_css_class("ft-dialog-subtitle");
+    header.append(&title);
+    header.append(&subtitle);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    body.add_css_class("ft-dialog-body");
+    let entry = gtk::Entry::builder()
+        .text(current_name)
+        .placeholder_text("Workspace name")
+        .hexpand(true)
+        .build();
+    entry.update_property(&[gtk::accessible::Property::Label("Workspace name")]);
+    let status = gtk::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .visible(false)
+        .build();
+    status.add_css_class("ft-inline-status");
+    body.append(&entry);
+    body.append(&status);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("ft-dialog-footer");
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    let cancel = gtk::Button::with_label("Cancel");
+    let rename = gtk::Button::with_label("Rename");
+    rename.add_css_class("suggested-action");
+    rename.set_sensitive(false);
+    footer.append(&spacer);
+    footer.append(&cancel);
+    footer.append(&rename);
+
+    let current_name_owned = current_name.to_string();
+    let status_for_change = status.clone();
+    let rename_for_change = rename.clone();
+    entry.connect_changed(move |entry| {
+        let candidate = entry.text();
+        let trimmed = candidate.trim();
+        let valid = !trimmed.is_empty() && trimmed != current_name_owned;
+        rename_for_change.set_sensitive(valid);
+        if trimmed.is_empty() {
+            set_status_message(
+                &status_for_change,
+                "Workspace name cannot be empty.",
+                StatusKind::Error,
+            );
+        } else {
+            clear_status_message(&status_for_change);
+        }
+    });
+
+    let dialog_for_cancel = dialog.clone();
+    cancel.connect_clicked(move |_| dialog_for_cancel.close());
+
+    let state_for_rename = state.clone();
+    let workspace_id_for_rename = workspace_id.to_string();
+    let dialog_for_rename = dialog.clone();
+    let status_for_rename = status.clone();
+    let entry_for_rename = entry.clone();
+    rename.connect_clicked(move |_| {
+        match rename_workspace_gtk(
+            &state_for_rename,
+            &workspace_id_for_rename,
+            entry_for_rename.text().as_str(),
+        ) {
+            Ok(()) => dialog_for_rename.close(),
+            Err(err) => set_status_message(&status_for_rename, &err, StatusKind::Error),
+        }
+    });
+
+    let rename_for_activate = rename.clone();
+    entry.connect_activate(move |_| {
+        if rename_for_activate.is_sensitive() {
+            rename_for_activate.emit_clicked();
+        }
+    });
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&header);
+    content.append(&body);
+    content.append(&footer);
+    dialog.set_default_widget(Some(&rename));
+    dialog.set_child(Some(&content));
+    dialog.present();
+    entry.grab_focus();
+    entry.select_region(0, -1);
+}
+
+pub(super) fn set_accessible_button_text(
+    button: &gtk::Button,
+    label: &str,
+    shortcut: Option<&str>,
+) {
+    if let Some(shortcut) = shortcut {
+        button.update_property(&[
+            gtk::accessible::Property::Label(label),
+            gtk::accessible::Property::KeyShortcuts(shortcut),
+        ]);
+    } else {
+        button.update_property(&[gtk::accessible::Property::Label(label)]);
+    }
+}
+
+pub(super) fn set_status_message(label: &gtk::Label, message: &str, kind: StatusKind) {
+    label.set_text(message);
+    label.set_visible(!message.is_empty());
+    label.remove_css_class("success");
+    label.remove_css_class("error");
+    match kind {
+        StatusKind::Success => label.add_css_class("success"),
+        StatusKind::Error => label.add_css_class("error"),
+    }
+}
+
+pub(super) fn clear_status_message(label: &gtk::Label) {
+    label.set_text("");
+    label.set_visible(false);
+    label.remove_css_class("success");
+    label.remove_css_class("error");
+}
+
+pub(super) fn refresh_notification_indicator(button: &gtk::Button, state: &SocketAppState) {
+    let badge = button
+        .child()
+        .and_then(|child| child.downcast::<gtk::Overlay>().ok())
+        .and_then(|overlay| overlay.first_child())
+        .and_then(|first| first.next_sibling())
+        .and_then(|child| child.downcast::<gtk::Label>().ok());
+
+    let (total, unread) = state
+        .model
+        .lock()
+        .ok()
+        .map(|model| {
+            (
+                model.list_notifications().len(),
+                model.unread_notification_count(),
+            )
+        })
+        .unwrap_or((0, 0));
+    if unread == 0 {
+        button.remove_css_class("needs-attention");
+        if let Some(badge) = &badge {
+            badge.set_visible(false);
+        }
+        let label = if total == 0 {
+            "Notifications".to_string()
+        } else if total == 1 {
+            "Notifications: 1 read".to_string()
+        } else {
+            format!("Notifications: {total} read")
+        };
+        button.set_tooltip_text(Some(&format!("{label} (Ctrl+Shift+M)")));
+        set_accessible_button_text(button, &label, Some("Ctrl+Shift+M"));
+    } else {
+        button.add_css_class("needs-attention");
+        if let Some(badge) = &badge {
+            let display = if unread > 99 {
+                "99+".to_string()
+            } else {
+                unread.to_string()
+            };
+            badge.set_text(&display);
+            badge.set_visible(true);
+        }
+        let label = if unread == 1 {
+            "Notifications: 1 unread".to_string()
+        } else {
+            format!("Notifications: {unread} unread")
+        };
+        button.set_tooltip_text(Some(&format!("{label} (Ctrl+Shift+M)")));
+        set_accessible_button_text(button, &label, Some("Ctrl+Shift+M"));
+    }
+}
+
+pub(super) fn notification_kind_label(kind: NotificationKind) -> &'static str {
+    match kind {
+        NotificationKind::Prompt => "Prompt",
+        NotificationKind::Error => "Error",
+        NotificationKind::Info => "Info",
+        NotificationKind::Custom => "Custom",
+    }
+}
+
+pub(super) fn notification_kind_class(kind: NotificationKind) -> &'static str {
+    match kind {
+        NotificationKind::Prompt => "prompt",
+        NotificationKind::Error => "error",
+        NotificationKind::Info => "info",
+        NotificationKind::Custom => "custom",
+    }
+}
+
+pub(super) fn notification_age_label(created_at_ms: u128) -> String {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let elapsed = now_ms.saturating_sub(created_at_ms);
+    let seconds = elapsed / 1000;
+    if seconds < 60 {
+        "Just now".to_string()
+    } else if seconds < 60 * 60 {
+        format!("{}m ago", seconds / 60)
+    } else if seconds < 24 * 60 * 60 {
+        format!("{}h ago", seconds / 3600)
+    } else {
+        format!("{}d ago", seconds / 86_400)
+    }
+}
+
+pub(super) fn add_context_menu_item<F>(
+    menu: &gtk::Box,
+    popover: &gtk::Popover,
+    icon_name: &str,
+    label: &str,
+    destructive: bool,
+    action: F,
+) where
+    F: Fn() + 'static,
+{
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.set_hexpand(true);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.add_css_class("ft-menu-icon");
+    let label_widget = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .hexpand(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    label_widget.add_css_class("ft-menu-label");
+    content.append(&icon);
+    content.append(&label_widget);
+
+    let button = gtk::Button::builder().child(&content).build();
+    button.add_css_class("flat");
+    button.add_css_class("ft-menu-item");
+    if destructive {
+        button.add_css_class("destructive-action");
+    }
+    button.set_halign(gtk::Align::Fill);
+    let popover = popover.clone();
+    button.connect_clicked(move |_| {
+        action();
+        popover.popdown();
+    });
+    menu.append(&button);
+}
+
+pub(super) fn add_context_menu_header(menu: &gtk::Box, workspace: &forktty_core::Workspace) {
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    header.add_css_class("ft-menu-header");
+
+    let title = gtk::Label::builder()
+        .label(&workspace.name)
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    title.add_css_class("ft-menu-header-title");
+    let subtitle = gtk::Label::builder()
+        .label(compact_path(&workspace.working_dir))
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .build();
+    subtitle.add_css_class("ft-menu-header-subtitle");
+
+    header.append(&title);
+    header.append(&subtitle);
+    menu.append(&header);
+}
+
+pub(super) fn add_context_menu_separator(menu: &gtk::Box) {
+    let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+    sep.add_css_class("ft-menu-separator");
+    menu.append(&sep);
+}
+
+pub(super) fn copy_to_clipboard(text: &str) {
+    if let Some(display) = gtk::gdk::Display::default() {
+        display.clipboard().set_text(text);
+    }
+}
