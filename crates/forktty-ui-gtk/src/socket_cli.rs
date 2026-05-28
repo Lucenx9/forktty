@@ -1221,7 +1221,7 @@ fn handle_notify(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         None if !parsed.positionals.is_empty() => parsed.positionals.join(" "),
         None => stdin.trim().to_string(),
     };
-    let title = string_option(&parsed.options, "title", "--title")?.unwrap_or("ForkTTY");
+    let title = non_blank_string_option(&parsed.options, "title", "--title")?.unwrap_or("ForkTTY");
     let kind = non_blank_string_option(&parsed.options, "kind", "--kind")?.unwrap_or("info");
     if !matches!(kind, "prompt" | "error" | "info" | "custom") {
         return Err(CliError::new(format!("Invalid kind: {kind}")));
@@ -2184,6 +2184,11 @@ fn handle_worktree_status(context: &CliContext, args: Vec<String>) -> CliResult<
     }
     let path_option = non_blank_string_option(&parsed.options, "path", "--path")?;
     let cwd_option = non_blank_string_option(&parsed.options, "cwd", "--cwd")?;
+    if path_option.is_some() && cwd_option.is_some() {
+        return Err(CliError::new(
+            "worktree-status: cannot combine --path and --cwd",
+        ));
+    }
     let path_value = path_option
         .or(cwd_option)
         .map(|value| value.trim().to_string())
@@ -4814,6 +4819,25 @@ mod tests {
         assert_err_contains(
             handle_worktree_status(&test_context(), strings(&["--cwd"])),
             "--cwd requires a value",
+        );
+    }
+
+    #[test]
+    fn worktree_status_rejects_ambiguous_path_options() {
+        assert_err_contains(
+            handle_worktree_status(
+                &test_context(),
+                strings(&["--path", "/tmp/a", "--cwd", "/tmp/b"]),
+            ),
+            "worktree-status: cannot combine --path and --cwd",
+        );
+    }
+
+    #[test]
+    fn notify_rejects_blank_title_option() {
+        assert_err_contains(
+            handle_notify(&test_context(), strings(&["--title=", "--body", "body"])),
+            "--title requires a value",
         );
     }
 

@@ -407,8 +407,10 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
         return Err(WorktreeError::InvalidHookName(hook_name.to_string()));
     }
     let hook_path = Path::new(worktree_path).join(".forktty").join(hook_name);
-    if !hook_path.exists() {
-        return Ok(None);
+    match std::fs::symlink_metadata(&hook_path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
     }
     let canonical_hook =
         std::fs::canonicalize(&hook_path).map_err(WorktreeError::HookPathUnresolved)?;
@@ -777,36 +779,39 @@ fn ensure_local_exclude_for_worktree_path(
         std::fs::create_dir_all(parent)?;
     }
     let mut existing = String::new();
-    if exclude_path.exists() {
-        let metadata = std::fs::symlink_metadata(&exclude_path)?;
-        if !metadata.file_type().is_file() {
-            return Err(WorktreeError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                ".git/info/exclude must be a regular file",
-            )));
+    match std::fs::symlink_metadata(&exclude_path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(WorktreeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    ".git/info/exclude must be a regular file",
+                )));
+            }
+            if metadata.len() > MAX_EXCLUDE_BYTES {
+                return Err(WorktreeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    ".git/info/exclude is too large",
+                )));
+            }
+            File::open(&exclude_path)?
+                .take(MAX_EXCLUDE_BYTES + 1)
+                .read_to_string(&mut existing)?;
+            if existing.len() as u64 > MAX_EXCLUDE_BYTES {
+                return Err(WorktreeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    ".git/info/exclude is too large",
+                )));
+            }
+            if existing
+                .lines()
+                .map(str::trim)
+                .any(|line| line == ".worktrees/" || line == "/.worktrees/")
+            {
+                return Ok(());
+            }
         }
-        if metadata.len() > MAX_EXCLUDE_BYTES {
-            return Err(WorktreeError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                ".git/info/exclude is too large",
-            )));
-        }
-        File::open(&exclude_path)?
-            .take(MAX_EXCLUDE_BYTES + 1)
-            .read_to_string(&mut existing)?;
-        if existing.len() as u64 > MAX_EXCLUDE_BYTES {
-            return Err(WorktreeError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                ".git/info/exclude is too large",
-            )));
-        }
-        if existing
-            .lines()
-            .map(str::trim)
-            .any(|line| line == ".worktrees/" || line == "/.worktrees/")
-        {
-            return Ok(());
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
     }
     let mut file = OpenOptions::new()
         .create(true)
@@ -1163,6 +1168,33 @@ mod tests {
             result,
             Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_exclude_rejects_broken_symlink() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        let outside = dir.path().join("missing-outside-exclude");
+        fs::remove_file(&exclude_path).unwrap();
+        symlink(&outside, &exclude_path).unwrap();
+
+        let result = ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
+        ));
+        assert!(
+            !outside.exists(),
+            "broken exclude symlink target must not be created"
+        );
     }
 
     #[test]
@@ -1544,5 +1576,18 @@ mod tests {
         let result = run_hook(dir.path().to_str().unwrap(), "setup");
 
         assert!(matches!(result, Err(WorktreeError::HookOutsideWorktree)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_hook_rejects_broken_hook_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let hook_dir = dir.path().join(".forktty");
+        fs::create_dir_all(&hook_dir).unwrap();
+        symlink(dir.path().join("missing-setup"), hook_dir.join("setup")).unwrap();
+
+        let result = run_hook(dir.path().to_str().unwrap(), "setup");
+
+        assert!(matches!(result, Err(WorktreeError::HookPathUnresolved(_))));
     }
 }
