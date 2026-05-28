@@ -1420,6 +1420,27 @@ fn terminal_theme_presets_use_expected_ansi_values() {
 }
 
 #[test]
+fn command_palette_search_matches_labels_and_shortcuts() {
+    let copy = command_search_text("Copy", Some("Ctrl+Shift+C"));
+    let shortcuts = command_search_text("Keyboard Shortcuts", Some("F1"));
+
+    assert!(command_matches(&copy, "copy"));
+    assert!(command_matches(&copy, "ctrl shift c"));
+    assert!(command_matches(&copy, "ctrl+c"));
+    assert!(command_matches(&shortcuts, "f1"));
+    assert!(!command_matches(&copy, "paste"));
+}
+
+#[test]
+fn command_palette_search_supports_fuzzy_words() {
+    let split = command_search_text("Split Right", Some("Ctrl+Shift+H"));
+
+    assert!(command_matches(&split, "sr"));
+    assert!(command_matches(&split, "sp ri"));
+    assert!(!command_matches(&split, "split down"));
+}
+
+#[test]
 fn default_terminal_font_prefers_installed_nerd_font() {
     let families = vec![
         "Noto Sans Mono".to_string(),

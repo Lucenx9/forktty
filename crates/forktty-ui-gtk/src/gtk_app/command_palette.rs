@@ -199,8 +199,9 @@ pub(super) fn show_command_palette_with_query(
     let mut command_rows = Vec::new();
     macro_rules! command {
         ($label:expr, $shortcut:expr, $action:expr) => {{
-            let (row, button) = append_command_row(&list, $label, $shortcut, $action);
-            command_rows.push(($label.to_ascii_lowercase(), row, button));
+            let shortcut = $shortcut;
+            let (row, button) = append_command_row(&list, $label, shortcut, $action);
+            command_rows.push((command_search_text($label, shortcut), row, button));
         }};
     }
 
@@ -274,7 +275,7 @@ pub(super) fn show_command_palette_with_query(
             show_notification_panel(&parent, &state, controller.clone());
         }
     });
-    command!("Keyboard Shortcuts", None, {
+    command!("Keyboard Shortcuts", Some("F1"), {
         let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
@@ -521,6 +522,15 @@ pub(super) fn command_matches(label: &str, query: &str) -> bool {
     query
         .split_whitespace()
         .all(|token| is_subsequence(token, label))
+}
+
+pub(super) fn command_search_text(label: &str, shortcut: Option<&str>) -> String {
+    let mut search_text = label.to_ascii_lowercase();
+    if let Some(shortcut) = shortcut {
+        search_text.push(' ');
+        search_text.push_str(&shortcut.to_ascii_lowercase());
+    }
+    search_text
 }
 
 pub(super) fn is_subsequence(needle: &str, haystack: &str) -> bool {
