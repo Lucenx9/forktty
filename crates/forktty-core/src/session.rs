@@ -476,6 +476,11 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
     if data.version != SESSION_FORMAT_VERSION {
         return Err(SessionError::UnsupportedVersion(data.version));
     }
+    if data.workspaces.is_empty() {
+        return Err(SessionError::InvalidData(
+            "session must contain at least one workspace".to_string(),
+        ));
+    }
     let mut workspace_ids = HashSet::new();
     let mut surface_ids = HashSet::new();
     let active_flag_workspaces: Vec<&str> = data
@@ -712,6 +717,22 @@ mod tests {
             surfaces: Vec::new(),
         };
         validate_session_data(&data).unwrap();
+    }
+
+    #[test]
+    fn rejects_session_without_workspaces() {
+        let data = SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: Vec::new(),
+            active_workspace_id: None,
+            surfaces: Vec::new(),
+        };
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(message))
+                if message == "session must contain at least one workspace"
+        ));
     }
 
     #[test]

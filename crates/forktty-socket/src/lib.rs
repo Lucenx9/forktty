@@ -2078,6 +2078,14 @@ fn browser_import_selected_sources(
         .flat_map(|browser| browser.profiles.into_iter())
         .collect();
     if all {
+        if params
+            .get("sources")
+            .is_some_and(|sources| !sources.is_null())
+        {
+            return Err(DispatchError::InvalidParam(
+                "cannot combine all and sources".to_string(),
+            ));
+        }
         return Ok(discovered);
     }
 
@@ -2099,6 +2107,11 @@ fn browser_import_selected_sources(
         let id = value.as_str().ok_or_else(|| {
             DispatchError::InvalidParam("Invalid parameter sources: expected strings".to_string())
         })?;
+        if id.trim().is_empty() {
+            return Err(DispatchError::InvalidParam(
+                "sources must not include empty source ids".to_string(),
+            ));
+        }
         if !seen.insert(id.to_string()) {
             continue;
         }
@@ -2207,10 +2220,15 @@ fn browser_import_destination_from_params(
     let object = destination.as_object().ok_or_else(|| {
         DispatchError::InvalidParam("Invalid parameter destination: expected object".to_string())
     })?;
-    let kind = object
-        .get("kind")
-        .and_then(Value::as_str)
-        .ok_or(DispatchError::MissingParam("destination.kind"))?;
+    let kind = match object.get("kind") {
+        None | Some(Value::Null) => return Err(DispatchError::MissingParam("destination.kind")),
+        Some(Value::String(kind)) => kind.as_str(),
+        Some(_) => {
+            return Err(DispatchError::InvalidParam(
+                "Invalid parameter destination.kind: expected string".to_string(),
+            ));
+        }
+    };
     match kind {
         "existing" => {
             let value = object
@@ -2222,13 +2240,17 @@ fn browser_import_destination_from_params(
             )))
         }
         "create" => {
-            let name = object
-                .get("display_name")
-                .or_else(|| object.get("name"))
-                .and_then(Value::as_str)
-                .ok_or(DispatchError::MissingParam("destination.display_name"))?
-                .trim()
-                .to_string();
+            let name = match object.get("display_name").or_else(|| object.get("name")) {
+                None | Some(Value::Null) => {
+                    return Err(DispatchError::MissingParam("destination.display_name"));
+                }
+                Some(Value::String(name)) => name.trim().to_string(),
+                Some(_) => {
+                    return Err(DispatchError::InvalidParam(
+                        "Invalid parameter destination.display_name: expected string".to_string(),
+                    ));
+                }
+            };
             if name.is_empty() {
                 return Err(DispatchError::InvalidParam(
                     "destination.display_name must not be empty".to_string(),
@@ -2257,10 +2279,15 @@ fn browser_import_plan_from_params(
         });
     }
 
-    let mode = params
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or("default");
+    let mode = match params.get("mode") {
+        None | Some(Value::Null) => "default",
+        Some(Value::String(mode)) => mode.as_str(),
+        Some(_) => {
+            return Err(DispatchError::InvalidParam(
+                "Invalid parameter mode: expected string".to_string(),
+            ));
+        }
+    };
     match mode {
         "default" => {
             let preferred = optional_profile_param_in_store(store, params)?;
@@ -7012,6 +7039,52 @@ mod tests {
         .unwrap_err();
         assert_eq!(corrupt.code(), "error");
         assert!(corrupt.to_string().contains("import database error"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_import_rejects_ambiguous_and_invalid_params() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        for (method, params, expected) in [
+            (
+                "browser.import.preview",
+                json!({"all": true, "sources": ["firefox:/tmp/profile"]}),
+                "cannot combine all and sources",
+            ),
+            (
+                "browser.import.preview",
+                json!({"sources": [" \t "]}),
+                "sources must not include empty source ids",
+            ),
+            (
+                "browser.import.run",
+                json!({"all": true, "mode": 42}),
+                "Invalid parameter mode",
+            ),
+            (
+                "browser.import.run",
+                json!({"all": true, "destination": {"kind": 42}}),
+                "Invalid parameter destination.kind",
+            ),
+            (
+                "browser.import.run",
+                json!({"all": true, "destination": {"kind": "create", "display_name": 42}}),
+                "Invalid parameter destination.display_name",
+            ),
+        ] {
+            let err = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(err.code(), "invalid_param");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
     }
 
     #[tokio::test]
