@@ -977,7 +977,7 @@ pub async fn dispatch(
         }
         "browser.history.list" => {
             let profile = resolve_profile_param(&params)?;
-            let limit = history_limit_from_params(&params);
+            let limit = history_limit_from_params(&params)?;
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -986,9 +986,9 @@ pub async fn dispatch(
             Ok(json!(rows))
         }
         "browser.history.search" => {
-            let query = required_string_param(&params, "query")?.to_string();
+            let query = required_string(&params, "query")?.to_string();
             let profile = resolve_profile_param(&params)?;
-            let limit = history_limit_from_params(&params);
+            let limit = history_limit_from_params(&params)?;
             let store = forktty_core::HistoryStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
@@ -1006,17 +1006,13 @@ pub async fn dispatch(
             Ok(json!({ "cleared": true }))
         }
         "browser.bookmark.add" => {
-            let url = required_string_param(&params, "url")?.to_string();
-            if url.trim().is_empty() {
+            let url = required_string_param(&params, "url")?.trim().to_string();
+            if url.is_empty() {
                 return Err(DispatchError::InvalidParam(
                     "url must not be empty".to_string(),
                 ));
             }
-            let title = params
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let title = optional_bookmark_title(&params)?;
             let profile = resolve_profile_param(&params)?;
             let mut store = forktty_core::BookmarkStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
@@ -1032,7 +1028,12 @@ pub async fn dispatch(
             Ok(json!(store.list()))
         }
         "browser.bookmark.remove" => {
-            let url = required_string_param(&params, "url")?.to_string();
+            let url = required_string_param(&params, "url")?.trim().to_string();
+            if url.is_empty() {
+                return Err(DispatchError::InvalidParam(
+                    "url must not be empty".to_string(),
+                ));
+            }
             let profile = resolve_profile_param(&params)?;
             let mut store = forktty_core::BookmarkStore::for_profile(profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
@@ -2441,12 +2442,30 @@ async fn browser_import_run(
     }))
 }
 
-fn history_limit_from_params(params: &Value) -> usize {
-    params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .map(|n| n.min(10_000) as usize)
-        .unwrap_or(100)
+fn history_limit_from_params(params: &Value) -> Result<usize, DispatchError> {
+    match params.get("limit") {
+        None | Some(Value::Null) => Ok(100),
+        Some(value) => value
+            .as_u64()
+            .map(|n| n.min(10_000) as usize)
+            .ok_or_else(|| {
+                DispatchError::InvalidParam(
+                    "Invalid parameter limit: expected unsigned integer".to_string(),
+                )
+            }),
+    }
+}
+
+fn optional_bookmark_title(params: &Value) -> Result<String, DispatchError> {
+    match params.get("title") {
+        None | Some(Value::Null) => Ok(String::new()),
+        Some(value) => value
+            .as_str()
+            .map(|title| title.trim().to_string())
+            .ok_or_else(|| {
+                DispatchError::InvalidParam("Invalid parameter title: expected string".to_string())
+            }),
+    }
 }
 
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
@@ -6685,12 +6704,20 @@ mod tests {
 
     #[test]
     fn browser_history_limit_defaults_and_caps() {
-        assert_eq!(history_limit_from_params(&json!({})), 100);
-        assert_eq!(history_limit_from_params(&json!({"limit": 5})), 5);
+        assert_eq!(history_limit_from_params(&json!({})).unwrap(), 100);
         assert_eq!(
-            history_limit_from_params(&json!({"limit": u64::MAX})),
+            history_limit_from_params(&json!({"limit": null})).unwrap(),
+            100
+        );
+        assert_eq!(history_limit_from_params(&json!({"limit": 5})).unwrap(), 5);
+        assert_eq!(
+            history_limit_from_params(&json!({"limit": u64::MAX})).unwrap(),
             10_000
         );
+        assert!(matches!(
+            history_limit_from_params(&json!({"limit": "5"})),
+            Err(DispatchError::InvalidParam(_))
+        ));
     }
 
     #[tokio::test]
@@ -6998,6 +7025,14 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), "missing_param");
+
+        for query in [json!(""), json!(" \t "), json!(42)] {
+            let err = dispatch(&state, "browser.history.search", json!({"query": query}))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), "error");
+            assert!(err.to_string().contains("Invalid parameter query"));
+        }
     }
 
     #[tokio::test]
@@ -7011,6 +7046,77 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), "invalid_param");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_history_rejects_invalid_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        for (method, params) in [
+            ("browser.history.list", json!({"limit": "5"})),
+            ("browser.history.list", json!({"limit": -1})),
+            (
+                "browser.history.search",
+                json!({"query": "example", "limit": 1.5}),
+            ),
+        ] {
+            let err = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(err.code(), "invalid_param");
+            assert!(err.to_string().contains("Invalid parameter limit"));
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn browser_bookmark_trims_url_and_title_and_rejects_bad_remove_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::set("XDG_DATA_HOME", tmp.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let added = dispatch(
+            &state,
+            "browser.bookmark.add",
+            json!({"url": " https://trim.test/ ", "title": " Trimmed "}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added["added"], json!(true));
+
+        let listed = dispatch(&state, "browser.bookmark.list", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(listed[0]["url"], json!("https://trim.test/"));
+        assert_eq!(listed[0]["title"], json!("Trimmed"));
+
+        let invalid_title = dispatch(
+            &state,
+            "browser.bookmark.add",
+            json!({"url": "https://title.test/", "title": 42}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(invalid_title.code(), "invalid_param");
+        assert!(invalid_title
+            .to_string()
+            .contains("Invalid parameter title"));
+
+        let empty_remove = dispatch(&state, "browser.bookmark.remove", json!({"url": "  "}))
+            .await
+            .unwrap_err();
+        assert_eq!(empty_remove.code(), "invalid_param");
+        assert!(empty_remove.to_string().contains("url must not be empty"));
+
+        let removed = dispatch(
+            &state,
+            "browser.bookmark.remove",
+            json!({"url": " https://trim.test/ "}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed["removed"], json!(true));
     }
 
     #[tokio::test]
