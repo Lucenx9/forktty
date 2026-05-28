@@ -1,3 +1,4 @@
+use serde_json::json;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -29,9 +30,15 @@ pub enum CliAction {
     LaunchApp,
     PrintVersion,
     PrintHelp,
-    Doctor,
+    Doctor(DoctorOptions),
     SocketCli(Vec<OsString>),
     Unknown(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DoctorOptions {
+    pub json: bool,
+    pub strict: bool,
 }
 
 pub fn parse<I, S>(args: I) -> CliAction
@@ -50,13 +57,16 @@ where
     let action = match arg.to_str() {
         Some("--version") | Some("-V") => CliAction::PrintVersion,
         Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
-        Some("doctor") => CliAction::Doctor,
+        Some("doctor") => match parse_doctor_options(&rest[1..]) {
+            Ok(options) => CliAction::Doctor(options),
+            Err(flag) => CliAction::Unknown(flag),
+        },
         Some(command) if is_socket_cli_command(command) => return CliAction::SocketCli(rest),
         Some(option) if is_socket_cli_global_option(option) => return CliAction::SocketCli(rest),
         Some(other) => return CliAction::Unknown(other.to_string()),
         None => return CliAction::Unknown("<non-utf8>".to_string()),
     };
-    if rest.len() > 1 && !matches!(action, CliAction::SocketCli(_)) {
+    if rest.len() > 1 && !matches!(action, CliAction::SocketCli(_) | CliAction::Doctor(_)) {
         let extra = &rest[1];
         return match extra.to_str() {
             Some(value) => CliAction::Unknown(value.to_string()),
@@ -146,14 +156,40 @@ pub fn print_help() {
 /// `doctor` only inspects the same user's filesystem state and the
 /// values forktty would itself resolve on launch. It does not connect
 /// to the socket, spawn shells, or touch the network.
-pub fn run_doctor() -> i32 {
+pub fn run_doctor(options: DoctorOptions) -> i32 {
     let report = collect_report();
-    print!("{}", format_report(&report));
-    if report.has_warnings() {
+    if options.json {
+        println!("{}", format_report_json(&report));
+    } else {
+        print!("{}", format_report(&report));
+    }
+    doctor_exit_code(&report, options)
+}
+
+fn doctor_exit_code(report: &DoctorReport, options: DoctorOptions) -> i32 {
+    if options.strict && report.has_warnings() {
         2
     } else {
         0
     }
+}
+
+fn parse_doctor_options(args: &[OsString]) -> Result<DoctorOptions, String> {
+    let mut options = DoctorOptions {
+        json: false,
+        strict: false,
+    };
+    for arg in args {
+        let Some(flag) = arg.to_str() else {
+            return Err("<non-utf8>".to_string());
+        };
+        match flag {
+            "--json" => options.json = true,
+            "--strict" => options.strict = true,
+            other => return Err(other.to_string()),
+        }
+    }
+    Ok(options)
 }
 
 struct DoctorReport {
@@ -781,6 +817,51 @@ fn format_report(report: &DoctorReport) -> String {
     out
 }
 
+fn format_report_json(report: &DoctorReport) -> String {
+    let hooks: Vec<_> = report
+        .hooks
+        .iter()
+        .map(|hook| {
+            json!({
+                "agent": hook.agent,
+                "path": hook.path.display().to_string(),
+                "exists": hook.exists,
+                "is_regular_file": hook.is_regular_file,
+                "status": hook.status_label(),
+                "error": hook.error,
+            })
+        })
+        .collect();
+    json!({
+        "version": report.version,
+        "feature_gtk_vte": report.feature_gtk_vte,
+        "config": path_state_json(&report.config),
+        "data_dir": path_state_json(&report.data_dir),
+        "session": path_state_json(&report.session),
+        "socket_parent": path_state_json(&report.socket_parent),
+        "socket": path_state_json(&report.socket),
+        "shell": report.shell,
+        "shell_executable": report.shell_executable,
+        "hooks": hooks,
+        "warnings": report.warnings,
+    })
+    .to_string()
+}
+
+fn path_state_json(state: &PathState) -> serde_json::Value {
+    json!({
+        "label": state.label,
+        "path": state.path.as_ref().map(|p| p.display().to_string()),
+        "exists": state.exists,
+        "is_regular_file": state.is_regular_file,
+        "is_dir": state.is_dir,
+        "is_socket": state.is_socket,
+        "mode": state.mode,
+        "size": state.size,
+        "error": state.error,
+    })
+}
+
 fn format_path(state: &PathState) -> String {
     let path_str = state
         .path
@@ -847,7 +928,24 @@ mod tests {
 
     #[test]
     fn parse_doctor_subcommand() {
-        assert_eq!(parse::<_, &str>(["forktty", "doctor"]), CliAction::Doctor);
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor"]),
+            CliAction::Doctor(DoctorOptions {
+                json: false,
+                strict: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_doctor_flags() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--json", "--strict"]),
+            CliAction::Doctor(DoctorOptions {
+                json: true,
+                strict: true
+            })
+        );
     }
 
     #[test]
@@ -918,8 +1016,8 @@ mod tests {
     #[test]
     fn parse_rejects_extra_args_for_builtin_commands() {
         assert_eq!(
-            parse::<_, &str>(["forktty", "doctor", "--json"]),
-            CliAction::Unknown("--json".to_string())
+            parse::<_, &str>(["forktty", "doctor", "--wat"]),
+            CliAction::Unknown("--wat".to_string())
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "--help", "doctor"]),
@@ -938,6 +1036,64 @@ mod tests {
         assert!(rendered.contains("config.toml"));
         assert!(rendered.contains("forktty.sock"));
         assert!(rendered.contains("Agent hook configs"));
+    }
+
+    #[test]
+    fn doctor_json_output_is_parseable() {
+        let rendered = format_report_json(&collect_report());
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
+        assert!(parsed.get("warnings").is_some());
+        assert!(parsed.get("config").is_some());
+    }
+
+    #[test]
+    fn doctor_strict_exit_code_depends_on_warnings() {
+        let missing = |label| PathState {
+            label,
+            path: None,
+            exists: false,
+            is_regular_file: false,
+            is_dir: false,
+            is_socket: false,
+            mode: None,
+            size: None,
+            error: None,
+        };
+        let clean = DoctorReport {
+            version: "test",
+            feature_gtk_vte: false,
+            config: missing("config"),
+            data_dir: missing("data"),
+            session: missing("session"),
+            socket_parent: missing("socket parent"),
+            socket: missing("socket"),
+            shell: None,
+            shell_executable: false,
+            hooks: Vec::new(),
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            doctor_exit_code(
+                &clean,
+                DoctorOptions {
+                    json: false,
+                    strict: true
+                }
+            ),
+            0
+        );
+        let mut warn = clean;
+        warn.warnings.push("warn".to_string());
+        assert_eq!(
+            doctor_exit_code(
+                &warn,
+                DoctorOptions {
+                    json: true,
+                    strict: true
+                }
+            ),
+            2
+        );
     }
 
     #[test]
@@ -1032,6 +1188,23 @@ mod tests {
                 && warning.contains(&path.display().to_string())
                 && warning.contains("will be quarantined")
         }));
+        assert!(
+            fs::symlink_metadata(&path)
+                .expect("symlink still exists")
+                .file_type()
+                .is_symlink(),
+            "doctor must not mutate broken symlink"
+        );
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .all(|name| !name.to_string_lossy().contains(".bad-")),
+            "doctor unexpectedly created quarantine files: {siblings:?}"
+        );
     }
 
     #[test]

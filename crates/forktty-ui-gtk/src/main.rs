@@ -22,7 +22,7 @@ fn main() -> ExitCode {
             cli::print_help();
             ExitCode::SUCCESS
         }
-        cli::CliAction::Doctor => ExitCode::from(cli::run_doctor() as u8),
+        cli::CliAction::Doctor(options) => ExitCode::from(cli::run_doctor(options) as u8),
         cli::CliAction::SocketCli(args) => {
             ExitCode::from(socket_cli::run(args).clamp(0, 255) as u8)
         }

@@ -268,6 +268,11 @@ rebuilding.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
 - `forktty doctor --wat` prints `unknown argument: --wat` to stderr and exits 2
   instead of silently ignoring the extra argument.
+- `forktty doctor --json` prints valid JSON only.
+- `forktty doctor --strict` exits 2 when warnings exist and 0 when clean.
+- `forktty doctor --json --strict` still prints valid JSON only.
+- TODO (follow-up): add scoped doctor flags (`--hooks`, `--socket`, and
+  `--packaging`) once the output contract for targeted diagnostics is finalized.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published `.deb`.
 - Remove the package and confirm `/usr/bin/forktty` and the desktop entry are removed.
