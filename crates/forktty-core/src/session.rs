@@ -580,7 +580,12 @@ fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, Sess
         PaneNode::Leaf { tabs, .. } if tabs.is_empty() => Err(SessionError::InvalidData(
             "pane leaf must have at least one tab".to_string(),
         )),
-        PaneNode::Leaf { tabs, .. } => {
+        PaneNode::Leaf { tabs, active } => {
+            if *active >= tabs.len() {
+                return Err(SessionError::InvalidData(
+                    "pane leaf active tab index is out of bounds".to_string(),
+                ));
+            }
             for tab in tabs {
                 if tab.trim().is_empty() {
                     return Err(SessionError::InvalidData(
@@ -1096,6 +1101,22 @@ mod tests {
             active: 0,
         };
         data.workspaces[0].focused_surface_id = " \n ".to_string();
+
+        assert!(matches!(
+            validate_session_data(&data),
+            Err(SessionError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_session_leaf_with_active_tab_out_of_range() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.workspaces[0].pane_tree = PaneNode::Leaf {
+            tabs: vec![workspace.focused_surface_id.clone()],
+            active: 1,
+        };
 
         assert!(matches!(
             validate_session_data(&data),
