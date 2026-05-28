@@ -347,6 +347,58 @@ fn closed_surface_notification_is_not_openable() {
 }
 
 #[test]
+fn open_notification_target_keeps_previous_workspace_when_spawn_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (target_workspace_id, target_surface_id, active_workspace_id, active_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let target = model.create_workspace("target", &project_cwd);
+        let active = model.create_workspace("active", &project_cwd);
+        (
+            target.id,
+            target.focused_surface_id,
+            active.id,
+            active.focused_surface_id,
+        )
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+    let notification = {
+        let mut model = model.lock().unwrap();
+        model.create_notification(
+            "Prompt",
+            "Needs input",
+            NotificationKind::Prompt,
+            Some(target_workspace_id),
+            Some(target_surface_id),
+        )
+    };
+
+    assert!(!open_notification_target(&state, None, &notification));
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(active_workspace_id.as_str())
+    );
+    assert!(model.list_notifications().iter().any(|notification| {
+        notification.title == "Open Notification Failed"
+            && notification.body.contains("spawn failed")
+    }));
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, active_surface_id);
+}
+
+#[test]
 fn close_active_workspace_keeps_a_terminal_when_closing_last_workspace() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();

@@ -113,25 +113,34 @@ pub(super) fn open_notification_target(
         return false;
     };
 
-    {
+    if let Some(surface_id) = surface_id.as_deref() {
         let Ok(mut model) = state.model.lock() else {
             return false;
         };
-        let _ = model.select_workspace(WorkspaceSelector::Id(&workspace_id));
-        if let Some(surface_id) = surface_id.as_deref() {
-            let _ = model.focus_surface(surface_id);
-            let _ = model.mark_surface_unread(surface_id, false);
+        if !model.focus_surface(surface_id) {
+            return false;
         }
     }
 
-    if let Err(err) = spawn_focused_surface_if_needed(state) {
-        eprintln!("Failed to open notification target: {err}");
-        create_global_notification(
-            state,
-            "Open Notification Failed",
-            &err.to_string(),
-            NotificationKind::Error,
-        );
+    match select_workspace_with_terminal(state, &workspace_id) {
+        Ok(true) => {}
+        Ok(false) => return false,
+        Err(err) => {
+            eprintln!("Failed to open notification target: {err}");
+            create_global_notification(
+                state,
+                "Open Notification Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
+            return false;
+        }
+    }
+
+    if let Some(surface_id) = surface_id.as_deref() {
+        if let Ok(mut model) = state.model.lock() {
+            let _ = model.mark_surface_unread(surface_id, false);
+        }
     }
     if let Some(controller) = controller {
         controller.borrow_mut().rebuild_layout();
@@ -273,6 +282,8 @@ pub(super) fn show_notification_panel(
                 .xalign(0.0)
                 .hexpand(true)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
+                .max_width_chars(48)
+                .single_line_mode(true)
                 .build();
             title.add_css_class("notification-title");
             let age = gtk::Label::builder()
@@ -345,6 +356,8 @@ pub(super) fn show_notification_panel(
                 .label(&notification.body)
                 .xalign(0.0)
                 .wrap(true)
+                .wrap_mode(gtk::pango::WrapMode::WordChar)
+                .selectable(true)
                 .build();
             body_label.add_css_class("notification-body");
 
@@ -355,6 +368,8 @@ pub(super) fn show_notification_panel(
                     .label(target)
                     .xalign(0.0)
                     .ellipsize(gtk::pango::EllipsizeMode::Middle)
+                    .max_width_chars(58)
+                    .single_line_mode(true)
                     .build();
                 target_label.add_css_class("notification-target");
                 card.append(&target_label);
