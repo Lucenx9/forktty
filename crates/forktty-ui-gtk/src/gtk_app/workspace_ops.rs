@@ -173,6 +173,63 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
     true
 }
 
+pub(super) fn close_tab_surface(state: &SocketAppState, surface_id: &str) -> bool {
+    let is_multi_tab = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        let Some(surface) = model.surface(surface_id) else {
+            return false;
+        };
+        let Some(workspace) = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == surface.workspace_id)
+        else {
+            return false;
+        };
+        surface_is_in_multi_tab_leaf(&workspace.pane_tree, surface_id)
+    };
+    if !is_multi_tab {
+        return false;
+    }
+
+    match state.terminal.close(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+        Err(err) => {
+            eprintln!("Failed to close tab terminal: {err}");
+            create_global_notification(
+                state,
+                "Close Tab Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
+            return false;
+        }
+    }
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        if model.close_surface(surface_id).is_none() {
+            return false;
+        }
+    }
+    save_session_from_state(state);
+    true
+}
+
+pub(super) fn surface_is_in_multi_tab_leaf(node: &PaneNode, surface_id: &str) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, .. } => tabs.len() > 1 && tabs.iter().any(|id| id == surface_id),
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .any(|child| surface_is_in_multi_tab_leaf(child, surface_id)),
+    }
+}
+
 pub(super) fn close_active_surface(state: &SocketAppState) {
     let (focused, root_replacement) = {
         let mut model = match state.model.lock() {

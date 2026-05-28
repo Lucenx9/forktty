@@ -401,6 +401,87 @@ fn close_active_surface_keeps_old_surface_when_replacement_spawn_fails() {
 }
 
 #[test]
+fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        (workspace.id, workspace.focused_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    add_new_tab_surface(&state, &surface_id);
+
+    let model = model.lock().unwrap();
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.focused_surface_id, surface_id);
+    assert_eq!(
+        workspace.pane_tree.leaf_tabs().unwrap(),
+        std::slice::from_ref(&surface_id)
+    );
+    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert!(model.list_notifications().iter().any(|notification| {
+        notification.title == "New Tab Failed" && notification.body.contains("spawn failed")
+    }));
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, surface_id);
+}
+
+#[test]
+fn split_active_surface_rolls_back_model_when_spawn_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        (workspace.id, workspace.focused_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    split_active_surface(&state, SplitAxis::Horizontal);
+
+    let model = model.lock().unwrap();
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.focused_surface_id, surface_id);
+    assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
+    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert!(model.list_notifications().iter().any(|notification| {
+        notification.title == "Split Failed" && notification.body.contains("spawn failed")
+    }));
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, surface_id);
+}
+
+#[test]
 fn restored_ssh_surface_respawns_with_ssh_shell() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
@@ -681,6 +762,145 @@ fn close_active_workspace_keeps_model_when_backend_close_fails() {
             |notification| notification.title == "Close Workspace Failed"
                 && notification.body.contains("close failed")
         ));
+}
+
+#[test]
+fn close_tab_keeps_model_when_backend_close_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(CloseFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, first_surface_id, second_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        let first_surface_id = workspace.focused_surface_id.clone();
+        let second = model.add_tab(&first_surface_id).unwrap();
+        (workspace.id, first_surface_id, second.id)
+    };
+    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
+        terminal
+            .spawn(SpawnRequest::for_surface(
+                &surface,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            ))
+            .unwrap();
+    }
+
+    assert!(!close_tab_surface(&state, &second_surface_id));
+
+    let model = model.lock().unwrap();
+    assert!(model.surface(&first_surface_id).is_some());
+    assert!(model.surface(&second_surface_id).is_some());
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert!(surface_is_in_multi_tab_leaf(
+        &workspace.pane_tree,
+        &second_surface_id
+    ));
+    assert!(model.list_notifications().iter().any(|notification| {
+        notification.title == "Close Tab Failed" && notification.body.contains("close failed")
+    }));
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 2);
+    assert!(backend_surfaces
+        .iter()
+        .any(|surface| surface.surface_id == second_surface_id));
+}
+
+#[test]
+fn close_tab_surface_closes_model_and_backend_for_non_last_tab() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, first_surface_id, second_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        let first_surface_id = workspace.focused_surface_id.clone();
+        let second = model.add_tab(&first_surface_id).unwrap();
+        (workspace.id, first_surface_id, second.id)
+    };
+    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
+        terminal
+            .spawn(SpawnRequest::for_surface(
+                &surface,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            ))
+            .unwrap();
+    }
+
+    assert!(close_tab_surface(&state, &second_surface_id));
+
+    let model = model.lock().unwrap();
+    assert!(model.surface(&first_surface_id).is_some());
+    assert!(model.surface(&second_surface_id).is_none());
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.focused_surface_id, first_surface_id);
+    assert_eq!(
+        workspace.pane_tree.leaf_tabs().unwrap(),
+        std::slice::from_ref(&first_surface_id)
+    );
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, first_surface_id);
+}
+
+#[test]
+fn close_tab_surface_refuses_single_tab_leaf() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        (workspace.id, workspace.focused_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    assert!(!close_tab_surface(&state, &surface_id));
+
+    let model = model.lock().unwrap();
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.focused_surface_id, surface_id);
+    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    let backend_surfaces = terminal.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, surface_id);
 }
 
 #[test]

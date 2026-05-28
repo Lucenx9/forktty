@@ -700,7 +700,6 @@ impl VteController {
             close.set_tooltip_text(Some("Close Tab"));
             set_accessible_button_text(&close, "Close Tab", None);
 
-            let model_for_close = self.model.clone();
             let state_for_close = self.state.clone();
             let parent_for_close = self.parent_window.clone();
             let close_id = surface_id.clone();
@@ -713,18 +712,7 @@ impl VteController {
                     return;
                 }
                 if let Some(state) = &state_for_close {
-                    match state.terminal.close(&close_id) {
-                        Ok(()) | Err(TerminalError::NotFound(_)) => {}
-                        Err(err) => {
-                            eprintln!("Failed to close tab terminal: {err}");
-                        }
-                    }
-                }
-                if let Ok(mut m) = model_for_close.lock() {
-                    let _ = m.close_surface(&close_id);
-                }
-                if let Some(state) = &state_for_close {
-                    save_session_from_state(state);
+                    close_tab_surface(state, &close_id);
                 }
             });
 
