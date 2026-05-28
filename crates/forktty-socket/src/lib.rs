@@ -1831,7 +1831,10 @@ fn workspace_create_name_from_params(params: &Value) -> Result<&str, DispatchErr
         return Ok("workspace");
     };
     match value.as_str().map(str::trim) {
-        Some(name) if !name.is_empty() => Ok(name),
+        Some(name) if !name.is_empty() => {
+            ensure_max_text_size("name", name)?;
+            Ok(name)
+        }
         Some(_) => Err("Invalid parameter name: must not be empty".into()),
         None => Err("Invalid parameter name: expected string".into()),
     }
@@ -4876,6 +4879,25 @@ mod tests {
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         assert_eq!(workspaces.as_array().unwrap().len(), 1);
         assert_eq!(workspaces[0]["name"], "main");
+    }
+
+    #[tokio::test]
+    async fn workspace_create_rejects_oversized_name() {
+        let (state, _backend) = test_state();
+
+        let oversized = "x".repeat(MAX_METADATA_TEXT_BYTES + 1);
+        let error = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": oversized, "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.code(), "payload_too_large");
+
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]

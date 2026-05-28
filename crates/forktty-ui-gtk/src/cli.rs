@@ -269,6 +269,7 @@ fn collect_report() -> DoctorReport {
     let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
     let session = describe_session_path(session_path);
     append_path_error_warning(&mut warnings, &data_dir);
+    append_data_dir_warning(&mut warnings, &data_dir);
     append_path_error_warning(&mut warnings, &session);
     append_launch_quarantine_warnings(
         &mut warnings,
@@ -451,6 +452,15 @@ fn append_socket_parent_warning(warnings: &mut Vec<String>, state: &PathState) {
     if state.exists && !state.is_dir && state.error.is_none() {
         warnings.push(format!(
             "socket parent {} exists but is not a directory; ForkTTY cannot bind its socket there.",
+            path_display(state)
+        ));
+    }
+}
+
+fn append_data_dir_warning(warnings: &mut Vec<String>, state: &PathState) {
+    if state.exists && !state.is_dir && state.error.is_none() {
+        warnings.push(format!(
+            "data dir {} exists but is not a directory; ForkTTY cannot store session state there.",
             path_display(state)
         ));
     }
@@ -1344,6 +1354,22 @@ mod tests {
 
         assert!(warnings.iter().any(|warning| {
             warning.contains(&parent_path.display().to_string())
+                && warning.contains("not a directory")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_data_dir_is_not_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_path = dir.path().join("forktty");
+        fs::write(&data_path, "not a directory").unwrap();
+        let state = describe_followed_path("data dir", Some(data_path.clone()));
+        let mut warnings = Vec::new();
+
+        append_data_dir_warning(&mut warnings, &state);
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains(&data_path.display().to_string())
                 && warning.contains("not a directory")
         }));
     }

@@ -27,7 +27,7 @@ pub enum WorktreeError {
     BranchNotFound(String),
     #[error("Worktree '{0}' not found")]
     NotFound(String),
-    #[error("Merge conflicts detected; resolve manually in the worktree")]
+    #[error("Merge conflicts detected; the merge was aborted and the checkout restored. Reconcile the branches manually before retrying")]
     MergeConflicts,
     #[error("Already up to date")]
     UpToDate,
@@ -343,6 +343,13 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
         repo.merge(&[&annotated_commit], None, None)?;
         let mut index = repo.index()?;
         if index.has_conflicts() {
+            // `repo.merge` has written conflict markers into the current
+            // checkout and set MERGE_HEAD. Abort it so the checkout is left
+            // clean instead of stranding the user in a half-merged state.
+            let mut checkout = git2::build::CheckoutBuilder::new();
+            checkout.force();
+            repo.checkout_head(Some(&mut checkout))?;
+            repo.cleanup_state()?;
             return Err(WorktreeError::MergeConflicts);
         }
         index.write()?;
@@ -1343,6 +1350,23 @@ mod tests {
         let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
 
         assert!(matches!(result, Err(WorktreeError::TargetDirty)));
+    }
+
+    #[test]
+    fn merge_conflict_aborts_and_restores_clean_checkout() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "merge-conflict", "nested").unwrap();
+        // Diverge the two branches with conflicting edits to the same file so
+        // the merge resolves to ANALYSIS_NORMAL with conflicts.
+        commit_file(Path::new(&info.path), "note.txt", "from branch\n");
+        commit_file(dir.path(), "note.txt", "from main\n");
+
+        let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
+
+        assert!(matches!(result, Err(WorktreeError::MergeConflicts)));
+        // The failed merge must leave the checkout clean, not half-merged.
+        assert_eq!(status(dir.path().to_str().unwrap()).unwrap(), "clean");
+        assert!(!dir.path().join(".git/MERGE_HEAD").exists());
     }
 
     #[test]

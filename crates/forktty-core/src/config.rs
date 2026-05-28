@@ -257,8 +257,14 @@ pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
     }
 
     let mut content = String::new();
-    file.take(MAX_CONFIG_SIZE_BYTES)
+    file.take(MAX_CONFIG_SIZE_BYTES + 1)
         .read_to_string(&mut content)?;
+    // Guard against the file growing between the metadata check and the read:
+    // `take(MAX)` would silently truncate and feed a partial TOML document to
+    // the parser. Reject instead of parsing a truncated config.
+    if content.len() as u64 > MAX_CONFIG_SIZE_BYTES {
+        return Err(ConfigError::Invalid("Config file is too large".to_string()));
+    }
     let config = normalize_loaded_config(toml::from_str(&content)?);
     validate_config(&config)?;
     Ok(config)
@@ -562,6 +568,24 @@ mod tests {
             load_config_from_path(&path),
             Err(ConfigError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn loaded_config_accepts_file_at_exactly_max_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let base = "[general]\nshell = \"/bin/sh\"\n";
+        let pad = MAX_CONFIG_SIZE_BYTES as usize - base.len();
+        // Pad to exactly the cap with a trailing comment. The read uses
+        // `take(MAX + 1)` and rejects only when content exceeds MAX, so a file
+        // sitting precisely at the boundary must still load.
+        let content = format!("{base}#{}", "a".repeat(pad - 1));
+        assert_eq!(content.len() as u64, MAX_CONFIG_SIZE_BYTES);
+        fs::write(&path, &content).unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.general.shell, "/bin/sh");
     }
 
     #[test]

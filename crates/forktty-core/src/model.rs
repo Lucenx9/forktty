@@ -339,7 +339,12 @@ impl WorkspaceModel {
                 self.surfaces.insert(surface.id.clone(), surface);
             }
             self.next_workspace = self.next_workspace.max(numeric_suffix(&workspace.id));
-            self.workspace_order.push(workspace.id.clone());
+            // `workspaces` is a map (dedups on id) but `workspace_order` is a
+            // Vec; pushing unconditionally would list a duplicated id twice if
+            // the session data ever contains two workspaces sharing an id.
+            if !self.workspaces.contains_key(&workspace.id) {
+                self.workspace_order.push(workspace.id.clone());
+            }
             self.workspaces.insert(workspace.id.clone(), workspace);
         }
         if !self.workspaces.values().any(|workspace| workspace.active) {
@@ -2744,6 +2749,31 @@ mod tests {
         let workspaces = restored.list_workspaces();
         assert!(workspaces[0].active);
         assert!(!workspaces[1].active);
+    }
+
+    #[test]
+    fn restore_session_dedups_workspace_order_on_duplicate_ids() {
+        let mut source = WorkspaceModel::new();
+        source.create_workspace("first", "/tmp/a");
+        source.create_workspace("second", "/tmp/b");
+        let mut data = source.to_session_data();
+        // Force the two workspaces to share an id. `workspaces` is a map so it
+        // collapses to one entry; `workspace_order` must not list it twice.
+        let shared_id = data.workspaces[0].id.clone();
+        data.workspaces[1].id = shared_id.clone();
+        data.workspaces[1].pane_tree =
+            PaneNode::single_leaf(data.workspaces[1].focused_surface_id.clone());
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+
+        let workspaces = restored.list_workspaces();
+        let occurrences = workspaces
+            .iter()
+            .filter(|workspace| workspace.id == shared_id)
+            .count();
+        assert_eq!(occurrences, 1);
+        crate::session::validate_session_data(&restored.to_session_data()).unwrap();
     }
 
     #[test]
