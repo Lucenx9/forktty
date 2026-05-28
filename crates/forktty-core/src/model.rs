@@ -3743,4 +3743,93 @@ mod tests {
         assert_eq!(tabs, &["surface-42"]);
         assert_eq!(leaf.leaf_active_id(), Some(&"surface-42".to_string()));
     }
+
+    fn assert_workspace_model_invariants(model: &WorkspaceModel) {
+        use std::collections::BTreeSet;
+
+        let workspaces = model.list_workspaces();
+        let workspace_ids: BTreeSet<_> = workspaces.iter().map(|ws| ws.id.clone()).collect();
+        let surface_ids: BTreeSet<_> = model
+            .list_surfaces(None)
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+
+        for workspace in &workspaces {
+            assert!(
+                surface_ids.contains(&workspace.focused_surface_id),
+                "focused surface {} must exist",
+                workspace.focused_surface_id
+            );
+            let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
+            assert!(
+                leaf_ids.contains(&workspace.focused_surface_id),
+                "focused surface {} must be in the pane tree",
+                workspace.focused_surface_id
+            );
+            for leaf_id in leaf_ids {
+                assert!(
+                    surface_ids.contains(&leaf_id),
+                    "pane leaf {} must reference an existing surface",
+                    leaf_id
+                );
+            }
+            for surface in model.list_surfaces(Some(&workspace.id)) {
+                assert!(
+                    workspace_ids.contains(&surface.workspace_id),
+                    "surface {} must belong to an existing workspace",
+                    surface.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn close_workspace_removes_workspace_scoped_metadata() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("first", "/tmp/first");
+        let second = model.create_workspace("second", "/tmp/second");
+        model
+            .set_status(&second.id, "qa", "QA", "Running", None)
+            .expect("set status");
+        model
+            .set_progress(&second.id, "build", "Build", 1.0, Some(10.0))
+            .expect("set progress");
+        model
+            .append_log(&second.id, LogLevel::Info, "hello")
+            .expect("append log");
+
+        let removed = model
+            .close_workspace(WorkspaceSelector::Id(&second.id))
+            .expect("workspace removed");
+        assert_eq!(removed.id, second.id);
+        assert!(model.list_status(&second.id).is_empty());
+        assert!(model.list_progress(&second.id).is_empty());
+        assert!(model.list_logs(&second.id).is_empty());
+        assert_workspace_model_invariants(&model);
+        assert_eq!(model.list_workspaces().len(), 1);
+        assert_eq!(model.list_workspaces()[0].id, first.id);
+    }
+
+    #[test]
+    fn invariants_hold_after_split_focus_close_and_restore() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let initial = workspace.focused_surface_id.clone();
+        let right = model
+            .split_surface(&initial, SplitAxis::Horizontal)
+            .expect("split");
+        assert_workspace_model_invariants(&model);
+
+        assert!(model.focus_surface(&initial));
+        assert_workspace_model_invariants(&model);
+
+        model.close_surface(&right.id).expect("close split surface");
+        assert_workspace_model_invariants(&model);
+
+        let session = model.to_session_data();
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(session);
+        assert_workspace_model_invariants(&restored);
+    }
 }

@@ -967,7 +967,10 @@ impl VteController {
                 .build();
             label.add_css_class("pane-tab-label");
 
-            let select = gtk::Button::builder().has_frame(false).hexpand(true).build();
+            let select = gtk::Button::builder()
+                .has_frame(false)
+                .hexpand(true)
+                .build();
             select.add_css_class("flat");
             select.add_css_class("pane-tab-select");
             select.set_child(Some(&label));

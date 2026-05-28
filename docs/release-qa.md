@@ -17,6 +17,26 @@ bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```
 
+### Already covered by automated tests
+
+The following release checks are now covered by headless Rust tests (core/socket
+or CLI parser tests), so they should be treated as regressions if they fail in CI:
+
+- socket CLI option parsing (`--socket` placement, missing values, unknown flags,
+  selector ambiguity, and unexpected positional arguments)
+- socket payload and parameter validation (`payload_too_large`, invalid enum/string
+  fields, and ambiguous selectors)
+- session/config quarantine and recovery paths (broken JSON, oversized payloads,
+  broken symlinks, and invalid workspace/surface invariants)
+- workspace model invariants around split/focus/close/restore and metadata cleanup
+  after workspace removal
+- hook installer safety paths (dry-run semantics, symlink handling, invalid JSON,
+  and backup behavior)
+
+Manual QA below should focus on runtime integration that headless tests cannot
+fully prove (GTK/VTE/WebKit lifecycle, desktop environment integration, and
+packaging/runtime service availability).
+
 ## Manual Runtime Smoke
 
 - Start from a clean config/session directory.
@@ -248,6 +268,11 @@ rebuilding.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
 - `forktty doctor --wat` prints `unknown argument: --wat` to stderr and exits 2
   instead of silently ignoring the extra argument.
+- `forktty doctor --json` prints valid JSON only.
+- `forktty doctor --strict` exits 2 when warnings exist and 0 when clean.
+- `forktty doctor --json --strict` still prints valid JSON only.
+- TODO (follow-up): add scoped doctor flags (`--hooks`, `--socket`, and
+  `--packaging`) once the output contract for targeted diagnostics is finalized.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published `.deb`.
 - Remove the package and confirm `/usr/bin/forktty` and the desktop entry are removed.
