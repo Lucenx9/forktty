@@ -1507,11 +1507,18 @@ fn settings_number_value_clamps_parsed_and_fallback_values() {
 #[test]
 fn command_palette_search_matches_labels_and_shortcuts() {
     let copy = command_search_text("Copy", Some("Ctrl+Shift+C"));
+    let new_tab = command_search_text("New Tab", Some("Ctrl+Shift+T"));
+    let settings = command_search_text("Settings", Some("Ctrl+,"));
+    let sidebar = command_search_text("Toggle Sidebar", Some("Ctrl+B / F9"));
     let shortcuts = command_search_text("Keyboard Shortcuts", Some("F1"));
 
     assert!(command_matches(&copy, "copy"));
     assert!(command_matches(&copy, "ctrl shift c"));
     assert!(command_matches(&copy, "ctrl+c"));
+    assert!(command_matches(&new_tab, "new tab"));
+    assert!(command_matches(&new_tab, "ctrl shift t"));
+    assert!(command_matches(&settings, "ctrl,"));
+    assert!(command_matches(&sidebar, "f9"));
     assert!(command_matches(&shortcuts, "f1"));
     assert!(!command_matches(&copy, "paste"));
 }

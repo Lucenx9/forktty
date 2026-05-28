@@ -42,6 +42,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         &content,
         "Panes",
         &[
+            ("New Tab", "Ctrl+Shift+T"),
             ("Split Right", "Ctrl+Shift+H"),
             ("Split Down", SPLIT_VERTICAL_SHORTCUT),
             ("Restart Pane", RESTART_PANE_SHORTCUT),
@@ -171,7 +172,7 @@ pub(super) fn show_command_palette_with_query(
         .build();
     title.add_css_class("ft-dialog-title");
     let subtitle = gtk::Label::builder()
-        .label("Run a workspace or pane command.")
+        .label("Run a workspace, pane, or app command.")
         .xalign(0.0)
         .build();
     subtitle.add_css_class("ft-dialog-subtitle");
@@ -218,6 +219,16 @@ pub(super) fn show_command_palette_with_query(
         let dialog = dialog.clone();
         move || {
             split_active_surface(&state, SplitAxis::Vertical);
+            dialog.close();
+        }
+    });
+    command!("New Tab", Some("Ctrl+Shift+T"), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(surface_id) = focused_surface_id(&state) {
+                add_new_tab_surface(&state, &surface_id);
+            }
             dialog.close();
         }
     });
@@ -273,6 +284,22 @@ pub(super) fn show_command_palette_with_query(
         move || {
             dialog.close();
             show_notification_panel(&parent, &state, controller.clone());
+        }
+    });
+    command!("Settings", Some("Ctrl+,"), {
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        move || {
+            dialog.close();
+            activate_app_action(&parent, "settings");
+        }
+    });
+    command!("Toggle Sidebar", Some("Ctrl+B / F9"), {
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        move || {
+            dialog.close();
+            activate_app_action(&parent, "toggle-sidebar");
         }
     });
     command!("Keyboard Shortcuts", Some("F1"), {
@@ -590,4 +617,14 @@ where
     row.set_child(Some(&button));
     list.append(&row);
     (row, button)
+}
+
+pub(super) fn activate_app_action(parent: &adw::ApplicationWindow, action_name: &str) -> bool {
+    parent
+        .application()
+        .and_then(|app| app.lookup_action(action_name))
+        .is_some_and(|action| {
+            action.activate(None);
+            true
+        })
 }
