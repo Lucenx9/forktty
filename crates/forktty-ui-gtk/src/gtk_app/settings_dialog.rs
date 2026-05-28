@@ -949,19 +949,18 @@ pub(super) fn show_browser_import_dialog(parent: &adw::ApplicationWindow, state:
         let import_button = import.clone();
         let status = status.clone();
         preview.connect_clicked(move |_| {
-            let Some(params) = browser_import_dialog_params(
+            let params = match browser_import_dialog_params(
                 &checks,
                 &include_history,
                 &include_bookmarks,
                 &include_cookies,
                 None,
-            ) else {
-                set_status_message(
-                    &status,
-                    "Select at least one source profile.",
-                    StatusKind::Error,
-                );
-                return;
+            ) {
+                Ok(params) => params,
+                Err(err) => {
+                    set_status_message(&status, err.message(), StatusKind::Error);
+                    return;
+                }
             };
             preview_button.set_sensitive(false);
             import_button.set_sensitive(false);
@@ -1012,19 +1011,18 @@ pub(super) fn show_browser_import_dialog(parent: &adw::ApplicationWindow, state:
             } else {
                 active_id.map(|id| json!({"kind": "existing", "profile": id}))
             };
-            let Some(params) = browser_import_dialog_params(
+            let params = match browser_import_dialog_params(
                 &checks,
                 &include_history,
                 &include_bookmarks,
                 &include_cookies,
                 destination,
-            ) else {
-                set_status_message(
-                    &status,
-                    "Select at least one source profile.",
-                    StatusKind::Error,
-                );
-                return;
+            ) {
+                Ok(params) => params,
+                Err(err) => {
+                    set_status_message(&status, err.message(), StatusKind::Error);
+                    return;
+                }
             };
             preview_button.set_sensitive(false);
             import_button.set_sensitive(false);
@@ -1049,6 +1047,23 @@ pub(super) fn show_browser_import_dialog(parent: &adw::ApplicationWindow, state:
     }
 
     dialog.present();
+}
+
+#[cfg(feature = "browser")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BrowserImportDialogParamError {
+    NoSources,
+    NoData,
+}
+
+#[cfg(feature = "browser")]
+impl BrowserImportDialogParamError {
+    fn message(self) -> &'static str {
+        match self {
+            Self::NoSources => "Select at least one source profile.",
+            Self::NoData => "Select at least one data type to import.",
+        }
+    }
 }
 
 #[cfg(feature = "browser")]
@@ -1098,28 +1113,48 @@ pub(super) fn browser_import_dialog_params(
     include_bookmarks: &gtk::CheckButton,
     include_cookies: &gtk::CheckButton,
     destination: Option<Value>,
-) -> Option<Value> {
+) -> Result<Value, BrowserImportDialogParamError> {
     let sources: Vec<Value> = checks
         .borrow()
         .iter()
         .filter(|(_, check)| check.is_active())
         .map(|(id, _)| Value::String(id.clone()))
         .collect();
+    browser_import_dialog_params_from_parts(
+        sources,
+        include_history.is_active(),
+        include_bookmarks.is_active(),
+        include_cookies.is_active(),
+        destination,
+    )
+}
+
+#[cfg(feature = "browser")]
+pub(super) fn browser_import_dialog_params_from_parts(
+    sources: Vec<Value>,
+    include_history: bool,
+    include_bookmarks: bool,
+    include_cookies: bool,
+    destination: Option<Value>,
+) -> Result<Value, BrowserImportDialogParamError> {
     if sources.is_empty() {
-        return None;
+        return Err(BrowserImportDialogParamError::NoSources);
+    }
+    if !(include_history || include_bookmarks || include_cookies) {
+        return Err(BrowserImportDialogParamError::NoData);
     }
     let mut params = json!({
         "sources": sources,
         "include": {
-            "history": include_history.is_active(),
-            "bookmarks": include_bookmarks.is_active(),
-            "cookies": include_cookies.is_active(),
+            "history": include_history,
+            "bookmarks": include_bookmarks,
+            "cookies": include_cookies,
         }
     });
     if let Some(destination) = destination {
         params["destination"] = destination;
     }
-    Some(params)
+    Ok(params)
 }
 
 #[cfg(feature = "browser")]

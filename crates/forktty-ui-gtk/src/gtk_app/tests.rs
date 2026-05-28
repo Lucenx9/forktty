@@ -882,6 +882,55 @@ fn socket_path_env_ignores_blank_and_relative_values() {
     );
 }
 
+#[cfg(feature = "browser")]
+#[test]
+fn browser_import_dialog_params_rejects_empty_source_selection() {
+    let err =
+        browser_import_dialog_params_from_parts(Vec::new(), true, true, true, None).unwrap_err();
+
+    assert_eq!(err, BrowserImportDialogParamError::NoSources);
+}
+
+#[cfg(feature = "browser")]
+#[test]
+fn browser_import_dialog_params_rejects_empty_data_selection() {
+    let err = browser_import_dialog_params_from_parts(
+        vec![serde_json::json!("firefox:/tmp/profile")],
+        false,
+        false,
+        false,
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(err, BrowserImportDialogParamError::NoData);
+}
+
+#[cfg(feature = "browser")]
+#[test]
+fn browser_import_dialog_params_builds_include_and_destination() {
+    let params = browser_import_dialog_params_from_parts(
+        vec![serde_json::json!("firefox:/tmp/profile")],
+        true,
+        false,
+        true,
+        Some(serde_json::json!({"kind": "existing", "profile": "Default"})),
+    )
+    .unwrap();
+
+    assert_eq!(
+        params["sources"][0],
+        serde_json::json!("firefox:/tmp/profile")
+    );
+    assert_eq!(params["include"]["history"], serde_json::json!(true));
+    assert_eq!(params["include"]["bookmarks"], serde_json::json!(false));
+    assert_eq!(params["include"]["cookies"], serde_json::json!(true));
+    assert_eq!(
+        params["destination"],
+        serde_json::json!({"kind": "existing", "profile": "Default"})
+    );
+}
+
 #[test]
 fn terminal_focus_click_claims_when_terminal_needs_focus() {
     assert!(!terminal_focus_click_should_claim(
