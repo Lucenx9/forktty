@@ -351,6 +351,7 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
         &["nested", "sibling", "outer-nested"],
     )
     .unwrap_or_else(default_worktree_layout);
+    config.general.notification_command = config.general.notification_command.trim().to_string();
     config.appearance.sidebar_position =
         normalize_config_choice(&config.appearance.sidebar_position, &["left", "right"])
             .unwrap_or_else(default_sidebar_position);
@@ -637,6 +638,25 @@ mod tests {
         let config = load_config_from_path(&path).unwrap();
 
         assert_eq!(config.general.shell, "/bin/sh");
+    }
+
+    #[test]
+    fn loaded_config_trims_notification_command_from_manual_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+            notification_command = " /bin/true "
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.general.notification_command, "/bin/true");
     }
 
     #[test]

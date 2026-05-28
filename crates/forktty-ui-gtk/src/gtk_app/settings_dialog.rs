@@ -37,6 +37,7 @@ pub(super) fn show_settings_dialog(
         .show_apply_button(true)
         .tooltip_text("Absolute path to the shell executable")
         .build();
+    shell_entry.set_input_purpose(gtk::InputPurpose::Terminal);
     shell_group.add(&shell_entry);
     terminal_page.add(&shell_group);
 
@@ -244,7 +245,7 @@ pub(super) fn show_settings_dialog(
         let on_apply = on_apply.clone();
         move |row: &adw::EntryRow| {
             let mut next = current.borrow().clone();
-            next.general.shell = row.text().to_string();
+            next.general.shell = normalized_settings_entry_text(row);
             persist_settings_change(
                 &dialog,
                 &current,
@@ -445,7 +446,7 @@ pub(super) fn show_settings_dialog(
         let on_apply = on_apply.clone();
         move |row: &adw::EntryRow| {
             let mut next = current.borrow().clone();
-            next.general.notification_command = row.text().to_string();
+            next.general.notification_command = normalized_settings_entry_text(row);
             persist_settings_change(
                 &dialog,
                 &current,
@@ -570,6 +571,15 @@ pub(super) fn settings_action_row(title: &str, subtitle: &str) -> adw::ActionRow
         .subtitle(subtitle)
         .subtitle_lines(0)
         .build()
+}
+
+pub(super) fn normalized_settings_entry_text(row: &adw::EntryRow) -> String {
+    let raw = row.text();
+    let normalized = raw.trim().to_string();
+    if raw.as_str() != normalized.as_str() {
+        row.set_text(&normalized);
+    }
+    normalized
 }
 
 pub(super) fn settings_combo_row(
