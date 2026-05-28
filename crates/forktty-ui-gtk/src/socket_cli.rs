@@ -3933,6 +3933,7 @@ pub(crate) fn hook_setup_reminder_message() -> Option<String> {
     hook_setup_reminder_message_for_statuses(statuses.iter().map(String::as_str))
 }
 
+#[cfg(any(test, feature = "gtk-vte"))]
 fn hook_setup_reminder_message_for_statuses<'a>(
     statuses: impl IntoIterator<Item = &'a str>,
 ) -> Option<String> {

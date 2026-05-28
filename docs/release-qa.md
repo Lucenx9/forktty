@@ -272,7 +272,8 @@ rebuilding.
 - With a directory at `$HOME/.codex/hooks.json`, `forktty doctor` reports the
   Codex hook config as `blocked`, warns that it is not a regular file, and exits 2.
 - With a broken symlink at `$HOME/.codex/hooks.json`, `forktty doctor` reports
-  the Codex hook config as `blocked`, warns that it is a broken symlink, and exits 2.
+  the Codex hook config as `blocked`, warns that `hooks setup` will replace the
+  broken symlink, and exits 2.
 - `forktty wat` prints `unknown argument: wat` to stderr and exits 2.
 - `forktty doctor --wat` prints `unknown argument: --wat` to stderr and exits 2
   instead of silently ignoring the extra argument.

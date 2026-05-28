@@ -517,11 +517,19 @@ fn append_hook_warnings(warnings: &mut Vec<String>, hooks: &[HookState]) {
     for hook in hooks {
         if let Some(error) = &hook.error {
             if hook.exists {
-                warnings.push(format!(
-                    "{} hook config {} is blocked: {error}; hooks setup cannot update it.",
-                    hook.agent,
-                    hook.path.display()
-                ));
+                if error == "path is a broken symlink" {
+                    warnings.push(format!(
+                        "{} hook config {} is blocked: {error}; hooks setup will replace it with a regular file.",
+                        hook.agent,
+                        hook.path.display()
+                    ));
+                } else {
+                    warnings.push(format!(
+                        "{} hook config {} is blocked: {error}; hooks setup cannot update it.",
+                        hook.agent,
+                        hook.path.display()
+                    ));
+                }
             } else {
                 warnings.push(format!(
                     "{} hook config {} could not be inspected: {error}",
@@ -1466,11 +1474,22 @@ mod tests {
         append_hook_warnings(&mut warnings, &hooks);
 
         assert_eq!(codex.status_label(), "blocked");
-        assert!(warnings.iter().any(|warning| {
-            warning.contains("codex hook config")
-                && warning.contains(&hook_path.display().to_string())
-                && warning.contains("broken symlink")
-        }));
+        let warning = warnings
+            .iter()
+            .find(|warning| {
+                warning.contains("codex hook config")
+                    && warning.contains(&hook_path.display().to_string())
+                    && warning.contains("broken symlink")
+            })
+            .expect("missing broken symlink hook warning");
+        assert!(
+            warning.contains("hooks setup will replace it with a regular file"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            !warning.contains("cannot update it"),
+            "unexpected warning: {warning}"
+        );
     }
 
     #[test]
