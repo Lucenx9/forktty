@@ -36,12 +36,48 @@
         ]
       }
     ],
+    "BeforeToolSelection": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini before-tool-selection || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
     "AfterTool": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini post-tool || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini before-model || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Gemini hooks",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "AfterModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks gemini after-model || echo '{\"continue\":true,\"suppressOutput\":false}'",
             "statusMessage": "ForkTTY Gemini hooks",
             "timeout": 30000
           }

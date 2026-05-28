@@ -187,8 +187,8 @@ rebuilding.
 - `forktty hooks setup --dry-run=yes codex` — exits with `--dry-run must be true or false` and does not create or update hook configs.
 - `forktty hooks setup --dryrun codex` — exits with `unknown option --dryrun` and does not create or update hook configs.
 - `forktty hooks setup codex codex` — updates Codex once and prints one Codex summary, without creating redundant backups.
-- `forktty hooks setup` (first run) — creates/updates all three agent configs, prints `updated` and a backup path.
-- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, and `.gemini` configs under that temporary home, not the real home directory.
+- `forktty hooks setup` (first run) — creates/updates all supported agent configs/plugins, prints `updated` and a backup path.
+- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini`, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 - `forktty hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
@@ -203,7 +203,7 @@ rebuilding.
 - Replace `~/.codex/hooks.json` with a directory, re-run `hooks setup codex` —
   error message says the path is not a regular file; no backup or replacement is created.
 - Replace `~/.codex/hooks.json` with a broken symlink, re-run `hooks setup codex` —
-  error message says the path is a broken symlink; the symlink is left untouched.
+  setup warns about the broken symlink and replaces it with a regular managed hook file.
 
 ## Worktree Smoke
 

@@ -18,6 +18,7 @@ const HOOK_EVENT_ORDER_PARAM: &str = "hook_event_order";
 const HOOK_TOOL_LABEL_MAX: usize = 48;
 const HOOK_TOKEN_CEILING_DEFAULT: u64 = 200_000;
 const FORKTTY_HOOK_TAG: &str = "forktty";
+const OPENCODE_PLUGIN_TAG: &str = "forktty-managed-opencode-plugin";
 const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
 const MAX_STDIN_TEXT_BYTES: usize = 1_048_576;
 
@@ -57,7 +58,7 @@ Usage:
   forktty clear-logs [--workspace-id <id>]
   forktty notifications [--json]
   forktty clear-notifications
-  forktty hooks setup [codex] [claude] [gemini]
+  forktty hooks setup [codex] [claude] [gemini] [opencode]
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
@@ -165,6 +166,12 @@ struct HookEntrySpec {
     timeout: u64,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HookInstallKind {
+    JsonConfig,
+    OpenCodePlugin,
+}
+
 #[derive(Clone, Copy)]
 struct AgentSpec {
     key: &'static str,
@@ -173,6 +180,7 @@ struct AgentSpec {
     config_path: fn() -> PathBuf,
     hook_entries: &'static [HookEntrySpec],
     matcher: Option<&'static str>,
+    install_kind: HookInstallKind,
 }
 
 // Codex and Claude Code both treat the `timeout` field as seconds (Codex default 600s;
@@ -209,6 +217,31 @@ const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
+        event_name: "PermissionRequest",
+        hook_event_name: "permission-request",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PreCompact",
+        hook_event_name: "pre-compact",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostCompact",
+        hook_event_name: "post-compact",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "SubagentStart",
+        hook_event_name: "subagent-start",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "SubagentStop",
+        hook_event_name: "subagent-stop",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
         event_name: "Stop",
         hook_event_name: "stop",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
@@ -227,8 +260,28 @@ const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
+        event_name: "UserPromptExpansion",
+        hook_event_name: "prompt-expansion",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "Setup",
+        hook_event_name: "setup",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
         event_name: "PreToolUse",
         hook_event_name: "pre-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PermissionRequest",
+        hook_event_name: "permission-request",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PermissionDenied",
+        hook_event_name: "permission-denied",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
@@ -237,8 +290,43 @@ const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
+        event_name: "PostToolUseFailure",
+        hook_event_name: "post-tool-failure",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostToolBatch",
+        hook_event_name: "post-tool-batch",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "SubagentStart",
+        hook_event_name: "subagent-start",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
         event_name: "SubagentStop",
         hook_event_name: "subagent-stop",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "TaskCreated",
+        hook_event_name: "task-created",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "TaskCompleted",
+        hook_event_name: "task-completed",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "Elicitation",
+        hook_event_name: "elicitation",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "ElicitationResult",
+        hook_event_name: "elicitation-result",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
@@ -247,13 +335,58 @@ const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
+        event_name: "PostCompact",
+        hook_event_name: "post-compact",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
         event_name: "Stop",
         hook_event_name: "stop",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
+        event_name: "StopFailure",
+        hook_event_name: "stop-failure",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "TeammateIdle",
+        hook_event_name: "teammate-idle",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
         event_name: "Notification",
         hook_event_name: "notification",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "ConfigChange",
+        hook_event_name: "config-change",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "InstructionsLoaded",
+        hook_event_name: "instructions-loaded",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "CwdChanged",
+        hook_event_name: "cwd-changed",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "FileChanged",
+        hook_event_name: "file-changed",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "WorktreeCreate",
+        hook_event_name: "worktree-create",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "WorktreeRemove",
+        hook_event_name: "worktree-remove",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
@@ -280,8 +413,23 @@ const GEMINI_HOOK_ENTRIES: &[HookEntrySpec] = &[
         timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
+        event_name: "BeforeToolSelection",
+        hook_event_name: "before-tool-selection",
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
         event_name: "AfterTool",
         hook_event_name: "post-tool",
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "BeforeModel",
+        hook_event_name: "before-model",
+        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "AfterModel",
+        hook_event_name: "after-model",
         timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
     },
     HookEntrySpec {
@@ -306,6 +454,64 @@ const GEMINI_HOOK_ENTRIES: &[HookEntrySpec] = &[
     },
 ];
 
+const OPENCODE_HOOK_ENTRIES: &[HookEntrySpec] = &[
+    HookEntrySpec {
+        event_name: "session.created",
+        hook_event_name: "session-start",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "session.status",
+        hook_event_name: "prompt-submit",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "permission.asked",
+        hook_event_name: "permission-request",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "permission.replied",
+        hook_event_name: "permission-replied",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "tool.execute.before",
+        hook_event_name: "pre-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "tool.execute.after",
+        hook_event_name: "post-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "experimental.session.compacting",
+        hook_event_name: "pre-compact",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "session.compacted",
+        hook_event_name: "post-compact",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "session.idle",
+        hook_event_name: "stop",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "session.error",
+        hook_event_name: "stop-failure",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "session.deleted",
+        hook_event_name: "session-end",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+];
+
 const AGENTS: &[AgentSpec] = &[
     AgentSpec {
         key: "codex",
@@ -314,6 +520,7 @@ const AGENTS: &[AgentSpec] = &[
         config_path: codex_config_path,
         hook_entries: CODEX_HOOK_ENTRIES,
         matcher: None,
+        install_kind: HookInstallKind::JsonConfig,
     },
     AgentSpec {
         key: "claude",
@@ -322,6 +529,7 @@ const AGENTS: &[AgentSpec] = &[
         config_path: claude_config_path,
         hook_entries: CLAUDE_HOOK_ENTRIES,
         matcher: Some("*"),
+        install_kind: HookInstallKind::JsonConfig,
     },
     AgentSpec {
         key: "gemini",
@@ -330,6 +538,16 @@ const AGENTS: &[AgentSpec] = &[
         config_path: gemini_config_path,
         hook_entries: GEMINI_HOOK_ENTRIES,
         matcher: None,
+        install_kind: HookInstallKind::JsonConfig,
+    },
+    AgentSpec {
+        key: "opencode",
+        label: "OpenCode",
+        disabled_env: "FORKTTY_OPENCODE_HOOKS_DISABLED",
+        config_path: opencode_plugin_path,
+        hook_entries: OPENCODE_HOOK_ENTRIES,
+        matcher: None,
+        install_kind: HookInstallKind::OpenCodePlugin,
     },
 ];
 
@@ -2733,6 +2951,8 @@ fn handle_socket_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()
             "FORKTTY_WORKSPACE_ID": trimmed_env("FORKTTY_WORKSPACE_ID"),
             "FORKTTY_SURFACE_ID": trimmed_env("FORKTTY_SURFACE_ID"),
             "CODEX_HOME": trimmed_env("CODEX_HOME"),
+            "CLAUDE_CONFIG_DIR": trimmed_env("CLAUDE_CONFIG_DIR"),
+            "OPENCODE_CONFIG_DIR": trimmed_env("OPENCODE_CONFIG_DIR"),
             "HOME": trimmed_env("HOME"),
         },
         "executable": {
@@ -2856,28 +3076,22 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
 
     let mut plans = Vec::new();
     for spec in agents {
-        let config_path = (spec.config_path)();
-        let existing = read_agent_config(spec, &config_path)?;
-        let (changed, config) = merge_hook_config(&existing, spec, &launcher)?;
-        plans.push((spec, config_path, changed, config));
+        plans.push(build_hook_setup_plan(spec, &launcher)?);
     }
 
     let mut summaries = Vec::new();
-    for (spec, config_path, changed, config) in plans {
+    for plan in plans {
         let mut backup_path = None;
-        if changed && !dry_run {
-            let write_path = hook_config_write_path(&config_path)?;
+        if plan.changed && !dry_run {
+            let write_path = hook_config_write_path(&plan.config_path)?;
             ensure_parent_dir(&write_path)?;
             backup_path = backup_file(&write_path)?;
-            atomic_write_file(
-                &write_path,
-                format!("{}\n", serde_json::to_string_pretty(&config)?).as_bytes(),
-            )?;
+            atomic_write_file(&write_path, plan.content.as_bytes())?;
         }
         summaries.push(json!({
-            "agent": spec.key,
-            "configPath": config_path,
-            "changed": changed,
+            "agent": plan.spec.key,
+            "configPath": plan.config_path,
+            "changed": plan.changed,
             "backupPath": backup_path,
             "dryRun": dry_run,
         }));
@@ -2906,13 +3120,47 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
     Ok(())
 }
 
+struct HookSetupPlan {
+    spec: &'static AgentSpec,
+    config_path: PathBuf,
+    changed: bool,
+    content: String,
+}
+
+fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult<HookSetupPlan> {
+    let config_path = (spec.config_path)();
+    match spec.install_kind {
+        HookInstallKind::JsonConfig => {
+            let existing = read_agent_config(spec, &config_path)?;
+            let (changed, config) = merge_hook_config(&existing, spec, launcher)?;
+            Ok(HookSetupPlan {
+                spec,
+                config_path,
+                changed,
+                content: format!("{}\n", serde_json::to_string_pretty(&config)?),
+            })
+        }
+        HookInstallKind::OpenCodePlugin => {
+            let existing = read_opencode_plugin_file(spec, &config_path)?;
+            let content = build_opencode_plugin(launcher)?;
+            let changed = existing.as_deref() != Some(content.as_str());
+            Ok(HookSetupPlan {
+                spec,
+                config_path,
+                changed,
+                content,
+            })
+        }
+    }
+}
+
 fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
     if names.is_empty() {
         return Ok(AGENTS.iter().collect());
     }
     let mut out = Vec::new();
     for name in names {
-        let normalized = name.to_lowercase();
+        let normalized = normalize_agent_name(name);
         let spec = agent_spec(&normalized)
             .ok_or_else(|| CliError::new(format!("Unsupported agent: {name}")))?;
         if !out
@@ -2927,6 +3175,14 @@ fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
 
 fn agent_spec(agent: &str) -> Option<&'static AgentSpec> {
     AGENTS.iter().find(|spec| spec.key == agent)
+}
+
+fn normalize_agent_name(agent: &str) -> String {
+    match agent.to_lowercase().as_str() {
+        "claude-code" | "claude_code" => "claude".to_string(),
+        "open-code" | "open_code" => "opencode".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn stable_hook_launcher_path() -> Option<PathBuf> {
@@ -2976,6 +3232,13 @@ fn claude_config_path() -> PathBuf {
 
 fn gemini_config_path() -> PathBuf {
     home_dir().join(".gemini/settings.json")
+}
+
+fn opencode_plugin_path() -> PathBuf {
+    trimmed_env("OPENCODE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config/opencode"))
+        .join("plugins/forktty.generated.js")
 }
 
 fn build_hook_shell_command(launcher: &Path, spec: &AgentSpec, event: &str) -> String {
@@ -3155,6 +3418,149 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
     }
 }
 
+fn read_opencode_plugin_file(spec: &AgentSpec, path: &Path) -> CliResult<Option<String>> {
+    let file = match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => match File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "warning: {} is a broken symlink; replacing with a fresh file",
+                    path.display()
+                );
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        },
+        Ok(_) => File::open(path)?,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    let stat = file.metadata()?;
+    if !stat.is_file() {
+        return Err(CliError::new("path exists but is not a regular file"));
+    }
+    if stat.len() > MAX_HOOK_CONFIG_SIZE_BYTES {
+        return Err(CliError::new(format!(
+            "hook plugin is too large ({} bytes; max {} bytes)",
+            stat.len(),
+            MAX_HOOK_CONFIG_SIZE_BYTES
+        )));
+    }
+    let mut text = String::new();
+    let mut limited = file.take(MAX_HOOK_CONFIG_SIZE_BYTES + 1);
+    limited.read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_HOOK_CONFIG_SIZE_BYTES {
+        return Err(CliError::new(format!(
+            "hook plugin is too large ({} bytes; max {} bytes)",
+            text.len(),
+            MAX_HOOK_CONFIG_SIZE_BYTES
+        )));
+    }
+    if !text.trim().is_empty() && !text.contains(OPENCODE_PLUGIN_TAG) {
+        return Err(CliError::new(format!(
+            "failed to read {} hook plugin at {}: refusing to overwrite unmanaged plugin file",
+            spec.key,
+            path.display()
+        )));
+    }
+    Ok(Some(text))
+}
+
+fn build_opencode_plugin(launcher: &Path) -> CliResult<String> {
+    let launcher = serde_json::to_string(&launcher.display().to_string())?;
+    Ok(format!(
+        r#"// {tag}
+// Generated by `forktty hooks setup`; local edits will be replaced.
+import {{ spawnSync }} from "node:child_process";
+
+const FORKTTY_LAUNCHER = {launcher};
+const DISABLED_ENV = "FORKTTY_OPENCODE_HOOKS_DISABLED";
+
+function cloneJson(value) {{
+  try {{
+    return JSON.parse(JSON.stringify(value ?? {{}}));
+  }} catch {{
+    return {{ forktty_note: "unserializable opencode payload" }};
+  }}
+}}
+
+function findString(value, names) {{
+  if (!value || typeof value !== "object") return undefined;
+  for (const name of names) {{
+    const candidate = value[name];
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate.trim();
+    if (typeof candidate === "number" || typeof candidate === "boolean") return String(candidate);
+  }}
+  for (const child of Object.values(value)) {{
+    const candidate = findString(child, names);
+    if (candidate) return candidate;
+  }}
+  return undefined;
+}}
+
+function payload(source, extra = {{}}) {{
+  const raw = cloneJson(source);
+  const session_id =
+    findString(raw, ["session_id", "sessionId", "sessionID"]) ??
+    (typeof raw?.session?.id === "string" ? raw.session.id : undefined);
+  return {{
+    provider: "opencode",
+    ...(session_id ? {{ session_id }} : {{}}),
+    ...extra,
+    raw,
+  }};
+}}
+
+function runForkTTY(hookEvent, body) {{
+  if (process.env[DISABLED_ENV] === "1") return;
+  const result = spawnSync(FORKTTY_LAUNCHER, ["hooks", "opencode", hookEvent], {{
+    input: JSON.stringify(body ?? {{}}),
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }});
+  if (result.error) process.stderr.write(`ForkTTY OpenCode hook warning: ${{result.error.message}}\n`);
+  if (result.stderr) process.stderr.write(result.stderr);
+}}
+
+const eventMap = {{
+  "session.created": "session-start",
+  "session.status": "prompt-submit",
+  "permission.asked": "permission-request",
+  "permission.replied": "permission-replied",
+  "session.compacted": "post-compact",
+  "session.idle": "stop",
+  "session.error": "stop-failure",
+  "session.deleted": "session-end",
+}};
+
+export const ForkTTYPlugin = async () => ({{
+  event: async (input) => {{
+    const event = input?.event ?? input;
+    const hookEvent = eventMap[event?.type];
+    if (hookEvent) runForkTTY(hookEvent, payload(event, {{ message: event?.type }}));
+  }},
+  "tool.execute.before": async (input, output) => {{
+    runForkTTY("pre-tool", payload(input, {{
+      tool_name: input?.tool ?? output?.tool,
+      tool_input: output?.args ?? input?.args,
+    }}));
+  }},
+  "tool.execute.after": async (input, output) => {{
+    runForkTTY("post-tool", payload(input, {{
+      tool_name: input?.tool ?? output?.tool,
+      tool_response: output,
+    }}));
+  }},
+  "experimental.session.compacting": async (input, output) => {{
+    runForkTTY("pre-compact", payload(input, {{ compact_output: output }}));
+  }},
+}});
+"#,
+        tag = OPENCODE_PLUGIN_TAG,
+        launcher = launcher,
+    ))
+}
+
 fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => match fs::canonicalize(path) {
@@ -3258,6 +3664,7 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
             "FORKTTY_SURFACE_ID": trimmed_env("FORKTTY_SURFACE_ID"),
             "CODEX_HOME": trimmed_env("CODEX_HOME"),
             "CLAUDE_CONFIG_DIR": trimmed_env("CLAUDE_CONFIG_DIR"),
+            "OPENCODE_CONFIG_DIR": trimmed_env("OPENCODE_CONFIG_DIR"),
             "HOME": trimmed_env("HOME"),
         },
         "executable": {
@@ -3307,9 +3714,15 @@ fn describe_launcher_check(
     config_path: &Path,
     current_launcher: Option<&Path>,
 ) -> Value {
-    let installed = match read_json_file(config_path) {
-        Ok(value) => extract_managed_launcher_from_config(spec, &value),
-        Err(_) => None,
+    let installed = match spec.install_kind {
+        HookInstallKind::JsonConfig => match read_json_file(config_path) {
+            Ok(value) => extract_managed_launcher_from_config(spec, &value),
+            Err(_) => None,
+        },
+        HookInstallKind::OpenCodePlugin => match read_opencode_plugin_file(spec, config_path) {
+            Ok(Some(text)) => extract_launcher_from_opencode_plugin(&text),
+            Ok(None) | Err(_) => None,
+        },
     };
     let current = current_launcher.map(|path| path.display().to_string());
     let status = match (&installed, &current) {
@@ -3323,6 +3736,14 @@ fn describe_launcher_check(
         "installedLauncher": installed,
         "currentLauncher": current,
     })
+}
+
+fn extract_launcher_from_opencode_plugin(text: &str) -> Option<String> {
+    let marker = "const FORKTTY_LAUNCHER = ";
+    let start = text.find(marker)? + marker.len();
+    let rest = &text[start..];
+    let end = rest.find(';')?;
+    serde_json::from_str(rest[..end].trim()).ok()
 }
 
 fn format_launcher_check(check: &Value) -> Option<String> {
@@ -3511,7 +3932,7 @@ fn single_agent_command(
     let Some(agent) = args.first() else {
         return Err(CliError::new(format!("{command} requires an agent")));
     };
-    let normalized = agent.to_lowercase();
+    let normalized = normalize_agent_name(agent);
     let spec = agent_spec(&normalized)
         .ok_or_else(|| CliError::new(format!("Unsupported {command} agent: {agent}")))?;
     Ok((spec, args[1..].to_vec()))
@@ -3520,7 +3941,7 @@ fn single_agent_command(
 fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let agent_name = args
         .first()
-        .map(|value| value.to_lowercase())
+        .map(|value| normalize_agent_name(value))
         .unwrap_or_default();
     let event = args
         .get(1)
@@ -3626,16 +4047,39 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 fn is_supported_hook_event(event: &str) -> bool {
     matches!(
         event,
-        "notification"
+        "after-model"
+            | "before-model"
+            | "before-tool-selection"
+            | "config-change"
+            | "cwd-changed"
+            | "elicitation"
+            | "elicitation-result"
+            | "file-changed"
+            | "instructions-loaded"
+            | "notification"
+            | "permission-denied"
+            | "permission-replied"
+            | "permission-request"
             | "post-tool"
+            | "post-tool-batch"
+            | "post-tool-failure"
             | "pre-compact"
             | "pre-tool"
+            | "post-compact"
+            | "prompt-expansion"
             | "prompt-submit"
             | "session-end"
             | "session-start"
+            | "setup"
             | "stop"
             | "stop-failure"
+            | "subagent-start"
             | "subagent-stop"
+            | "task-completed"
+            | "task-created"
+            | "teammate-idle"
+            | "worktree-create"
+            | "worktree-remove"
     )
 }
 
@@ -3704,12 +4148,11 @@ fn add_hook_metadata(
     Value::Object(params)
 }
 
-/// Map Claude Code's documented `permission_mode` enum to a status color so
-/// risky modes are visible at a glance. Codex documents `permission_mode`
-/// only as "string", so its values stay neutral (`muted`) to avoid inventing
-/// a risk model the provider doesn't publish.
+/// Map documented permission modes to a status color so risky modes are
+/// visible at a glance. Unknown provider-specific values stay neutral
+/// (`muted`) to avoid inventing a risk model the provider does not publish.
 fn permission_mode_color(spec: &AgentSpec, mode: &str) -> &'static str {
-    if spec.key != "claude" {
+    if !matches!(spec.key, "claude" | "codex") {
         return "muted";
     }
     match mode {
@@ -3818,7 +4261,44 @@ fn build_hook_actions(
                 ("notification.create".to_string(), Value::Object(note)),
             ]
         }
-        "stop-failure" => {
+        "permission-request" => {
+            let body = if message.is_empty() {
+                format!("{} requested permission.", spec.label)
+            } else {
+                message.clone()
+            };
+            let mut note = target.clone();
+            note.insert(
+                "title".to_string(),
+                Value::String(format!("{} permission required", spec.label)),
+            );
+            note.insert("body".to_string(), Value::String(body));
+            note.insert("kind".to_string(), Value::String("prompt".to_string()));
+            vec![
+                log(
+                    "warn",
+                    if message.is_empty() {
+                        format!("{} requested permission", spec.label)
+                    } else {
+                        message
+                    },
+                ),
+                status("Permission required", "yellow", event),
+                ("notification.create".to_string(), Value::Object(note)),
+            ]
+        }
+        "permission-denied" => vec![
+            log(
+                "warn",
+                if message.is_empty() {
+                    format!("{} permission denied", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Permission denied", "yellow", event),
+        ],
+        "stop-failure" | "post-tool-failure" => {
             let body = if message.is_empty() {
                 format!("{} reported a failure.", spec.label)
             } else {
@@ -3844,6 +4324,40 @@ fn build_hook_actions(
                 ("notification.create".to_string(), Value::Object(note)),
             ]
         }
+        "setup"
+        | "config-change"
+        | "instructions-loaded"
+        | "cwd-changed"
+        | "file-changed"
+        | "worktree-create"
+        | "worktree-remove" => vec![log(
+            "info",
+            if message.is_empty() {
+                format!("{} reported {event}", spec.label)
+            } else {
+                message
+            },
+        )],
+        "prompt-expansion" => vec![
+            log("info", format!("{} prompt expansion", spec.label)),
+            status("Running", "blue", event),
+        ],
+        "before-model" => vec![
+            log("info", format!("{} model request started", spec.label)),
+            status("Thinking", "blue", event),
+        ],
+        "after-model" => vec![log(
+            "info",
+            if message.is_empty() {
+                format!("{} model response received", spec.label)
+            } else {
+                message
+            },
+        )],
+        "before-tool-selection" => vec![
+            log("info", format!("{} selecting tools", spec.label)),
+            status("Selecting tool", "blue", event),
+        ],
         "pre-tool" => {
             let tool = extract_hook_tool_name(payload);
             let value = tool
@@ -3885,11 +4399,77 @@ fn build_hook_actions(
             }
             actions
         }
+        "post-tool-batch" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} finished tool batch", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Running", "blue", event),
+        ],
+        "subagent-start" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} subagent started", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Subagent running", "blue", event),
+        ],
         "subagent-stop" => vec![
             log(
                 "info",
                 if message.is_empty() {
                     format!("{} subagent finished", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Running", "blue", event),
+        ],
+        "task-created" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} task created", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Running", "blue", event),
+        ],
+        "task-completed" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} task completed", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Running", "blue", event),
+        ],
+        "elicitation" => vec![
+            log(
+                "warn",
+                if message.is_empty() {
+                    format!("{} elicitation requested", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Needs input", "yellow", event),
+        ],
+        "elicitation-result" | "permission-replied" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} received {event}", spec.label)
                 } else {
                     message
                 },
@@ -3925,6 +4505,17 @@ fn build_hook_actions(
                 ("notification.create".to_string(), Value::Object(note)),
             ]
         }
+        "post-compact" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} context compacted", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Running", "blue", event),
+        ],
         "stop" => {
             let mut clear_permission = target.clone();
             clear_permission.insert("key".to_string(), Value::String(permission_key.clone()));
@@ -3944,6 +4535,17 @@ fn build_hook_actions(
                 ),
             ]
         }
+        "teammate-idle" => vec![
+            log(
+                "info",
+                if message.is_empty() {
+                    format!("{} teammate idle", spec.label)
+                } else {
+                    message
+                },
+            ),
+            status("Running", "blue", event),
+        ],
         "session-end" => {
             let mut clear = target.clone();
             clear.insert("key".to_string(), Value::String(key));
@@ -4029,7 +4631,7 @@ fn build_hook_response(
 ) -> CliResult<Value> {
     if spec.key == "claude" && event == "session-start" {
         let additional_context = format!(
-            "Running inside the ForkTTY terminal. workspace_id={} surface_id={} socket={}. ForkTTY hooks publish status, logs, and notifications to the app for SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SubagentStop, PreCompact, Stop, Notification, and SessionEnd. Inspect state via the `forktty` CLI (notifications, status, workspaces, surfaces, worktrees).",
+            "Running inside the ForkTTY terminal. workspace_id={} surface_id={} socket={}. ForkTTY hooks publish configured lifecycle status, logs, and notifications to the app. Inspect state via the `forktty` CLI (notifications, status, workspaces, surfaces, worktrees).",
             trimmed_env("FORKTTY_WORKSPACE_ID").unwrap_or_else(|| "(none)".to_string()),
             trimmed_env("FORKTTY_SURFACE_ID").unwrap_or_else(|| "(none)".to_string()),
             trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
@@ -4153,7 +4755,7 @@ fn extract_hook_permission_mode(payload: &Value) -> Option<String> {
 }
 
 fn extract_hook_session_id(payload: &Value) -> Option<String> {
-    extract_first_string_like(payload, &["session_id", "sessionId"])
+    extract_first_string_like(payload, &["session_id", "sessionId", "sessionID"])
         .map(|value| {
             sanitize_for_terminal(&value)
                 .chars()
@@ -5171,12 +5773,9 @@ mod tests {
 
     #[test]
     fn permission_mode_publishes_separate_status_for_codex_and_claude() {
-        // Codex docs: `permission_mode` is "string, for most events"; Claude
-        // Code docs document the enum (default|plan|acceptEdits|auto|
-        // dontAsk|bypassPermissions). Both providers ship the field in
-        // SessionStart and UserPromptSubmit stdin payloads, so we publish a
-        // sibling status entry that never collides with the existing
-        // `agent:<key>` activity status.
+        // Providers can emit permission state in lifecycle payloads. Keep it
+        // as a sibling status so it never collides with `agent:<key>`
+        // activity.
         let claude_payload = json!({
             "session_id": "sess-claude-1",
             "permission_mode": "acceptEdits",
@@ -5237,23 +5836,19 @@ mod tests {
     }
 
     #[test]
-    fn codex_permission_mode_stays_muted() {
-        // Codex docs only describe permission_mode as "string" without an
-        // enum, so ForkTTY must not infer a risk level for Codex modes.
+    fn codex_permission_mode_colors_track_documented_risk() {
         let codex = agent_spec("codex").unwrap();
-        for mode in [
-            "default",
-            "on-request",
-            "never",
-            "agent-full-access",
-            "bypassPermissions",
-        ] {
+        assert_eq!(permission_mode_color(codex, "bypassPermissions"), "red");
+        for warn in ["acceptEdits", "auto", "dontAsk"] {
+            assert_eq!(permission_mode_color(codex, warn), "yellow");
+        }
+        for mode in ["default", "plan", "on-request", "futureMode"] {
             assert_eq!(permission_mode_color(codex, mode), "muted");
         }
     }
 
     #[test]
-    fn build_hook_actions_paints_bypass_permissions_red_for_claude_only() {
+    fn build_hook_actions_paints_bypass_permissions_red_for_documented_providers() {
         let claude_actions = build_hook_actions(
             agent_spec("claude").unwrap(),
             "session-start",
@@ -5272,7 +5867,7 @@ mod tests {
         );
         let codex_permission = codex_actions.last().expect("permission action");
         assert_eq!(codex_permission.1["key"], "agent:codex:permission");
-        assert_eq!(codex_permission.1["color"], "muted");
+        assert_eq!(codex_permission.1["color"], "red");
     }
 
     #[test]
@@ -5364,10 +5959,6 @@ mod tests {
 
     #[test]
     fn doctor_supported_events_track_installed_entries_per_provider() {
-        // Codex officially supports 10 events; ForkTTY installs the subset
-        // relevant to terminal state. Claude installs the full documented
-        // lifecycle. The doctor report mirrors the installer so users can
-        // confirm parity without hand-diffing JSON files.
         let codex_events: Vec<&str> = agent_spec("codex")
             .unwrap()
             .hook_entries
@@ -5381,6 +5972,11 @@ mod tests {
                 "UserPromptSubmit",
                 "PreToolUse",
                 "PostToolUse",
+                "PermissionRequest",
+                "PreCompact",
+                "PostCompact",
+                "SubagentStart",
+                "SubagentStop",
                 "Stop",
             ]
         );
@@ -5395,12 +5991,32 @@ mod tests {
             vec![
                 "SessionStart",
                 "UserPromptSubmit",
+                "UserPromptExpansion",
+                "Setup",
                 "PreToolUse",
+                "PermissionRequest",
+                "PermissionDenied",
                 "PostToolUse",
+                "PostToolUseFailure",
+                "PostToolBatch",
+                "SubagentStart",
                 "SubagentStop",
+                "TaskCreated",
+                "TaskCompleted",
+                "Elicitation",
+                "ElicitationResult",
                 "PreCompact",
+                "PostCompact",
                 "Stop",
+                "StopFailure",
+                "TeammateIdle",
                 "Notification",
+                "ConfigChange",
+                "InstructionsLoaded",
+                "CwdChanged",
+                "FileChanged",
+                "WorktreeCreate",
+                "WorktreeRemove",
                 "SessionEnd",
             ]
         );
@@ -5408,6 +6024,25 @@ mod tests {
         // installer must never target them.
         assert!(!codex_events.contains(&"Notification"));
         assert!(!codex_events.contains(&"SessionEnd"));
+
+        let gemini_events: Vec<&str> = agent_spec("gemini")
+            .unwrap()
+            .hook_entries
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect();
+        assert!(gemini_events.contains(&"BeforeModel"));
+        assert!(gemini_events.contains(&"AfterModel"));
+        assert!(gemini_events.contains(&"BeforeToolSelection"));
+
+        let opencode_events: Vec<&str> = agent_spec("opencode")
+            .unwrap()
+            .hook_entries
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect();
+        assert!(opencode_events.contains(&"tool.execute.before"));
+        assert!(opencode_events.contains(&"permission.asked"));
     }
 
     #[test]
@@ -5460,14 +6095,21 @@ mod tests {
             ],
             || {
                 let context = test_context();
-                handle_hooks_setup(&context, strings(&["codex", "claude", "gemini", "codex"]))
-                    .unwrap();
+                handle_hooks_setup(
+                    &context,
+                    strings(&["codex", "claude", "gemini", "opencode", "codex"]),
+                )
+                .unwrap();
 
                 let codex_path = codex_home.join("hooks.json");
                 let claude_path = claude_dir.join("settings.json");
                 let gemini_path = home.join(".gemini/settings.json");
+                let opencode_path = home
+                    .join(".config/opencode")
+                    .join("plugins/forktty.generated.js");
                 let codex = read_json(&codex_path);
                 assert!(codex["hooks"]["SessionStart"].is_array());
+                assert!(codex["hooks"]["PermissionRequest"].is_array());
                 assert!(codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
                     .as_str()
                     .unwrap()
@@ -5478,7 +6120,18 @@ mod tests {
                     .contains("forktty.mjs"));
 
                 let claude = read_json(&claude_path);
-                for event in ["PreToolUse", "PostToolUse", "SubagentStop", "PreCompact"] {
+                for event in [
+                    "PreToolUse",
+                    "PostToolUse",
+                    "PostToolUseFailure",
+                    "PermissionRequest",
+                    "SubagentStart",
+                    "SubagentStop",
+                    "PreCompact",
+                    "PostCompact",
+                    "StopFailure",
+                    "SessionEnd",
+                ] {
                     assert!(claude["hooks"][event].is_array(), "missing {event}");
                 }
                 assert!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
@@ -5487,13 +6140,25 @@ mod tests {
                     .contains(" hooks claude pre-tool"));
 
                 let gemini = read_json(&gemini_path);
-                for event in ["BeforeTool", "AfterTool", "Notification", "PreCompress"] {
+                for event in [
+                    "BeforeTool",
+                    "BeforeToolSelection",
+                    "AfterTool",
+                    "BeforeModel",
+                    "AfterModel",
+                    "Notification",
+                    "PreCompress",
+                ] {
                     assert!(gemini["hooks"][event].is_array(), "missing {event}");
                 }
                 assert!(gemini["hooks"]["PreCompress"][0]["hooks"][0]["command"]
                     .as_str()
                     .unwrap()
                     .contains(" hooks gemini pre-compact"));
+                let opencode = fs::read_to_string(&opencode_path).unwrap();
+                assert!(opencode.contains(OPENCODE_PLUGIN_TAG));
+                assert!(opencode.contains("hooks\", \"opencode\""));
+                assert!(opencode.contains("\"tool.execute.before\""));
 
                 let first = fs::read_to_string(&codex_path).unwrap();
                 handle_hooks_setup(&context, strings(&["codex"])).unwrap();
@@ -5883,6 +6548,11 @@ mod tests {
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
+            "PermissionRequest",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStart",
+            "SubagentStop",
             "Stop",
         ] {
             assert!(codex["hooks"][event].is_array(), "missing Codex {event}");
@@ -5902,7 +6572,10 @@ mod tests {
             "SessionStart",
             "BeforeAgent",
             "BeforeTool",
+            "BeforeToolSelection",
             "AfterTool",
+            "BeforeModel",
+            "AfterModel",
             "AfterAgent",
             "Notification",
             "PreCompress",
@@ -5941,6 +6614,41 @@ mod tests {
                 "{template} is out of sync with the native hook installer"
             );
         }
+    }
+
+    #[test]
+    fn opencode_plugin_plan_is_idempotent_and_protects_unmanaged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[("HOME", Some(&home_s)), ("OPENCODE_CONFIG_DIR", None)],
+            || {
+                let spec = agent_spec("opencode").unwrap();
+                let launcher = Path::new("/usr/bin/forktty");
+                let first = build_hook_setup_plan(spec, launcher).unwrap();
+                assert!(first.changed);
+                assert!(first.content.contains(OPENCODE_PLUGIN_TAG));
+                assert_eq!(
+                    extract_launcher_from_opencode_plugin(&first.content).as_deref(),
+                    Some("/usr/bin/forktty")
+                );
+
+                ensure_parent_dir(&first.config_path).unwrap();
+                atomic_write_file(&first.config_path, first.content.as_bytes()).unwrap();
+                let second = build_hook_setup_plan(spec, launcher).unwrap();
+                assert!(!second.changed);
+
+                atomic_write_file(
+                    &first.config_path,
+                    b"export const Mine = async () => ({})\n",
+                )
+                .unwrap();
+                assert_err_contains(
+                    build_hook_setup_plan(spec, launcher),
+                    "refusing to overwrite unmanaged plugin file",
+                );
+            },
+        );
     }
 
     fn generated_without_installer_tags(mut value: Value) -> Value {

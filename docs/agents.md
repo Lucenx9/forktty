@@ -4,21 +4,21 @@ This document treats Claude Code, Codex, OpenCode, Gemini CLI, and custom CLIs a
 
 This is a baseline taxonomy for safe future integration. It does not change how ForkTTY launches agents, writes hook config, gates permissions, or reports UI/socket state by itself.
 
-## Documentation areas reviewed (May 22, 2026)
+## Documentation areas reviewed (May 29, 2026)
 
-- Claude Code docs: hooks reference and hooks guide (`code.claude.com/docs/en/hooks`, `.../hooks-guide`).
-- OpenAI Codex repo/docs: `openai/codex` (`docs/config.md`, repository `AGENTS.md`).
-- OpenCode docs: `opencode.ai/docs/agents/`.
-- Gemini CLI docs: configuration, GEMINI.md, headless mode, MCP (`google-gemini.github.io/gemini-cli/...`).
+- Claude Code docs: hooks reference (`code.claude.com/docs/en/hooks`).
+- OpenAI Codex docs: hooks reference (`developers.openai.com/codex/hooks`).
+- OpenCode docs: config, plugins, and agents (`opencode.ai/docs/...`).
+- Gemini CLI docs: configuration and hooks (`google-gemini/gemini-cli` docs).
 
 ## Capability matrix (documented-only)
 
 | Provider | Install command (doc) | Launch command (doc) | Context files | Hooks/events | Permission controls | MCP | Headless/JSON |
 |---|---|---|---|---|---|---|---|
-| Claude Code | See Claude install docs | `claude` | `CLAUDE.md` / project settings | Documented event hooks; ForkTTY must still write only known local settings shapes | Documented permission settings; no automatic ForkTTY policy mapping | Documented by provider; verify per install | Not fully standardized publicly |
-| Codex CLI | `npm install -g @openai/codex` | `codex` | `AGENTS.md` | Configurable hooks exist, but event coverage/stability should be validated per release | Approval/sandbox modes documented; no automatic ForkTTY policy mapping | Documented by provider; control API is experimental | JSON/headless flows documented in Codex docs |
-| OpenCode | See opencode install docs | `opencode` | rules/agent config docs | No ForkTTY hook installer yet; verify schema before enabling | Documented agent permission boundaries; no automatic ForkTTY policy mapping | Documented by provider; not modeled here | Unclear whether stable event stream contract is public |
-| Gemini CLI | `npm install -g @google/gemini-cli` | `gemini` | `GEMINI.md` (hierarchical) | Documented hooks exist; ForkTTY should validate exact schema before deeper automation | Safety/confirmation behavior in settings/docs; no automatic ForkTTY policy mapping | Yes (`mcpServers`) | Yes (`--output-format json`, headless mode docs) |
+| Claude Code | See Claude install docs | `claude` | `CLAUDE.md` / project settings | ForkTTY installs documented local settings hooks for the current lifecycle surface | Documented permission settings; ForkTTY colors documented risky modes | Documented by provider; verify per install | Not fully standardized publicly |
+| Codex CLI | `npm install -g @openai/codex` | `codex` | `AGENTS.md` | ForkTTY installs documented `hooks.json` lifecycle hooks that are useful for terminal state | Approval/sandbox modes documented; ForkTTY colors documented risky modes | Documented by provider; control API is experimental | JSON/headless flows documented in Codex docs |
+| OpenCode | See opencode install docs | `opencode` | rules/agent config docs | ForkTTY installs a generated local plugin under the OpenCode plugins directory | Documented agent permission boundaries; ForkTTY observes permission events | Documented by provider; not modeled here | CLI/server flows documented by provider |
+| Gemini CLI | `npm install -g @google/gemini-cli` | `gemini` | `GEMINI.md` (hierarchical) | ForkTTY installs documented settings hooks for lifecycle/tool/model events | Safety/confirmation behavior in settings/docs; no automatic ForkTTY policy mapping | Yes (`mcpServers`) | Yes (`output.format = "json"`) |
 | Custom | User-defined | User-defined | User-defined | Unknown | Unknown | Unknown | Unknown |
 
 ## Safe integration points for ForkTTY
@@ -31,12 +31,12 @@ This is a baseline taxonomy for safe future integration. It does not change how 
 
 ## Unknowns / risks (left unimplemented intentionally)
 
-- OpenCode hook schema and stable event names need implementation-specific review before safe automatic hook installation.
-- Gemini CLI hook APIs are documented, but ForkTTY should still validate schema compatibility before adding deeper automation.
+- Provider hook surfaces are evolving; run `forktty hooks doctor <agent>` after agent upgrades to confirm installed event coverage.
+- OpenCode integration is plugin-based, so ForkTTY intentionally writes a generated plugin file instead of mutating `opencode.json`.
 - Cross-provider “progress stream” formats are not standardized; normalization should remain best-effort and conservative.
 
 ## Current ForkTTY integration notes
 
-- Hook setup currently targets Codex, Claude, and Gemini local settings files.
+- Hook setup currently targets Codex, Claude, and Gemini local settings files, plus a generated OpenCode plugin.
 - `forktty doctor` reports hook config path state and misconfiguration risks.
 - Status normalization is now centralized in `forktty-core` for reuse by UI/socket/script layers.

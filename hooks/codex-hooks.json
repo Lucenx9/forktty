@@ -48,6 +48,66 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex permission-request || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex pre-compact || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex post-compact || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex subagent-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CODEX_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks codex subagent-stop || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Codex hooks",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

@@ -26,7 +26,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 ## Why ForkTTY
 
-- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, shell scripts, and custom tools.
+- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, OpenCode, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode, plus experimental WebKitGTK6 browser panes behind the `browser` feature.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
@@ -242,10 +242,10 @@ default socket location.
 
 ## Agent Hooks
 
-Install hook templates for Codex, Claude Code, and Gemini CLI:
+Install hook templates for Codex, Claude Code, Gemini CLI, and OpenCode:
 
 ```bash
-forktty hooks setup                       # install all three
+forktty hooks setup                       # install all supported agents
 forktty hooks setup codex                 # install just one
 forktty hooks setup codex claude --dry-run
 ```
@@ -259,6 +259,7 @@ The installer merges commands into the agent's own config file:
 | Codex       | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`                 |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`   |
 | Gemini CLI  | `~/.gemini/settings.json`                                         |
+| OpenCode    | `$OPENCODE_CONFIG_DIR/plugins/forktty.generated.js` or `~/.config/opencode/plugins/forktty.generated.js` |
 
 When `HOME` is overridden, the `~` defaults are resolved under that home
 directory. Existing configs are written atomically (tmp + rename) and a
@@ -276,6 +277,7 @@ Each agent's hook commands honor a per-agent disable variable:
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
 - `FORKTTY_GEMINI_HOOKS_DISABLED=1`
+- `FORKTTY_OPENCODE_HOOKS_DISABLED=1`
 
 Hooks report status, progress, logs, and prompt notifications through
 the same local socket pipeline. Manual hook-event commands can pass

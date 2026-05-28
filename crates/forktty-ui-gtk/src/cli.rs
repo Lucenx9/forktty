@@ -16,7 +16,7 @@ forktty — Linux-native multi-agent terminal
 USAGE:
     forktty                 Launch the GTK app (default).
     forktty doctor          Print a local diagnostics report and exit.
-    forktty hooks setup     Install Codex, Claude Code, and Gemini hooks.
+    forktty hooks setup     Install Codex, Claude Code, Gemini, and OpenCode hooks.
     forktty ping            Check the ForkTTY socket daemon.
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
@@ -681,6 +681,7 @@ fn collect_hooks() -> Vec<HookState> {
         home.as_deref(),
         std::env::var_os("CODEX_HOME"),
         std::env::var_os("CLAUDE_CONFIG_DIR"),
+        std::env::var_os("OPENCODE_CONFIG_DIR"),
     )
 }
 
@@ -688,10 +689,12 @@ fn collect_hooks_from_env(
     home: Option<&Path>,
     codex_home_env: Option<OsString>,
     claude_config_dir_env: Option<OsString>,
+    opencode_config_dir_env: Option<OsString>,
 ) -> Vec<HookState> {
     let codex_home = env_path_or_home(codex_home_env, home, ".codex");
     let claude_home = env_path_or_home(claude_config_dir_env, home, ".claude");
     let gemini_home = home.map(|h| h.join(".gemini"));
+    let opencode_home = env_path_or_home(opencode_config_dir_env, home, ".config/opencode");
 
     let mut out = Vec::new();
     if let Some(dir) = codex_home {
@@ -702,6 +705,12 @@ fn collect_hooks_from_env(
     }
     if let Some(dir) = gemini_home {
         out.push(inspect_hook_config("gemini", dir.join("settings.json")));
+    }
+    if let Some(dir) = opencode_home {
+        out.push(inspect_hook_config(
+            "opencode",
+            dir.join("plugins/forktty.generated.js"),
+        ));
     }
     out
 }
@@ -1425,7 +1434,7 @@ mod tests {
         let hook_path = codex_dir.join("hooks.json");
         fs::create_dir(&hook_path).unwrap();
 
-        let hooks = collect_hooks_from_env(Some(home.path()), None, None);
+        let hooks = collect_hooks_from_env(Some(home.path()), None, None, None);
         let codex = hooks.iter().find(|hook| hook.agent == "codex").unwrap();
         let mut warnings = Vec::new();
 
@@ -1449,7 +1458,7 @@ mod tests {
         let hook_path = codex_dir.join("hooks.json");
         symlink(codex_dir.join("missing-hooks.json"), &hook_path).unwrap();
 
-        let hooks = collect_hooks_from_env(Some(home.path()), None, None);
+        let hooks = collect_hooks_from_env(Some(home.path()), None, None, None);
         let codex = hooks.iter().find(|hook| hook.agent == "codex").unwrap();
         let mut warnings = Vec::new();
 
@@ -1566,14 +1575,21 @@ mod tests {
             Some(home.path()),
             Some(OsString::from("")),
             Some(OsString::from(" \t ")),
+            Some(OsString::from("")),
         );
 
         let codex = hooks.iter().find(|hook| hook.agent == "codex").unwrap();
         let claude = hooks.iter().find(|hook| hook.agent == "claude").unwrap();
         let gemini = hooks.iter().find(|hook| hook.agent == "gemini").unwrap();
+        let opencode = hooks.iter().find(|hook| hook.agent == "opencode").unwrap();
 
         assert_eq!(codex.path, home.path().join(".codex/hooks.json"));
         assert_eq!(claude.path, home.path().join(".claude/settings.json"));
         assert_eq!(gemini.path, home.path().join(".gemini/settings.json"));
+        assert_eq!(
+            opencode.path,
+            home.path()
+                .join(".config/opencode/plugins/forktty.generated.js")
+        );
     }
 }

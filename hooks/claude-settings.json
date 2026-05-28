@@ -104,6 +104,266 @@
         "matcher": "*"
       }
     ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude prompt-expansion || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "Setup": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude setup || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude permission-request || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude permission-denied || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude post-tool-failure || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude post-tool-batch || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude subagent-start || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude task-created || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude task-completed || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude elicitation || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "ElicitationResult": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude elicitation-result || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude post-compact || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude stop-failure || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude teammate-idle || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude config-change || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude instructions-loaded || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude cwd-changed || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "FileChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude file-changed || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude worktree-create || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude worktree-remove || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
