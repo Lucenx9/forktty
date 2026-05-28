@@ -33,6 +33,30 @@ pub struct ImportedData {
     pub result: ImportResult,
 }
 
+/// Which source data types the engine should read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportReadSelection {
+    pub cookies: bool,
+    pub history: bool,
+    pub bookmarks: bool,
+}
+
+impl ImportReadSelection {
+    pub const fn all() -> Self {
+        Self {
+            cookies: true,
+            history: true,
+            bookmarks: true,
+        }
+    }
+}
+
+impl Default for ImportReadSelection {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
 /// Engine error type.
 #[derive(Debug)]
 pub enum ImportError {
@@ -126,12 +150,20 @@ impl ImportEngine {
     /// not errors. A running browser that locks its SQLite files is handled by copying
     /// the DB to a temporary file before opening it.
     pub fn read_source(profile: &SourceProfile) -> Result<ImportedData, ImportError> {
+        Self::read_source_with_selection(profile, ImportReadSelection::all())
+    }
+
+    /// Read only the selected importable data from `profile`.
+    pub fn read_source_with_selection(
+        profile: &SourceProfile,
+        selection: ImportReadSelection,
+    ) -> Result<ImportedData, ImportError> {
         let base = Path::new(&profile.path);
 
         if profile.family.is_chromium() {
-            Self::read_chromium(base, &ChromiumCookieKeys::v10_only())
+            Self::read_chromium(base, &ChromiumCookieKeys::v10_only(), selection)
         } else {
-            Self::read_firefox(base)
+            Self::read_firefox(base, selection)
         }
     }
 
@@ -139,31 +171,58 @@ impl ImportEngine {
     /// keyring path for v11 cookies when available, then read SQLite files via
     /// the same copied-database path as the synchronous API.
     pub async fn read_source_async(profile: &SourceProfile) -> Result<ImportedData, ImportError> {
+        Self::read_source_async_with_selection(profile, ImportReadSelection::all()).await
+    }
+
+    /// Async import entrypoint that reads only the selected data types.
+    pub async fn read_source_async_with_selection(
+        profile: &SourceProfile,
+        selection: ImportReadSelection,
+    ) -> Result<ImportedData, ImportError> {
         let base = Path::new(&profile.path);
 
         if profile.family.is_chromium() {
-            let keys = ChromiumCookieKeys::for_family(profile.family).await;
-            Self::read_chromium(base, &keys)
+            let keys = if selection.cookies {
+                ChromiumCookieKeys::for_family(profile.family).await
+            } else {
+                ChromiumCookieKeys::v10_only()
+            };
+            Self::read_chromium(base, &keys, selection)
         } else {
-            Self::read_firefox(base)
+            Self::read_firefox(base, selection)
         }
     }
 
-    fn read_firefox(base: &Path) -> Result<ImportedData, ImportError> {
+    fn read_firefox(
+        base: &Path,
+        selection: ImportReadSelection,
+    ) -> Result<ImportedData, ImportError> {
         let cookies_path = base.join("cookies.sqlite");
         let places_path = base.join("places.sqlite");
 
-        let cookies = read_via_copy(&cookies_path, vec![], |p| {
-            read_firefox_cookies(p).map_err(ImportError::from)
-        })?;
+        let cookies = if selection.cookies {
+            read_via_copy(&cookies_path, vec![], |p| {
+                read_firefox_cookies(p).map_err(ImportError::from)
+            })?
+        } else {
+            vec![]
+        };
 
-        let visits = read_via_copy(&places_path, vec![], |p| {
-            read_firefox_history(p).map_err(ImportError::from)
-        })?;
+        let visits = if selection.history {
+            read_via_copy(&places_path, vec![], |p| {
+                read_firefox_history(p).map_err(ImportError::from)
+            })?
+        } else {
+            vec![]
+        };
 
         // Bookmarks share places.sqlite but the table may be absent in minimal DBs → treat as empty.
         // Corrupt DB or other real errors are propagated (not swallowed).
-        let bookmarks = read_via_copy(&places_path, vec![], firefox_bookmarks_or_empty)?;
+        let bookmarks = if selection.bookmarks {
+            read_via_copy(&places_path, vec![], firefox_bookmarks_or_empty)?
+        } else {
+            vec![]
+        };
 
         let result = ImportResult {
             cookies: cookies.len(),
@@ -183,23 +242,36 @@ impl ImportEngine {
     fn read_chromium(
         base: &Path,
         cookie_keys: &ChromiumCookieKeys,
+        selection: ImportReadSelection,
     ) -> Result<ImportedData, ImportError> {
         let cookies_path = base.join("Cookies");
         let history_path = base.join("History");
         let bookmarks_path = base.join("Bookmarks");
 
-        let (cookies, skipped) = read_via_copy(&cookies_path, (vec![], 0usize), |p| {
-            read_chromium_cookies_with_keys(p, cookie_keys).map_err(ImportError::from)
-        })?;
+        let (cookies, skipped) = if selection.cookies {
+            read_via_copy(&cookies_path, (vec![], 0usize), |p| {
+                read_chromium_cookies_with_keys(p, cookie_keys).map_err(ImportError::from)
+            })?
+        } else {
+            (vec![], 0)
+        };
 
-        let visits = read_via_copy(&history_path, vec![], |p| {
-            read_chromium_history(p).map_err(ImportError::from)
-        })?;
+        let visits = if selection.history {
+            read_via_copy(&history_path, vec![], |p| {
+                read_chromium_history(p).map_err(ImportError::from)
+            })?
+        } else {
+            vec![]
+        };
 
         // Bookmarks JSON: Chromium writes `Bookmarks` atomically via temp-file + rename,
         // so reading it directly is safe — no partial-read or lock risk. Missing file → empty.
-        let bookmarks = if bookmarks_path.exists() {
-            read_chromium_bookmarks(&bookmarks_path).map_err(ImportError::from)?
+        let bookmarks = if selection.bookmarks {
+            if bookmarks_path.exists() {
+                read_chromium_bookmarks(&bookmarks_path).map_err(ImportError::from)?
+            } else {
+                vec![]
+            }
         } else {
             vec![]
         };
@@ -267,6 +339,43 @@ mod tests {
         };
         let data = ImportEngine::read_source(&profile).unwrap();
         assert!(data.cookies.is_empty());
+        assert_eq!(data.result.cookies, 0);
+    }
+
+    #[test]
+    fn read_source_selection_skips_unselected_corrupt_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cookies.sqlite"), b"not a sqlite database").unwrap();
+        let places = rusqlite::Connection::open(dir.path().join("places.sqlite")).unwrap();
+        places
+            .execute_batch(
+                "CREATE TABLE moz_places (id INTEGER PRIMARY KEY,url TEXT,title TEXT,visit_count INTEGER);
+                 INSERT INTO moz_places (url,title,visit_count) VALUES ('https://a.test/','A',2);",
+            )
+            .unwrap();
+        drop(places);
+        let profile = SourceProfile {
+            family: BrowserFamily::Firefox,
+            display_name: "P".into(),
+            path: dir.path().to_string_lossy().into_owned(),
+            is_default: true,
+        };
+
+        assert!(ImportEngine::read_source(&profile).is_err());
+
+        let data = ImportEngine::read_source_with_selection(
+            &profile,
+            ImportReadSelection {
+                cookies: false,
+                history: true,
+                bookmarks: false,
+            },
+        )
+        .unwrap();
+        assert!(data.cookies.is_empty());
+        assert!(data.bookmarks.is_empty());
+        assert_eq!(data.visits.len(), 1);
+        assert_eq!(data.result.history, 1);
         assert_eq!(data.result.cookies, 0);
     }
 

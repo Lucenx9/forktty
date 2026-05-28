@@ -1970,6 +1970,20 @@ struct BrowserImportSelection {
     cookies: bool,
 }
 
+impl BrowserImportSelection {
+    fn any(self) -> bool {
+        self.history || self.bookmarks || self.cookies
+    }
+
+    fn read_selection(self) -> forktty_import::ImportReadSelection {
+        forktty_import::ImportReadSelection {
+            cookies: self.cookies,
+            history: self.history,
+            bookmarks: self.bookmarks,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct BrowserImportCounts {
     cookies: usize,
@@ -2061,11 +2075,17 @@ fn browser_import_selection(params: &Value) -> Result<BrowserImportSelection, Di
     let object = include.as_object().ok_or_else(|| {
         DispatchError::InvalidParam("Invalid parameter include: expected object".to_string())
     })?;
-    Ok(BrowserImportSelection {
+    let selection = BrowserImportSelection {
         history: browser_import_bool_param(object.get("history"), "include.history", true)?,
         bookmarks: browser_import_bool_param(object.get("bookmarks"), "include.bookmarks", true)?,
         cookies: browser_import_bool_param(object.get("cookies"), "include.cookies", true)?,
-    })
+    };
+    if !selection.any() {
+        return Err(DispatchError::InvalidParam(
+            "select at least one browser data type to import".to_string(),
+        ));
+    }
+    Ok(selection)
 }
 
 fn browser_import_all_sources_param(params: &Value) -> Result<bool, DispatchError> {
@@ -2173,9 +2193,12 @@ async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> 
     let mut source_rows = Vec::new();
 
     for source in selected {
-        let data = forktty_import::ImportEngine::read_source_async(&source)
-            .await
-            .map_err(|err| DispatchError::Other(err.to_string()))?;
+        let data = forktty_import::ImportEngine::read_source_async_with_selection(
+            &source,
+            include.read_selection(),
+        )
+        .await
+        .map_err(|err| DispatchError::Other(err.to_string()))?;
         let counts = browser_import_counts_from_data(&data, include);
         total.add(counts);
         source_rows.push(json!({
@@ -2408,9 +2431,12 @@ async fn browser_import_run(
         let mut entry_sources = Vec::new();
 
         for source in entry.sources {
-            let data = forktty_import::ImportEngine::read_source_async(&source)
-                .await
-                .map_err(|err| DispatchError::Other(err.to_string()))?;
+            let data = forktty_import::ImportEngine::read_source_async_with_selection(
+                &source,
+                include.read_selection(),
+            )
+            .await
+            .map_err(|err| DispatchError::Other(err.to_string()))?;
             let read_counts = browser_import_counts_from_data(&data, include);
             entry_read.add(read_counts);
             entry_sources.push(browser_import_profile_json(&source));
@@ -6906,6 +6932,34 @@ mod tests {
         }
     }
 
+    fn create_firefox_import_source_with_corrupt_cookies(
+        home: &Path,
+        name: &str,
+    ) -> forktty_import::SourceProfile {
+        let profile_dir = home.join(".mozilla/firefox").join(name);
+        fs::create_dir_all(&profile_dir).unwrap();
+        fs::write(profile_dir.join("cookies.sqlite"), b"not a sqlite database").unwrap();
+        let places = rusqlite::Connection::open(profile_dir.join("places.sqlite")).unwrap();
+        places
+            .execute_batch(
+                "CREATE TABLE moz_places (
+                    id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER
+                 );
+                 INSERT INTO moz_places (id,url,title,visit_count)
+                    VALUES (1,'https://history-only.test/','History Only',3);",
+            )
+            .unwrap();
+        drop(places);
+        let profiles_ini = format!("[Profile0]\nName={name}\nPath={name}\nDefault=1\n");
+        fs::write(home.join(".mozilla/firefox/profiles.ini"), profiles_ini).unwrap();
+        forktty_import::SourceProfile {
+            family: forktty_import::BrowserFamily::Firefox,
+            display_name: name.to_string(),
+            path: profile_dir.to_string_lossy().into_owned(),
+            is_default: true,
+        }
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn browser_import_discover_preview_and_run_imports_history_bookmarks() {
@@ -7034,6 +7088,46 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn browser_import_skips_unselected_corrupt_cookie_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+        let source = create_firefox_import_source_with_corrupt_cookies(&home, "history-only");
+        let source_id = browser_import_source_id(&source);
+        let (state, _backend) = test_state();
+
+        let preview = dispatch(
+            &state,
+            "browser.import.preview",
+            json!({
+                "sources": [source_id.clone()],
+                "include": {"history": true, "bookmarks": false, "cookies": false}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(preview["total"]["history"], json!(1));
+        assert_eq!(preview["total"]["cookies"], json!(0));
+
+        let imported = dispatch(
+            &state,
+            "browser.import.run",
+            json!({
+                "sources": [source_id],
+                "include": {"history": true, "bookmarks": false, "cookies": false},
+                "destination": {"kind": "existing", "profile": "Default"}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported["total"]["written"]["history"], json!(1));
+        assert_eq!(imported["total"]["cookies"]["read"], json!(0));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn browser_import_missing_and_corrupt_sources_are_errors_not_crashes() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
@@ -7098,6 +7192,14 @@ mod tests {
                 "browser.import.run",
                 json!({"all": true, "destination": {"kind": "create", "display_name": 42}}),
                 "Invalid parameter destination.display_name",
+            ),
+            (
+                "browser.import.preview",
+                json!({
+                    "sources": ["firefox:/tmp/profile"],
+                    "include": {"history": false, "bookmarks": false, "cookies": false}
+                }),
+                "select at least one browser data type",
             ),
         ] {
             let err = dispatch(&state, method, params).await.unwrap_err();
