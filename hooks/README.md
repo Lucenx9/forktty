@@ -76,9 +76,9 @@ quoting automatically.
 The `timeout` field is provider-defined. Claude Code and Codex measure it in
 **seconds** (Codex default 600 s; Claude default 600 s, 30 s for
 `UserPromptSubmit`), and ForkTTY pins those entries at 30 s. Gemini templates
-use `5000`, matching Gemini's millisecond-style hook timeout field. The intent
-is the same for every provider: a hook should not block the agent loop longer
-than a local socket round-trip needs.
+use `30000`, matching Gemini's millisecond-style hook timeout field and the
+same 30 s budget. The intent is the same for every provider: a hook should not
+block the agent loop longer than a local socket round-trip needs.
 
 Each command is guarded by a per-agent disable variable:
 
