@@ -587,18 +587,33 @@ pub(super) fn restore_or_bootstrap_workspaces(
     cwd: PathBuf,
 ) -> Result<(), String> {
     match session::load_session() {
-        Ok(Some(data)) if !data.workspaces.is_empty() => {
-            let mut model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            model.restore_session(data);
-            // session::load_session already runs validate_session_data, but
-            // running the invariant repair here is cheap and turns any
-            // belt-and-suspenders mismatch (e.g. an empty pane tree slipping
-            // past validation in a future migration) into a no-op rather than
-            // an inconsistent UI.
-            let _ = model.repair_session_invariants();
+        Ok(Some(mut data)) if !data.workspaces.is_empty() => {
+            let repaired_paths = repair_restored_workspace_paths(&mut data, &cwd);
+            {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                model.restore_session(data);
+                // session::load_session already runs validate_session_data, but
+                // running the invariant repair here is cheap and turns any
+                // belt-and-suspenders mismatch (e.g. an empty pane tree slipping
+                // past validation in a future migration) into a no-op rather than
+                // an inconsistent UI.
+                let _ = model.repair_session_invariants();
+            }
+            if repaired_paths > 0 {
+                create_global_notification(
+                    state,
+                    "Session Restore Issue",
+                    &format!(
+                        "{repaired_paths} saved workspace path(s) no longer exist; using {}.",
+                        restore_session_fallback_dir(&cwd).display()
+                    ),
+                    NotificationKind::Error,
+                );
+                save_session_from_state(state);
+            }
             Ok(())
         }
         Ok(_) => {
@@ -621,6 +636,43 @@ pub(super) fn restore_or_bootstrap_workspaces(
             bootstrap_default_workspace(state, cwd)
         }
     }
+}
+
+pub(super) fn repair_restored_workspace_paths(
+    data: &mut session::SessionData,
+    fallback_dir: &Path,
+) -> usize {
+    let fallback_dir = restore_session_fallback_dir(fallback_dir);
+    let mut repaired = 0;
+    let mut workspace_dirs = BTreeMap::new();
+    for workspace in &mut data.workspaces {
+        if !workspace.working_dir.is_dir() {
+            workspace.working_dir = fallback_dir.clone();
+            repaired += 1;
+        }
+        workspace_dirs.insert(workspace.id.clone(), workspace.working_dir.clone());
+    }
+    for surface in &mut data.surfaces {
+        if surface.cwd.is_dir() {
+            continue;
+        }
+        surface.cwd = workspace_dirs
+            .get(&surface.workspace_id)
+            .cloned()
+            .unwrap_or_else(|| fallback_dir.clone());
+        repaired += 1;
+    }
+    repaired
+}
+
+fn restore_session_fallback_dir(candidate: &Path) -> PathBuf {
+    if candidate.is_dir() {
+        return candidate.to_path_buf();
+    }
+    dirs::home_dir()
+        .filter(|path| path.is_dir())
+        .or_else(|| std::env::current_dir().ok().filter(|path| path.is_dir()))
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 pub(super) fn register_app_icon() {

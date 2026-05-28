@@ -897,6 +897,34 @@ fn restart_surface_does_not_spawn_terminal_for_browser_pane() {
 }
 
 #[test]
+fn restored_missing_workspace_dirs_fall_back_to_valid_startup_dir() {
+    let fallback = tempfile::tempdir().unwrap();
+    let missing = fallback.path().join("deleted-workspace");
+    let mut source = WorkspaceModel::new();
+    let workspace = source.create_workspace("missing", &missing);
+    let mut data = source.to_session_data();
+
+    let repaired = repair_restored_workspace_paths(&mut data, fallback.path());
+
+    assert_eq!(repaired, 1);
+    assert_eq!(data.workspaces[0].working_dir, fallback.path());
+
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(data);
+
+    let restored_workspace = restored.list_workspaces()[0].clone();
+    assert_eq!(restored_workspace.id, workspace.id);
+    assert_eq!(restored_workspace.working_dir, fallback.path());
+    assert_eq!(
+        restored
+            .surface(&restored_workspace.focused_surface_id)
+            .unwrap()
+            .cwd,
+        fallback.path()
+    );
+}
+
+#[test]
 fn uses_configured_shell_for_gtk_spawn() {
     let mut config = config::AppConfig::default();
     config.general.shell = "/bin/sh".to_string();
