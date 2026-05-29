@@ -80,7 +80,13 @@ pub fn send_text(widget: &VteTerminalWidget, text: &str) {
 
 #[cfg(feature = "vte")]
 fn child_environment(request: &SpawnRequest) -> Vec<String> {
-    let mut env = std::env::vars().collect::<BTreeMap<_, _>>();
+    // `vars_os` rather than `vars`: a single non-UTF-8 environment variable
+    // (legal on Linux) makes `vars` panic, which would crash the app while
+    // spawning a terminal. Such vars can't be passed to `spawn_async` as
+    // `&str` anyway, so skip the ones that aren't valid UTF-8.
+    let mut env = std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect::<BTreeMap<_, _>>();
     for (key, value) in request.forktty_env() {
         env.insert(key, value);
     }
@@ -139,6 +145,36 @@ mod tests {
         assert!(!env
             .iter()
             .any(|entry| entry == "FORKTTY_SURFACE_ID=spoofed"));
+    }
+
+    #[test]
+    fn child_environment_skips_non_utf8_vars_without_panicking() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        // A non-UTF-8 value is legal on Linux and made `std::env::vars` panic.
+        let key = "FORKTTY_TEST_NON_UTF8_VALUE";
+        std::env::set_var(key, OsStr::from_bytes(&[0x66, 0x6f, 0x80, 0x6f]));
+
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        let env = child_environment(&request);
+        std::env::remove_var(key);
+
+        // The injected ForkTTY vars still come through, and the non-UTF-8 var
+        // is dropped rather than crashing.
+        assert!(env
+            .iter()
+            .any(|entry| entry == "FORKTTY_WORKSPACE_ID=workspace-1"));
+        assert!(!env.iter().any(|entry| entry.starts_with(&format!("{key}="))));
     }
 
     #[test]
