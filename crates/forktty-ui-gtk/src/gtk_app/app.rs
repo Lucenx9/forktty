@@ -62,9 +62,20 @@ pub(super) fn build_ui(app: &adw::Application) {
     brand_wordmark.append(&brand_name);
     brand.append(&brand_logo);
     brand.append(&brand_wordmark);
+
+    let app_menu = gtk::MenuButton::builder()
+        .icon_name("forktty-menu-symbolic")
+        .tooltip_text("Main Menu")
+        .has_frame(false)
+        .build();
+    app_menu.add_css_class("flat");
+    app_menu.add_css_class("header-action");
+    app_menu.update_property(&[gtk::accessible::Property::Label("Main Menu")]);
+
     let brand_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     brand_separator.add_css_class("header-action-separator");
     header.pack_start(&brand);
+    header.pack_start(&app_menu);
     header.pack_start(&brand_separator);
 
     let workspace_title_label = gtk::Label::builder()
@@ -79,7 +90,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         .build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");
-    workspace_title.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
     workspace_title.set_sensitive(false);
     set_accessible_button_text(&workspace_title, "No active workspace", None);
     header.set_title_widget(Some(&workspace_title));
@@ -104,14 +114,9 @@ pub(super) fn build_ui(app: &adw::Application) {
         .child(&notif_overlay)
         .tooltip_text("Notifications (Ctrl+Shift+M)")
         .build();
-    let settings = gtk::Button::builder()
-        .icon_name("forktty-settings-symbolic")
-        .tooltip_text("Settings (Ctrl+,)")
-        .build();
     for (button, label, shortcut) in [
         (&command_palette, "Command Palette", Some("Ctrl+Shift+P")),
         (&notifications, "Notifications", Some("Ctrl+Shift+M")),
-        (&settings, "Settings", Some("Ctrl+,")),
     ] {
         button.add_css_class("flat");
         button.add_css_class("header-action");
@@ -134,7 +139,6 @@ pub(super) fn build_ui(app: &adw::Application) {
     header_action_separator.add_css_class("header-action-separator");
     header.pack_end(&window_controls);
     header.pack_end(&header_action_separator);
-    header.pack_end(&settings);
     header.pack_end(&notifications);
     header.pack_end(&command_palette);
 
@@ -218,7 +222,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         .build();
     status_location.add_css_class("flat");
     status_location.add_css_class("status-location");
-    status_location.set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
     status_location.set_sensitive(false);
     let status_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     status_spacer.set_hexpand(true);
@@ -276,6 +279,7 @@ pub(super) fn build_ui(app: &adw::Application) {
             );
         }
     }
+    app_menu.set_popover(Some(&build_app_menu_popover(&window)));
     {
         let window = window.clone();
         minimize.connect_clicked(move |_| window.minimize());
@@ -457,17 +461,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         );
     });
 
-    let settings_parent = window.clone();
-    let settings_state = state.clone();
-    let settings_apply_for_button = settings_apply.clone();
-    settings.connect_clicked(move |_| {
-        show_settings_dialog(
-            &settings_parent,
-            &settings_state,
-            settings_apply_for_button.clone(),
-        );
-    });
-
     install_actions(
         app,
         &window,
@@ -531,12 +524,70 @@ fn app_window_control_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::builder()
         .icon_name(icon_name)
         .has_frame(false)
-        .tooltip_text(label)
         .build();
     button.add_css_class("flat");
     button.add_css_class("app-window-control");
     set_accessible_button_text(&button, label, None);
     button
+}
+
+fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
+    let popover = gtk::Popover::builder().has_arrow(false).build();
+    popover.add_css_class("ft-app-menu");
+    let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    menu.add_css_class("ft-menu");
+
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-heart-symbolic",
+        "Support me",
+        false,
+        open_support_uri,
+    );
+    add_context_menu_separator(&menu);
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-settings-symbolic",
+        "Settings",
+        false,
+        {
+            let parent = parent.clone();
+            move || {
+                activate_app_action(&parent, "settings");
+            }
+        },
+    );
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-keyboard-symbolic",
+        "Keyboard Shortcuts",
+        false,
+        {
+            let parent = parent.clone();
+            move || {
+                show_shortcuts_dialog(&parent);
+            }
+        },
+    );
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-info-symbolic",
+        "About ForkTTY",
+        false,
+        {
+            let parent = parent.clone();
+            move || {
+                show_about_dialog(&parent);
+            }
+        },
+    );
+
+    popover.set_child(Some(&menu));
+    popover
 }
 
 pub(super) fn default_startup_workspace_dir_from(

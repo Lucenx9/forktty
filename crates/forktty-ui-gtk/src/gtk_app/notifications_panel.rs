@@ -153,14 +153,27 @@ pub(super) fn show_notification_panel(
     state: &SocketAppState,
     controller: Option<Rc<RefCell<VteController>>>,
 ) {
+    let notifications = state
+        .model
+        .lock()
+        .ok()
+        .map(|mut model| {
+            let notifications = model.list_notifications();
+            model.mark_notifications_read();
+            notifications
+        })
+        .unwrap_or_default();
+    let has_notifications = !notifications.is_empty();
+
     let dialog = gtk::Window::builder()
         .title("Notifications")
         .transient_for(parent)
         .modal(true)
-        .default_width(460)
-        .default_height(420)
+        .default_width(440)
+        .default_height(if has_notifications { 420 } else { 300 })
         .build();
     dialog.add_css_class("ft-dialog");
+    dialog.add_css_class("notification-panel");
     apply_dialog_chrome(&dialog);
     install_escape_close(&dialog);
     restore_focus_after_hide(&dialog, parent);
@@ -174,17 +187,6 @@ pub(super) fn show_notification_panel(
     title.add_css_class("ft-dialog-title");
     header_box.append(&title);
 
-    let notifications = state
-        .model
-        .lock()
-        .ok()
-        .map(|mut model| {
-            let notifications = model.list_notifications();
-            model.mark_notifications_read();
-            notifications
-        })
-        .unwrap_or_default();
-    let has_notifications = !notifications.is_empty();
     let subtitle = gtk::Label::builder()
         .label(if has_notifications {
             format!(
@@ -197,7 +199,7 @@ pub(super) fn show_notification_panel(
                 }
             )
         } else {
-            "No notifications".to_string()
+            "All clear".to_string()
         })
         .xalign(0.0)
         .build();
@@ -213,33 +215,46 @@ pub(super) fn show_notification_panel(
         .build();
     list.add_css_class("notification-list");
 
-    let close_button = gtk::Button::with_label("Close");
     let jump = gtk::Button::with_label("Open Latest");
-    jump.set_sensitive(latest_openable_notification(state).is_some());
+    let has_openable_notification = latest_openable_notification(state).is_some();
+    jump.set_sensitive(has_openable_notification);
+    jump.set_visible(has_openable_notification);
     jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
     let clear = gtk::Button::with_label("Clear All");
     clear.set_sensitive(has_notifications);
-    clear.add_css_class("destructive-action");
     clear.set_tooltip_text(Some("Clear pending notifications"));
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("ft-dialog-footer");
+    footer.add_css_class("notification-panel-footer");
+    footer.set_visible(has_notifications);
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    footer.append(&spacer);
+    footer.append(&jump);
+    footer.append(&clear);
 
     let show_empty_state = {
         let body = body.clone();
         let subtitle = subtitle.clone();
         let clear = clear.clone();
         let jump = jump.clone();
+        let footer = footer.clone();
         Rc::new(move || {
             while let Some(child) = body.first_child() {
                 body.remove(&child);
             }
             let empty = compact_status_page(
                 "forktty-notifications-symbolic",
-                "All Clear",
-                "Prompts and alerts will appear here.",
+                "No Notifications",
+                "New prompts and alerts will appear here.",
             );
             body.append(&empty);
-            subtitle.set_label("No notifications");
+            subtitle.set_label("All clear");
             clear.set_sensitive(false);
             jump.set_sensitive(false);
+            jump.set_visible(false);
+            footer.set_visible(false);
         })
     };
 
@@ -247,7 +262,9 @@ pub(super) fn show_notification_panel(
         let state = state.clone();
         let jump = jump.clone();
         Rc::new(move || {
-            jump.set_sensitive(latest_openable_notification(&state).is_some());
+            let openable = latest_openable_notification(&state).is_some();
+            jump.set_sensitive(openable);
+            jump.set_visible(openable);
         })
     };
 
@@ -380,18 +397,6 @@ pub(super) fn show_notification_panel(
         body.append(&scroll);
     }
 
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    footer.add_css_class("ft-dialog-footer");
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    footer.append(&spacer);
-    footer.append(&close_button);
-    footer.append(&jump);
-    footer.append(&clear);
-
-    let dialog_for_close = dialog.clone();
-    close_button.connect_clicked(move |_| dialog_for_close.close());
-
     {
         let state_for_jump = state.clone();
         let controller_for_jump = controller.clone();
@@ -425,7 +430,6 @@ pub(super) fn show_notification_panel(
     content.append(&header_box);
     content.append(&body);
     content.append(&footer);
-    dialog.set_default_widget(Some(&close_button));
     dialog.set_child(Some(&content));
     dialog.present();
 }

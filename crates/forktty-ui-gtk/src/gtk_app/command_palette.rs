@@ -106,20 +106,6 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
     dialog.present();
 }
 
-pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
-    let dialog = gtk::AboutDialog::builder()
-        .transient_for(parent)
-        .modal(true)
-        .program_name("ForkTTY")
-        .version(env!("CARGO_PKG_VERSION"))
-        .comments("Native GTK/VTE workspace terminal for panes, worktrees and socket automation.")
-        .website("https://github.com/Lucenx9/forktty")
-        .website_label("GitHub Repository")
-        .logo_icon_name("forktty")
-        .build();
-    dialog.present();
-}
-
 pub(super) fn append_shortcut_group(container: &gtk::Box, title: &str, shortcuts: &[(&str, &str)]) {
     let title = gtk::Label::builder().label(title).xalign(0.0).build();
     title.add_css_class("ft-section-title");
@@ -160,6 +146,7 @@ pub(super) fn show_command_palette_with_query(
         .default_height(360)
         .build();
     dialog.add_css_class("ft-dialog");
+    dialog.add_css_class("command-palette-dialog");
     apply_dialog_chrome(&dialog);
     install_escape_close(&dialog);
     restore_focus_after_hide(&dialog, parent);
@@ -171,13 +158,7 @@ pub(super) fn show_command_palette_with_query(
         .xalign(0.0)
         .build();
     title.add_css_class("ft-dialog-title");
-    let subtitle = gtk::Label::builder()
-        .label("Run a workspace, pane, or app command.")
-        .xalign(0.0)
-        .build();
-    subtitle.add_css_class("ft-dialog-subtitle");
     header.append(&title);
-    header.append(&subtitle);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.add_css_class("ft-dialog-body");
@@ -428,15 +409,6 @@ pub(super) fn show_command_palette_with_query(
             );
         }
     });
-    command!("About ForkTTY", None, {
-        let parent = parent.clone();
-        let dialog = dialog.clone();
-        move || {
-            dialog.close();
-            show_about_dialog(&parent);
-        }
-    });
-
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -445,8 +417,8 @@ pub(super) fn show_command_palette_with_query(
     body.append(&scroll);
     let empty = compact_status_page(
         "forktty-search-symbolic",
-        "No Commands Found",
-        "Try a different search.",
+        "No commands found",
+        "Try another search.",
     );
     empty.set_visible(false);
     body.append(&empty);

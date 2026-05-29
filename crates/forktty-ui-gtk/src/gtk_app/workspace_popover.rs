@@ -13,7 +13,7 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
 
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
     container.add_css_class("ft-workspace-popover-list");
-    container.set_width_request(300);
+    container.set_width_request(280);
 
     let (active_id, workspaces, ssh_hosts) = {
         let Ok(model) = state.model.lock() else {
@@ -79,15 +79,18 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
                     meta_parts.push(format!("wt:{wt}"));
                 }
             }
-            meta_parts.push(compact_path(&ws.working_dir));
-            let path = gtk::Label::builder()
-                .label(meta_parts.join(" · "))
-                .xalign(0.0)
-                .ellipsize(gtk::pango::EllipsizeMode::Middle)
-                .build();
-            path.add_css_class("ft-workspace-popover-path");
             body.append(&name);
-            body.append(&path);
+            meta_parts.push(compact_path(&ws.working_dir));
+            let meta = meta_parts.join(" · ");
+            if meta != "~" {
+                let path = gtk::Label::builder()
+                    .label(meta)
+                    .xalign(0.0)
+                    .ellipsize(gtk::pango::EllipsizeMode::Middle)
+                    .build();
+                path.add_css_class("ft-workspace-popover-path");
+                body.append(&path);
+            }
             inner.append(&body);
             row.set_child(Some(&inner));
 

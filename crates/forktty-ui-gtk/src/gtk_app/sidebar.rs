@@ -57,12 +57,11 @@ pub(super) fn refresh_sidebar(
     let snapshot = sidebar_snapshot(state);
     if let Some(name) = snapshot.active_workspace_name.as_deref() {
         ui.workspace_title_label.set_label(name);
-        ui.workspace_title
-            .set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
+        ui.workspace_title.set_tooltip_text(None);
         set_accessible_button_text(
             &ui.workspace_title,
             &format!("Active workspace: {name}"),
-            Some("Ctrl+Shift+P"),
+            None,
         );
         ui.workspace_title.set_sensitive(true);
     } else {
@@ -75,17 +74,16 @@ pub(super) fn refresh_sidebar(
     if let Some(label) = snapshot.active_status_label.as_deref() {
         ui.status_location_label.set_label(label);
         if let Some(path) = snapshot.active_full_path.as_deref() {
-            ui.status_location.set_tooltip_text(Some(&format!(
-                "Switch workspace (Ctrl+Shift+P)\nFull path: {path}"
-            )));
+            ui.status_location
+                .set_tooltip_text(Some(&format!("Workspace location: {path}")));
         } else {
             ui.status_location
-                .set_tooltip_text(Some("Switch workspace (Ctrl+Shift+P)"));
+                .set_tooltip_text(Some("Workspace location"));
         }
         set_accessible_button_text(
             &ui.status_location,
             &format!("Workspace location: {label}"),
-            Some("Ctrl+Shift+P"),
+            None,
         );
         ui.status_location.set_sensitive(true);
     } else {

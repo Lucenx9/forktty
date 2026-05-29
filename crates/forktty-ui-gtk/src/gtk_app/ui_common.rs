@@ -68,6 +68,114 @@ pub(super) fn install_escape_close(window: &gtk::Window) {
     window.add_controller(controller);
 }
 
+const FORKTTY_SUPPORT_URI: &str = "https://ko-fi.com/lucenx9";
+const FORKTTY_REPOSITORY_URI: &str = env!("CARGO_PKG_REPOSITORY");
+const FORKTTY_LICENSE: &str = "AGPL-3.0-only";
+
+pub(super) fn open_support_uri() {
+    open_external_uri(FORKTTY_SUPPORT_URI, "support page");
+}
+
+pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
+    let dialog = gtk::Window::builder()
+        .title("About ForkTTY")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(420)
+        .default_height(430)
+        .resizable(false)
+        .build();
+    dialog.add_css_class("ft-dialog");
+    dialog.add_css_class("about-dialog");
+    apply_dialog_chrome(&dialog);
+    install_escape_close(&dialog);
+    restore_focus_after_hide(&dialog, parent);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.add_css_class("about-body");
+
+    let hero = gtk::Box::new(gtk::Orientation::Vertical, 7);
+    hero.add_css_class("about-hero");
+    let logo = gtk::Image::from_icon_name("forktty");
+    logo.set_pixel_size(96);
+    logo.add_css_class("about-logo");
+    let name = gtk::Label::builder().label("ForkTTY").build();
+    name.add_css_class("about-name");
+    let version = gtk::Label::builder()
+        .label(format!("Version {}", env!("CARGO_PKG_VERSION")))
+        .build();
+    version.add_css_class("about-version");
+    let description = gtk::Label::builder()
+        .label("A native GTK/VTE terminal for panes, worktrees, and automation.")
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .max_width_chars(44)
+        .build();
+    description.add_css_class("about-description");
+    hero.append(&logo);
+    hero.append(&name);
+    hero.append(&version);
+    hero.append(&description);
+    body.append(&hero);
+
+    let details = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    details.add_css_class("about-details");
+    details.append(&about_detail_row("Developer", "Lucenx9"));
+    details.append(&about_detail_row("License", FORKTTY_LICENSE));
+    details.append(&about_detail_row("Copyright", "2026 Lucenx9"));
+    body.append(&details);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.add_css_class("about-actions");
+    actions.set_halign(gtk::Align::Center);
+    let repository = about_action_button("Source Code");
+    repository.connect_clicked(move |_| {
+        open_external_uri(FORKTTY_REPOSITORY_URI, "repository");
+    });
+    let support = about_action_button("Support me");
+    support.add_css_class("suggested-action");
+    support.connect_clicked(move |_| open_support_uri());
+    actions.append(&repository);
+    actions.append(&support);
+    body.append(&actions);
+
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
+fn open_external_uri(uri: &str, description: &str) {
+    if let Err(err) = gio::AppInfo::launch_default_for_uri(uri, None::<&gio::AppLaunchContext>) {
+        eprintln!("Could not open {description}: {err}");
+    }
+}
+
+fn about_detail_row(label: &str, value: &str) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.add_css_class("about-detail-row");
+    let label = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .width_request(92)
+        .build();
+    label.add_css_class("about-detail-label");
+    let value = gtk::Label::builder()
+        .label(value)
+        .xalign(0.0)
+        .hexpand(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    value.add_css_class("about-detail-value");
+    row.append(&label);
+    row.append(&value);
+    row
+}
+
+fn about_action_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::with_label(label);
+    button.add_css_class("about-action");
+    button
+}
+
 pub(super) fn show_destructive_confirmation<W, F>(
     parent: &W,
     title: &str,

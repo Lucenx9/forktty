@@ -138,7 +138,8 @@ window {
   color: var(--ft-text-faint);
 }
 
-.app-header .header-action {
+.app-header .header-action,
+.app-header menubutton.header-action > button {
   min-width: 24px;
   min-height: 24px;
   margin: 0;
@@ -151,26 +152,31 @@ window {
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
-.app-header .header-action image {
+.app-header .header-action image,
+.app-header menubutton.header-action > button image {
   -gtk-icon-size: 14px;
 }
 
-.app-header .header-action:hover {
+.app-header .header-action:hover,
+.app-header menubutton.header-action > button:hover {
   color: var(--ft-text-strong);
   background: var(--ft-bg-3);
 }
 
-.app-header .header-action:active {
+.app-header .header-action:active,
+.app-header menubutton.header-action > button:active {
   background: var(--ft-accent-soft);
   color: var(--ft-text-strong);
 }
 
-.app-header .header-action:focus-visible {
+.app-header .header-action:focus-visible,
+.app-header menubutton.header-action > button:focus-visible {
   background: var(--ft-bg-3);
   color: var(--ft-text-strong);
 }
 
-.app-header .header-action:disabled {
+.app-header .header-action:disabled,
+.app-header menubutton.header-action > button:disabled {
   color: var(--ft-text-faint);
   background: transparent;
 }
@@ -290,13 +296,18 @@ window {
  * Context menu (workspace row right-click)
  * -------------------------------------------------------------------------- */
 
+popover.ft-app-menu contents,
 popover.ft-context-menu contents,
 popover.ft-workspace-popover contents {
-  padding: 7px;
-  background: var(--ft-bg-overlay);
-  border: 1px solid var(--ft-border-strong);
-  border-radius: 6px;
-  box-shadow: 0 10px 28px alpha(var(--ft-shadow), 0.42);
+  padding: 6px;
+  background: var(--ft-bg-1);
+  border: 1px solid var(--ft-border);
+  border-radius: 7px;
+  box-shadow: 0 12px 28px alpha(var(--ft-shadow), 0.34);
+}
+
+popover.ft-app-menu contents {
+  min-width: 214px;
 }
 
 popover.ft-context-menu contents {
@@ -687,7 +698,7 @@ popover.ft-context-menu contents {
 }
 
 .ft-workspace-popover-row {
-  min-height: 42px;
+  min-height: 34px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -696,25 +707,23 @@ popover.ft-context-menu contents {
 }
 
 .ft-workspace-popover-row:hover {
-  background: var(--ft-bg-4);
+  background: var(--ft-bg-3);
 }
 
 .ft-workspace-popover-row:focus-visible {
   border-color: var(--ft-accent);
 }
 
-/* Echo the sidebar card's active treatment: neutral fill with a small accent rail. */
 .ft-workspace-popover-row.active {
-  background: var(--ft-selection-bg);
-  box-shadow: inset 3px 0 0 var(--ft-selection-rail);
+  background: var(--ft-bg-2);
 }
 
 .ft-workspace-popover-row.active:hover {
-  background: var(--ft-selection-bg-hover);
+  background: var(--ft-bg-3);
 }
 
 .ft-workspace-popover-row-inner {
-  padding: 7px 9px;
+  padding: 6px 8px;
 }
 
 .ft-workspace-popover-check,
@@ -726,21 +735,27 @@ popover.ft-context-menu contents {
 
 .ft-workspace-popover-name {
   color: var(--ft-text-strong);
-  font-weight: 650;
-  font-size: 0.92em;
+  font-weight: 600;
+  font-size: 0.90em;
 }
 
 .ft-workspace-popover-path {
   color: var(--ft-text-faint);
-  font-size: 0.78em;
+  font-size: 0.76em;
 }
 
 .ft-workspace-popover-separator {
-  margin: 6px 2px;
+  margin: 6px 4px;
   background: var(--ft-border-subtle);
 }
 
 .ft-workspace-popover-action {
+  color: var(--ft-text);
+}
+
+.ft-workspace-popover-action .ft-workspace-popover-name,
+.ft-workspace-popover-action label {
+  font-weight: 600;
   color: var(--ft-text);
 }
 
@@ -1408,6 +1423,77 @@ window.ft-dialog,
   background: var(--ft-bg-0);
 }
 
+.about-dialog {
+  background: var(--ft-bg-1);
+}
+
+.about-body {
+  padding: 18px 22px 22px 22px;
+  background: var(--ft-bg-1);
+}
+
+.about-hero {
+  margin: 0 8px 16px 8px;
+}
+
+.about-logo {
+  margin-bottom: 4px;
+}
+
+.about-name {
+  color: var(--ft-text-strong);
+  font-size: 1.30em;
+  font-weight: 750;
+}
+
+.about-version {
+  color: var(--ft-text-faint);
+  font-size: 0.84em;
+}
+
+.about-description {
+  color: var(--ft-text-muted);
+  font-size: 0.90em;
+}
+
+.about-details {
+  background: var(--ft-bg-2);
+  border: 1px solid var(--ft-border);
+  border-radius: 7px;
+}
+
+.about-detail-row {
+  min-height: 38px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ft-border-subtle);
+}
+
+.about-detail-row:last-child {
+  border-bottom: 0;
+}
+
+.about-detail-label {
+  color: var(--ft-text-faint);
+  font-size: 0.78em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.about-detail-value {
+  color: var(--ft-text);
+  font-size: 0.90em;
+}
+
+.about-actions {
+  margin-top: 16px;
+}
+
+.about-action {
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 7px;
+}
+
 .ft-section-title {
   color: var(--ft-text-muted);
   font-size: 0.74em;
@@ -1449,65 +1535,213 @@ window.ft-dialog,
   font-weight: 700;
 }
 
-/* Adwaita PreferencesWindow polish:
- *   - the view-switcher in the title bar gets a clear "checked" state so
- *     the active tab is unambiguous;
- *   - PreferencesGroup titles get extra breathing room to act as actual
- *     section dividers instead of blurring into the first row. */
-preferenceswindow viewswitcher button:checked,
-preferenceswindow viewswitcher button.checked {
-  background: var(--ft-selection-bg);
-  color: var(--ft-text-strong);
-  box-shadow: inset 0 -2px 0 0 var(--ft-selection-rail);
+.ft-settings-window {
+  background: var(--ft-bg-1);
 }
 
-preferenceswindow viewswitcher button:checked:hover,
-preferenceswindow viewswitcher button.checked:hover {
-  background: var(--ft-selection-bg-hover);
+.settings-shell {
+  background: var(--ft-bg-1);
+  color: var(--ft-text);
 }
 
-preferenceswindow preferencesgroup > box > .header {
-  margin-top: 18px;
-  margin-bottom: 6px;
-  padding-bottom: 6px;
+.settings-titlebar {
+  min-height: 42px;
+  padding: 0 8px 0 14px;
+  background: var(--ft-bg-1);
   border-bottom: 1px solid var(--ft-border-subtle);
-}
-
-preferenceswindow preferencespage > scrolledwindow > viewport > clamp > box > preferencesgroup:first-child > box > .header {
-  margin-top: 4px;
-}
-
-preferenceswindow preferencesgroup > box > .header > label.title {
-  color: var(--ft-text-strong);
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-
-preferenceswindow preferencesgroup > box > .header > label.description {
-  color: var(--ft-text-muted);
-  font-size: 0.86em;
-}
-
-/* Flatten Adwaita's boxed-list cards into flat rows separated by hairline
- * dividers (Zed/Cursor settings style) instead of a raised rounded card. */
-preferenceswindow .boxed-list {
-  background: transparent;
-  border: 0;
   box-shadow: none;
 }
 
-preferenceswindow .boxed-list > row {
+.settings-window-title {
+  color: var(--ft-text-strong);
+  font-size: 0.96em;
+  font-weight: 700;
+}
+
+.settings-close {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--ft-text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+
+.settings-close image {
+  -gtk-icon-size: 14px;
+}
+
+.settings-close:hover {
+  background: var(--ft-bg-3);
+  color: var(--ft-text-strong);
+}
+
+.settings-close:focus-visible {
+  border-color: var(--ft-accent);
+}
+
+.settings-body {
+  min-height: 0;
+  background: var(--ft-bg-1);
+}
+
+.settings-nav {
+  min-width: 216px;
+  padding: 14px 10px 16px 10px;
+  background: var(--ft-bg-0);
+  border-right: 1px solid var(--ft-border-subtle);
+}
+
+.settings-nav-item {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ft-text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-nav-item:hover {
+  background: var(--ft-bg-3);
+  color: var(--ft-text);
+}
+
+.settings-nav-item:checked {
+  background: var(--ft-bg-2);
+  border-color: var(--ft-border-subtle);
+  color: var(--ft-text-strong);
+  box-shadow: inset 2px 0 0 var(--ft-accent), 0 1px 0 alpha(var(--ft-shadow), 0.18);
+}
+
+.settings-nav-icon {
+  -gtk-icon-size: 14px;
+  color: var(--ft-text-muted);
+}
+
+.settings-nav-item:checked .settings-nav-icon {
+  color: var(--ft-accent);
+}
+
+.settings-nav-label {
+  color: inherit;
+  font-size: 0.90em;
+  font-weight: 650;
+}
+
+.settings-stack {
+  background: var(--ft-bg-1);
+}
+
+.settings-page-scroll {
+  background: transparent;
+}
+
+.settings-page {
+  margin: 22px 28px 30px 28px;
+}
+
+.settings-section-header {
+  margin-left: 2px;
+}
+
+.settings-section-title {
+  color: var(--ft-text-strong);
+  font-weight: 700;
+  font-size: 0.92em;
+  letter-spacing: 0;
+}
+
+.settings-section-description {
+  color: var(--ft-text-muted);
+  font-size: 0.84em;
+}
+
+.settings-list {
+  background: var(--ft-bg-2);
+  border: 1px solid var(--ft-border);
+  border-radius: 7px;
+  box-shadow: inset 0 1px 0 alpha(var(--ft-text-strong), 0.03);
+}
+
+.settings-list row,
+.settings-list .settings-row {
+  min-height: 52px;
+  padding: 0 14px;
   background: transparent;
   border-radius: 0;
   border-bottom: 1px solid var(--ft-border-subtle);
 }
 
-preferenceswindow .boxed-list > row:last-child {
-  border-bottom: 0;
+.settings-list row:first-child,
+.settings-list .settings-row:first-child {
+  border-top-left-radius: 7px;
+  border-top-right-radius: 7px;
 }
 
-preferenceswindow .boxed-list > row:hover {
-  background: alpha(var(--window-fg-color), 0.03);
+.settings-list row:last-child,
+.settings-list .settings-row:last-child {
+  border-bottom: 0;
+  border-bottom-left-radius: 7px;
+  border-bottom-right-radius: 7px;
+}
+
+.settings-list row:hover,
+.settings-list .settings-row:hover {
+  background: var(--ft-bg-3);
+}
+
+.settings-list actionrow label.title,
+.settings-list entryrow label.title,
+.settings-list switchrow label.title {
+  color: var(--ft-text-strong);
+  font-weight: 560;
+  font-size: 0.92em;
+}
+
+.settings-list actionrow label.subtitle,
+.settings-list entryrow label.subtitle,
+.settings-list switchrow label.subtitle {
+  color: var(--ft-text-muted);
+  font-size: 0.80em;
+}
+
+.settings-list entryrow entry {
+  min-height: 30px;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.settings-list entryrow:focus-within,
+.settings-list row:focus-within {
+  box-shadow: inset 2px 0 0 var(--ft-accent);
+}
+
+.settings-list entryrow image,
+.settings-list row image {
+  color: var(--ft-text-muted);
+}
+
+.settings-list combobox button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--ft-bg-1);
+  border-color: var(--ft-border);
+}
+
+.settings-list combobox button:hover {
+  background: var(--ft-bg-3);
+  border-color: var(--ft-border-strong);
+}
+
+.settings-list switch {
+  min-width: 44px;
+  min-height: 24px;
 }
 
 .ft-form-row {
@@ -1585,14 +1819,46 @@ combobox.worktree-existing button {
   background: transparent;
 }
 
+.command-palette-dialog .ft-dialog-header {
+  padding: 10px 14px 4px 14px;
+}
+
+.command-palette-dialog .ft-dialog-title {
+  font-size: 0.98em;
+  font-weight: 700;
+}
+
+.command-palette-dialog .ft-dialog-body {
+  padding: 8px 14px 14px 14px;
+}
+
 .command-search {
-  margin-bottom: 10px;
+  min-height: 36px;
+  margin-bottom: 8px;
+  border-color: var(--ft-border-strong);
+  border-radius: 7px;
+  background: var(--ft-bg-1);
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.24), 0 0 0 0 transparent;
+}
+
+entry.search.command-search:focus,
+entry.search.command-search:focus-within,
+.command-search:focus,
+.command-search:focus-within {
+  border-color: var(--ft-accent);
+  background: var(--ft-bg-1);
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.24), 0 0 0 1px alpha(var(--ft-accent), 0.42);
+  outline: none;
+}
+
+.command-search text {
+  color: var(--ft-text);
 }
 
 .command-list row {
   background: transparent;
-  border-radius: 8px;
-  margin: 1px 0;
+  border-radius: 6px;
+  margin: 0;
   padding: 0;
   transition: background-color 90ms ease-out;
 }
@@ -1605,16 +1871,16 @@ combobox.worktree-existing button {
 }
 
 .command-list row:hover {
-  background: var(--ft-bg-2);
+  background: var(--ft-bg-3);
 }
 
 .command-list row:selected {
-  background: var(--ft-selection-bg);
-  box-shadow: inset 3px 0 0 var(--ft-selection-rail);
+  background: var(--ft-bg-3);
+  box-shadow: inset 2px 0 0 var(--ft-accent);
 }
 
 .command-list row:selected:hover {
-  background: var(--ft-selection-bg-hover);
+  background: var(--ft-bg-4);
 }
 
 .command-list row:selected button.flat {
@@ -1622,13 +1888,32 @@ combobox.worktree-existing button {
 }
 
 .command-item {
-  padding: 8px 12px;
+  padding: 7px 10px;
 }
 
 .command-item-label {
   color: var(--ft-text);
+  font-weight: 580;
+  font-size: 0.92em;
+}
+
+.command-item .keycap {
+  padding: 1px 5px;
+  color: var(--ft-text-faint);
+  background: var(--ft-bg-2);
+  border-color: var(--ft-border-subtle);
+  font-size: 0.70em;
   font-weight: 600;
-  font-size: 0.95em;
+}
+
+.command-list row:selected .command-item-label {
+  color: var(--ft-text-strong);
+}
+
+.command-list row:selected .command-item .keycap {
+  color: var(--ft-text-muted);
+  background: var(--ft-bg-1);
+  border-color: var(--ft-border);
 }
 
 .command-item-hint {
@@ -1658,17 +1943,33 @@ combobox.worktree-existing button {
   background: transparent;
 }
 
+.notification-panel .ft-dialog-header {
+  padding: 10px 14px 4px 14px;
+}
+
+.notification-panel .ft-dialog-body {
+  padding: 8px 14px 14px 14px;
+}
+
+.notification-panel-footer {
+  padding: 10px 14px 12px 14px;
+}
+
+.notification-panel statuspage.compact > scrolledwindow > viewport > box {
+  margin: 12px;
+}
+
 .notification-list row {
   background: transparent;
-  border-radius: 10px;
-  margin: 2px 0;
+  border-radius: 7px;
+  margin: 0 0 6px 0;
   padding: 0;
 }
 
 .notification-row {
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid var(--ft-border-subtle);
-  border-radius: 10px;
+  border-radius: 7px;
   background: var(--ft-bg-2);
 }
 
