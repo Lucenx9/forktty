@@ -38,7 +38,6 @@ where
     let terminal = vte4::Terminal::new();
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
-    terminal.set_scrollback_lines(20_000);
 
     let env_storage = child_environment(request);
     let argv_storage = child_argv(request);
