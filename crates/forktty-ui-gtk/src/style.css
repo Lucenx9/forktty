@@ -395,13 +395,13 @@ popover.ft-context-menu contents {
 }
 
 .navigation-sidebar {
-  padding: 5px 6px;
+  padding: 5px 0;
   background: transparent;
   color: var(--ft-text);
 }
 
 .navigation-sidebar row {
-  border-radius: 4px;
+  border-radius: 0;
   margin: 0;
   background: transparent;
   padding: 0;
@@ -428,21 +428,23 @@ popover.ft-context-menu contents {
 
 .workspace-card {
   min-height: 38px;
-  padding: 6px 8px 6px 10px;
+  padding: 6px 10px 6px 14px;
   margin: 0;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
   border: 0;
+  border-left: 2px solid transparent;
   transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .navigation-sidebar row:hover .workspace-card {
-  background: var(--ft-bg-3);
+  background: var(--ft-bg-2);
 }
 
 .workspace-row.active .workspace-card {
   background: var(--ft-selection-bg);
-  box-shadow: inset 2px 0 0 var(--ft-text-muted);
+  border-left-color: var(--ft-selection-rail);
+  box-shadow: none;
 }
 
 .workspace-row.active:hover .workspace-card {
@@ -450,14 +452,16 @@ popover.ft-context-menu contents {
 }
 
 .workspace-row.needs-attention .workspace-card {
-  box-shadow: inset 2px 0 0 var(--ft-warning);
+  border-left-color: var(--ft-warning);
+  box-shadow: none;
 }
 
 /* Active + needs-attention: keep active selection subtle and swap the rail to
  * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
   background: var(--ft-selection-bg);
-  box-shadow: inset 2px 0 0 var(--ft-warning);
+  border-left-color: var(--ft-warning);
+  box-shadow: none;
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
