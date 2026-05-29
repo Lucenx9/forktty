@@ -166,13 +166,14 @@ Implemented categories:
 | Category | Methods |
 | -------- | ------- |
 | System | `system.ping`, `system.capabilities` |
-| Workspace | `workspace.list`, `workspace.create`, `workspace.select`, `workspace.close` |
+| Workspace | `workspace.list`, `workspace.create`, `workspace.create_ssh`, `workspace.select`, `workspace.close` |
 | Surface | `surface.list`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
+| Pane | `pane.new_tab`, `pane.select_tab` |
 | Notification | `notification.create`, `notification.list`, `notification.clear` |
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
 | Events | `events.subscribe` |
-| Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
+| Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`, `browser.import.discover`, `browser.import.preview`, `browser.import.run` |
 
 Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged VTE pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 

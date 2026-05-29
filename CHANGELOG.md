@@ -8,9 +8,12 @@ All notable changes to ForkTTY are documented here.
 - Added `events.subscribe` NDJSON streaming and `system.capabilities` discovery, with `forktty events` and `forktty capabilities` CLI entry points.
 - Added an optional source-build browser-pane path behind the `browser` feature: WebKitGTK6 pane surfaces, socket/CLI open/navigate/snapshot/click/fill/eval/back/forward/reload verbs, GUI open/close controls, persistent per-profile WebKit sessions, and browser profile CRUD.
 - Added per-profile browser history and bookmark stores plus `browser.history.*` / `browser.bookmark.*` socket verbs and `forktty browser history|bookmark` CLI mirrors; GTK address-bar/history integration remains follow-up work.
+- Added browser import via the new `forktty-import` crate: `browser.import.discover`/`preview`/`run` socket verbs, `forktty browser import discover|preview|run` CLI, and a Settings "Import Browser Data" dialog that imports history and bookmarks from local Firefox/Chromium-family profiles (cookies are preview-only, not yet written) with rollback on failure.
+- Added SSH remote workspaces: `SurfaceKind::Ssh` panes spawned as `ssh <host>`, the `workspace.create_ssh` socket method, a `forktty ssh` CLI, sidebar `ssh:<host>` hints, and respawn on session restore.
+- Added per-pane tabs: `pane.new_tab`/`pane.select_tab` socket methods, `forktty new-tab`/`select-tab` CLI, and pane-chrome/command-palette tab controls.
 
 ### Documentation
-- Audited Markdown docs against the current Rust workspace, scripts, feature gates, socket methods, browser profile/storage behavior, packaging flow, and support links.
+- Audited Markdown docs against the current Rust workspace, scripts, feature gates, socket methods, browser profile/storage behavior, packaging flow, and support links, and brought SPEC/ROADMAP/cmux-gap docs in line with the shipped SSH workspace, per-pane tab, and browser import surfaces.
 
 ## [0.2.0-alpha.5] - 2026-05-23
 

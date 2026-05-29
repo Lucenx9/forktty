@@ -16,12 +16,15 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Browser pane SP2: scriptable verbs (`browser.snapshot`/`click`/`fill`/`eval`) + socket-driven `back`/`forward`/`reload` via socket→GTK command channel + `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (behind the `browser` cargo feature).
 - [x] Browser pane SP3 P1/P2: persistent per-profile WebKit sessions, `ProfileId` on browser surfaces, profile metadata store, `browser.profile.*` socket methods, and `forktty browser profile ...` CLI.
 - [x] Browser pane SP3 P3 core/socket/CLI storage: per-profile `HistoryStore` and `BookmarkStore` in `forktty-core`, `browser.history.*` / `browser.bookmark.*` socket verbs, and `forktty browser history|bookmark` CLI mirrors.
+- [x] Browser import: `forktty-import` crate reading Firefox/Chromium-family profiles, `browser.import.discover`/`preview`/`run` socket verbs, `forktty browser import discover|preview|run` CLI, and a Settings "Import Browser Data" dialog with profile rollback on failure.
 
 ### Workspaces and Panes
 
 - [x] Rust workspace model with active workspace, pane tree, surfaces, focus, unread state, metadata, and notifications.
 - [x] Recursive split-pane rendering through GTK paned containers.
 - [x] Surface split, focus, close, workspace select, workspace create, and workspace close.
+- [x] Per-pane tabs: `pane.new_tab`/`pane.select_tab` socket methods, `forktty new-tab`/`select-tab` CLI, and pane-chrome/command-palette tab controls.
+- [x] SSH remote workspaces: `SurfaceKind::Ssh` panes spawned as `ssh <host>`, `workspace.create_ssh` socket method, `forktty ssh` CLI, sidebar `ssh:<host>` hints, and respawn on session restore.
 - [x] Sidebar refresh from the Rust model with active/unread/worktree/metadata state.
 - [x] Listening-TCP-port hints in the sidebar, auto-detected from each workspace's pane child-process tree via `/proc`.
 - [x] Linked-PR hints in the sidebar (`#number state`), resolved per branch via `gh` on a background thread.
@@ -82,8 +85,6 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [ ] Ghostty theme import for the native VTE color palette.
 - [ ] Multi-window support.
 - [ ] Browser visit recording and history/bookmark address-bar completion.
-- [ ] Browser import wizard for cookies, history, and bookmarks from Firefox/Chromium-family profiles.
-- [ ] SSH remote workspaces.
 - [ ] MCP/server integration.
 - [ ] Plugin system.
 - [ ] Auto-update mechanism.
