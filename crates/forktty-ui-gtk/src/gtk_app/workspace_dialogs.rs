@@ -70,7 +70,7 @@ pub(super) fn open_workspace_from_path(
 }
 
 pub(super) fn create_plain_workspace(state: &SocketAppState) {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let cwd = default_startup_workspace_dir();
     let (workspace, previous_active_id) = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
