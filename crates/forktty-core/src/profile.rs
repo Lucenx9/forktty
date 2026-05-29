@@ -124,20 +124,8 @@ fn ensure_default_profile(profiles: &mut Vec<ProfileMeta>) {
     profiles.append(&mut others);
 }
 
-fn unique_backup_path(path: &Path, extension: &str) -> PathBuf {
-    let candidate = path.with_extension(extension);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    path.with_extension(format!("{extension}-{}-{nonce}", std::process::id()))
-}
-
 fn backup_corrupt_profile_store(path: &Path, bytes: &[u8]) {
-    let backup = unique_backup_path(path, "json.bak");
+    let backup = crate::backup::unique_backup_path(path, "json.bak");
     if std::fs::rename(path, &backup).is_err() {
         let _ = std::fs::write(&backup, bytes);
     }

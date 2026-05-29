@@ -1,3 +1,4 @@
+use forktty_socket::socket_path_from_env;
 use serde_json::json;
 use std::ffi::OsString;
 use std::fs;
@@ -634,15 +635,6 @@ fn path_display(state: &PathState) -> String {
 
 fn resolve_shell(config_path: Option<&Path>) -> (Option<String>, bool, Option<String>) {
     resolve_shell_from_path(config_path, std::env::var("SHELL").ok())
-}
-
-fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
-    socket_env
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && Path::new(value).is_absolute())
-        .map(PathBuf::from)
-        .unwrap_or_else(forktty_socket::default_socket_path)
 }
 
 fn resolve_shell_from_path(

@@ -589,15 +589,6 @@ pub(super) fn configured_shell(config: &config::AppConfig) -> String {
     }
 }
 
-pub(super) fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
-    socket_env
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && Path::new(value).is_absolute())
-        .map(PathBuf::from)
-        .unwrap_or_else(default_socket_path)
-}
-
 pub(super) fn apply_color_scheme(_config: &config::AppConfig) {
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
 }

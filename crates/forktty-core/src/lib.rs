@@ -1,4 +1,5 @@
 pub mod agents;
+mod backup;
 pub mod browser_cmd;
 pub mod browser_history;
 pub mod command_safety;
@@ -13,10 +14,7 @@ pub mod protocol;
 pub mod session;
 pub mod worktree;
 
-pub use agents::{
-    normalize_agent_status, AgentCapabilities, AgentConfigLocation, AgentKind, AgentProfile,
-    AgentStatus,
-};
+pub use agents::{normalize_agent_status, AgentKind, AgentStatus};
 pub use browser_cmd::{
     BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, MAX_BROWSER_RESULT_BYTES,
     MAX_BROWSER_SCRIPT_BYTES,

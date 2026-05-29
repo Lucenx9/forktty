@@ -325,12 +325,8 @@ impl WorktreeDialogMode {
     }
 
     fn action_label(self) -> &'static str {
-        match self {
-            WorktreeDialogMode::Create => "Create Worktree",
-            WorktreeDialogMode::Attach => "Attach Worktree",
-            WorktreeDialogMode::Merge => "Merge Worktree",
-            WorktreeDialogMode::Remove => "Remove Worktree",
-        }
+        // The confirm button reuses the dialog title verbatim across all modes.
+        self.dialog_title()
     }
 
     fn icon_name(self) -> &'static str {

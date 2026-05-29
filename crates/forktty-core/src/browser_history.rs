@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::backup::unique_backup_path;
 use crate::profile::ProfileId;
 
 /// One visited URL with its aggregate visit metadata.
@@ -42,18 +43,6 @@ impl From<rusqlite::Error> for HistoryError {
     fn from(e: rusqlite::Error) -> Self {
         HistoryError::Db(e.to_string())
     }
-}
-
-fn unique_backup_path(path: &Path, extension: &str) -> PathBuf {
-    let candidate = path.with_extension(extension);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    path.with_extension(format!("{extension}-{}-{nonce}", std::process::id()))
 }
 
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {

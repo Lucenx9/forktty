@@ -6,7 +6,8 @@ use forktty_core::{
     WorktreeNameError,
 };
 use forktty_socket::{
-    bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve, SocketAppState,
+    bind_socket_listener, bootstrap_default_workspace, default_socket_path, serve,
+    socket_path_from_env, SocketAppState,
 };
 use forktty_terminal::vte::{
     send_text as vte_send_text, spawn_vte_terminal_with_callback, CursorBlinkMode, CursorShape,

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -10,32 +9,6 @@ pub enum AgentKind {
     OpenCode,
     Gemini,
     Custom,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AgentCapabilities {
-    pub hooks: bool,
-    pub status_events: bool,
-    pub permission_requests: bool,
-    pub project_context_files: bool,
-    pub mcp: bool,
-    pub headless_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentConfigLocation {
-    pub scope: &'static str,
-    pub path: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentProfile {
-    pub kind: AgentKind,
-    pub label: &'static str,
-    pub install_hint: &'static str,
-    pub launch_hint: &'static str,
-    pub context_files: &'static [&'static str],
-    pub capabilities: AgentCapabilities,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

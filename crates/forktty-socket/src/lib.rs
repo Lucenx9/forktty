@@ -283,6 +283,18 @@ pub fn default_socket_path() -> PathBuf {
     default_socket_dir().join("forktty.sock")
 }
 
+/// Resolve the socket path from an optional override, falling back to the
+/// default. An override is honored only when it trims to a non-empty absolute
+/// path; anything else (relative, blank, unset) uses [`default_socket_path`].
+pub fn socket_path_from_env(socket_env: Option<String>) -> PathBuf {
+    socket_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && Path::new(value).is_absolute())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_socket_path)
+}
+
 pub fn bind_socket_listener(
     socket_path: impl AsRef<Path>,
     enforce_private_parent: bool,

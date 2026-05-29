@@ -28,17 +28,12 @@
 
   --ft-accent: #e88745;
   --ft-accent-hover: #f09a58;
-  --ft-accent-strong: #f2a464;
   --ft-accent-soft: #30251d;
-  --ft-accent-soft-2: #3a2b20;
   --ft-accent-fg: #17110c;
-  --ft-brand-purple: #a7784d;
 
   --ft-selection-bg: #222222;
   --ft-selection-bg-hover: #282828;
-  --ft-selection-border: transparent;
   --ft-selection-rail: #c9793f;
-  --ft-selection-rail-strong: #e88745;
 
   --ft-warning: #c8a75d;
   --ft-warning-soft: #2c2619;
@@ -254,12 +249,16 @@ window {
  * Context menu (workspace row right-click)
  * -------------------------------------------------------------------------- */
 
-popover.ft-context-menu contents {
+popover.ft-context-menu contents,
+popover.ft-workspace-popover contents {
   padding: 7px;
   background: var(--ft-bg-overlay);
   border: 1px solid var(--ft-border-strong);
   border-radius: 6px;
   box-shadow: 0 10px 28px alpha(var(--ft-shadow), 0.42);
+}
+
+popover.ft-context-menu contents {
   min-width: 248px;
 }
 
@@ -574,7 +573,6 @@ popover.ft-context-menu contents {
   color: var(--ft-text-muted);
 }
 
-.sidebar-keycap,
 .keycap {
   padding: 1px 6px;
   border-radius: 4px;
@@ -642,14 +640,6 @@ popover.ft-context-menu contents {
 }
 
 /* Workspace popover */
-
-popover.ft-workspace-popover contents {
-  padding: 7px;
-  background: var(--ft-bg-overlay);
-  border: 1px solid var(--ft-border-strong);
-  border-radius: 6px;
-  box-shadow: 0 10px 28px alpha(var(--ft-shadow), 0.42);
-}
 
 .ft-workspace-popover-list {
   background: transparent;
