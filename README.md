@@ -169,6 +169,7 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+O`: open workspace
 - `Ctrl+Shift+H`: split pane right
 - `Ctrl+Shift+E`: split pane down
+- `Ctrl+Shift+T`: new tab in the focused pane
 - `Ctrl+Alt+Left` / `Ctrl+Alt+Right`: focus previous/next pane
 - `Ctrl+Shift+W`: close pane
 - `Ctrl+B` or `F9`: toggle workspace sidebar
@@ -194,8 +195,10 @@ to the live socket:
 ```bash
 forktty list
 forktty focus "Workspace 2"
+forktty ssh user@example.com
 forktty surfaces --workspace-name main
 forktty split-surface --axis vertical
+forktty new-tab
 forktty send-text "cargo test\n"
 forktty worktree-status
 forktty notify --title "Input needed" --kind prompt "Blocked on test fixture"
@@ -219,6 +222,9 @@ forktty browser fill <surface-id> <ref> "value"
 forktty browser eval <surface-id> "document.title"
 forktty browser profile list
 forktty browser profile create Work
+forktty browser history list
+forktty browser bookmark add https://www.rust-lang.org
+forktty browser import discover
 ```
 
 The socket CLI and agent hook bridge are native Rust code in the
@@ -294,11 +300,11 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded VTE terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace, surface, notification, worktree, metadata, event-stream, capabilities, and browser automation.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, event-stream, capabilities, and browser automation.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
-- Experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, and history/bookmark socket plus CLI access.
+- Experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
 ## Configuration
@@ -364,7 +370,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Full theme customization, multi-window, persistent scrollback, browser history/bookmark GTK UI integration, and browser import from external browsers are backlog items.
+- Full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are included in full source and packaged builds; use `--features gtk-vte` only for a terminal-only development build.
 
 ## Troubleshooting
