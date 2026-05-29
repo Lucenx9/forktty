@@ -819,8 +819,12 @@ popover.ft-workspace-popover contents {
   color: inherit;
 }
 
-.pane-tab-select:hover {
+.pane-tab-select:hover,
+button.flat.pane-tab-select:hover,
+button.flat.pane-tab-select:active {
   background: transparent;
+  border-color: transparent;
+  box-shadow: none;
   color: inherit;
 }
 
@@ -857,14 +861,18 @@ popover.ft-workspace-popover contents {
   opacity: 0.62;
 }
 
-.pane-tab-close:hover {
+button.flat.pane-tab-close:hover {
   background: var(--ft-error-soft);
+  border-color: transparent;
+  box-shadow: none;
   color: var(--ft-error);
   opacity: 1;
 }
 
-.pane-tab-close:active {
+button.flat.pane-tab-close:active {
   background: alpha(var(--ft-error), 0.22);
+  border-color: transparent;
+  box-shadow: none;
   color: var(--ft-error);
   opacity: 1;
 }
