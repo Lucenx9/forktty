@@ -25,7 +25,7 @@ pub(super) fn show_settings_dialog(
 
     let terminal_page = adw::PreferencesPage::builder()
         .title("Terminal")
-        .icon_name("utilities-terminal-symbolic")
+        .icon_name("forktty-terminal-symbolic")
         .build();
     let shell_group = adw::PreferencesGroup::builder()
         .title("Shell")
@@ -100,7 +100,7 @@ pub(super) fn show_settings_dialog(
 
     let appearance_page = adw::PreferencesPage::builder()
         .title("Interface")
-        .icon_name("preferences-desktop-theme-symbolic")
+        .icon_name("forktty-theme-symbolic")
         .build();
     let theme_group = adw::PreferencesGroup::builder()
         .title("Theme")
@@ -146,7 +146,7 @@ pub(super) fn show_settings_dialog(
     {
         let browser_page = adw::PreferencesPage::builder()
             .title("Browser")
-            .icon_name("web-browser-symbolic")
+            .icon_name("forktty-browser-symbolic")
             .build();
         let import_group = adw::PreferencesGroup::builder()
             .title("Browser Data")
@@ -172,7 +172,7 @@ pub(super) fn show_settings_dialog(
 
     let automation_page = adw::PreferencesPage::builder()
         .title("Automation")
-        .icon_name("system-run-symbolic")
+        .icon_name("forktty-run-symbolic")
         .build();
     let worktree_group = adw::PreferencesGroup::builder()
         .title("Git Worktrees")

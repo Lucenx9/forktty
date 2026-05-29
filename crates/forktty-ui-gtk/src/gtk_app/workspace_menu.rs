@@ -96,7 +96,7 @@ pub(super) fn build_workspace_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "go-jump-symbolic",
+            "forktty-jump-symbolic",
             "Focus Workspace",
             false,
             move || {
@@ -115,7 +115,7 @@ pub(super) fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "document-edit-symbolic",
+        "forktty-edit-symbolic",
         "Rename Workspace...",
         false,
         move || show_rename_workspace_dialog(&parent_, &state_, &ws_id, &ws_name),
@@ -128,7 +128,7 @@ pub(super) fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "view-dual-symbolic",
+        "forktty-split-horizontal-symbolic",
         "Split Right",
         false,
         move || {
@@ -143,7 +143,7 @@ pub(super) fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "view-paged-symbolic",
+        "forktty-split-vertical-symbolic",
         "Split Down",
         false,
         move || {
@@ -161,7 +161,7 @@ pub(super) fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "folder-new-symbolic",
+        "forktty-folder-new-symbolic",
         "New Worktree from Here...",
         false,
         move || {
@@ -175,7 +175,7 @@ pub(super) fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "edit-copy-symbolic",
+        "forktty-copy-symbolic",
         "Copy Working Directory",
         false,
         move || {
@@ -192,7 +192,7 @@ pub(super) fn build_workspace_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "emblem-ok-symbolic",
+            "forktty-check-symbolic",
             "Merge Worktree",
             false,
             move || {
@@ -213,7 +213,7 @@ pub(super) fn build_workspace_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "user-trash-symbolic",
+            "forktty-trash-symbolic",
             "Remove Worktree",
             true,
             move || {
@@ -250,7 +250,7 @@ pub(super) fn build_workspace_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "window-close-symbolic",
+        "forktty-close-symbolic",
         "Close Workspace",
         true,
         move || {
@@ -342,7 +342,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "edit-copy-symbolic",
+        "forktty-copy-symbolic",
         "Copy",
         false,
         move || terminal_for_copy.copy_clipboard_format(Format::Text),
@@ -352,7 +352,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "edit-paste-symbolic",
+        "forktty-paste-symbolic",
         "Paste",
         false,
         move || terminal_for_paste.paste_clipboard(),
@@ -362,7 +362,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "edit-select-all-symbolic",
+        "forktty-select-all-symbolic",
         "Select All",
         false,
         move || terminal_for_select.select_all(),
@@ -372,7 +372,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "edit-clear-all-symbolic",
+        "forktty-clear-symbolic",
         "Reset and Clear",
         false,
         move || reset_and_redraw_terminal(&terminal_for_reset),
@@ -385,7 +385,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "view-dual-symbolic",
+        "forktty-split-horizontal-symbolic",
         "Split Right",
         false,
         move || {
@@ -400,7 +400,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "view-paged-symbolic",
+        "forktty-split-vertical-symbolic",
         "Split Down",
         false,
         move || {
@@ -417,7 +417,7 @@ pub(super) fn build_terminal_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "edit-copy-symbolic",
+            "forktty-copy-symbolic",
             "Copy Workspace ID",
             false,
             move || copy_to_clipboard(&workspace_id),
@@ -427,7 +427,7 @@ pub(super) fn build_terminal_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "edit-copy-symbolic",
+            "forktty-copy-symbolic",
             "Copy Surface ID",
             false,
             move || copy_to_clipboard(&surface_id),
@@ -442,7 +442,7 @@ pub(super) fn build_terminal_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "edit-copy-symbolic",
+            "forktty-copy-symbolic",
             "Copy IDs",
             false,
             move || copy_to_clipboard(&identifiers),
@@ -452,7 +452,7 @@ pub(super) fn build_terminal_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "folder-symbolic",
+            "forktty-folder-symbolic",
             "Copy Working Directory",
             false,
             move || copy_to_clipboard(&cwd),
@@ -466,7 +466,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "view-refresh-symbolic",
+        "forktty-refresh-symbolic",
         "Restart Pane",
         false,
         move || {
@@ -480,7 +480,7 @@ pub(super) fn build_terminal_context_menu(
     add_context_menu_item(
         &menu,
         &popover,
-        "window-close-symbolic",
+        "forktty-close-symbolic",
         "Close Pane",
         true,
         move || {

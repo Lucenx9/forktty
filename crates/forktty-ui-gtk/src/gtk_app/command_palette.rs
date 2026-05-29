@@ -444,7 +444,7 @@ pub(super) fn show_command_palette_with_query(
         .build();
     body.append(&scroll);
     let empty = compact_status_page(
-        "system-search-symbolic",
+        "forktty-search-symbolic",
         "No Commands Found",
         "Try a different search.",
     );

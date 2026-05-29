@@ -46,7 +46,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     let header = adw::HeaderBar::new();
     header.set_decoration_layout(Some(":minimize,maximize,close"));
     header.set_show_start_title_buttons(false);
-    header.set_show_end_title_buttons(true);
+    header.set_show_end_title_buttons(false);
     header.add_css_class("app-header");
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 7);
     brand.add_css_class("app-brand");
@@ -85,13 +85,13 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.set_title_widget(Some(&workspace_title));
 
     let command_palette = gtk::Button::builder()
-        .icon_name("system-search-symbolic")
+        .icon_name("forktty-search-symbolic")
         .tooltip_text("Command Palette (Ctrl+Shift+P)")
         .build();
     let notif_overlay = gtk::Overlay::new();
     notif_overlay.set_halign(gtk::Align::Center);
     notif_overlay.set_valign(gtk::Align::Center);
-    let notif_icon = gtk::Image::from_icon_name("preferences-system-notifications-symbolic");
+    let notif_icon = gtk::Image::from_icon_name("forktty-notifications-symbolic");
     notif_overlay.set_child(Some(&notif_icon));
     let notif_badge = gtk::Label::new(None);
     notif_badge.add_css_class("notification-badge");
@@ -105,7 +105,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         .tooltip_text("Notifications (Ctrl+Shift+M)")
         .build();
     let settings = gtk::Button::builder()
-        .icon_name("preferences-system-symbolic")
+        .icon_name("forktty-settings-symbolic")
         .tooltip_text("Settings (Ctrl+,)")
         .build();
     for (button, label, shortcut) in [
@@ -119,9 +119,20 @@ pub(super) fn build_ui(app: &adw::Application) {
     }
     refresh_notification_indicator(&notifications, &state);
 
+    let window_controls = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    window_controls.add_css_class("app-window-controls");
+    let minimize = app_window_control_button("forktty-window-minimize-symbolic", "Minimize");
+    let maximize = app_window_control_button("forktty-window-maximize-symbolic", "Maximize");
+    let close = app_window_control_button("forktty-window-close-symbolic", "Close");
+    close.add_css_class("close");
+    window_controls.append(&minimize);
+    window_controls.append(&maximize);
+    window_controls.append(&close);
+
     // Global app tools stay in the titlebar; workspace creation lives in the sidebar.
     let header_action_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     header_action_separator.add_css_class("header-action-separator");
+    header.pack_end(&window_controls);
     header.pack_end(&header_action_separator);
     header.pack_end(&settings);
     header.pack_end(&notifications);
@@ -146,7 +157,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         .build();
     section_label.add_css_class("sidebar-section-label");
     let sidebar_add = gtk::Button::builder()
-        .icon_name("tab-new-symbolic")
+        .icon_name("forktty-add-symbolic")
         .tooltip_text("New Workspace (Ctrl+Shift+N)")
         .has_frame(false)
         .build();
@@ -264,6 +275,24 @@ pub(super) fn build_ui(app: &adw::Application) {
                 NotificationKind::Info,
             );
         }
+    }
+    {
+        let window = window.clone();
+        minimize.connect_clicked(move |_| window.minimize());
+    }
+    {
+        let window = window.clone();
+        maximize.connect_clicked(move |_| {
+            if window.is_maximized() {
+                window.unmaximize();
+            } else {
+                window.maximize();
+            }
+        });
+    }
+    {
+        let window = window.clone();
+        close.connect_clicked(move |_| window.close());
     }
 
     let provider = gtk::CssProvider::new();
@@ -496,6 +525,18 @@ pub(super) fn build_ui(app: &adw::Application) {
 
 pub(super) fn default_startup_workspace_dir() -> PathBuf {
     default_startup_workspace_dir_from(dirs::home_dir(), std::env::current_dir().ok())
+}
+
+fn app_window_control_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = gtk::Button::builder()
+        .icon_name(icon_name)
+        .has_frame(false)
+        .tooltip_text(label)
+        .build();
+    button.add_css_class("flat");
+    button.add_css_class("app-window-control");
+    set_accessible_button_text(&button, label, None);
+    button
 }
 
 pub(super) fn default_startup_workspace_dir_from(

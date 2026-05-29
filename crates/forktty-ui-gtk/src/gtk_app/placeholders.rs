@@ -33,7 +33,7 @@ pub(super) fn browser_unavailable_placeholder(surface_id: &str) -> gtk::Box {
         "Surface {surface_id} was restored as a browser pane, but this build was compiled without browser support."
     );
     body.append(&compact_status_page(
-        "web-browser-symbolic",
+        "forktty-browser-symbolic",
         "Browser Feature Unavailable",
         &description,
     ));
@@ -79,7 +79,7 @@ pub(super) fn missing_surface_placeholder(
         actions.set_halign(gtk::Align::Center);
         if details.can_restart {
             let (restart, _, _) =
-                labeled_icon_button_parts("view-refresh-symbolic", "Restart Pane");
+                labeled_icon_button_parts("forktty-refresh-symbolic", "Restart Pane");
             restart.add_css_class("suggested-action");
             let state_for_restart = state.clone();
             let surface_id_for_restart = surface_id.to_string();
@@ -88,7 +88,7 @@ pub(super) fn missing_surface_placeholder(
             });
             actions.append(&restart);
         }
-        let (copy_id, _, _) = labeled_icon_button_parts("edit-copy-symbolic", "Copy Surface ID");
+        let (copy_id, _, _) = labeled_icon_button_parts("forktty-copy-symbolic", "Copy Surface ID");
         let surface_id_for_copy = surface_id.to_string();
         copy_id.connect_clicked(move |_| copy_to_clipboard(&surface_id_for_copy));
         actions.append(&copy_id);
@@ -110,7 +110,7 @@ pub(super) fn empty_terminal_stage(
     container.set_vexpand(true);
 
     let status = compact_status_page(
-        "utilities-terminal-symbolic",
+        "forktty-terminal-symbolic",
         "No Workspace Open",
         "Create a workspace to start a terminal session.",
     );
@@ -120,13 +120,13 @@ pub(super) fn empty_terminal_stage(
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.add_css_class("terminal-placeholder-actions");
         actions.set_halign(gtk::Align::Center);
-        let (create, _, _) = labeled_icon_button_parts("tab-new-symbolic", "New Workspace");
+        let (create, _, _) = labeled_icon_button_parts("forktty-add-symbolic", "New Workspace");
         create.add_css_class("suggested-action");
         let state_for_create = state.clone();
         create.connect_clicked(move |_| create_plain_workspace(&state_for_create));
         actions.append(&create);
         if let Some(parent) = parent {
-            let (open, _, _) = labeled_icon_button_parts("folder-open-symbolic", "Open Workspace");
+            let (open, _, _) = labeled_icon_button_parts("forktty-folder-open-symbolic", "Open Workspace");
             let state_for_open = state.clone();
             let parent_for_open = parent.clone();
             open.connect_clicked(move |_| open_workspace_dialog(&parent_for_open, &state_for_open));
@@ -174,7 +174,7 @@ pub(super) fn surface_placeholder_details(
     if let Some(status) = status {
         if status_entry_suggests_error(&status) {
             return SurfacePlaceholderDetails {
-                icon_name: "dialog-error-symbolic",
+                icon_name: "forktty-error-symbolic",
                 title: "Terminal Failed to Start",
                 description: terminal_failure_guidance(&status.value),
                 can_restart: true,
@@ -182,7 +182,7 @@ pub(super) fn surface_placeholder_details(
         }
         if status_entry_suggests_exited(&status) {
             return SurfacePlaceholderDetails {
-                icon_name: "dialog-warning-symbolic",
+                icon_name: "forktty-warning-symbolic",
                 title: "Terminal Exited",
                 description: format!(
                     "{}. Restart this pane to open a new shell in the same directory.",
@@ -193,7 +193,7 @@ pub(super) fn surface_placeholder_details(
         }
         if status.value.to_ascii_lowercase().contains("restarting") {
             return SurfacePlaceholderDetails {
-                icon_name: "view-refresh-symbolic",
+                icon_name: "forktty-refresh-symbolic",
                 title: "Starting Terminal",
                 description: "ForkTTY is starting this pane.".to_string(),
                 can_restart: false,
@@ -202,7 +202,7 @@ pub(super) fn surface_placeholder_details(
     }
 
     SurfacePlaceholderDetails {
-        icon_name: "utilities-terminal-symbolic",
+        icon_name: "forktty-terminal-symbolic",
         title: "Terminal Waiting to Start",
         description: format!(
             "This pane is waiting for its terminal process. Restart the pane if it stays here. Diagnostic ID: {surface_id}."

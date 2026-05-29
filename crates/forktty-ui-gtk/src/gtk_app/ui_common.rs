@@ -27,7 +27,7 @@ pub(super) fn apply_dialog_chrome(dialog: &gtk::Window) {
     titlebar.add_css_class("ft-dialog-titlebar");
     titlebar.set_title_widget(Some(&gtk::Label::new(None)));
     let close = gtk::Button::builder()
-        .icon_name("window-close-symbolic")
+        .icon_name("forktty-close-symbolic")
         .tooltip_text("Close")
         .build();
     close.add_css_class("flat");

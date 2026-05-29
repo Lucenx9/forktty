@@ -54,6 +54,10 @@ install -Dm644 "$ROOT_DIR/packaging/linux/forktty.desktop" \
   "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"
+if [[ -d "$ROOT_DIR/packaging/linux/icons/hicolor" ]]; then
+  mkdir -p "$PKG_ROOT/usr/share/icons/hicolor"
+  cp -a "$ROOT_DIR/packaging/linux/icons/hicolor/." "$PKG_ROOT/usr/share/icons/hicolor/"
+fi
 install -Dm644 "$APPSTREAM_FILE" "$PKG_ROOT/usr/share/metainfo/$DESKTOP_ID.appdata.xml"
 
 mkdir -p "$PKG_ROOT/DEBIAN"

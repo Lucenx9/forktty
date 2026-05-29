@@ -201,6 +201,47 @@ window {
   margin: 0 1px;
 }
 
+.app-window-controls {
+  margin: 0 1px;
+}
+
+.app-header .app-window-control {
+  min-width: 22px;
+  min-height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ft-text-muted);
+  box-shadow: none;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
+}
+
+.app-header .app-window-control image {
+  -gtk-icon-size: 12px;
+}
+
+.app-header .app-window-control:hover {
+  background: alpha(var(--window-fg-color), 0.075);
+  color: var(--ft-text-strong);
+}
+
+.app-header .app-window-control:active {
+  background: alpha(var(--window-fg-color), 0.12);
+  color: var(--ft-text-strong);
+}
+
+.app-header .app-window-control.close:hover {
+  background: var(--ft-error-soft);
+  color: var(--ft-error);
+}
+
+.app-header .app-window-control.close:active {
+  background: alpha(var(--ft-error), 0.32);
+  color: var(--ft-error);
+}
+
 .app-header button.titlebutton,
 .app-header windowcontrols button {
   min-width: 22px;

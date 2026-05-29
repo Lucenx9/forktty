@@ -128,7 +128,7 @@ pub(super) fn refresh_sidebar(
         let empty = gtk::Box::new(gtk::Orientation::Vertical, 10);
         empty.add_css_class("sidebar-empty");
         empty.set_halign(gtk::Align::Center);
-        let icon = gtk::Image::from_icon_name("folder-symbolic");
+        let icon = gtk::Image::from_icon_name("forktty-folder-symbolic");
         icon.set_pixel_size(24);
         let title = gtk::Label::builder().label("No Workspaces").build();
         title.add_css_class("sidebar-empty-title");
@@ -247,7 +247,7 @@ pub(super) fn refresh_sidebar(
             let count_badge = gtk::Box::new(gtk::Orientation::Horizontal, 3);
             count_badge.add_css_class("workspace-count-badge");
             count_badge.set_valign(gtk::Align::Center);
-            let count_icon = gtk::Image::from_icon_name("view-grid-symbolic");
+            let count_icon = gtk::Image::from_icon_name("forktty-grid-symbolic");
             count_icon.add_css_class("workspace-count-icon");
             count_icon.set_tooltip_text(Some(&format!("{surface_count} panes")));
             let count_label = gtk::Label::new(Some(&surface_count.to_string()));

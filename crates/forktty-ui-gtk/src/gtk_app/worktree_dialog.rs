@@ -136,7 +136,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     status.add_css_class("ft-inline-status");
 
     let (primary, primary_icon, primary_label) =
-        labeled_icon_button_parts("list-add-symbolic", "Create Worktree");
+        labeled_icon_button_parts("forktty-add-symbolic", "Create Worktree");
     primary.add_css_class("suggested-action");
     primary.set_sensitive(false);
     let cancel = gtk::Button::with_label("Cancel");
@@ -331,10 +331,10 @@ impl WorktreeDialogMode {
 
     fn icon_name(self) -> &'static str {
         match self {
-            WorktreeDialogMode::Create => "list-add-symbolic",
-            WorktreeDialogMode::Attach => "folder-open-symbolic",
-            WorktreeDialogMode::Merge => "view-converge-symbolic",
-            WorktreeDialogMode::Remove => "edit-delete-symbolic",
+            WorktreeDialogMode::Create => "forktty-add-symbolic",
+            WorktreeDialogMode::Attach => "forktty-folder-open-symbolic",
+            WorktreeDialogMode::Merge => "forktty-merge-symbolic",
+            WorktreeDialogMode::Remove => "forktty-trash-symbolic",
         }
     }
 

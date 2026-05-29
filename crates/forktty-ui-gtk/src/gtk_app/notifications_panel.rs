@@ -232,7 +232,7 @@ pub(super) fn show_notification_panel(
                 body.remove(&child);
             }
             let empty = compact_status_page(
-                "preferences-system-notifications-symbolic",
+                "forktty-notifications-symbolic",
                 "All Clear",
                 "Prompts and alerts will appear here.",
             );
@@ -315,7 +315,7 @@ pub(super) fn show_notification_panel(
                 top.append(&open);
             }
             let dismiss = gtk::Button::builder()
-                .icon_name("window-close-symbolic")
+                .icon_name("forktty-close-symbolic")
                 .tooltip_text("Dismiss notification")
                 .build();
             dismiss.add_css_class("flat");

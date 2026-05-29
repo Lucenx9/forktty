@@ -52,7 +52,7 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
             let inner = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             inner.add_css_class("ft-workspace-popover-row-inner");
 
-            let check = gtk::Image::from_icon_name("emblem-ok-symbolic");
+            let check = gtk::Image::from_icon_name("forktty-check-symbolic");
             check.add_css_class("ft-workspace-popover-check");
             check.set_visible(is_active);
             inner.append(&check);
@@ -113,7 +113,7 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
     new_btn.add_css_class("ft-workspace-popover-action");
     let new_inner = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     new_inner.add_css_class("ft-workspace-popover-row-inner");
-    let new_icon = gtk::Image::from_icon_name("tab-new-symbolic");
+    let new_icon = gtk::Image::from_icon_name("forktty-add-symbolic");
     new_icon.add_css_class("ft-workspace-popover-action-icon");
     new_inner.append(&new_icon);
     let new_label = gtk::Label::builder()

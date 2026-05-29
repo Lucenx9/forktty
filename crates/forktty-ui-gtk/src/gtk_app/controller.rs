@@ -693,7 +693,7 @@ impl VteController {
             });
 
             let close = gtk::Button::builder()
-                .icon_name("window-close-symbolic")
+                .icon_name("forktty-close-symbolic")
                 .has_frame(false)
                 .build();
             close.add_css_class("flat");

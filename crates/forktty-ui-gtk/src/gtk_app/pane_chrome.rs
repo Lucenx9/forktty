@@ -43,21 +43,21 @@ pub(super) fn build_pane_chrome(
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     actions.add_css_class("terminal-pane-actions");
     actions.set_can_target(false);
-    let split_h = pane_action_button("view-dual-symbolic", "Split Right (Ctrl+Shift+H)");
+    let split_h = pane_action_button("forktty-split-horizontal-symbolic", "Split Right (Ctrl+Shift+H)");
     let split_v = pane_action_button(
-        "view-paged-symbolic",
+        "forktty-split-vertical-symbolic",
         &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
     );
-    let close = pane_action_button("window-close-symbolic", "Close Pane (Ctrl+Shift+W)");
+    let close = pane_action_button("forktty-close-symbolic", "Close Pane (Ctrl+Shift+W)");
     close.add_css_class("pane-close-action");
     let close_separator = gtk::Separator::new(gtk::Orientation::Vertical);
     close_separator.add_css_class("pane-action-separator");
-    let new_tab = pane_action_button("tab-new-symbolic", "New Tab (Ctrl+Shift+T)");
+    let new_tab = pane_action_button("forktty-add-symbolic", "New Tab (Ctrl+Shift+T)");
     actions.append(&split_h);
     actions.append(&split_v);
     actions.append(&new_tab);
     #[cfg(feature = "browser")]
-    let open_browser = pane_action_button("web-browser-symbolic", "Open Browser Pane");
+    let open_browser = pane_action_button("forktty-browser-symbolic", "Open Browser Pane");
     #[cfg(feature = "browser")]
     actions.append(&open_browser);
     actions.append(&close_separator);
@@ -74,17 +74,17 @@ pub(super) fn build_pane_chrome(
     single_pane_actions.set_valign(gtk::Align::Start);
     single_pane_actions.set_visible(false);
     single_pane_actions.set_sensitive(false);
-    let single_split_h = pane_action_button("view-dual-symbolic", "Split Right (Ctrl+Shift+H)");
+    let single_split_h = pane_action_button("forktty-split-horizontal-symbolic", "Split Right (Ctrl+Shift+H)");
     let single_split_v = pane_action_button(
-        "view-paged-symbolic",
+        "forktty-split-vertical-symbolic",
         &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
     );
-    let single_new_tab = pane_action_button("tab-new-symbolic", "New Tab (Ctrl+Shift+T)");
+    let single_new_tab = pane_action_button("forktty-add-symbolic", "New Tab (Ctrl+Shift+T)");
     single_pane_actions.append(&single_split_h);
     single_pane_actions.append(&single_split_v);
     single_pane_actions.append(&single_new_tab);
     #[cfg(feature = "browser")]
-    let single_open_browser = pane_action_button("web-browser-symbolic", "Open Browser Pane");
+    let single_open_browser = pane_action_button("forktty-browser-symbolic", "Open Browser Pane");
     #[cfg(feature = "browser")]
     single_pane_actions.append(&single_open_browser);
     terminal_overlay.add_overlay(&single_pane_actions);
