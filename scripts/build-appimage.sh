@@ -110,6 +110,22 @@ copy_appimage_runtime_libs() {
   echo "Bundled $copied shared libraries into $lib_dir" >&2
 }
 
+copy_appimage_icon_theme() {
+  local source_dir="${FORKTTY_APPIMAGE_ICON_THEME_DIR:-/usr/share/icons/Adwaita}"
+  local target_dir="$APPDIR/usr/share/icons/Adwaita"
+
+  if [[ ! -d "$source_dir" ]]; then
+    echo "Unable to build the AppImage: Adwaita icon theme not found at $source_dir" >&2
+    echo "Install adwaita-icon-theme, or set FORKTTY_APPIMAGE_ICON_THEME_DIR=/path/to/Adwaita." >&2
+    exit 1
+  fi
+
+  rm -rf "$target_dir"
+  mkdir -p "$(dirname "$target_dir")"
+  cp -a "$source_dir" "$target_dir"
+  echo "Bundled GTK icon theme from $source_dir" >&2
+}
+
 APPIMAGETOOL_TOOL="$(resolve_tool APPIMAGETOOL appimagetool)"
 
 if [[ -z "$APPIMAGETOOL_TOOL" ]]; then
@@ -149,6 +165,7 @@ install -Dm755 "$ROOT_DIR/target/release/forktty" "$APPDIR/usr/bin/forktty"
 install -Dm644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop"
 install -Dm644 "$ICON_FILE" "$APPDIR/usr/share/icons/hicolor/128x128/apps/forktty.png"
 install -Dm644 "$APPSTREAM_FILE" "$APPDIR/usr/share/metainfo/$APPIMAGE_DESKTOP_ID.appdata.xml"
+copy_appimage_icon_theme
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"
@@ -166,6 +183,7 @@ if [ -n "${XDG_DATA_DIRS:-}" ]; then
 else
   export XDG_DATA_DIRS="$HERE/usr/share:/usr/local/share:/usr/share"
 fi
+export GTK_ICON_THEME=Adwaita
 exec "$HERE/usr/bin/forktty" "$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"

@@ -44,6 +44,9 @@ pub(super) fn build_ui(app: &adw::Application) {
     let ui_alive = Rc::new(Cell::new(true));
 
     let header = adw::HeaderBar::new();
+    header.set_decoration_layout(Some(":minimize,maximize,close"));
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(true);
     header.add_css_class("app-header");
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 7);
     brand.add_css_class("app-brand");
