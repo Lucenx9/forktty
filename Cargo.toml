@@ -19,7 +19,7 @@ homepage = "https://github.com/Lucenx9/forktty"
 repository = "https://github.com/Lucenx9/forktty"
 
 [workspace.dependencies]
-aes = "0.8"
+aes = "0.9"
 async-channel = "2"
 base64 = "0.22"
 cbc = "0.1"
