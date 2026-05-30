@@ -38,7 +38,7 @@ The fastest paths are the prebuilt artifacts from the
 Each release ships:
 
 - `forktty-0.2.0-alpha.6-x86_64.AppImage` — recommended portable Linux package.
-- `forktty_0.2.0~alpha.6_amd64.deb` — Debian/Ubuntu package.
+- `forktty_0.2.0.alpha.6_amd64.deb` — Debian/Ubuntu package.
 - `SHA256SUMS` — checksums for both artifacts.
 
 After downloading, verify checksums:
@@ -73,9 +73,9 @@ GSK_RENDERER=ngl ./forktty-0.2.0-alpha.6-x86_64.AppImage
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo apt install ./forktty_0.2.0~alpha.6_amd64.deb
+sudo apt install ./forktty_0.2.0.alpha.6_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0~alpha.6_amd64.deb
+sudo dpkg -i forktty_0.2.0.alpha.6_amd64.deb
 sudo apt -f install
 ```
 
