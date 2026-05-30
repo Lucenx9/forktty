@@ -52,10 +52,10 @@ jobs:
         run: cargo run -p xtask -- check
 
       - name: Rust tests
-        run: cargo test --workspace --no-default-features --features gtk-vte
+        run: cargo test --workspace --all-targets --no-default-features --features gtk-vte
 
       - name: Rust clippy
-        run: cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings
+        run: cargo clippy --workspace --all-targets --no-default-features --features gtk-vte -- -D warnings
 
       - name: GTK/VTE build
         run: cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
@@ -94,10 +94,10 @@ jobs:
           workspaces: .
 
       - name: Browser feature tests
-        run: cargo test -p forktty-ui-gtk --features browser
+        run: cargo test -p forktty-ui-gtk --all-targets --features browser
 
       - name: Browser feature clippy
-        run: cargo clippy -p forktty-ui-gtk --features browser -- -D warnings
+        run: cargo clippy -p forktty-ui-gtk --all-targets --features browser -- -D warnings
 
       - name: Browser feature build
         run: cargo build -p forktty-ui-gtk --features browser

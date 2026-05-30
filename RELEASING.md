@@ -14,10 +14,10 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
 2. Run the full QA checklist locally on at least one supported distro
    (see [`docs/QA.md`](docs/QA.md)):
    - `cargo fmt --all --check`
-   - `cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings`
-   - `cargo test --workspace --no-default-features --features gtk-vte`
+   - `cargo clippy --workspace --all-targets --no-default-features --features gtk-vte -- -D warnings`
+   - `cargo test --workspace --all-targets --no-default-features --features gtk-vte`
    - `cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte`
-   - `cargo test -p forktty-ui-gtk --features browser`
+   - `cargo test -p forktty-ui-gtk --all-targets --features browser`
    - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
    - `bash scripts/build-appimage.sh`

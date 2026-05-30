@@ -405,10 +405,10 @@ Useful commands:
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace --no-default-features --features gtk-vte
-cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings
+cargo test --workspace --all-targets --no-default-features --features gtk-vte
+cargo clippy --workspace --all-targets --no-default-features --features gtk-vte -- -D warnings
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
-cargo test -p forktty-ui-gtk --features browser
+cargo test -p forktty-ui-gtk --all-targets --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
