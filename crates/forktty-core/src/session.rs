@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 #[derive(Error, Debug)]
 pub enum SessionError {
@@ -182,7 +182,7 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
     validate_session_data(data)?;
     let write_path = session_write_path(path)?;
     if let Some(parent) = write_path.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_session_parent_dir(parent)?;
     }
     let json = serde_json::to_string_pretty(data)?;
     let nonce = SystemTime::now()
@@ -199,12 +199,70 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
         tmp_file.write_all(json.as_bytes())?;
         tmp_file.sync_all()?;
         fs::rename(&tmp_path, &write_path)?;
+        sync_parent_dir(&write_path)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+fn ensure_session_parent_dir(parent: &Path) -> Result<(), SessionError> {
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        let mut missing = Vec::new();
+        let mut cursor = Some(parent);
+        while let Some(dir) = cursor {
+            match fs::metadata(dir) {
+                Ok(meta) if meta.is_dir() => break,
+                Ok(_) => {
+                    return Err(SessionError::InvalidData(format!(
+                        "session directory path is not a directory: {}",
+                        dir.display()
+                    )));
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(dir.to_path_buf());
+                    cursor = dir.parent().filter(|path| !path.as_os_str().is_empty());
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        for dir in missing.iter().rev() {
+            match fs::DirBuilder::new().mode(0o700).create(dir) {
+                Ok(()) => fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !fs::metadata(dir)?.is_dir() {
+                        return Err(SessionError::InvalidData(format!(
+                            "session directory path is not a directory: {}",
+                            dir.display()
+                        )));
+                    }
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), SessionError> {
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+            fs::File::open(parent)?.sync_all()?;
+        }
+    }
+    Ok(())
 }
 
 fn session_write_path(path: &Path) -> Result<PathBuf, SessionError> {
@@ -809,6 +867,30 @@ mod tests {
             );
         }
         assert_eq!(load_session_from_path(&path).unwrap(), Some(data));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_session_to_path_creates_missing_parent_directories_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("state").join("forktty");
+        let path = parent.join("session-v2.json");
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let data = model.to_session_data();
+
+        save_session_to_path(&path, &data).unwrap();
+
+        assert_eq!(
+            fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[cfg(unix)]
