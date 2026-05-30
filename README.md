@@ -21,7 +21,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 > **Status**: Early alpha (v0.2.0-alpha.6). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
-  <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />
+  <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY alpha.6 with workspace sidebar, split terminal panes, active pane focus, and a browser pane" width="960" />
 </p>
 
 ## Why ForkTTY
@@ -381,6 +381,13 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - A corrupt `~/.config/forktty/config.toml` or `~/.local/share/forktty/session-v2.json` is renamed aside as `*.bad-<timestamp>` so the app can start with defaults; the rename reason is logged to stderr.
 - Local logs live under `~/.local/share/forktty/logs/`.
 
+## Support
+
+For usage questions and bug reports, start with [SUPPORT.md](SUPPORT.md)
+and include the output of `forktty doctor`, your distro/desktop
+environment, install method, and the exact command or workflow that
+failed. Security reports should follow [SECURITY.md](SECURITY.md).
+
 ## Contributing
 
 Useful commands:
@@ -388,7 +395,7 @@ Useful commands:
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace
+cargo test --workspace --features browser
 cargo clippy --workspace --features browser -- -D warnings
 cargo build -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
