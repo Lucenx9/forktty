@@ -219,6 +219,11 @@ pub struct WorkspaceModel {
 }
 
 const MAX_LOG_ENTRIES: usize = 200;
+/// Upper bound on retained notifications. Notifications accumulate for the life
+/// of the process (they are never persisted), so without a cap a long-running
+/// instance with a flapping agent would grow this `Vec` without bound. When the
+/// cap is exceeded the oldest entries are dropped, keeping the newest.
+const MAX_NOTIFICATIONS: usize = 1_000;
 const HOOK_TERMINAL_PROMPT_GUARD_NS: u128 = 2_000_000_000;
 
 impl WorkspaceModel {
@@ -1097,6 +1102,10 @@ impl WorkspaceModel {
             }
         }
         self.notifications.push(item.clone());
+        if self.notifications.len() > MAX_NOTIFICATIONS {
+            let overflow = self.notifications.len() - MAX_NOTIFICATIONS;
+            self.notifications.drain(0..overflow);
+        }
         item
     }
 
@@ -2658,6 +2667,30 @@ mod tests {
         let surface = model.surface(&workspace.focused_surface_id).unwrap();
         assert!(surface.unread);
         assert!(model.list_workspaces()[0].needs_attention);
+    }
+
+    #[test]
+    fn notifications_are_capped_dropping_oldest() {
+        let mut model = WorkspaceModel::new();
+        let total = MAX_NOTIFICATIONS + 5;
+        for index in 0..total {
+            model.create_notification(
+                format!("n{index}"),
+                "body",
+                NotificationKind::Info,
+                None,
+                None,
+            );
+        }
+
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), MAX_NOTIFICATIONS);
+        // The five oldest were dropped; the newest is retained.
+        assert_eq!(notifications.first().unwrap().title, "n5");
+        assert_eq!(
+            notifications.last().unwrap().title,
+            format!("n{}", total - 1)
+        );
     }
 
     #[test]

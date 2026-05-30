@@ -777,6 +777,9 @@ fn quarantine_corrupt_session_with_timestamp(
     }
     let quarantine_path = available_bad_session_path(path, timestamp);
     fs::rename(path, &quarantine_path)?;
+    // Flush the rename like the config quarantine path does, so a crash right
+    // after quarantining can't resurrect the corrupt file on the next boot.
+    sync_parent_dir(&quarantine_path)?;
     Ok(Some(quarantine_path))
 }
 
