@@ -29,7 +29,7 @@ git2 = { version = "0.21", features = ["vendored-libgit2"] }
 hmac = "0.12"
 libc = "0.2"
 notify-rust = "4"
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 regex = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 secret-service = { version = "5", default-features = false, features = ["rt-tokio-crypto-rust"] }
