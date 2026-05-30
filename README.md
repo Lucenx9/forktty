@@ -14,6 +14,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
 
+[Website](https://forktty-site.vercel.app/) ·
 [Download v0.2.0-alpha.6 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.6/forktty-0.2.0-alpha.6-x86_64.AppImage)
 
 </div>
