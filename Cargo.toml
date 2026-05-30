@@ -31,7 +31,7 @@ libc = "0.2"
 notify-rust = "4"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 regex = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 secret-service = { version = "4", default-features = false, features = ["rt-tokio-crypto-rust"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
