@@ -12,7 +12,7 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -30,6 +30,7 @@ const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 /// How often the background task snapshots the model and emits diffs.
 const EVENTS_TICK: Duration = Duration::from_millis(250);
+static SOCKET_BIND_UMASK_LOCK: Mutex<()> = Mutex::new(());
 
 /// Methods advertised by `system.capabilities`. Every entry except
 /// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
@@ -340,7 +341,7 @@ pub fn bind_socket_listener(
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
             Err(err) => return Err(err),
         }
-        match StdUnixListener::bind(socket_path) {
+        match bind_private_socket_path(socket_path) {
             Ok(listener) => break listener,
             Err(err) if err.kind() == io::ErrorKind::AddrInUse && !reclaimed_stale => {
                 reclaimed_stale = true;
@@ -355,6 +356,37 @@ pub fn bind_socket_listener(
         return Err(err);
     }
     Ok(listener)
+}
+
+struct UmaskGuard<'a> {
+    previous: libc::mode_t,
+    _lock: MutexGuard<'a, ()>,
+}
+
+impl UmaskGuard<'_> {
+    fn set(mask: libc::mode_t) -> io::Result<Self> {
+        let lock = SOCKET_BIND_UMASK_LOCK
+            .lock()
+            .map_err(|_| io::Error::other("socket bind umask lock poisoned"))?;
+        let previous = unsafe { libc::umask(mask) };
+        Ok(Self {
+            previous,
+            _lock: lock,
+        })
+    }
+}
+
+impl Drop for UmaskGuard<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            libc::umask(self.previous);
+        }
+    }
+}
+
+fn bind_private_socket_path(socket_path: &Path) -> io::Result<StdUnixListener> {
+    let _guard = UmaskGuard::set(0o177)?;
+    StdUnixListener::bind(socket_path)
 }
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {
@@ -3761,6 +3793,24 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[test]
+    fn bind_socket_listener_creates_owner_only_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+
+        let listener = bind_socket_listener(&socket_path, false).unwrap();
+
+        assert_eq!(
+            fs::symlink_metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        drop(listener);
     }
 
     #[test]
