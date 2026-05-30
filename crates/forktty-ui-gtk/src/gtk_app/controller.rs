@@ -1047,7 +1047,7 @@ fn install_tab_drop_target_on(
         let moved = model
             .lock()
             .ok()
-            .is_some_and(|mut model| model.move_tab(&source_id, &target_id, position));
+            .is_some_and(|mut model| model.move_tab(&source_id, target_id, position));
         if moved {
             if let Some(state) = state.as_ref() {
                 save_session_from_state(state);
