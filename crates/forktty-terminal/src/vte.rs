@@ -84,6 +84,7 @@ pub fn send_text(widget: &VteTerminalWidget, text: &str) {
 
 #[cfg(feature = "vte")]
 fn child_environment(request: &SpawnRequest) -> Vec<String> {
+    let appimage_dirs = appimage_runtime_dirs();
     // `vars_os` rather than `vars`: a single non-UTF-8 environment variable
     // (legal on Linux) makes `vars` panic, which would crash the app while
     // spawning a terminal. Such vars can't be passed to `spawn_async` as
@@ -92,6 +93,7 @@ fn child_environment(request: &SpawnRequest) -> Vec<String> {
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .filter(|(key, _)| !is_appimage_runtime_env(key))
         .collect::<BTreeMap<_, _>>();
+    sanitize_appimage_child_environment(&mut env, &appimage_dirs);
     for (key, value) in request.forktty_env() {
         env.insert(key, value);
     }
@@ -104,8 +106,95 @@ fn child_environment(request: &SpawnRequest) -> Vec<String> {
 fn is_appimage_runtime_env(key: &str) -> bool {
     matches!(
         key,
-        "APPIMAGE" | "APPDIR" | "ARGV0" | "DESKTOPINTEGRATION" | "OWD"
+        "APPIMAGE" | "APPDIR" | "ARGV0" | "DESKTOPINTEGRATION" | "FORKTTY_APPIMAGE_DIR" | "OWD"
     ) || key.starts_with("APPIMAGE_")
+}
+
+#[cfg(feature = "vte")]
+fn appimage_runtime_dirs() -> Vec<String> {
+    let mut dirs = ["APPDIR", "FORKTTY_APPIMAGE_DIR"]
+        .iter()
+        .filter_map(|key| std::env::var_os(key))
+        .filter_map(|value| value.into_string().ok())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+#[cfg(feature = "vte")]
+fn sanitize_appimage_child_environment(
+    env: &mut BTreeMap<String, String>,
+    appimage_dirs: &[String],
+) {
+    if appimage_dirs.is_empty() {
+        return;
+    }
+
+    for key in [
+        "GIO_EXTRA_MODULES",
+        "GI_TYPELIB_PATH",
+        "GTK_PATH",
+        "LD_LIBRARY_PATH",
+        "GST_PLUGIN_PATH",
+        "GST_PLUGIN_SYSTEM_PATH_1_0",
+        "XDG_DATA_DIRS",
+    ] {
+        strip_appimage_path_entries(env, key, appimage_dirs);
+    }
+
+    for key in [
+        "GDK_PIXBUF_MODULE_FILE",
+        "GSETTINGS_SCHEMA_DIR",
+        "GST_PLUGIN_SCANNER",
+    ] {
+        remove_appimage_path_value(env, key, appimage_dirs);
+    }
+}
+
+#[cfg(feature = "vte")]
+fn strip_appimage_path_entries(
+    env: &mut BTreeMap<String, String>,
+    key: &str,
+    appimage_dirs: &[String],
+) {
+    let Some(value) = env.get(key).cloned() else {
+        return;
+    };
+    let cleaned = value
+        .split(':')
+        .filter(|entry| entry.is_empty() || !is_inside_appimage_dir(entry, appimage_dirs))
+        .collect::<Vec<_>>();
+    if cleaned.is_empty() {
+        env.remove(key);
+    } else {
+        env.insert(key.to_string(), cleaned.join(":"));
+    }
+}
+
+#[cfg(feature = "vte")]
+fn remove_appimage_path_value(
+    env: &mut BTreeMap<String, String>,
+    key: &str,
+    appimage_dirs: &[String],
+) {
+    if env
+        .get(key)
+        .is_some_and(|value| is_inside_appimage_dir(value, appimage_dirs))
+    {
+        env.remove(key);
+    }
+}
+
+#[cfg(feature = "vte")]
+fn is_inside_appimage_dir(value: &str, appimage_dirs: &[String]) -> bool {
+    appimage_dirs.iter().any(|dir| {
+        value == dir
+            || value
+                .strip_prefix(dir)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })
 }
 
 #[cfg(feature = "vte")]
@@ -247,6 +336,7 @@ mod tests {
         std::env::set_var("APPDIR", "/tmp/.mount_forktty");
         std::env::set_var("APPIMAGE_EXTRACT_AND_RUN", "1");
         std::env::set_var("DESKTOPINTEGRATION", "1");
+        std::env::set_var("FORKTTY_APPIMAGE_DIR", "/tmp/.mount_forktty");
         std::env::set_var("OWD", "/home/me");
 
         let request = SpawnRequest {
@@ -264,13 +354,66 @@ mod tests {
         std::env::remove_var("APPDIR");
         std::env::remove_var("APPIMAGE_EXTRACT_AND_RUN");
         std::env::remove_var("DESKTOPINTEGRATION");
+        std::env::remove_var("FORKTTY_APPIMAGE_DIR");
         std::env::remove_var("OWD");
 
         assert_eq!(env_value(&env, "APPIMAGE"), None);
         assert_eq!(env_value(&env, "APPDIR"), None);
         assert_eq!(env_value(&env, "APPIMAGE_EXTRACT_AND_RUN"), None);
         assert_eq!(env_value(&env, "DESKTOPINTEGRATION"), None);
+        assert_eq!(env_value(&env, "FORKTTY_APPIMAGE_DIR"), None);
         assert_eq!(env_value(&env, "OWD"), None);
+    }
+
+    #[test]
+    fn child_environment_strips_appimage_runtime_paths() {
+        std::env::set_var("APPDIR", "/tmp/.mount_forktty");
+        std::env::set_var("FORKTTY_APPIMAGE_DIR", "/tmp/.mount_forktty");
+        std::env::set_var(
+            "LD_LIBRARY_PATH",
+            "/tmp/.mount_forktty/usr/lib:/opt/codex/lib",
+        );
+        std::env::set_var(
+            "XDG_DATA_DIRS",
+            "/tmp/.mount_forktty/usr/share:/usr/local/share:/usr/share",
+        );
+        std::env::set_var(
+            "GIO_EXTRA_MODULES",
+            "/tmp/.mount_forktty/usr/lib/gio/modules:/usr/lib/gio/modules",
+        );
+        std::env::set_var(
+            "GST_PLUGIN_SCANNER",
+            "/tmp/.mount_forktty/usr/lib/gstreamer-1.0/gst-plugin-scanner",
+        );
+
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        let env = child_environment(&request);
+        std::env::remove_var("APPDIR");
+        std::env::remove_var("FORKTTY_APPIMAGE_DIR");
+        std::env::remove_var("LD_LIBRARY_PATH");
+        std::env::remove_var("XDG_DATA_DIRS");
+        std::env::remove_var("GIO_EXTRA_MODULES");
+        std::env::remove_var("GST_PLUGIN_SCANNER");
+
+        assert_eq!(env_value(&env, "LD_LIBRARY_PATH"), Some("/opt/codex/lib"));
+        assert_eq!(
+            env_value(&env, "XDG_DATA_DIRS"),
+            Some("/usr/local/share:/usr/share")
+        );
+        assert_eq!(
+            env_value(&env, "GIO_EXTRA_MODULES"),
+            Some("/usr/lib/gio/modules")
+        );
+        assert_eq!(env_value(&env, "GST_PLUGIN_SCANNER"), None);
     }
 
     fn env_value<'a>(env: &'a [String], key: &str) -> Option<&'a str> {
