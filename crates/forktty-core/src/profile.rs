@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+const MAX_PROFILE_STORE_BYTES: u64 = 1024 * 1024;
+
 /// Stable identity for a browser profile. Serializes as its hyphenated lowercase
 /// UUID string, which is also the on-disk directory name under `browser_profiles/`.
 /// `Default` is the well-known P1 Default profile, so sessions created before the
@@ -135,17 +137,17 @@ impl ProfileStore {
     /// Load the store from `path`, creating an in-memory Default-only store if the
     /// file is absent. A present file always has the Default profile ensured.
     pub fn load(path: PathBuf) -> Result<Self, ProfileError> {
-        let mut profiles: Vec<ProfileMeta> = match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(profiles) => profiles,
-                Err(_) => {
-                    backup_corrupt_profile_store(&path, &bytes);
-                    Vec::new()
-                }
-            },
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(ProfileError::Io(e.to_string())),
-        };
+        let mut profiles: Vec<ProfileMeta> =
+            match read_optional_file_bounded(&path, MAX_PROFILE_STORE_BYTES, "profile store")? {
+                Some(bytes) => match serde_json::from_slice(&bytes) {
+                    Ok(profiles) => profiles,
+                    Err(_) => {
+                        backup_corrupt_profile_store(&path, &bytes);
+                        Vec::new()
+                    }
+                },
+                None => Vec::new(),
+            };
         ensure_default_profile(&mut profiles);
         Ok(Self { path, profiles })
     }
@@ -240,6 +242,27 @@ impl ProfileStore {
             .find(|p| p.display_name.trim().to_ascii_lowercase() == needle)
             .map(|p| p.id)
     }
+}
+
+fn read_optional_file_bounded(
+    path: &Path,
+    limit: u64,
+    label: &str,
+) -> Result<Option<Vec<u8>>, ProfileError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(ProfileError::Io(err.to_string())),
+    };
+    if metadata.len() > limit {
+        return Err(ProfileError::Io(format!(
+            "{label} is {} bytes, exceeds limit of {limit} bytes",
+            metadata.len()
+        )));
+    }
+    std::fs::read(path)
+        .map(Some)
+        .map_err(|err| ProfileError::Io(err.to_string()))
 }
 
 #[cfg(test)]
@@ -356,6 +379,17 @@ mod tests {
         assert_eq!(store.list().len(), 1);
         assert_eq!(store.list()[0].id, ProfileId::default());
         assert!(path.with_extension("json.bak").exists());
+    }
+
+    #[test]
+    fn oversized_profile_store_is_rejected_without_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_PROFILE_STORE_BYTES + 1).unwrap();
+
+        let err = ProfileStore::load(path).unwrap_err();
+        assert!(err.to_string().contains("exceeds limit"));
     }
 
     #[test]

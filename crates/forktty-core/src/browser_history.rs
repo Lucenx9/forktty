@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::backup::unique_backup_path;
 use crate::profile::ProfileId;
 
+const MAX_BOOKMARKS_JSON_BYTES: u64 = 16 * 1024 * 1024;
+
 /// One visited URL with its aggregate visit metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Visit {
@@ -277,8 +279,8 @@ impl BookmarkStore {
     /// that fails to parse is backed up to `<path>.bak` and the store starts empty
     /// (navigation must never break on corrupt bookmarks).
     pub fn open(path: &Path) -> Result<Self, HistoryError> {
-        let items = match std::fs::read(path) {
-            Ok(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
+        let items = match read_optional_file_bounded(path, MAX_BOOKMARKS_JSON_BYTES, "bookmarks")? {
+            Some(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
                 Ok(v) => v,
                 Err(_) => {
                     let bak = unique_backup_path(path, "json.bak");
@@ -286,8 +288,7 @@ impl BookmarkStore {
                     Vec::new()
                 }
             },
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(HistoryError::Io(e.to_string())),
+            None => Vec::new(),
         };
         Ok(Self {
             path: path.to_path_buf(),
@@ -362,6 +363,27 @@ impl BookmarkStore {
         }
         result
     }
+}
+
+fn read_optional_file_bounded(
+    path: &Path,
+    limit: u64,
+    label: &str,
+) -> Result<Option<Vec<u8>>, HistoryError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(HistoryError::Io(err.to_string())),
+    };
+    if metadata.len() > limit {
+        return Err(HistoryError::Io(format!(
+            "{label} file is {} bytes, exceeds limit of {limit} bytes",
+            metadata.len()
+        )));
+    }
+    std::fs::read(path)
+        .map(Some)
+        .map_err(|err| HistoryError::Io(err.to_string()))
 }
 
 #[cfg(test)]
@@ -581,5 +603,19 @@ mod tests {
             })
             .count();
         assert_eq!(backup_count, 2);
+    }
+
+    #[test]
+    fn bookmark_open_rejects_oversized_file_without_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_BOOKMARKS_JSON_BYTES + 1).unwrap();
+
+        let err = match BookmarkStore::open(&path) {
+            Ok(_) => panic!("oversized bookmarks should be rejected"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("exceeds limit"));
     }
 }

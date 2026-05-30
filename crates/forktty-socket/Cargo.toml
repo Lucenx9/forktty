@@ -9,6 +9,10 @@ homepage.workspace = true
 repository.workspace = true
 description = "ForkTTY Unix socket JSON-RPC server"
 
+[features]
+default = []
+browser = []
+
 [dependencies]
 async-channel = { workspace = true }
 dirs.workspace = true

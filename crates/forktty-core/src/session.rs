@@ -1,4 +1,5 @@
-use crate::model::{PaneNode, SplitAxis, Surface, Workspace};
+use crate::command_safety::is_valid_ssh_host;
+use crate::model::{PaneNode, SplitAxis, Surface, SurfaceKind, Workspace};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -665,6 +666,14 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
                 surface.id
             )));
         }
+        if let SurfaceKind::Ssh { host } = &surface.kind {
+            if !is_valid_ssh_host(host) {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted ssh surface has invalid host: {}",
+                    surface.id
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -1305,6 +1314,20 @@ mod tests {
             validate_session_data(&data),
             Err(SessionError::InvalidData(_))
         ));
+    }
+
+    #[test]
+    fn rejects_session_with_invalid_persisted_ssh_host() {
+        let mut model = WorkspaceModel::new();
+        model.create_ssh_workspace("ssh", "/tmp", "server.local".to_string());
+        let mut data = model.to_session_data();
+        assert_eq!(data.surfaces.len(), 1);
+        data.surfaces[0].kind = SurfaceKind::Ssh {
+            host: "-oProxyCommand=x".to_string(),
+        };
+
+        let err = validate_session_data(&data).unwrap_err();
+        assert!(err.to_string().contains("invalid host"));
     }
 
     #[test]
