@@ -120,6 +120,67 @@ copy_forktty_icon_assets() {
   fi
 }
 
+write_appimage_hicolor_index_theme() {
+  local index_file="$APPDIR/usr/share/icons/hicolor/index.theme"
+
+  mkdir -p "$(dirname "$index_file")"
+  cat > "$index_file" <<'EOF'
+[Icon Theme]
+Name=Hicolor
+Comment=Fallback icon theme
+Directories=16x16/apps,24x24/apps,32x32/apps,48x48/apps,64x64/apps,128x128/apps,256x256/apps,scalable/apps,scalable/actions
+
+[16x16/apps]
+Size=16
+Context=Applications
+Type=Fixed
+
+[24x24/apps]
+Size=24
+Context=Applications
+Type=Fixed
+
+[32x32/apps]
+Size=32
+Context=Applications
+Type=Fixed
+
+[48x48/apps]
+Size=48
+Context=Applications
+Type=Fixed
+
+[64x64/apps]
+Size=64
+Context=Applications
+Type=Fixed
+
+[128x128/apps]
+Size=128
+Context=Applications
+Type=Fixed
+
+[256x256/apps]
+Size=256
+Context=Applications
+Type=Fixed
+
+[scalable/apps]
+Size=128
+Context=Applications
+Type=Scalable
+MinSize=16
+MaxSize=512
+
+[scalable/actions]
+Size=16
+Context=Actions
+Type=Scalable
+MinSize=8
+MaxSize=64
+EOF
+}
+
 APPIMAGETOOL_TOOL="$(resolve_tool APPIMAGETOOL appimagetool)"
 
 if [[ -z "$APPIMAGETOOL_TOOL" ]]; then
@@ -160,6 +221,7 @@ install -Dm644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/$APPIMAGE_DESKTOP
 install -Dm644 "$ICON_FILE" "$APPDIR/usr/share/icons/hicolor/128x128/apps/forktty.png"
 install -Dm644 "$APPSTREAM_FILE" "$APPDIR/usr/share/metainfo/$APPIMAGE_DESKTOP_ID.appdata.xml"
 copy_forktty_icon_assets
+write_appimage_hicolor_index_theme
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"

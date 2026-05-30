@@ -802,14 +802,37 @@ pub(super) fn register_app_icon() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
     };
-    let icon_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("packaging")
-        .join("linux")
-        .join("icons");
-    if icon_dir.is_dir() {
-        gtk::IconTheme::for_display(&display).add_search_path(icon_dir);
+    let icon_theme = gtk::IconTheme::for_display(&display);
+    let mut icon_dirs = Vec::new();
+
+    if let Some(appdir) = std::env::var_os("APPDIR") {
+        icon_dirs.push(
+            PathBuf::from(appdir)
+                .join("usr")
+                .join("share")
+                .join("icons"),
+        );
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(usr_dir) = exe.parent().and_then(Path::parent) {
+            icon_dirs.push(usr_dir.join("share").join("icons"));
+        }
+    }
+
+    icon_dirs.push(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("packaging")
+            .join("linux")
+            .join("icons"),
+    );
+
+    for icon_dir in icon_dirs {
+        if icon_dir.is_dir() {
+            icon_theme.add_search_path(icon_dir);
+        }
     }
 }
 
