@@ -44,6 +44,42 @@ pub(super) fn install_actions(
             }
         }
     });
+    add_action(app, "previous-tab", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::Previous) {
+                controller.borrow_mut().sync_model_focus_to_ui();
+            }
+        }
+    });
+    add_action(app, "next-tab", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::Next) {
+                controller.borrow_mut().sync_model_focus_to_ui();
+            }
+        }
+    });
+    add_action(app, "first-tab", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::First) {
+                controller.borrow_mut().sync_model_focus_to_ui();
+            }
+        }
+    });
+    add_action(app, "last-tab", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::Last) {
+                controller.borrow_mut().sync_model_focus_to_ui();
+            }
+        }
+    });
     add_action(app, "command-palette", {
         let window = window.clone();
         let state = state.clone();
@@ -145,6 +181,10 @@ pub(super) fn install_actions(
     app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
     app.set_accels_for_action("app.split-vertical", &[SPLIT_VERTICAL_ACCEL]);
     app.set_accels_for_action("app.new-tab", &["<Control><Shift>T"]);
+    app.set_accels_for_action("app.previous-tab", &[PREVIOUS_TAB_ACCEL]);
+    app.set_accels_for_action("app.next-tab", &[NEXT_TAB_ACCEL]);
+    app.set_accels_for_action("app.first-tab", &[FIRST_TAB_ACCEL]);
+    app.set_accels_for_action("app.last-tab", &[LAST_TAB_ACCEL]);
     app.set_accels_for_action("app.new-workspace", &["<Control><Shift>N"]);
     app.set_accels_for_action("app.open-workspace", &["<Control><Shift>O"]);
     app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);

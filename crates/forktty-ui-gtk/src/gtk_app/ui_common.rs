@@ -6,6 +6,74 @@ pub(super) enum StatusKind {
     Error,
 }
 
+pub(super) fn install_internal_drag_source<W>(widget: &W, payload: String)
+where
+    W: IsA<gtk::Widget>,
+{
+    static TRANSPARENT_DRAG_PIXEL: [u8; 4] = [0, 0, 0, 0];
+
+    let source = gtk::DragSource::builder()
+        .actions(gdk::DragAction::MOVE)
+        .build();
+    // Capture avoids child buttons/list rows claiming the pointer sequence
+    // before GtkDragSource can recognize a drag.
+    source.set_propagation_phase(gtk::PropagationPhase::Capture);
+    source
+        .connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&payload.to_value())));
+    source.connect_drag_begin(move |source, _| {
+        let bytes = glib::Bytes::from_static(&TRANSPARENT_DRAG_PIXEL);
+        let icon = gdk::MemoryTexture::new(1, 1, gdk::MemoryFormat::R8g8b8a8, &bytes, 4);
+        source.set_icon(Some(&icon), 0, 0);
+    });
+    widget.add_controller(source);
+}
+
+pub(super) fn internal_drop_target<F>(accept_prefix: &'static str, on_drop: F) -> gtk::DropTarget
+where
+    F: Fn(String, f64, f64) -> bool + 'static,
+{
+    let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
+    // Tab/pane/workspace drags are all carried as a String, so a bare String
+    // DropTarget would advertise itself as a valid drop zone for every kind and
+    // then silently no-op on drop. Preload the payload while hovering and refuse
+    // the MOVE action for foreign prefixes, so only the matching kind highlights
+    // (`:drop(active)`). A not-yet-loaded value falls through to MOVE, so a
+    // matching drag is never suppressed and existing drops cannot regress.
+    target.set_preload(true);
+    target.connect_motion(move |target, _x, _y| {
+        match target.value().and_then(|value| value.get::<String>().ok()) {
+            Some(payload) if !payload.starts_with(accept_prefix) => gdk::DragAction::empty(),
+            _ => gdk::DragAction::MOVE,
+        }
+    });
+    target.connect_drop(move |_, value, x, y| {
+        let Ok(payload) = value.get::<String>() else {
+            return false;
+        };
+        on_drop(payload, x, y)
+    });
+    target
+}
+
+pub(super) fn prefixed_dnd_payload(prefix: &str, id: &str) -> String {
+    format!("{prefix}{id}")
+}
+
+pub(super) fn dnd_payload_id(payload: &str, prefix: &str) -> Option<String> {
+    payload
+        .strip_prefix(prefix)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub(super) fn drop_position(coord: f64, span: i32) -> forktty_core::MovePosition {
+    if coord < f64::from(span.max(1)) / 2.0 {
+        forktty_core::MovePosition::Before
+    } else {
+        forktty_core::MovePosition::After
+    }
+}
+
 pub(super) fn labeled_icon_button_parts(
     icon_name: &str,
     label: &str,

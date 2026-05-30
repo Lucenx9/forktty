@@ -6,8 +6,12 @@ use gtk4::glib;
 use std::cell::{Cell, RefCell};
 #[cfg(feature = "vte")]
 use std::collections::BTreeMap;
+#[cfg(all(feature = "vte", unix))]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(feature = "vte")]
 use std::rc::Rc;
+#[cfg(feature = "vte")]
+use std::{fs, path::Path};
 #[cfg(feature = "vte")]
 use vte4::prelude::*;
 #[cfg(feature = "vte")]
@@ -39,8 +43,9 @@ where
     terminal.set_hexpand(true);
     terminal.set_vexpand(true);
 
+    let runtime_env_keys = appimage_runtime_env_keys();
     let env_storage = child_environment(request);
-    let argv_storage = child_argv(request);
+    let argv_storage = child_argv(request, &runtime_env_keys);
     let cwd_storage = child_cwd(request);
     let on_spawn_result = Rc::new(RefCell::new(Some(on_spawn_result)));
     let spawned = Rc::new(Cell::new(false));
@@ -85,6 +90,7 @@ fn child_environment(request: &SpawnRequest) -> Vec<String> {
     // `&str` anyway, so skip the ones that aren't valid UTF-8.
     let mut env = std::env::vars_os()
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(key, _)| !is_appimage_runtime_env(key))
         .collect::<BTreeMap<_, _>>();
     for (key, value) in request.forktty_env() {
         env.insert(key, value);
@@ -95,10 +101,67 @@ fn child_environment(request: &SpawnRequest) -> Vec<String> {
 }
 
 #[cfg(feature = "vte")]
-fn child_argv(request: &SpawnRequest) -> Vec<String> {
-    std::iter::once(request.shell.clone())
+fn is_appimage_runtime_env(key: &str) -> bool {
+    matches!(
+        key,
+        "APPIMAGE" | "APPDIR" | "ARGV0" | "DESKTOPINTEGRATION" | "OWD"
+    ) || key.starts_with("APPIMAGE_")
+}
+
+#[cfg(feature = "vte")]
+fn appimage_runtime_env_keys() -> Vec<String> {
+    let mut keys = std::env::vars_os()
+        .filter_map(|(key, _)| key.into_string().ok())
+        .filter(|key| is_appimage_runtime_env(key))
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+#[cfg(feature = "vte")]
+fn child_argv(request: &SpawnRequest, unset_env_keys: &[String]) -> Vec<String> {
+    let command = std::iter::once(request.shell.clone())
         .chain(request.args.iter().cloned())
-        .collect()
+        .collect::<Vec<_>>();
+    let Some(env_command) = env_command_path().filter(|_| !unset_env_keys.is_empty()) else {
+        return command;
+    };
+
+    let mut argv = Vec::with_capacity(1 + unset_env_keys.len() * 2 + command.len());
+    argv.push(env_command);
+    for key in unset_env_keys {
+        argv.push("-u".to_string());
+        argv.push(key.clone());
+    }
+    argv.extend(command);
+    argv
+}
+
+#[cfg(feature = "vte")]
+fn env_command_path() -> Option<String> {
+    ["/usr/bin/env", "/bin/env"]
+        .iter()
+        .find(|path| is_executable_file(Path::new(path)))
+        .map(|path| (*path).to_string())
+}
+
+#[cfg(feature = "vte")]
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 #[cfg(feature = "vte")]
@@ -173,7 +236,46 @@ mod tests {
         assert!(env
             .iter()
             .any(|entry| entry == "FORKTTY_WORKSPACE_ID=workspace-1"));
-        assert!(!env.iter().any(|entry| entry.starts_with(&format!("{key}="))));
+        assert!(!env
+            .iter()
+            .any(|entry| entry.starts_with(&format!("{key}="))));
+    }
+
+    #[test]
+    fn child_environment_does_not_leak_appimage_runtime_vars() {
+        std::env::set_var("APPIMAGE", "/home/me/ForkTTY-old.AppImage");
+        std::env::set_var("APPDIR", "/tmp/.mount_forktty");
+        std::env::set_var("APPIMAGE_EXTRACT_AND_RUN", "1");
+        std::env::set_var("DESKTOPINTEGRATION", "1");
+        std::env::set_var("OWD", "/home/me");
+
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        let env = child_environment(&request);
+        std::env::remove_var("APPIMAGE");
+        std::env::remove_var("APPDIR");
+        std::env::remove_var("APPIMAGE_EXTRACT_AND_RUN");
+        std::env::remove_var("DESKTOPINTEGRATION");
+        std::env::remove_var("OWD");
+
+        assert_eq!(env_value(&env, "APPIMAGE"), None);
+        assert_eq!(env_value(&env, "APPDIR"), None);
+        assert_eq!(env_value(&env, "APPIMAGE_EXTRACT_AND_RUN"), None);
+        assert_eq!(env_value(&env, "DESKTOPINTEGRATION"), None);
+        assert_eq!(env_value(&env, "OWD"), None);
+    }
+
+    fn env_value<'a>(env: &'a [String], key: &str) -> Option<&'a str> {
+        env.iter()
+            .find_map(|entry| entry.strip_prefix(&format!("{key}=")))
     }
 
     #[test]
@@ -188,7 +290,7 @@ mod tests {
             extra_env: Vec::new(),
         };
 
-        assert_eq!(child_argv(&request), vec!["/bin/zsh"]);
+        assert_eq!(child_argv(&request, &[]), vec!["/bin/zsh"]);
         assert_eq!(child_cwd(&request), "/tmp/project");
     }
 
@@ -204,7 +306,44 @@ mod tests {
             extra_env: Vec::new(),
         };
 
-        assert_eq!(child_argv(&request), vec!["ssh", "user@example.test"]);
+        assert_eq!(child_argv(&request, &[]), vec!["ssh", "user@example.test"]);
         assert_eq!(child_cwd(&request), "/tmp/project");
+    }
+
+    #[test]
+    fn child_argv_unsets_appimage_runtime_vars_with_env_wrapper() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/zsh".to_string(),
+            args: vec!["-l".to_string()],
+            cwd: PathBuf::from("/tmp/project"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        let argv = child_argv(
+            &request,
+            &[
+                "APPDIR".to_string(),
+                "APPIMAGE".to_string(),
+                "ARGV0".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            argv,
+            vec![
+                env_command_path().expect("env command should exist on Linux"),
+                "-u".to_string(),
+                "APPDIR".to_string(),
+                "-u".to_string(),
+                "APPIMAGE".to_string(),
+                "-u".to_string(),
+                "ARGV0".to_string(),
+                "/bin/zsh".to_string(),
+                "-l".to_string(),
+            ]
+        );
     }
 }

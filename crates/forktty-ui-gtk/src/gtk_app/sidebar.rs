@@ -48,6 +48,51 @@ pub(super) fn schedule_sidebar_refresh(
     });
 }
 
+fn install_workspace_reorder_dnd<W>(
+    handle: &W,
+    workspace_id: &str,
+    state: &SocketAppState,
+    controller: &Rc<RefCell<VteController>>,
+    ui: &SidebarUi,
+) where
+    W: IsA<gtk::Widget>,
+{
+    install_internal_drag_source(
+        handle,
+        prefixed_dnd_payload(DND_WORKSPACE_PREFIX, workspace_id),
+    );
+    let target_workspace_id = workspace_id.to_string();
+    let state_for_drop = state.clone();
+    let controller_for_drop = controller.clone();
+    let ui_for_drop = ui.clone();
+    let handle_for_drop = handle.as_ref().clone();
+    handle.add_controller(internal_drop_target(
+        DND_WORKSPACE_PREFIX,
+        move |payload, _x, y| {
+            let Some(source_workspace_id) = dnd_payload_id(&payload, DND_WORKSPACE_PREFIX) else {
+                return false;
+            };
+            if source_workspace_id == target_workspace_id {
+                return false;
+            }
+            let position = drop_position(y, handle_for_drop.allocated_height());
+            let moved = state_for_drop.model.lock().ok().is_some_and(|mut model| {
+                model.move_workspace(&source_workspace_id, &target_workspace_id, position)
+            });
+            if moved {
+                close_sidebar_context_menu(&ui_for_drop);
+                save_session_from_state(&state_for_drop);
+                schedule_sidebar_refresh(
+                    ui_for_drop.clone(),
+                    state_for_drop.clone(),
+                    controller_for_drop.clone(),
+                );
+            }
+            moved
+        },
+    ));
+}
+
 pub(super) fn refresh_sidebar(
     ui: &SidebarUi,
     state: &SocketAppState,
@@ -163,7 +208,14 @@ pub(super) fn refresh_sidebar(
         row.set_selectable(true);
         row.set_activatable(true);
         row.add_css_class("workspace-row");
-        let mut accessible_label = format!("Workspace {}. {}", workspace.name, meta);
+        let mut accessible_label = if workspace.active {
+            format!("Current workspace {}. {}", workspace.name, meta)
+        } else {
+            format!("Workspace {}. {}", workspace.name, meta)
+        };
+        if surface_count > 1 {
+            accessible_label.push_str(&format!(". {surface_count} panes"));
+        }
         if let Some(status) = status.as_ref() {
             accessible_label.push_str(&format!(". {}", status.tooltip));
         }
@@ -184,6 +236,12 @@ pub(super) fn refresh_sidebar(
             .hexpand(true)
             .build();
         card.add_css_class("workspace-card");
+        install_workspace_reorder_dnd(&card, &workspace.id, state, controller, ui);
+
+        let grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
+        grip.add_css_class("workspace-drag-grip");
+        grip.set_tooltip_text(Some("Drag to reorder"));
+        card.append(&grip);
 
         let text = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -261,6 +319,10 @@ pub(super) fn refresh_sidebar(
             tooltip.push('\n');
             tooltip.push_str(status.tooltip);
         }
+        if surface_count > 1 {
+            tooltip.push('\n');
+            tooltip.push_str(&format!("{surface_count} panes"));
+        }
         if !summary.is_empty() {
             tooltip.push('\n');
             tooltip.push_str(&summary);
@@ -271,14 +333,13 @@ pub(super) fn refresh_sidebar(
 
         let primary_click = gtk::GestureClick::new();
         primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
-        primary_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        primary_click.set_propagation_phase(gtk::PropagationPhase::Bubble);
         let workspace_id_for_click = workspace.id.clone();
         let state_for_click = state.clone();
         let controller_for_click = controller.clone();
         let ui_for_click = ui.clone();
         let row_for_click = row.clone();
-        primary_click.connect_pressed(move |gesture, _n_press, _x, _y| {
-            gesture.set_state(gtk::EventSequenceState::Claimed);
+        primary_click.connect_released(move |_, _n_press, _x, _y| {
             close_sidebar_context_menu(&ui_for_click);
             ui_for_click.sidebar.select_row(Some(&row_for_click));
             select_sidebar_workspace(

@@ -4,6 +4,14 @@
  * for active, focus, and primary actions; everything else uses neutral tiers.
  * -------------------------------------------------------------------------- */
 
+@define-color accent_color #e88745;
+@define-color accent_bg_color #e88745;
+@define-color accent_fg_color #17110c;
+@define-color theme_selected_bg_color #e88745;
+@define-color theme_selected_fg_color #17110c;
+@define-color theme_unfocused_selected_bg_color #c9793f;
+@define-color theme_unfocused_selected_fg_color #17110c;
+
 :root {
   --ft-bg-0: #141414;
   --ft-bg-1: #181818;
@@ -30,6 +38,11 @@
   --ft-accent-hover: #f09a58;
   --ft-accent-soft: #30251d;
   --ft-accent-fg: #17110c;
+  --accent-color: #e88745;
+  --accent-bg-color: #e88745;
+  --accent-fg-color: #17110c;
+  --theme-selected-bg-color: #e88745;
+  --theme-selected-fg-color: #17110c;
 
   --ft-selection-bg: #222222;
   --ft-selection-bg-hover: #282828;
@@ -388,9 +401,15 @@ popover.ft-context-menu contents {
  * -------------------------------------------------------------------------- */
 
 .workspace-paned > separator {
-  background: var(--ft-border-subtle);
-  min-width: 1px;
-  min-height: 1px;
+  background: alpha(var(--window-fg-color), 0.10);
+  min-width: 3px;
+  min-height: 3px;
+  transition: background-color 90ms ease-out;
+}
+
+.workspace-paned > separator:hover,
+.workspace-paned > separator:focus-visible {
+  background: alpha(var(--ft-accent), 0.42);
 }
 
 .sidebar-shell {
@@ -471,6 +490,15 @@ popover.ft-context-menu contents {
   border-color: transparent;
 }
 
+.navigation-sidebar row:drop(active),
+.workspace-row:drop(active) {
+  background: transparent;
+  background-image: none;
+  color: var(--ft-text);
+  outline-color: alpha(var(--ft-accent), 0.58);
+  box-shadow: none;
+}
+
 .navigation-sidebar row:focus-visible .workspace-card {
   border-color: var(--ft-accent);
 }
@@ -488,8 +516,19 @@ popover.ft-context-menu contents {
   transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
+.workspace-drag-grip {
+  color: var(--ft-text-faint);
+  min-width: 14px;
+  -gtk-icon-size: 14px;
+  transition: color 90ms ease-out;
+}
+
+.navigation-sidebar row:hover .workspace-drag-grip {
+  color: var(--ft-text-muted);
+}
+
 .navigation-sidebar row:hover .workspace-card {
-  background: var(--ft-bg-2);
+  background: var(--ft-bg-3);
 }
 
 .workspace-row.active .workspace-card {
@@ -500,6 +539,14 @@ popover.ft-context-menu contents {
 
 .workspace-row.active:hover .workspace-card {
   background: var(--ft-bg-4);
+}
+
+.workspace-row:drop(active) .workspace-card,
+.workspace-card:drop(active) {
+  background: var(--ft-bg-4);
+  background-image: none;
+  border-left-color: var(--ft-accent);
+  box-shadow: inset 2px 0 0 var(--ft-accent);
 }
 
 .workspace-row.needs-attention .workspace-card {
@@ -775,14 +822,15 @@ popover.ft-context-menu contents {
 }
 
 .terminal-stage paned > separator {
-  background: var(--ft-border-subtle);
-  min-width: 1px;
-  min-height: 1px;
+  background: alpha(var(--window-fg-color), 0.12);
+  min-width: 4px;
+  min-height: 4px;
   transition: background-color 90ms ease-out;
 }
 
-.terminal-stage paned > separator:hover {
-  background: alpha(var(--window-fg-color), 0.24);
+.terminal-stage paned > separator:hover,
+.terminal-stage paned > separator:focus-visible {
+  background: alpha(var(--ft-accent), 0.46);
 }
 
 .terminal-pane {
@@ -793,7 +841,8 @@ popover.ft-context-menu contents {
 }
 
 .terminal-pane.active {
-  border-top-color: alpha(var(--window-fg-color), 0.28);
+  border-top-color: alpha(var(--ft-accent), 0.46);
+  box-shadow: inset 0 1px 0 alpha(var(--ft-accent), 0.16);
 }
 
 .terminal-pane:focus-visible {
@@ -822,6 +871,15 @@ popover.ft-context-menu contents {
   border-bottom-color: alpha(var(--ft-warning), 0.36);
 }
 
+.terminal-pane-header:drop(active),
+.browser-toolbar:drop(active) {
+  background: var(--ft-bg-3);
+  background-image: none;
+  outline: 1px solid alpha(var(--ft-accent), 0.58);
+  outline-offset: -1px;
+  box-shadow: inset 2px 0 0 var(--ft-accent);
+}
+
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
 .pane-tabstrip {
@@ -829,6 +887,14 @@ popover.ft-context-menu contents {
   border-bottom: 1px solid var(--ft-border-subtle);
   min-height: 25px;
   padding: 1px 5px 1px 7px;
+  transition: background-color 90ms ease-out, border-color 90ms ease-out;
+}
+
+.pane-tabstrip:drop(active) {
+  background: var(--ft-bg-2);
+  background-image: none;
+  border-bottom-color: alpha(var(--ft-accent), 0.58);
+  box-shadow: inset 0 -1px 0 alpha(var(--ft-accent), 0.58);
 }
 
 .pane-tab {
@@ -860,6 +926,38 @@ popover.ft-context-menu contents {
   box-shadow: inset 0 1px 0 var(--ft-selection-rail);
 }
 
+.pane-tab:drop(active),
+.pane-tab-select:drop(active),
+.pane-tab-close:drop(active) {
+  background: var(--ft-bg-3);
+  background-image: none;
+  border-color: alpha(var(--ft-accent), 0.58);
+  outline-color: alpha(var(--ft-accent), 0.58);
+}
+
+.pane-tab.drop-before,
+.pane-tab.drop-after {
+  background: var(--ft-bg-3);
+  background-image: none;
+  border-color: alpha(var(--ft-accent), 0.62);
+}
+
+.pane-tab.drop-before {
+  box-shadow: inset 3px 0 0 var(--ft-accent);
+}
+
+.pane-tab.drop-after {
+  box-shadow: inset -3px 0 0 var(--ft-accent);
+}
+
+.pane-tab.active.drop-before {
+  box-shadow: inset 3px 0 0 var(--ft-accent), inset 0 1px 0 var(--ft-selection-rail);
+}
+
+.pane-tab.active.drop-after {
+  box-shadow: inset -3px 0 0 var(--ft-accent), inset 0 1px 0 var(--ft-selection-rail);
+}
+
 .pane-tab-select {
   min-height: 20px;
   padding: 0 4px 0 0;
@@ -871,12 +969,22 @@ popover.ft-context-menu contents {
 }
 
 .pane-tab-select:hover,
-button.flat.pane-tab-select:hover,
-button.flat.pane-tab-select:active {
+.pane-tab-select:active {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
   color: inherit;
+}
+
+.pane-tab-grip {
+  -gtk-icon-size: 11px;
+  color: var(--ft-text-faint);
+  opacity: 0.54;
+}
+
+.pane-tab:hover .pane-tab-grip,
+.pane-tab.active .pane-tab-grip {
+  opacity: 0.78;
 }
 
 .pane-tab-label {
@@ -1066,13 +1174,27 @@ button.flat.pane-tab-close:active {
  * layouts keep one visual rhythm. */
 .browser-pane {
   background: var(--ft-pane-bg);
+  border-top: 2px solid transparent;
+  transition: border-color 90ms ease-out, box-shadow 90ms ease-out;
+}
+
+.browser-pane.active {
+  border-top-color: alpha(var(--ft-accent), 0.46);
+  box-shadow: inset 0 1px 0 alpha(var(--ft-accent), 0.16);
 }
 
 .browser-toolbar {
-  min-height: 32px;
-  padding: 4px 6px;
+  min-height: 30px;
+  padding: 3px 6px;
   background: var(--ft-pane-header);
   border-bottom: 1px solid var(--ft-border-subtle);
+  color: var(--ft-text-muted);
+}
+
+.browser-pane.active .browser-toolbar {
+  background: var(--ft-pane-header-active);
+  border-bottom-color: alpha(var(--window-fg-color), 0.11);
+  color: var(--ft-text-strong);
 }
 
 .browser-action {
@@ -1095,6 +1217,11 @@ button.flat.pane-tab-close:active {
   background: var(--ft-bg-3);
 }
 
+.browser-action:focus-visible {
+  color: var(--ft-text-strong);
+  background: var(--ft-bg-3);
+}
+
 .browser-action.pane-close-action:hover {
   color: var(--ft-error);
   background: var(--ft-error-soft);
@@ -1109,7 +1236,6 @@ button.flat.pane-tab-close:active {
 .browser-action:disabled:hover {
   color: var(--ft-text-faint);
   background: transparent;
-  cursor: not-allowed;
 }
 
 .browser-address {
@@ -1117,6 +1243,22 @@ button.flat.pane-tab-close:active {
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 0.82em;
+  background: var(--ft-bg-1);
+  border: 1px solid var(--ft-border-subtle);
+  color: var(--ft-text-muted);
+  box-shadow: none;
+}
+
+.browser-pane.active .browser-address {
+  border-color: var(--ft-border);
+  color: var(--ft-text);
+}
+
+.browser-address:focus,
+.browser-address:focus-within {
+  border-color: var(--ft-accent);
+  color: var(--ft-text-strong);
+  box-shadow: inset 0 1px 2px alpha(var(--ft-shadow), 0.24), 0 0 0 1px alpha(var(--ft-accent), 0.42);
 }
 
 .vte-terminal {
@@ -1589,16 +1731,25 @@ window.ft-dialog,
 
 .settings-nav {
   min-width: 216px;
-  padding: 14px 10px 16px 10px;
+  padding: 12px 10px 16px 10px;
   background: var(--ft-bg-0);
   border-right: 1px solid var(--ft-border-subtle);
 }
 
+.settings-nav-heading {
+  margin: 9px 10px 4px 10px;
+  color: var(--ft-text-faint);
+  font-size: 0.66em;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .settings-nav-item {
-  min-height: 36px;
-  padding: 0 11px;
+  min-height: 50px;
+  padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   color: var(--ft-text-muted);
   background: transparent;
   box-shadow: none;
@@ -1617,7 +1768,7 @@ window.ft-dialog,
 }
 
 .settings-nav-icon {
-  -gtk-icon-size: 14px;
+  -gtk-icon-size: 15px;
   color: var(--ft-text-muted);
 }
 
@@ -1625,10 +1776,24 @@ window.ft-dialog,
   color: var(--ft-accent);
 }
 
+.settings-nav-copy {
+  min-width: 0;
+}
+
 .settings-nav-label {
   color: inherit;
-  font-size: 0.90em;
-  font-weight: 650;
+  font-size: 0.88em;
+  font-weight: 700;
+}
+
+.settings-nav-subtitle {
+  color: var(--ft-text-faint);
+  font-size: 0.76em;
+  font-weight: 500;
+}
+
+.settings-nav-item:checked .settings-nav-subtitle {
+  color: var(--ft-text-muted);
 }
 
 .settings-stack {
@@ -1641,6 +1806,23 @@ window.ft-dialog,
 
 .settings-page {
   margin: 22px 28px 30px 28px;
+}
+
+.settings-page-header {
+  margin-left: 2px;
+  margin-bottom: 2px;
+}
+
+.settings-page-title {
+  color: var(--ft-text-strong);
+  font-size: 1.05em;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.settings-page-description {
+  color: var(--ft-text-muted);
+  font-size: 0.84em;
 }
 
 .settings-section-header {

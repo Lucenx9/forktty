@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TabNavigation {
+    Previous,
+    Next,
+    First,
+    Last,
+}
+
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
     let surface = {
         let mut model = match state.model.lock() {
@@ -70,6 +78,53 @@ pub(super) fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
         );
     } else {
         save_session_from_state(state);
+    }
+}
+
+pub(super) fn select_tab_in_focused_pane(
+    state: &SocketAppState,
+    navigation: TabNavigation,
+) -> bool {
+    let mut model = match state.model.lock() {
+        Ok(model) => model,
+        Err(_) => return false,
+    };
+    let Some(workspace) = model.active_workspace() else {
+        return false;
+    };
+    let Some(target) = tab_navigation_target(
+        &workspace.pane_tree,
+        &workspace.focused_surface_id,
+        navigation,
+    ) else {
+        return false;
+    };
+    model.select_tab(&target)
+}
+
+pub(super) fn tab_navigation_target(
+    node: &PaneNode,
+    focused_surface_id: &str,
+    navigation: TabNavigation,
+) -> Option<String> {
+    match node {
+        PaneNode::Leaf { tabs, .. } if tabs.iter().any(|id| id == focused_surface_id) => {
+            if tabs.len() < 2 {
+                return None;
+            }
+            let current = tabs.iter().position(|id| id == focused_surface_id)?;
+            let target = match navigation {
+                TabNavigation::Previous => (current + tabs.len() - 1) % tabs.len(),
+                TabNavigation::Next => (current + 1) % tabs.len(),
+                TabNavigation::First => 0,
+                TabNavigation::Last => tabs.len() - 1,
+            };
+            tabs.get(target).cloned()
+        }
+        PaneNode::Leaf { .. } => None,
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .find_map(|child| tab_navigation_target(child, focused_surface_id, navigation)),
     }
 }
 

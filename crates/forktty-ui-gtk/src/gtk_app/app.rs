@@ -146,6 +146,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         .selection_mode(gtk::SelectionMode::Single)
         .build();
     sidebar.add_css_class("navigation-sidebar");
+    sidebar.update_property(&[gtk::accessible::Property::Label("Workspaces")]);
 
     let sidebar_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     sidebar_shell.set_width_request(220);
@@ -155,7 +156,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     let sidebar_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     sidebar_header.add_css_class("sidebar-header");
     let section_label = gtk::Label::builder()
-        .label("WORKSPACES")
+        .label("Workspaces")
         .xalign(0.0)
         .hexpand(true)
         .build();
