@@ -52,7 +52,7 @@ jobs:
         run: cargo run -p xtask -- check
 
       - name: Rust tests
-        run: cargo test --workspace
+        run: cargo test --workspace --features browser
 
       - name: Rust clippy
         run: cargo clippy --workspace --features browser -- -D warnings

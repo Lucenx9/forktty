@@ -125,7 +125,9 @@ impl VteController {
                 self.widgets.remove(&surface_id);
                 self.surface_pids.borrow_mut().remove(&surface_id);
                 #[cfg(feature = "browser")]
-                self.browser_panes.borrow_mut().remove(&surface_id);
+                if let Some(pane) = self.browser_panes.borrow_mut().remove(&surface_id) {
+                    pane.prepare_close();
+                }
                 self.rebuild_layout();
             }
         }
@@ -242,9 +244,18 @@ impl VteController {
                         .collect::<BTreeSet<_>>()
                 })
                 .unwrap_or_default();
-            self.browser_panes
-                .borrow_mut()
-                .retain(|surface_id, _| live_surface_ids.contains(surface_id));
+            let stale_browser_ids = self
+                .browser_panes
+                .borrow()
+                .keys()
+                .filter(|surface_id| !live_surface_ids.contains(*surface_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            for surface_id in stale_browser_ids {
+                if let Some(pane) = self.browser_panes.borrow_mut().remove(&surface_id) {
+                    pane.prepare_close();
+                }
+            }
             // Cached browser widgets are reused across rebuilds; detach them from
             // their previous parent first, or set_start/end_child asserts
             // (gtk_widget_get_parent(child) == NULL) when re-inserting.
@@ -590,17 +601,33 @@ impl VteController {
 
     fn widget_for_pane(&self, node: &PaneNode, workspace_id: &str) -> gtk::Widget {
         let model = self.model.clone();
+        let state_for_resize = self.state.clone();
         let workspace_id_for_resize = workspace_id.to_string();
+        let pending_resize_save = Rc::new(RefCell::new(None::<glib::SourceId>));
         let on_resize: SplitResizeCallback =
             Rc::new(move |left: &[String], right: &[String], ratio: f64| {
-                if let Ok(mut model) = model.lock() {
-                    let _ = model.update_split_partition_ratio(
-                        &workspace_id_for_resize,
-                        left,
-                        right,
-                        ratio,
-                    );
+                let changed = if let Ok(mut model) = model.lock() {
+                    model.update_split_partition_ratio(&workspace_id_for_resize, left, right, ratio)
+                } else {
+                    false
+                };
+                if !changed {
+                    return;
                 }
+                let Some(state) = state_for_resize.clone() else {
+                    return;
+                };
+                if let Some(source_id) = pending_resize_save.borrow_mut().take() {
+                    source_id.remove();
+                }
+                let state_for_timeout = state.clone();
+                let pending_resize_save_for_timeout = pending_resize_save.clone();
+                let source_id =
+                    glib::timeout_add_local_once(SESSION_RESIZE_SAVE_DEBOUNCE, move || {
+                        *pending_resize_save_for_timeout.borrow_mut() = None;
+                        save_session_from_state(&state_for_timeout);
+                    });
+                *pending_resize_save.borrow_mut() = Some(source_id);
             });
         self.widget_for_pane_with_resize(node, on_resize)
     }
@@ -757,7 +784,7 @@ impl VteController {
 
             tab.append(&select);
             tab.append(&close);
-            install_internal_drag_source(&tab, prefixed_dnd_payload(DND_TAB_PREFIX, surface_id));
+            install_tab_drag_source(&tab, surface_id);
             tabstrip.append(&tab);
             tab_widgets.push(tab);
             labels.push(label);
@@ -988,58 +1015,22 @@ fn install_tab_drop_target_on(
         .iter()
         .map(|(surface_id, _)| surface_id.clone())
         .collect::<Vec<_>>();
+    let tab_targets_for_drop = tab_targets.clone();
+    let tab_order_for_drop = tab_order.clone();
     let tab_targets_for_motion = tab_targets.clone();
     let tab_order_for_motion = tab_order.clone();
     let handle_for_motion = handle.clone();
     let strip_for_motion = tabstrip.clone();
-    let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
-    target.set_preload(true);
-    target.connect_motion(move |target, x, y| {
-        let Some(payload) = target.value().and_then(|value| value.get::<String>().ok()) else {
-            clear_tab_drop_indicators(&tab_targets_for_motion);
-            return gdk::DragAction::MOVE;
-        };
-        let Some(source_id) = dnd_payload_id(&payload, DND_TAB_PREFIX) else {
-            clear_tab_drop_indicators(&tab_targets_for_motion);
-            return gdk::DragAction::empty();
-        };
-        let Some((strip_x, _)) = handle_for_motion.translate_coordinates(&strip_for_motion, x, y)
-        else {
-            clear_tab_drop_indicators(&tab_targets_for_motion);
-            return gdk::DragAction::MOVE;
-        };
-        let midpoints = tab_drop_midpoints(&strip_for_motion, &tab_targets_for_motion);
-        let Some((target_id, position)) =
-            tab_drop_target_at_x(&midpoints, strip_x).filter(|(target_id, position)| {
-                !tab_move_would_keep_order(&tab_order_for_motion, &source_id, target_id, *position)
-            })
-        else {
-            clear_tab_drop_indicators(&tab_targets_for_motion);
-            return gdk::DragAction::MOVE;
-        };
-        set_tab_drop_indicator(&tab_targets_for_motion, target_id, position);
-        gdk::DragAction::MOVE
-    });
-    let tab_targets_for_leave = tab_targets.clone();
-    target.connect_leave(move |_| {
-        clear_tab_drop_indicators(&tab_targets_for_leave);
-    });
-    target.connect_drop(move |_, value, x, y| {
-        clear_tab_drop_indicators(&tab_targets);
-        let Ok(payload) = value.get::<String>() else {
-            return false;
-        };
-        let Some(source_id) = dnd_payload_id(&payload, DND_TAB_PREFIX) else {
-            return false;
-        };
+    let target = tab_drop_target(move |source_id, x, y| {
+        clear_tab_drop_indicators(&tab_targets_for_drop);
         let Some((strip_x, _)) = handle_for_drop.translate_coordinates(&strip_for_drop, x, y)
         else {
             return false;
         };
-        let midpoints = tab_drop_midpoints(&strip_for_drop, &tab_targets);
+        let midpoints = tab_drop_midpoints(&strip_for_drop, &tab_targets_for_drop);
         let Some((target_id, position)) =
             tab_drop_target_at_x(&midpoints, strip_x).filter(|(target_id, position)| {
-                !tab_move_would_keep_order(&tab_order, &source_id, target_id, *position)
+                !tab_move_would_keep_order(&tab_order_for_drop, &source_id, target_id, *position)
             })
         else {
             return false;
@@ -1054,6 +1045,36 @@ fn install_tab_drop_target_on(
             }
         }
         moved
+    });
+    target.set_preload(true);
+    target.connect_motion(move |target, x, y| {
+        let Some(source_id) = target
+            .value()
+            .and_then(|value| tab_dnd_id_from_value(&value))
+        else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::MOVE;
+        };
+        let Some((strip_x, _)) = handle_for_motion.translate_coordinates(&strip_for_motion, x, y)
+        else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::empty();
+        };
+        let midpoints = tab_drop_midpoints(&strip_for_motion, &tab_targets_for_motion);
+        let Some((target_id, position)) =
+            tab_drop_target_at_x(&midpoints, strip_x).filter(|(target_id, position)| {
+                !tab_move_would_keep_order(&tab_order_for_motion, &source_id, target_id, *position)
+            })
+        else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::empty();
+        };
+        set_tab_drop_indicator(&tab_targets_for_motion, target_id, position);
+        gdk::DragAction::MOVE
+    });
+    let tab_targets_for_leave = tab_targets.clone();
+    target.connect_leave(move |_| {
+        clear_tab_drop_indicators(&tab_targets_for_leave);
     });
     handle.add_controller(target);
 }

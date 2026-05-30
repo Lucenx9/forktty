@@ -1,9 +1,12 @@
 //! Browser source discovery. Probe functions take an explicit root path for
 //! testability; `discover()` calls them with the real `dirs::home_dir()`-based roots.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::model::{BrowserFamily, SourceBrowser, SourceProfile};
+
+const MAX_DISCOVERY_TEXT_BYTES: u64 = 1024 * 1024;
 
 // ─── Firefox ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +80,7 @@ pub fn discover_firefox(root: &Path) -> Option<SourceBrowser> {
     let ini_path = root.join("profiles.ini");
     let profiles = if ini_path.exists() {
         // Parse profiles.ini
-        let text = std::fs::read_to_string(&ini_path).unwrap_or_default();
+        let text = read_small_text_file(&ini_path).unwrap_or_default();
         let sections = parse_ini(&text);
         let mut profiles = Vec::new();
         for section in &sections {
@@ -204,7 +207,7 @@ pub fn discover_chromium_family(family: BrowserFamily, root: &Path) -> Option<So
 /// Load `profile.info_cache` display names from `<root>/Local State`.
 /// Returns `None` on any parse failure (callers fall back to dir names).
 fn load_local_state_names(root: &Path) -> Option<std::collections::HashMap<String, String>> {
-    let text = std::fs::read_to_string(root.join("Local State")).ok()?;
+    let text = read_small_text_file(&root.join("Local State"))?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let cache = v
         .get("profile")
@@ -218,6 +221,22 @@ fn load_local_state_names(root: &Path) -> Option<std::collections::HashMap<Strin
         })
         .collect();
     Some(map)
+}
+
+fn read_small_text_file(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_DISCOVERY_TEXT_BYTES {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(MAX_DISCOVERY_TEXT_BYTES + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() as u64 > MAX_DISCOVERY_TEXT_BYTES {
+        return None;
+    }
+    Some(text)
 }
 
 // ─── Top-level discover ───────────────────────────────────────────────────────
@@ -372,6 +391,37 @@ mod tests {
         assert_eq!(browser.profiles.len(), 1);
         assert_eq!(browser.profiles[0].display_name, "xyz.default");
         assert!(!browser.profiles[0].is_default);
+    }
+
+    #[test]
+    fn discover_firefox_fallback_scan_with_oversized_ini() {
+        let dir = tempfile::tempdir().unwrap();
+        let ff = dir.path().join(".mozilla/firefox");
+        fs::create_dir_all(ff.join("xyz.default")).unwrap();
+        fs::write(ff.join("xyz.default/cookies.sqlite"), b"x").unwrap();
+        std::fs::File::create(ff.join("profiles.ini"))
+            .unwrap()
+            .set_len(MAX_DISCOVERY_TEXT_BYTES + 1)
+            .unwrap();
+        let browser = discover_firefox(&ff).unwrap();
+        assert_eq!(browser.profiles.len(), 1);
+        assert_eq!(browser.profiles[0].display_name, "xyz.default");
+        assert!(!browser.profiles[0].is_default);
+    }
+
+    #[test]
+    fn discover_chromium_falls_back_when_local_state_is_oversized() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(".config/chromium");
+        fs::create_dir_all(root.join("Default")).unwrap();
+        fs::write(root.join("Default/Cookies"), b"x").unwrap();
+        std::fs::File::create(root.join("Local State"))
+            .unwrap()
+            .set_len(MAX_DISCOVERY_TEXT_BYTES + 1)
+            .unwrap();
+        let browser = discover_chromium_family(BrowserFamily::Chromium, &root).unwrap();
+        assert_eq!(browser.profiles.len(), 1);
+        assert_eq!(browser.profiles[0].display_name, "Default");
     }
 
     #[test]

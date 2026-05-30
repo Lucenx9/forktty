@@ -501,13 +501,16 @@ pub(super) fn install_terminal_context_menu(
     let gesture = gtk::GestureClick::new();
     gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let widget_for_menu = widget.clone();
+    let widget_for_menu = widget.downgrade();
     let state_for_menu = state.clone();
     let parent_for_menu = parent.clone();
     let surface_id_for_menu = surface_id.to_string();
     let current_popover = Rc::new(RefCell::new(None::<gtk::Popover>));
     let current_popover_for_menu = current_popover.clone();
     gesture.connect_pressed(move |gesture, _n_press, x, y| {
+        let Some(widget_for_menu) = widget_for_menu.upgrade() else {
+            return;
+        };
         gesture.set_state(gtk::EventSequenceState::Claimed);
         widget_for_menu.grab_focus();
         if let Ok(mut model) = state_for_menu.model.lock() {

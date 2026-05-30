@@ -8,6 +8,12 @@ pub(super) enum TabNavigation {
     Last,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TabMoveDirection {
+    Left,
+    Right,
+}
+
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
     let surface = {
         let mut model = match state.model.lock() {
@@ -102,6 +108,28 @@ pub(super) fn select_tab_in_focused_pane(
     model.select_tab(&target)
 }
 
+pub(super) fn move_focused_tab(state: &SocketAppState, direction: TabMoveDirection) -> bool {
+    let moved = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        let Some(workspace) = model.active_workspace() else {
+            return false;
+        };
+        let source = workspace.focused_surface_id.clone();
+        let Some((target, position)) = tab_move_target(&workspace.pane_tree, &source, direction)
+        else {
+            return false;
+        };
+        model.move_tab(&source, &target, position)
+    };
+    if moved {
+        save_session_from_state(state);
+    }
+    moved
+}
+
 pub(super) fn tab_navigation_target(
     node: &PaneNode,
     focused_surface_id: &str,
@@ -125,6 +153,32 @@ pub(super) fn tab_navigation_target(
         PaneNode::Split { children, .. } => children
             .iter()
             .find_map(|child| tab_navigation_target(child, focused_surface_id, navigation)),
+    }
+}
+
+pub(super) fn tab_move_target(
+    node: &PaneNode,
+    focused_surface_id: &str,
+    direction: TabMoveDirection,
+) -> Option<(String, forktty_core::MovePosition)> {
+    match node {
+        PaneNode::Leaf { tabs, .. } if tabs.iter().any(|id| id == focused_surface_id) => {
+            let current = tabs.iter().position(|id| id == focused_surface_id)?;
+            match direction {
+                TabMoveDirection::Left if current > 0 => Some((
+                    tabs[current - 1].clone(),
+                    forktty_core::MovePosition::Before,
+                )),
+                TabMoveDirection::Right if current + 1 < tabs.len() => {
+                    Some((tabs[current + 1].clone(), forktty_core::MovePosition::After))
+                }
+                _ => None,
+            }
+        }
+        PaneNode::Leaf { .. } => None,
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .find_map(|child| tab_move_target(child, focused_surface_id, direction)),
     }
 }
 

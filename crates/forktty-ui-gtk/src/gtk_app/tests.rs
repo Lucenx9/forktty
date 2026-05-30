@@ -619,6 +619,25 @@ fn focus_relative_pane_ignores_extra_tabs_in_a_single_pane() {
 }
 
 #[test]
+fn relative_pane_target_rejects_missing_focused_surface() {
+    let panes = vec![
+        "surface-1".to_string(),
+        "surface-2".to_string(),
+        "surface-3".to_string(),
+    ];
+
+    assert_eq!(relative_pane_target(&panes, "missing-surface", 1), None);
+    assert_eq!(
+        relative_pane_target(&panes, "surface-2", 1),
+        Some("surface-3".to_string())
+    );
+    assert_eq!(
+        relative_pane_target(&panes, "surface-2", -1),
+        Some("surface-1".to_string())
+    );
+}
+
+#[test]
 fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
@@ -1168,6 +1187,67 @@ fn worktree_create_removes_created_worktree_when_spawn_fails() {
 }
 
 #[test]
+fn gtk_worktree_remove_keeps_worktree_when_terminal_close_fails() {
+    let repo_dir = make_temp_repo();
+    let branch_name = format!("feature/remove-close-fails-{}", std::process::id());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    {
+        let mut model = model.lock().unwrap();
+        model.create_workspace("repo", repo_dir.path());
+    }
+    let terminal = Arc::new(CloseFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap();
+    let info = worktree::list(repo_dir.path().to_str().unwrap())
+        .unwrap()
+        .into_iter()
+        .find(|info| info.branch == branch_name)
+        .unwrap();
+    let (workspace_id, surface_id) = {
+        let model = model.lock().unwrap();
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.worktree_name.as_deref() == Some(&info.worktree_name))
+            .unwrap();
+        let surface = model
+            .list_surfaces(Some(&workspace.id))
+            .into_iter()
+            .next()
+            .unwrap();
+        (workspace.id, surface.id)
+    };
+
+    let error = remove_worktree_from_gtk(&state, &branch_name).unwrap_err();
+
+    assert!(error.contains("close failed"));
+    assert!(Path::new(&info.path).exists());
+    assert_eq!(
+        worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .len(),
+        1
+    );
+    let model = model.lock().unwrap();
+    assert!(model
+        .list_workspaces()
+        .iter()
+        .any(|workspace| workspace.id == workspace_id));
+    assert!(terminal
+        .surfaces()
+        .unwrap()
+        .iter()
+        .any(|surface| surface.surface_id == surface_id));
+}
+
+#[test]
 fn builds_surface_metadata_keys() {
     assert_eq!(surface_status_key("surface-1"), "surface:surface-1:status");
 }
@@ -1336,20 +1416,14 @@ fn tab_drop_target_uses_whole_strip_geometry() {
 }
 
 #[test]
-fn dnd_payload_id_accepts_only_its_own_prefix() {
-    let tab = prefixed_dnd_payload(DND_TAB_PREFIX, "surface-7");
-    assert_eq!(
-        dnd_payload_id(&tab, DND_TAB_PREFIX).as_deref(),
-        Some("surface-7")
-    );
-    // Pane/workspace payloads share the String content type but must be rejected
-    // by a tab drop target, otherwise a foreign drag would silently no-op on drop.
-    assert_eq!(dnd_payload_id(&tab, DND_PANE_PREFIX), None);
-    let workspace = prefixed_dnd_payload(DND_WORKSPACE_PREFIX, "workspace-1");
-    assert_eq!(dnd_payload_id(&workspace, DND_TAB_PREFIX), None);
-    // Empty id and unrelated junk are rejected.
-    assert_eq!(dnd_payload_id(DND_TAB_PREFIX, DND_TAB_PREFIX), None);
-    assert_eq!(dnd_payload_id("garbage", DND_TAB_PREFIX), None);
+fn dnd_payload_types_keep_drag_kinds_distinct() {
+    assert_ne!(tab_dnd_type(), workspace_dnd_type());
+    assert_ne!(tab_dnd_type(), pane_dnd_type());
+    assert_ne!(workspace_dnd_type(), pane_dnd_type());
+
+    let tab = tab_dnd_value("surface-7");
+    assert_eq!(tab_dnd_id_from_value(&tab).as_deref(), Some("surface-7"));
+    assert!(tab.get::<String>().is_err());
 }
 
 #[test]
@@ -1377,6 +1451,39 @@ fn tab_drop_target_at_x_handles_edge_insertions() {
     assert_eq!(
         tab_drop_target_at_x(&targets, 9_999.0),
         Some(("surface-2", forktty_core::MovePosition::After))
+    );
+}
+
+#[test]
+fn tab_move_target_uses_adjacent_tabs_without_wrapping() {
+    let tree = PaneNode::Leaf {
+        tabs: vec![
+            "surface-1".to_string(),
+            "surface-2".to_string(),
+            "surface-3".to_string(),
+        ],
+        active: 1,
+    };
+
+    assert_eq!(
+        tab_move_target(&tree, "surface-2", TabMoveDirection::Left),
+        Some(("surface-1".to_string(), forktty_core::MovePosition::Before))
+    );
+    assert_eq!(
+        tab_move_target(&tree, "surface-2", TabMoveDirection::Right),
+        Some(("surface-3".to_string(), forktty_core::MovePosition::After))
+    );
+    assert_eq!(
+        tab_move_target(&tree, "surface-1", TabMoveDirection::Left),
+        None
+    );
+    assert_eq!(
+        tab_move_target(&tree, "surface-3", TabMoveDirection::Right),
+        None
+    );
+    assert_eq!(
+        tab_move_target(&tree, "missing-surface", TabMoveDirection::Right),
+        None
     );
 }
 
@@ -1416,6 +1523,40 @@ fn tab_move_would_keep_order_detects_adjacent_noops() {
         &order,
         "surface-3",
         "surface-1",
+        forktty_core::MovePosition::After
+    ));
+}
+
+#[test]
+fn workspace_move_would_keep_order_detects_adjacent_noops() {
+    let order = vec![
+        "workspace-1".to_string(),
+        "workspace-2".to_string(),
+        "workspace-3".to_string(),
+    ];
+
+    assert!(workspace_move_would_keep_order(
+        &order,
+        "workspace-1",
+        "workspace-2",
+        forktty_core::MovePosition::Before
+    ));
+    assert!(workspace_move_would_keep_order(
+        &order,
+        "workspace-2",
+        "workspace-1",
+        forktty_core::MovePosition::After
+    ));
+    assert!(workspace_move_would_keep_order(
+        &order,
+        "workspace-2",
+        "workspace-2",
+        forktty_core::MovePosition::After
+    ));
+    assert!(!workspace_move_would_keep_order(
+        &order,
+        "workspace-1",
+        "workspace-3",
         forktty_core::MovePosition::After
     ));
 }
@@ -1700,6 +1841,17 @@ fn command_palette_search_supports_fuzzy_words() {
     assert!(command_matches(&split, "sr"));
     assert!(command_matches(&split, "sp ri"));
     assert!(!command_matches(&split, "split down"));
+}
+
+#[test]
+fn accessible_shortcut_text_uses_accessibility_key_names() {
+    assert_eq!(accessible_shortcut_text("Ctrl+Shift+P"), "Control+Shift+P");
+    assert_eq!(
+        accessible_shortcut_text("Ctrl+L / Alt+D"),
+        "Control+L Alt+D"
+    );
+    assert_eq!(accessible_shortcut_text("Ctrl+,"), "Control+comma");
+    assert_eq!(accessible_shortcut_text("Esc"), "Escape");
 }
 
 #[test]

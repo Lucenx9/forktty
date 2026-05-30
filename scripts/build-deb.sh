@@ -7,8 +7,9 @@ VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/
 DEB_VERSION="${FORKTTY_DEB_VERSION:-$VERSION}"
 TARGET_DIR="$ROOT_DIR/target/packaging/deb"
 ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
-DESKTOP_ID="dev.forktty.ForkTTY"
-APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.appdata.xml"
+DESKTOP_ID="dev.forktty.forktty"
+DESKTOP_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.desktop"
+APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.metainfo.xml"
 
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
@@ -37,7 +38,7 @@ command -v dpkg-deb >/dev/null || {
 }
 
 if command -v desktop-file-validate >/dev/null; then
-  desktop-file-validate "$ROOT_DIR/packaging/linux/forktty.desktop"
+  desktop-file-validate "$DESKTOP_FILE"
 fi
 
 if command -v appstreamcli >/dev/null; then
@@ -50,15 +51,14 @@ cargo build -p forktty-ui-gtk --features browser --release
 
 rm -rf "$PKG_ROOT"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$PKG_ROOT/usr/bin/forktty"
-install -Dm644 "$ROOT_DIR/packaging/linux/forktty.desktop" \
-  "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
+install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"
 if [[ -d "$ROOT_DIR/packaging/linux/icons/hicolor" ]]; then
   mkdir -p "$PKG_ROOT/usr/share/icons/hicolor"
   cp -a "$ROOT_DIR/packaging/linux/icons/hicolor/." "$PKG_ROOT/usr/share/icons/hicolor/"
 fi
-install -Dm644 "$APPSTREAM_FILE" "$PKG_ROOT/usr/share/metainfo/$DESKTOP_ID.appdata.xml"
+install -Dm644 "$APPSTREAM_FILE" "$PKG_ROOT/usr/share/metainfo/$DESKTOP_ID.metainfo.xml"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
 INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"

@@ -35,8 +35,11 @@ pub(super) fn attach_vte_signal_handlers(
     let focus_click = gtk::GestureClick::new();
     focus_click.set_button(gtk::gdk::BUTTON_PRIMARY);
     focus_click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let widget_for_focus_click = widget.clone();
+    let widget_for_focus_click = widget.downgrade();
     focus_click.connect_pressed(move |gesture, _n_press, _x, _y| {
+        let Some(widget_for_focus_click) = widget_for_focus_click.upgrade() else {
+            return;
+        };
         let model_focused_surface_id = focus_click_model
             .lock()
             .ok()

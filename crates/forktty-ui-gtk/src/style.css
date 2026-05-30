@@ -549,6 +549,18 @@ popover.ft-context-menu contents {
   box-shadow: inset 2px 0 0 var(--ft-accent);
 }
 
+.workspace-card.drop-before {
+  background: var(--ft-bg-4);
+  border-left-color: var(--ft-accent);
+  box-shadow: inset 0 2px 0 var(--ft-accent), inset 2px 0 0 var(--ft-accent);
+}
+
+.workspace-card.drop-after {
+  background: var(--ft-bg-4);
+  border-left-color: var(--ft-accent);
+  box-shadow: inset 0 -2px 0 var(--ft-accent), inset 2px 0 0 var(--ft-accent);
+}
+
 .workspace-row.needs-attention .workspace-card {
   border-left-color: var(--ft-warning);
   box-shadow: none;

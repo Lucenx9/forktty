@@ -25,6 +25,32 @@ fn sync_history_buttons(web_view: &WebView, back: &gtk::Button, forward: &gtk::B
     forward.set_sensitive(web_view.can_go_forward());
 }
 
+fn accessible_shortcut_text(shortcut: &str) -> String {
+    shortcut
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.replace("Ctrl", "Control")
+                .replace("Esc", "Escape")
+                .replace("Control+,", "Control+comma")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn set_accessible_button_text(button: &gtk::Button, label: &str, shortcut: Option<&str>) {
+    if let Some(shortcut) = shortcut {
+        let shortcut = accessible_shortcut_text(shortcut);
+        button.update_property(&[
+            gtk::accessible::Property::Label(label),
+            gtk::accessible::Property::KeyShortcuts(shortcut.as_str()),
+        ]);
+    } else {
+        button.update_property(&[gtk::accessible::Property::Label(label)]);
+    }
+}
+
 /// The scripting driver injected into every page (SP2).
 pub const DRIVER_JS: &str = include_str!("driver.js");
 
@@ -77,11 +103,6 @@ impl BrowserPaneNavigation {
             self.address.set_text(url);
         }
     }
-
-    fn sync_committed_uri(&self, url: &str) {
-        *self.last_requested.borrow_mut() = url.to_string();
-        self.update_address(url);
-    }
 }
 
 fn browser_pane_shortcut(
@@ -115,9 +136,15 @@ fn install_browser_shortcuts<W: IsA<gtk::Widget>>(
 ) {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let web_view = web_view.clone();
-    let address = address.clone();
+    let web_view = web_view.downgrade();
+    let address = address.downgrade();
     controller.connect_key_pressed(move |_, key, _, modifiers| {
+        let Some(web_view) = web_view.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let Some(address) = address.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
         match browser_pane_shortcut(key, modifiers) {
             Some(BrowserPaneShortcut::FocusAddress) => {
                 address.grab_focus();
@@ -183,19 +210,33 @@ impl BrowserPaneWidget {
         address.set_placeholder_text(Some("Enter URL"));
         address.add_css_class("browser-address");
         address.set_tooltip_text(Some("Address bar (Ctrl+L)"));
-        address.update_property(&[gtk::accessible::Property::Label("Address bar")]);
+        let address_shortcuts = accessible_shortcut_text("Ctrl+L / Alt+D");
+        address.update_property(&[
+            gtk::accessible::Property::Label("Address bar"),
+            gtk::accessible::Property::KeyShortcuts(address_shortcuts.as_str()),
+        ]);
         let close = gtk::Button::from_icon_name("forktty-close-symbolic");
         close.add_css_class("pane-close-action");
-        for (button, label) in [
-            (&back, "Back (Alt+Left)"),
-            (&forward, "Forward (Alt+Right)"),
-            (&reload, "Reload (Ctrl+R / F5)"),
-            (&close, "Close Pane"),
+        for (button, label, shortcut, tooltip) in [
+            (&back, "Back", Some("Alt+Left"), "Back (Alt+Left)"),
+            (
+                &forward,
+                "Forward",
+                Some("Alt+Right"),
+                "Forward (Alt+Right)",
+            ),
+            (
+                &reload,
+                "Reload",
+                Some("Ctrl+R / F5"),
+                "Reload (Ctrl+R / F5)",
+            ),
+            (&close, "Close Pane", None, "Close Pane"),
         ] {
             button.add_css_class("flat");
             button.add_css_class("browser-action");
-            button.set_tooltip_text(Some(label));
-            button.update_property(&[gtk::accessible::Property::Label(label)]);
+            button.set_tooltip_text(Some(tooltip));
+            set_accessible_button_text(button, label, shortcut);
         }
         bar.append(&back);
         bar.append(&forward);
@@ -235,26 +276,48 @@ impl BrowserPaneWidget {
             std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
 
         {
-            let wv = web_view.clone();
-            let back_button = back.clone();
-            let forward_button = forward.clone();
+            let wv = web_view.downgrade();
+            let back_button = back.downgrade();
+            let forward_button = forward.downgrade();
             back.connect_clicked(move |_| {
+                let Some(wv) = wv.upgrade() else {
+                    return;
+                };
+                let Some(back_button) = back_button.upgrade() else {
+                    return;
+                };
+                let Some(forward_button) = forward_button.upgrade() else {
+                    return;
+                };
                 wv.go_back();
                 sync_history_buttons(&wv, &back_button, &forward_button);
             });
         }
         {
-            let wv = web_view.clone();
-            let back_button = back.clone();
-            let forward_button = forward.clone();
+            let wv = web_view.downgrade();
+            let back_button = back.downgrade();
+            let forward_button = forward.downgrade();
             forward.connect_clicked(move |_| {
+                let Some(wv) = wv.upgrade() else {
+                    return;
+                };
+                let Some(back_button) = back_button.upgrade() else {
+                    return;
+                };
+                let Some(forward_button) = forward_button.upgrade() else {
+                    return;
+                };
                 wv.go_forward();
                 sync_history_buttons(&wv, &back_button, &forward_button);
             });
         }
         {
-            let wv = web_view.clone();
-            reload.connect_clicked(move |_| wv.reload());
+            let wv = web_view.downgrade();
+            reload.connect_clicked(move |_| {
+                if let Some(wv) = wv.upgrade() {
+                    wv.reload();
+                }
+            });
         }
 
         // Parse profile_id → ProfileId for history/bookmark stores.
@@ -309,16 +372,26 @@ impl BrowserPaneWidget {
         // after redirects, history navigation, or in-page user clicks.
         {
             let populate = populate_completion;
-            let back_button = back.clone();
-            let forward_button = forward.clone();
-            let navigation = navigation.clone();
+            let back_button = back.downgrade();
+            let forward_button = forward.downgrade();
+            let address = address.downgrade();
+            let last_requested = navigation.last_requested.clone();
             let committed_uri_handlers = committed_uri_handlers.clone();
             web_view.connect_load_changed(move |wv, event| {
-                sync_history_buttons(wv, &back_button, &forward_button);
+                if let (Some(back_button), Some(forward_button)) =
+                    (back_button.upgrade(), forward_button.upgrade())
+                {
+                    sync_history_buttons(wv, &back_button, &forward_button);
+                }
                 if event == webkit6::LoadEvent::Committed {
                     if let Some(uri) = wv.uri() {
                         let u = uri.to_string();
-                        navigation.sync_committed_uri(&u);
+                        *last_requested.borrow_mut() = u.clone();
+                        if let Some(address) = address.upgrade() {
+                            if address.text().as_str() != u {
+                                address.set_text(&u);
+                            }
+                        }
                         for handler in committed_uri_handlers.borrow().iter() {
                             handler(u.clone());
                         }
@@ -446,9 +519,11 @@ impl BrowserPaneWidget {
 
     /// Connect the address bar's Enter key to a navigation callback.
     pub fn connect_address_activate<F: Fn(String) + 'static>(&self, f: F) {
-        let entry = self.address.clone();
+        let entry = self.address.downgrade();
         self.address.connect_activate(move |_| {
-            f(entry.text().to_string());
+            if let Some(entry) = entry.upgrade() {
+                f(entry.text().to_string());
+            }
         });
     }
 
@@ -463,6 +538,10 @@ impl BrowserPaneWidget {
     /// `show_close_pane_confirmation` path terminal panes use.
     pub fn connect_close<F: Fn() + 'static>(&self, f: F) {
         self.close.connect_clicked(move |_| f());
+    }
+
+    pub fn prepare_close(&self) {
+        self.web_view.stop_loading();
     }
 
     /// Run JavaScript in the page, delivering the JSON-serialized result (or an

@@ -57,40 +57,133 @@ fn install_workspace_reorder_dnd<W>(
 ) where
     W: IsA<gtk::Widget>,
 {
-    install_internal_drag_source(
-        handle,
-        prefixed_dnd_payload(DND_WORKSPACE_PREFIX, workspace_id),
-    );
+    install_workspace_drag_source(handle, workspace_id);
     let target_workspace_id = workspace_id.to_string();
     let state_for_drop = state.clone();
     let controller_for_drop = controller.clone();
     let ui_for_drop = ui.clone();
     let handle_for_drop = handle.as_ref().clone();
-    handle.add_controller(internal_drop_target(
-        DND_WORKSPACE_PREFIX,
-        move |payload, _x, y| {
-            let Some(source_workspace_id) = dnd_payload_id(&payload, DND_WORKSPACE_PREFIX) else {
-                return false;
-            };
-            if source_workspace_id == target_workspace_id {
-                return false;
-            }
-            let position = drop_position(y, handle_for_drop.allocated_height());
-            let moved = state_for_drop.model.lock().ok().is_some_and(|mut model| {
-                model.move_workspace(&source_workspace_id, &target_workspace_id, position)
-            });
-            if moved {
-                close_sidebar_context_menu(&ui_for_drop);
-                save_session_from_state(&state_for_drop);
-                schedule_sidebar_refresh(
-                    ui_for_drop.clone(),
-                    state_for_drop.clone(),
-                    controller_for_drop.clone(),
-                );
-            }
-            moved
-        },
-    ));
+    let target = workspace_drop_target(move |source_workspace_id, _x, y| {
+        clear_workspace_drop_indicator(&handle_for_drop);
+        if source_workspace_id == target_workspace_id {
+            return false;
+        }
+        let position = drop_position(y, handle_for_drop.allocated_height());
+        let moved = state_for_drop.model.lock().ok().is_some_and(|mut model| {
+            model.move_workspace(&source_workspace_id, &target_workspace_id, position)
+        });
+        if moved {
+            close_sidebar_context_menu(&ui_for_drop);
+            save_session_from_state(&state_for_drop);
+            schedule_sidebar_refresh(
+                ui_for_drop.clone(),
+                state_for_drop.clone(),
+                controller_for_drop.clone(),
+            );
+        }
+        moved
+    });
+    target.set_preload(true);
+    let target_workspace_id_for_motion = workspace_id.to_string();
+    let state_for_motion = state.clone();
+    let handle_for_motion = handle.as_ref().clone();
+    target.connect_motion(move |target, _x, y| {
+        let Some(source_workspace_id) = target
+            .value()
+            .and_then(|value| workspace_dnd_id_from_value(&value))
+        else {
+            clear_workspace_drop_indicator(&handle_for_motion);
+            return gdk::DragAction::MOVE;
+        };
+        if source_workspace_id == target_workspace_id_for_motion {
+            clear_workspace_drop_indicator(&handle_for_motion);
+            return gdk::DragAction::empty();
+        }
+        let position = drop_position(y, handle_for_motion.allocated_height());
+        let order = state_for_motion
+            .model
+            .lock()
+            .ok()
+            .map(|model| {
+                model
+                    .list_workspaces()
+                    .into_iter()
+                    .map(|workspace| workspace.id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if workspace_move_would_keep_order(
+            &order,
+            &source_workspace_id,
+            &target_workspace_id_for_motion,
+            position,
+        ) {
+            clear_workspace_drop_indicator(&handle_for_motion);
+            return gdk::DragAction::empty();
+        }
+        set_workspace_drop_indicator(&handle_for_motion, position);
+        gdk::DragAction::MOVE
+    });
+    let handle_for_leave = handle.as_ref().clone();
+    target.connect_leave(move |_| {
+        clear_workspace_drop_indicator(&handle_for_leave);
+    });
+    handle.add_controller(target);
+}
+
+fn clear_workspace_drop_indicator(handle: &gtk::Widget) {
+    handle.remove_css_class("drop-before");
+    handle.remove_css_class("drop-after");
+}
+
+fn set_workspace_drop_indicator(handle: &gtk::Widget, position: forktty_core::MovePosition) {
+    clear_workspace_drop_indicator(handle);
+    match position {
+        forktty_core::MovePosition::Before => handle.add_css_class("drop-before"),
+        forktty_core::MovePosition::After => handle.add_css_class("drop-after"),
+    }
+}
+
+pub(super) fn workspace_move_would_keep_order(
+    workspace_order: &[String],
+    source_id: &str,
+    target_id: &str,
+    position: forktty_core::MovePosition,
+) -> bool {
+    if source_id == target_id {
+        return true;
+    }
+    let source_index = workspace_order
+        .iter()
+        .position(|workspace_id| workspace_id == source_id);
+    let target_index = workspace_order
+        .iter()
+        .position(|workspace_id| workspace_id == target_id);
+    matches!(
+        (source_index, target_index, position),
+        (Some(source), Some(target), forktty_core::MovePosition::Before)
+            if source + 1 == target
+    ) || matches!(
+        (source_index, target_index, position),
+        (Some(source), Some(target), forktty_core::MovePosition::After)
+            if target + 1 == source
+    )
+}
+
+pub(super) fn relative_pane_target(
+    panes: &[String],
+    focused_surface_id: &str,
+    delta: isize,
+) -> Option<String> {
+    if panes.len() < 2 {
+        return None;
+    }
+    let current = panes
+        .iter()
+        .position(|surface_id| surface_id == focused_surface_id)?;
+    let len = panes.len() as isize;
+    let target = (current as isize + delta).rem_euclid(len) as usize;
+    panes.get(target).cloned()
 }
 
 pub(super) fn refresh_sidebar(
@@ -654,16 +747,61 @@ pub(super) fn focus_relative_pane(state: &SocketAppState, delta: isize) -> bool 
         return false;
     };
     let panes = collect_panes(&workspace.pane_tree);
-    if panes.len() < 2 {
+    let Some(target) = relative_pane_target(&panes, &workspace.focused_surface_id, delta) else {
         return false;
+    };
+    model.focus_surface(&target)
+}
+
+pub(super) fn swap_focused_pane_relative(state: &SocketAppState, delta: isize) -> bool {
+    let swapped = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        let Some(workspace) = model.active_workspace() else {
+            return false;
+        };
+        let source = workspace.focused_surface_id.clone();
+        let panes = collect_panes(&workspace.pane_tree);
+        let Some(target) = relative_pane_target(&panes, &source, delta) else {
+            return false;
+        };
+        model.swap_panes(&source, &target)
+    };
+    if swapped {
+        save_session_from_state(state);
     }
-    let current = panes
-        .iter()
-        .position(|surface_id| surface_id == &workspace.focused_surface_id)
-        .unwrap_or(0);
-    let len = panes.len() as isize;
-    let next = (current as isize + delta).rem_euclid(len) as usize;
-    model.focus_surface(&panes[next])
+    swapped
+}
+
+pub(super) fn move_active_workspace_relative(state: &SocketAppState, delta: isize) -> bool {
+    let moved = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        let workspaces = model.list_workspaces();
+        let Some(current) = workspaces.iter().position(|workspace| workspace.active) else {
+            return false;
+        };
+        let target = current as isize + delta;
+        if target < 0 || target >= workspaces.len() as isize {
+            return false;
+        }
+        let source_id = workspaces[current].id.clone();
+        let target_id = workspaces[target as usize].id.clone();
+        let position = if delta < 0 {
+            forktty_core::MovePosition::Before
+        } else {
+            forktty_core::MovePosition::After
+        };
+        model.move_workspace(&source_id, &target_id, position)
+    };
+    if moved {
+        save_session_from_state(state);
+    }
+    moved
 }
 
 pub(super) fn notification_targets_workspace(

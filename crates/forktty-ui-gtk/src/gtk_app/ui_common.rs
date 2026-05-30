@@ -6,7 +6,99 @@ pub(super) enum StatusKind {
     Error,
 }
 
-pub(super) fn install_internal_drag_source<W>(widget: &W, payload: String)
+macro_rules! define_internal_dnd_payload {
+    ($payload:ident, $type_name:literal, $source_fn:ident, $target_fn:ident, $type_fn:ident) => {
+        #[derive(Clone, Debug, PartialEq, Eq, glib::Boxed)]
+        #[boxed_type(name = $type_name)]
+        pub(super) struct $payload(String);
+
+        impl $payload {
+            fn new(id: &str) -> Self {
+                Self(id.to_string())
+            }
+
+            fn id(&self) -> String {
+                self.0.clone()
+            }
+        }
+
+        pub(super) fn $source_fn<W>(widget: &W, id: &str)
+        where
+            W: IsA<gtk::Widget>,
+        {
+            install_internal_drag_source(widget, $payload::new(id).to_value());
+        }
+
+        pub(super) fn $target_fn<F>(on_drop: F) -> gtk::DropTarget
+        where
+            F: Fn(String, f64, f64) -> bool + 'static,
+        {
+            let target = gtk::DropTarget::new($payload::static_type(), gdk::DragAction::MOVE);
+            target.connect_drop(move |_, value, x, y| {
+                let Ok(payload) = value.get::<$payload>() else {
+                    return false;
+                };
+                on_drop(payload.id(), x, y)
+            });
+            target
+        }
+
+        #[cfg(test)]
+        pub(super) fn $type_fn() -> glib::Type {
+            $payload::static_type()
+        }
+    };
+}
+
+define_internal_dnd_payload!(
+    WorkspaceDndPayload,
+    "ForkttyWorkspaceDndPayload",
+    install_workspace_drag_source,
+    workspace_drop_target,
+    workspace_dnd_type
+);
+define_internal_dnd_payload!(
+    TabDndPayload,
+    "ForkttyTabDndPayload",
+    install_tab_drag_source,
+    tab_drop_target,
+    tab_dnd_type
+);
+define_internal_dnd_payload!(
+    PaneDndPayload,
+    "ForkttyPaneDndPayload",
+    install_pane_drag_source,
+    pane_drop_target,
+    pane_dnd_type
+);
+
+pub(super) fn tab_dnd_id_from_value(value: &glib::Value) -> Option<String> {
+    value
+        .get::<TabDndPayload>()
+        .ok()
+        .map(|payload| payload.id())
+}
+
+pub(super) fn workspace_dnd_id_from_value(value: &glib::Value) -> Option<String> {
+    value
+        .get::<WorkspaceDndPayload>()
+        .ok()
+        .map(|payload| payload.id())
+}
+
+pub(super) fn pane_dnd_id_from_value(value: &glib::Value) -> Option<String> {
+    value
+        .get::<PaneDndPayload>()
+        .ok()
+        .map(|payload| payload.id())
+}
+
+#[cfg(test)]
+pub(super) fn tab_dnd_value(id: &str) -> glib::Value {
+    TabDndPayload::new(id).to_value()
+}
+
+fn install_internal_drag_source<W>(widget: &W, payload: glib::Value)
 where
     W: IsA<gtk::Widget>,
 {
@@ -18,52 +110,13 @@ where
     // Capture avoids child buttons/list rows claiming the pointer sequence
     // before GtkDragSource can recognize a drag.
     source.set_propagation_phase(gtk::PropagationPhase::Capture);
-    source
-        .connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&payload.to_value())));
+    source.connect_prepare(move |_, _, _| Some(gdk::ContentProvider::for_value(&payload)));
     source.connect_drag_begin(move |source, _| {
         let bytes = glib::Bytes::from_static(&TRANSPARENT_DRAG_PIXEL);
         let icon = gdk::MemoryTexture::new(1, 1, gdk::MemoryFormat::R8g8b8a8, &bytes, 4);
         source.set_icon(Some(&icon), 0, 0);
     });
     widget.add_controller(source);
-}
-
-pub(super) fn internal_drop_target<F>(accept_prefix: &'static str, on_drop: F) -> gtk::DropTarget
-where
-    F: Fn(String, f64, f64) -> bool + 'static,
-{
-    let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
-    // Tab/pane/workspace drags are all carried as a String, so a bare String
-    // DropTarget would advertise itself as a valid drop zone for every kind and
-    // then silently no-op on drop. Preload the payload while hovering and refuse
-    // the MOVE action for foreign prefixes, so only the matching kind highlights
-    // (`:drop(active)`). A not-yet-loaded value falls through to MOVE, so a
-    // matching drag is never suppressed and existing drops cannot regress.
-    target.set_preload(true);
-    target.connect_motion(move |target, _x, _y| {
-        match target.value().and_then(|value| value.get::<String>().ok()) {
-            Some(payload) if !payload.starts_with(accept_prefix) => gdk::DragAction::empty(),
-            _ => gdk::DragAction::MOVE,
-        }
-    });
-    target.connect_drop(move |_, value, x, y| {
-        let Ok(payload) = value.get::<String>() else {
-            return false;
-        };
-        on_drop(payload, x, y)
-    });
-    target
-}
-
-pub(super) fn prefixed_dnd_payload(prefix: &str, id: &str) -> String {
-    format!("{prefix}{id}")
-}
-
-pub(super) fn dnd_payload_id(payload: &str, prefix: &str) -> Option<String> {
-    payload
-        .strip_prefix(prefix)
-        .filter(|id| !id.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 pub(super) fn drop_position(coord: f64, span: i32) -> forktty_core::MovePosition {
@@ -438,13 +491,28 @@ pub(super) fn set_accessible_button_text(
     shortcut: Option<&str>,
 ) {
     if let Some(shortcut) = shortcut {
+        let shortcut = accessible_shortcut_text(shortcut);
         button.update_property(&[
             gtk::accessible::Property::Label(label),
-            gtk::accessible::Property::KeyShortcuts(shortcut),
+            gtk::accessible::Property::KeyShortcuts(shortcut.as_str()),
         ]);
     } else {
         button.update_property(&[gtk::accessible::Property::Label(label)]);
     }
+}
+
+pub(super) fn accessible_shortcut_text(shortcut: &str) -> String {
+    shortcut
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.replace("Ctrl", "Control")
+                .replace("Esc", "Escape")
+                .replace("Control+,", "Control+comma")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(super) fn set_status_message(label: &gtk::Label, message: &str, kind: StatusKind) {

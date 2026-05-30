@@ -199,6 +199,7 @@ struct DoctorReport {
     feature_gtk_vte: bool,
     config: PathState,
     data_dir: PathState,
+    state_dir: PathState,
     session: PathState,
     socket_parent: PathState,
     socket: PathState,
@@ -263,15 +264,20 @@ fn collect_report() -> DoctorReport {
         "Config",
     );
 
-    // Match the directory the app actually uses for its data/session files
-    // (`forktty_core::session` and the browser session use `data_local_dir`),
-    // so doctor diagnoses the same path that gets read/written on launch.
+    // Match the directories the app actually uses, so doctor diagnoses the
+    // same paths that get read/written on launch.
     let data_root = dirs::data_local_dir().map(|d| d.join("forktty"));
     let data_dir = describe_followed_path("data dir", data_root.clone());
-    let session_path = data_root.as_ref().map(|d| d.join("session-v2.json"));
+    let state_root = dirs::state_dir()
+        .or_else(dirs::data_local_dir)
+        .map(|d| d.join("forktty"));
+    let state_dir = describe_followed_path("state dir", state_root.clone());
+    let session_path = state_root.as_ref().map(|d| d.join("session-v2.json"));
     let session = describe_session_path(session_path);
     append_path_error_warning(&mut warnings, &data_dir);
-    append_data_dir_warning(&mut warnings, &data_dir);
+    append_storage_dir_warning(&mut warnings, &data_dir, "browser data");
+    append_path_error_warning(&mut warnings, &state_dir);
+    append_storage_dir_warning(&mut warnings, &state_dir, "session state");
     append_path_error_warning(&mut warnings, &session);
     append_launch_quarantine_warnings(
         &mut warnings,
@@ -331,6 +337,7 @@ fn collect_report() -> DoctorReport {
         feature_gtk_vte: cfg!(feature = "gtk-vte"),
         config,
         data_dir,
+        state_dir,
         session,
         socket_parent,
         socket: socket_state,
@@ -459,11 +466,12 @@ fn append_socket_parent_warning(warnings: &mut Vec<String>, state: &PathState) {
     }
 }
 
-fn append_data_dir_warning(warnings: &mut Vec<String>, state: &PathState) {
+fn append_storage_dir_warning(warnings: &mut Vec<String>, state: &PathState, purpose: &str) {
     if state.exists && !state.is_dir && state.error.is_none() {
         warnings.push(format!(
-            "data dir {} exists but is not a directory; ForkTTY cannot store session state there.",
-            path_display(state)
+            "{} {} exists but is not a directory; ForkTTY cannot store {purpose} there.",
+            state.label,
+            path_display(state),
         ));
     }
 }
@@ -798,6 +806,7 @@ fn format_report(report: &DoctorReport) -> String {
     out.push_str("Paths:\n");
     out.push_str(&format_path(&report.config));
     out.push_str(&format_path(&report.data_dir));
+    out.push_str(&format_path(&report.state_dir));
     out.push_str(&format_path(&report.session));
     out.push_str(&format_path(&report.socket_parent));
     out.push_str(&format_path(&report.socket));
@@ -860,6 +869,7 @@ fn format_report_json(report: &DoctorReport) -> String {
         "feature_gtk_vte": report.feature_gtk_vte,
         "config": path_state_json(&report.config),
         "data_dir": path_state_json(&report.data_dir),
+        "state_dir": path_state_json(&report.state_dir),
         "session": path_state_json(&report.session),
         "socket_parent": path_state_json(&report.socket_parent),
         "socket": path_state_json(&report.socket),
@@ -1087,6 +1097,7 @@ mod tests {
             feature_gtk_vte: false,
             config: missing("config"),
             data_dir: missing("data"),
+            state_dir: missing("state"),
             session: missing("session"),
             socket_parent: missing("socket parent"),
             socket: missing("socket"),
@@ -1369,18 +1380,19 @@ mod tests {
     }
 
     #[test]
-    fn doctor_warns_when_data_dir_is_not_a_directory() {
+    fn doctor_warns_when_storage_dir_is_not_a_directory() {
         let dir = tempfile::tempdir().unwrap();
         let data_path = dir.path().join("forktty");
         fs::write(&data_path, "not a directory").unwrap();
         let state = describe_followed_path("data dir", Some(data_path.clone()));
         let mut warnings = Vec::new();
 
-        append_data_dir_warning(&mut warnings, &state);
+        append_storage_dir_warning(&mut warnings, &state, "browser data");
 
         assert!(warnings.iter().any(|warning| {
             warning.contains(&data_path.display().to_string())
                 && warning.contains("not a directory")
+                && warning.contains("browser data")
         }));
     }
 

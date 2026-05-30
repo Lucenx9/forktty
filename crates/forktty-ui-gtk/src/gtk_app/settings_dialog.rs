@@ -666,6 +666,7 @@ pub(super) fn show_settings_dialog(
     });
 
     window.present();
+    terminal_nav.grab_focus();
 }
 
 fn apply_settings_dialog_chrome(window: &gtk::Window) {
@@ -840,6 +841,7 @@ pub(super) fn settings_combo_row(
     let combo = combo_with_ids(items, active_id);
     combo.set_valign(gtk::Align::Center);
     combo.set_width_request(180);
+    combo.update_property(&[gtk::accessible::Property::Label(title)]);
     row.add_suffix(&combo);
     row.set_activatable_widget(Some(&combo));
     (row, combo)
@@ -912,16 +914,19 @@ pub(super) fn settings_number_row(
         .build();
     entry.add_css_class("settings-number-entry");
     gtk::prelude::EntryExt::set_alignment(&entry, 1.0);
+    entry.update_property(&[gtk::accessible::Property::Label(title)]);
 
     let decrement = gtk::Button::with_label("\u{2212}");
     decrement.add_css_class("settings-number-button");
-    decrement.set_tooltip_text(Some("Decrease"));
-    set_accessible_button_text(&decrement, "Decrease", None);
+    let decrement_label = format!("Decrease {title}");
+    decrement.set_tooltip_text(Some(&decrement_label));
+    set_accessible_button_text(&decrement, &decrement_label, None);
 
     let increment = gtk::Button::with_label("+");
     increment.add_css_class("settings-number-button");
-    increment.set_tooltip_text(Some("Increase"));
-    set_accessible_button_text(&increment, "Increase", None);
+    let increment_label = format!("Increase {title}");
+    increment.set_tooltip_text(Some(&increment_label));
+    set_accessible_button_text(&increment, &increment_label, None);
 
     control.append(&decrement);
     control.append(&entry);

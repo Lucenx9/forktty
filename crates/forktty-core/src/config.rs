@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -181,7 +181,7 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
     validate_config(config)?;
     let write_path = config_write_path(path)?;
     if let Some(parent) = write_path.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_config_parent_dir(parent)?;
     }
     let content = toml::to_string_pretty(config)?;
     let nonce = SystemTime::now()
@@ -198,12 +198,76 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
         tmp_file.write_all(content.as_bytes())?;
         tmp_file.sync_all()?;
         fs::rename(&tmp_path, &write_path)?;
+        sync_parent_dir(&write_path)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+fn ensure_config_parent_dir(parent: &Path) -> Result<(), ConfigError> {
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        ensure_config_parent_dir_unix(parent)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(parent)?;
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn ensure_config_parent_dir_unix(parent: &Path) -> Result<(), ConfigError> {
+    let mut missing = Vec::new();
+    let mut cursor = Some(parent);
+    while let Some(dir) = cursor {
+        match fs::metadata(dir) {
+            Ok(meta) if meta.is_dir() => break,
+            Ok(_) => {
+                return Err(ConfigError::Invalid(format!(
+                    "Config directory path is not a directory: {}",
+                    dir.display()
+                )));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(dir.to_path_buf());
+                cursor = dir.parent().filter(|path| !path.as_os_str().is_empty());
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    for dir in missing.iter().rev() {
+        match fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if !fs::metadata(dir)?.is_dir() {
+                    return Err(ConfigError::Invalid(format!(
+                        "Config directory path is not a directory: {}",
+                        dir.display()
+                    )));
+                }
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(())
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), ConfigError> {
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+            fs::File::open(parent)?.sync_all()?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_config_permissions(write_path: &Path, tmp_path: &Path) -> Result<(), ConfigError> {
@@ -424,6 +488,7 @@ fn quarantine_bad_config_with_timestamp(
     }
     let quarantine_path = available_bad_config_path(path, timestamp);
     fs::rename(path, &quarantine_path)?;
+    sync_parent_dir(&quarantine_path)?;
     Ok(Some(quarantine_path))
 }
 
@@ -939,6 +1004,51 @@ mod tests {
                 .iter()
                 .all(|name| !name.to_string_lossy().contains(".tmp-")),
             "unexpected temp file sibling: {siblings:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_config_to_path_creates_missing_config_directories_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_home = dir.path().join("xdg-config");
+        let app_dir = config_home.join("forktty");
+        let path = app_dir.join("config.toml");
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+
+        save_config_to_path(&path, &config).unwrap();
+
+        assert_eq!(
+            fs::metadata(&config_home).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&app_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_config_to_path_keeps_existing_directory_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let app_dir = dir.path().join("forktty");
+        fs::create_dir(&app_dir).unwrap();
+        fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = app_dir.join("config.toml");
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+
+        save_config_to_path(&path, &config).unwrap();
+
+        assert_eq!(
+            fs::metadata(&app_dir).unwrap().permissions().mode() & 0o777,
+            0o755
         );
     }
 

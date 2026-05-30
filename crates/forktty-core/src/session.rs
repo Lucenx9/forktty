@@ -130,12 +130,34 @@ pub fn save_session(data: &SessionData) -> Result<(), SessionError> {
 }
 
 pub fn load_session() -> Result<Option<SessionData>, SessionError> {
-    load_session_from_paths(&session_path()?, &legacy_session_path()?)
+    let current_path = session_path()?;
+    let mut fallback_paths = Vec::new();
+    if let Ok(previous_current_path) = previous_data_session_path() {
+        if previous_current_path != current_path {
+            fallback_paths.push(previous_current_path);
+        }
+    }
+    if let Ok(legacy_path) = legacy_session_path() {
+        fallback_paths.push(legacy_path);
+    }
+    let fallback_refs = fallback_paths
+        .iter()
+        .map(PathBuf::as_path)
+        .collect::<Vec<_>>();
+    load_session_from_ordered_paths(&current_path, &fallback_refs)
 }
 
+#[cfg(test)]
 fn load_session_from_paths(
     current_path: &Path,
     legacy_path: &Path,
+) -> Result<Option<SessionData>, SessionError> {
+    load_session_from_ordered_paths(current_path, &[legacy_path])
+}
+
+fn load_session_from_ordered_paths(
+    current_path: &Path,
+    fallback_paths: &[&Path],
 ) -> Result<Option<SessionData>, SessionError> {
     let had_current_session = fs::symlink_metadata(current_path).is_ok();
     if let Some(data) = load_session_from_path(current_path)? {
@@ -144,7 +166,16 @@ fn load_session_from_paths(
     if had_current_session {
         return Ok(None);
     }
-    load_session_from_path(legacy_path)
+    for fallback_path in fallback_paths {
+        let had_fallback_session = fs::symlink_metadata(fallback_path).is_ok();
+        if let Some(data) = load_session_from_path(fallback_path)? {
+            return Ok(Some(data));
+        }
+        if had_fallback_session {
+            return Ok(None);
+        }
+    }
+    Ok(None)
 }
 
 pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), SessionError> {
@@ -653,7 +684,18 @@ fn data_dir() -> Result<PathBuf, SessionError> {
         .ok_or(SessionError::NoDataDir)
 }
 
+fn state_dir() -> Result<PathBuf, SessionError> {
+    dirs::state_dir()
+        .or_else(dirs::data_local_dir)
+        .map(|d| d.join("forktty"))
+        .ok_or(SessionError::NoDataDir)
+}
+
 fn session_path() -> Result<PathBuf, SessionError> {
+    Ok(state_dir()?.join("session-v2.json"))
+}
+
+fn previous_data_session_path() -> Result<PathBuf, SessionError> {
     Ok(data_dir()?.join("session-v2.json"))
 }
 
@@ -704,7 +746,15 @@ fn default_legacy_session_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::WorkspaceModel;
+    use crate::model::{MovePosition, SurfaceKind, WorkspaceModel, WorkspaceSelector};
+    use crate::profile::ProfileId;
+
+    fn assert_ratio(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "expected ratio {expected}, got {actual}"
+        );
+    }
 
     #[test]
     fn validates_round_trip_session() {
@@ -883,6 +933,66 @@ mod tests {
         assert_eq!(loaded.active_workspace_id.as_deref(), Some("workspace-1"));
         assert_eq!(loaded.workspaces[0].name, "legacy");
         assert!(legacy_path.exists());
+    }
+
+    #[test]
+    fn loads_previous_data_home_session_when_state_session_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("state").join("session-v2.json");
+        let previous_data_path = dir.path().join("data").join("session-v2.json");
+        let legacy_path = dir.path().join("data").join("session.json");
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("persisted", "/tmp/persisted");
+        let data = model.to_session_data();
+        save_session_to_path(&previous_data_path, &data).unwrap();
+        write_legacy_session_file(&legacy_path);
+
+        let loaded =
+            load_session_from_ordered_paths(&state_path, &[&previous_data_path, &legacy_path])
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(loaded.version, SESSION_FORMAT_VERSION);
+        assert_eq!(
+            loaded.active_workspace_id.as_deref(),
+            Some(workspace.id.as_str())
+        );
+        assert_eq!(loaded.workspaces[0].name, "persisted");
+    }
+
+    #[test]
+    fn skips_legacy_session_after_previous_data_session_is_quarantined() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("state").join("session-v2.json");
+        let previous_data_path = dir.path().join("data").join("session-v2.json");
+        let legacy_path = dir.path().join("data").join("session.json");
+        fs::create_dir_all(previous_data_path.parent().unwrap()).unwrap();
+        fs::write(&previous_data_path, "{ broken").unwrap();
+        write_legacy_session_file(&legacy_path);
+
+        let loaded =
+            load_session_from_ordered_paths(&state_path, &[&previous_data_path, &legacy_path])
+                .unwrap();
+
+        assert!(loaded.is_none());
+        assert!(
+            !previous_data_path.exists(),
+            "corrupt previous data-home session was not moved"
+        );
+        assert!(
+            legacy_path.exists(),
+            "legacy session should be left untouched"
+        );
+        let siblings: Vec<_> = fs::read_dir(previous_data_path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .any(|name| name.to_string_lossy().contains("session-v2.json.bad-")),
+            "expected a quarantined migrated v2 session sibling, got {siblings:?}"
+        );
     }
 
     #[test]
@@ -1400,6 +1510,136 @@ mod tests {
         assert_eq!(tabs.len(), 2);
         assert!(tabs.contains(&ws.focused_surface_id));
         assert!(tabs.contains(&tab2_id));
+    }
+
+    #[test]
+    fn round_trip_restores_complex_manual_workspace_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v3-complex.json");
+        let mut model = WorkspaceModel::new();
+
+        let alpha = model.create_workspace("alpha", "/tmp/forktty-alpha");
+        let alpha_root = alpha.focused_surface_id.clone();
+        let alpha_tab = model.add_tab(&alpha_root).expect("alpha tab");
+        let alpha_split = model
+            .split_surface(&alpha_tab.id, SplitAxis::Horizontal)
+            .expect("alpha split");
+        let browser = model
+            .open_browser(
+                &alpha.id,
+                "https://example.com/manual-restore",
+                ProfileId::default(),
+                SplitAxis::Vertical,
+            )
+            .expect("browser pane");
+        assert!(model.update_split_partition_ratio(
+            &alpha.id,
+            &[alpha_root.clone(), alpha_tab.id.clone()],
+            &[alpha_split.id.clone(), browser.id.clone()],
+            0.72,
+        ));
+        assert!(model.update_split_partition_ratio(
+            &alpha.id,
+            std::slice::from_ref(&alpha_split.id),
+            std::slice::from_ref(&browser.id),
+            0.34,
+        ));
+
+        let beta = model.create_workspace("beta", "/tmp/forktty-beta");
+        let beta_root = beta.focused_surface_id.clone();
+        let beta_tab = model.add_tab(&beta_root).expect("beta tab");
+        let gamma = model.create_workspace("gamma", "/tmp/forktty-gamma");
+        assert!(model.move_workspace(&gamma.id, &alpha.id, MovePosition::Before));
+        model
+            .select_workspace(WorkspaceSelector::Id(&alpha.id))
+            .expect("select alpha");
+        assert!(model.focus_surface(&browser.id));
+
+        let data = model.to_session_data();
+        validate_session_data(&data).unwrap();
+        save_session_to_path(&path, &data).unwrap();
+        let loaded = load_session_from_path(&path).unwrap().unwrap();
+        assert_eq!(loaded, data);
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(loaded);
+        let restored_data = restored.to_session_data();
+        assert_eq!(restored_data, data);
+
+        let workspace_ids = restored_data
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            workspace_ids,
+            vec![gamma.id.as_str(), alpha.id.as_str(), beta.id.as_str()]
+        );
+        assert_eq!(
+            restored_data.active_workspace_id.as_deref(),
+            Some(alpha.id.as_str())
+        );
+
+        let alpha_restored = restored_data
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == alpha.id)
+            .expect("alpha restored");
+        assert!(alpha_restored.active);
+        assert_eq!(alpha_restored.focused_surface_id, browser.id);
+
+        let PaneNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: root_children,
+            sizes: root_sizes,
+        } = &alpha_restored.pane_tree
+        else {
+            panic!("expected alpha root horizontal split");
+        };
+        assert_eq!(root_children.len(), 2);
+        assert_ratio(root_sizes[0], 0.72);
+        assert_ratio(root_sizes[1], 0.28);
+
+        let PaneNode::Leaf { tabs, active } = &root_children[0] else {
+            panic!("expected alpha first child to be tab leaf");
+        };
+        assert_eq!(tabs, &vec![alpha_root.clone(), alpha_tab.id.clone()]);
+        assert_eq!(*active, 1);
+
+        let PaneNode::Split {
+            axis: SplitAxis::Vertical,
+            children: browser_children,
+            sizes: browser_sizes,
+        } = &root_children[1]
+        else {
+            panic!("expected alpha second child to be vertical split");
+        };
+        assert_eq!(browser_children.len(), 2);
+        assert_ratio(browser_sizes[0], 0.34);
+        assert_ratio(browser_sizes[1], 0.66);
+
+        let beta_restored = restored_data
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == beta.id)
+            .expect("beta restored");
+        let PaneNode::Leaf { tabs, active } = &beta_restored.pane_tree else {
+            panic!("expected beta to remain a tab leaf");
+        };
+        assert_eq!(tabs, &vec![beta_root, beta_tab.id.clone()]);
+        assert_eq!(*active, 1);
+        assert_eq!(beta_restored.focused_surface_id, beta_tab.id);
+
+        let restored_browser = restored
+            .surface(&browser.id)
+            .expect("restored browser surface");
+        assert_eq!(
+            restored_browser.kind,
+            SurfaceKind::Browser {
+                url: "https://example.com/manual-restore".to_string(),
+                profile: ProfileId::default(),
+            }
+        );
     }
 
     #[test]

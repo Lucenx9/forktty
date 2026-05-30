@@ -214,6 +214,7 @@ pub(super) fn show_notification_panel(
         .selection_mode(gtk::SelectionMode::None)
         .build();
     list.add_css_class("notification-list");
+    list.update_property(&[gtk::accessible::Property::Label("Notifications list")]);
 
     let jump = gtk::Button::with_label("Open Latest");
     let has_openable_notification = latest_openable_notification(state).is_some();
@@ -432,4 +433,9 @@ pub(super) fn show_notification_panel(
     content.append(&footer);
     dialog.set_child(Some(&content));
     dialog.present();
+    if jump.is_visible() && jump.is_sensitive() {
+        jump.grab_focus();
+    } else if clear.is_visible() && clear.is_sensitive() {
+        clear.grab_focus();
+    }
 }

@@ -21,6 +21,7 @@ const FORKTTY_HOOK_TAG: &str = "forktty";
 const OPENCODE_PLUGIN_TAG: &str = "forktty-managed-opencode-plugin";
 const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
 const MAX_STDIN_TEXT_BYTES: usize = 1_048_576;
+const MAX_SOCKET_RESPONSE_BYTES: usize = 1_048_576;
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -921,15 +922,15 @@ fn send_socket_request_with_timeout(
     stream.write_all(b"\n")?;
     stream.flush()?;
 
-    let mut line = String::new();
     let mut reader = BufReader::new(stream);
-    let bytes = reader.read_line(&mut line)?;
-    if bytes == 0 {
+    let Some(line) =
+        read_limited_response_line(&mut reader, MAX_SOCKET_RESPONSE_BYTES, "socket response")?
+    else {
         return Err(CliError::new(format!(
             "Socket closed without response for {method} at {}",
             socket_path.display()
         )));
-    }
+    };
     let response: JsonRpcResponse = serde_json::from_str(line.trim()).map_err(|err| {
         CliError::new(format!(
             "Invalid socket response from {} for {method}: {err}",
@@ -993,6 +994,46 @@ fn format_socket_connect_error(error: io::Error, socket_path: &Path) -> CliError
             error
         )),
     }
+}
+
+fn read_limited_response_line(
+    reader: &mut impl BufRead,
+    max_bytes: usize,
+    source: &str,
+) -> CliResult<Option<String>> {
+    let mut buf = Vec::with_capacity(4096);
+    loop {
+        let (consume, done) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                if buf.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            }
+            let newline = available.iter().position(|&byte| byte == b'\n');
+            let chunk_len = newline.unwrap_or(available.len());
+            if buf.len().saturating_add(chunk_len) > max_bytes {
+                return Err(CliError::code(
+                    format!("{source} exceeds {max_bytes} byte limit"),
+                    "response_too_large",
+                ));
+            }
+            buf.extend_from_slice(&available[..chunk_len]);
+            let consume = newline.map_or(chunk_len, |pos| pos + 1);
+            (consume, newline.is_some())
+        };
+        reader.consume(consume);
+        if done {
+            break;
+        }
+    }
+    if buf.last() == Some(&b'\r') {
+        buf.pop();
+    }
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|err| CliError::code(err.to_string(), "parse_error"))
 }
 
 fn read_stdin_text() -> CliResult<String> {
@@ -1112,13 +1153,17 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
     // server_busy) before closing, or accepts it with a `{"event":"subscribed"}`
     // handshake followed by the NDJSON stream. Surface the former as an error
     // rather than printing it as an event.
-    let mut first = String::new();
-    if reader.read_line(&mut first)? == 0 {
+    let Some(first) = read_limited_response_line(
+        &mut reader,
+        MAX_SOCKET_RESPONSE_BYTES,
+        "events.subscribe response",
+    )?
+    else {
         return Err(CliError::new(format!(
             "Socket closed without response for events.subscribe at {}",
             socket_path.display()
         )));
-    }
+    };
     if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(first.trim()) {
         if !response.ok {
             let error = response.error.unwrap_or_else(|| JsonRpcError {
@@ -1137,8 +1182,9 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
     if writeln!(handle, "{}", first.trim_end()).is_err() {
         return Ok(());
     }
-    for line in reader.lines() {
-        let line = line?;
+    while let Some(line) =
+        read_limited_response_line(&mut reader, MAX_SOCKET_RESPONSE_BYTES, "events stream line")?
+    {
         if writeln!(handle, "{line}").is_err() {
             break;
         }
@@ -1165,12 +1211,12 @@ fn format_workspace_line(workspace: &Value) -> String {
         .get("active")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let name = string_field(workspace, "name").unwrap_or("(unnamed)");
-    let id = string_field(workspace, "id").unwrap_or("(unknown)");
-    let git_branch =
-        string_field(workspace, "gitBranch").or_else(|| string_field(workspace, "git_branch"));
-    let working_dir =
-        string_field(workspace, "workingDir").or_else(|| string_field(workspace, "working_dir"));
+    let name = safe_string_field(workspace, "name").unwrap_or_else(|| "(unnamed)".to_string());
+    let id = safe_string_field(workspace, "id").unwrap_or_else(|| "(unknown)".to_string());
+    let git_branch = safe_string_field(workspace, "gitBranch")
+        .or_else(|| safe_string_field(workspace, "git_branch"));
+    let working_dir = safe_string_field(workspace, "workingDir")
+        .or_else(|| safe_string_field(workspace, "working_dir"));
     let surface_count = workspace
         .get("surfaces")
         .and_then(Value::as_u64)
@@ -1179,14 +1225,14 @@ fn format_workspace_line(workspace: &Value) -> String {
         });
     let mut parts = vec![
         if active { "*" } else { " " }.to_string(),
-        name.to_string(),
+        name,
         format!("[{id}]"),
     ];
     if let Some(branch) = git_branch {
-        parts.push(branch.to_string());
+        parts.push(branch);
     }
     if let Some(dir) = working_dir {
-        parts.push(dir.to_string());
+        parts.push(dir);
     }
     parts.push(format!(
         "{surface_count} surface{}",
@@ -1500,18 +1546,18 @@ fn handle_surfaces(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 }
 
 fn format_surface_line(surface: &Value) -> String {
-    let id = string_field(surface, "id").unwrap_or("(unknown)");
-    let workspace_id = string_field(surface, "workspace_id").unwrap_or("");
+    let id = safe_string_field(surface, "id").unwrap_or_else(|| "(unknown)".to_string());
+    let workspace_id = safe_string_field(surface, "workspace_id").unwrap_or_default();
     let unread = surface
         .get("unread")
         .or_else(|| surface.get("needs_attention"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let state = if unread { "unread" } else { "read" };
-    let title = string_field(surface, "title")
+    let title = safe_string_field(surface, "title")
         .map(|title| format!(" {title}"))
         .unwrap_or_default();
-    let cwd = string_field(surface, "cwd")
+    let cwd = safe_string_field(surface, "cwd")
         .map(|cwd| format!(" {cwd}"))
         .unwrap_or_default();
     format!("{id} [{workspace_id}] {state}{title}{cwd}")
@@ -2570,12 +2616,13 @@ fn caller_cwd() -> Option<String> {
 }
 
 fn format_worktree_line(worktree: &Value) -> String {
-    let branch = string_field(worktree, "branch")
-        .or_else(|| string_field(worktree, "name"))
-        .unwrap_or("(unknown)");
-    let name = string_field(worktree, "worktree_name").unwrap_or("(unknown)");
-    let path = string_field(worktree, "path").unwrap_or("(unknown)");
-    let status = string_field(worktree, "status")
+    let branch = safe_string_field(worktree, "branch")
+        .or_else(|| safe_string_field(worktree, "name"))
+        .unwrap_or_else(|| "(unknown)".to_string());
+    let name =
+        safe_string_field(worktree, "worktree_name").unwrap_or_else(|| "(unknown)".to_string());
+    let path = safe_string_field(worktree, "path").unwrap_or_else(|| "(unknown)".to_string());
+    let status = safe_string_field(worktree, "status")
         .map(|status| format!(" {status}"))
         .unwrap_or_default();
     format!("{branch} [{name}] {path}{status}")
@@ -2857,24 +2904,27 @@ fn clear_metadata(
 }
 
 fn format_status_line(status: &Value) -> String {
-    let label = string_field(status, "label").unwrap_or("status");
-    let value = string_field(status, "value").unwrap_or("");
-    let color = string_field(status, "color")
+    let label = safe_string_field(status, "label").unwrap_or_else(|| "status".to_string());
+    let value = safe_string_field(status, "value").unwrap_or_default();
+    let color = safe_string_field(status, "color")
         .map(|color| format!(" ({color})"))
         .unwrap_or_default();
     format!("{label}: {value}{color}")
 }
 
 fn format_progress_line(progress: &Value) -> String {
-    let label = string_field(progress, "label")
-        .or_else(|| string_field(progress, "key"))
-        .unwrap_or("progress");
+    let label = safe_string_field(progress, "label")
+        .or_else(|| safe_string_field(progress, "key"))
+        .unwrap_or_else(|| "progress".to_string());
     let value = progress
         .get("value")
-        .map(format_json_scalar)
+        .map(format_terminal_safe_json_scalar)
         .unwrap_or_default();
     if let Some(total) = progress.get("total") {
-        format!("{label}: {value}/{}", format_json_scalar(total))
+        format!(
+            "{label}: {value}/{}",
+            format_terminal_safe_json_scalar(total)
+        )
     } else {
         format!("{label}: {value}")
     }
@@ -2921,12 +2971,12 @@ fn format_notification_line(notification: &Value) -> String {
     } else {
         "unread"
     };
-    let workspace = string_field(notification, "workspaceName")
-        .or_else(|| string_field(notification, "workspace_id"))
-        .unwrap_or("global");
-    let kind = string_field(notification, "kind").unwrap_or("info");
-    let title = string_field(notification, "title").unwrap_or("ForkTTY");
-    let body = string_field(notification, "body")
+    let workspace = safe_string_field(notification, "workspaceName")
+        .or_else(|| safe_string_field(notification, "workspace_id"))
+        .unwrap_or_else(|| "global".to_string());
+    let kind = safe_string_field(notification, "kind").unwrap_or_else(|| "info".to_string());
+    let title = safe_string_field(notification, "title").unwrap_or_else(|| "ForkTTY".to_string());
+    let body = safe_string_field(notification, "body")
         .filter(|body| !body.is_empty())
         .map(|body| format!(" — {body}"))
         .unwrap_or_default();
@@ -3020,12 +3070,20 @@ fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
+fn safe_string_field(value: &Value, key: &str) -> Option<String> {
+    string_field(value, key).map(sanitize_for_terminal)
+}
+
 fn format_json_scalar(value: &Value) -> String {
     if let Some(text) = value.as_str() {
         text.to_string()
     } else {
         value.to_string()
     }
+}
+
+fn format_terminal_safe_json_scalar(value: &Value) -> String {
+    sanitize_for_terminal(&format_json_scalar(value))
 }
 
 fn trimmed_env(key: &str) -> Option<String> {
@@ -5076,11 +5134,15 @@ fn short_hash(value: &str) -> String {
 }
 
 fn read_token_usage_from_transcript(path: &Path) -> Option<TokenUsage> {
-    let mut file = File::open(path).ok()?;
-    let size = file.metadata().ok()?.len();
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let size = metadata.len();
     if size == 0 {
         return None;
     }
+    let mut file = File::open(path).ok()?;
     let chunk_size = size.min(64 * 1024);
     file.seek(SeekFrom::Start(size - chunk_size)).ok()?;
     let mut buffer = vec![0; chunk_size as usize];
@@ -5639,6 +5701,15 @@ mod tests {
                 assert!(err.message.contains("Invalid socket response"));
             },
         );
+
+        with_socket_response(
+            |_| format!("{}\n", "x".repeat(MAX_SOCKET_RESPONSE_BYTES + 1)),
+            |socket_path| {
+                let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
+                assert_eq!(err.code.as_deref(), Some("response_too_large"));
+                assert!(err.message.contains("socket response exceeds"));
+            },
+        );
     }
 
     #[test]
@@ -5866,6 +5937,59 @@ mod tests {
             extract_hook_compact_trigger(&json!({ "compactTrigger": "manual" })).as_deref(),
             Some("manual")
         );
+    }
+
+    #[test]
+    fn human_formatters_escape_socket_payload_control_sequences() {
+        let workspace_line = format_workspace_line(&json!({
+            "active": true,
+            "name": "bad\u{1b}[31m\nname",
+            "id": "workspace\u{1b}",
+            "gitBranch": "main\tbranch",
+            "workingDir": "/tmp\rdir",
+            "surfaces": 1,
+        }));
+        assert!(workspace_line.contains("bad\\x1b[31m\\nname"));
+        assert!(workspace_line.contains("main\\tbranch"));
+        assert!(!workspace_line.contains('\u{1b}'));
+        assert!(!workspace_line.contains('\n'));
+
+        let surface_line = format_surface_line(&json!({
+            "id": "surface\u{1b}",
+            "workspace_id": "workspace\n",
+            "title": "build\r",
+            "cwd": "/tmp\tforktty",
+        }));
+        assert!(surface_line.contains("surface\\x1b"));
+        assert!(surface_line.contains("workspace\\n"));
+        assert!(surface_line.contains("/tmp\\tforktty"));
+        assert!(!surface_line.contains('\u{1b}'));
+
+        let status_line = format_status_line(&json!({
+            "label": "agent\u{1b}",
+            "value": "running\n",
+            "color": "red\r",
+        }));
+        assert_eq!(status_line, "agent\\x1b: running\\n (red\\r)");
+
+        let progress_line = format_progress_line(&json!({
+            "label": "task\u{1b}",
+            "value": "5\n",
+            "total": "10\r",
+        }));
+        assert_eq!(progress_line, "task\\x1b: 5\\n/10\\r");
+
+        let notification_line = format_notification_line(&json!({
+            "workspaceName": "main\u{1b}",
+            "kind": "prompt\n",
+            "title": "Needs\rinput",
+            "body": "Run\ttool",
+        }));
+        assert!(notification_line.contains("main\\x1b"));
+        assert!(notification_line.contains("prompt\\n"));
+        assert!(notification_line.contains("Needs\\rinput"));
+        assert!(notification_line.contains("Run\\ttool"));
+        assert!(!notification_line.contains('\u{1b}'));
     }
 
     #[test]
@@ -6300,6 +6424,7 @@ mod tests {
         assert_eq!(usage.cache_read, 4500);
         assert_eq!(usage.cache_creation, 300);
         assert!(read_token_usage_from_transcript(&dir.path().join("missing.jsonl")).is_none());
+        assert!(read_token_usage_from_transcript(dir.path()).is_none());
     }
 
     #[test]
@@ -7177,6 +7302,18 @@ mod tests {
                     handle_events(&ctx_for(socket_path), vec![]),
                     "Socket closed without response for events.subscribe",
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn events_rejects_oversized_handshake_response() {
+        with_socket_response(
+            |_req| format!("{}\n", "x".repeat(MAX_SOCKET_RESPONSE_BYTES + 1)),
+            |socket_path| {
+                let err = handle_events(&ctx_for(socket_path), vec![]).unwrap_err();
+                assert_eq!(err.code.as_deref(), Some("response_too_large"));
+                assert!(err.message.contains("events.subscribe response exceeds"));
             },
         );
     }

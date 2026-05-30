@@ -3,6 +3,7 @@ name: Security Audit
 on:
   schedule:
     - cron: "0 7 * * 1" # Weekly Monday 7AM UTC
+  workflow_dispatch:
 
 permissions:
   contents: read

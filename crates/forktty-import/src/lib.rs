@@ -25,6 +25,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+const MAX_SQLITE_COPY_BYTES: u64 = 512 * 1024 * 1024;
+
 /// All data read from a single source profile.
 pub struct ImportedData {
     pub cookies: Vec<ImportedCookie>,
@@ -96,11 +98,10 @@ fn read_via_copy<T, F>(src: &Path, default: T, f: F) -> Result<T, ImportError>
 where
     F: FnOnce(&Path) -> Result<T, ImportError>,
 {
-    if !src.exists() {
+    let tmp = tempfile::NamedTempFile::new().map_err(ImportError::from)?;
+    if !copy_regular_file_bounded(src, tmp.path())? {
         return Ok(default);
     }
-    let tmp = tempfile::NamedTempFile::new().map_err(ImportError::from)?;
-    std::fs::copy(src, tmp.path()).map_err(ImportError::from)?;
     let copied_sidecars = copy_sqlite_sidecars(src, tmp.path())?;
     let result = f(tmp.path());
     for sidecar in copied_sidecars {
@@ -119,13 +120,36 @@ fn copy_sqlite_sidecars(src: &Path, dst: &Path) -> Result<Vec<PathBuf>, ImportEr
     let mut copied = Vec::new();
     for suffix in ["-wal", "-shm"] {
         let src_sidecar = sqlite_sidecar_path(src, suffix);
-        if src_sidecar.exists() {
-            let dst_sidecar = sqlite_sidecar_path(dst, suffix);
-            std::fs::copy(&src_sidecar, &dst_sidecar).map_err(ImportError::from)?;
+        let dst_sidecar = sqlite_sidecar_path(dst, suffix);
+        if copy_regular_file_bounded(&src_sidecar, &dst_sidecar)? {
             copied.push(dst_sidecar);
         }
     }
     Ok(copied)
+}
+
+fn copy_regular_file_bounded(src: &Path, dst: &Path) -> Result<bool, ImportError> {
+    let metadata = match std::fs::symlink_metadata(src) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(ImportError::from(err)),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(ImportError::Io(format!(
+            "{} is not a regular file",
+            src.display()
+        )));
+    }
+    if metadata.len() > MAX_SQLITE_COPY_BYTES {
+        return Err(ImportError::Io(format!(
+            "{} is too large to import safely ({} bytes > {} bytes)",
+            src.display(),
+            metadata.len(),
+            MAX_SQLITE_COPY_BYTES
+        )));
+    }
+    std::fs::copy(src, dst).map_err(ImportError::from)?;
+    Ok(true)
 }
 
 /// Read Firefox bookmarks, treating a missing `moz_bookmarks` table as empty.
@@ -445,5 +469,61 @@ mod tests {
         assert_eq!(visits[0].visit_count, 7);
 
         drop(conn);
+    }
+
+    #[test]
+    fn read_via_copy_rejects_oversized_source_before_reader_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("History");
+        std::fs::File::create(&db)
+            .unwrap()
+            .set_len(MAX_SQLITE_COPY_BYTES + 1)
+            .unwrap();
+
+        let result: Result<Vec<ImportedVisit>, ImportError> = read_via_copy(&db, vec![], |_| {
+            panic!("oversized import source should not reach the sqlite reader")
+        });
+
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too large to import safely"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_via_copy_rejects_symlinked_source() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real-history");
+        let link = dir.path().join("History");
+        std::fs::write(&target, b"not sqlite").unwrap();
+        symlink(&target, &link).unwrap();
+
+        let result: Result<Vec<ImportedVisit>, ImportError> = read_via_copy(&link, vec![], |_| {
+            panic!("symlinked import source should not reach the sqlite reader")
+        });
+
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_via_copy_rejects_symlinked_wal_sidecar() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("History");
+        let sidecar_target = dir.path().join("real-wal");
+        std::fs::write(&db, b"not sqlite").unwrap();
+        std::fs::write(&sidecar_target, b"wal").unwrap();
+        symlink(&sidecar_target, sqlite_sidecar_path(&db, "-wal")).unwrap();
+
+        let result: Result<Vec<ImportedVisit>, ImportError> = read_via_copy(&db, vec![], |_| {
+            panic!("symlinked sqlite sidecar should fail before reader runs")
+        });
+
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not a regular file"));
     }
 }

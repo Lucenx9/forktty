@@ -555,18 +555,14 @@ pub(super) fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Re
     let name = validate_worktree_name_for_gtk(name)?;
     let cwd = active_workspace_cwd_string(state)?;
     let fallback_path = worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
-    let mut workspace_worktree_name = name.to_string();
-    if let Ok(existing) = worktree::list(&cwd) {
-        if let Some(info) = existing
-            .iter()
-            .find(|info| info.worktree_name == name || info.branch == name)
-        {
-            workspace_worktree_name = info.worktree_name.clone();
-        }
-    }
-    worktree::remove(&cwd, name, false).map_err(|err| err.to_string())?;
-    close_workspace_by_worktree_name(state, &workspace_worktree_name, fallback_path)
-        .map_err(|err| err.to_string())?;
+    let removal = worktree::prepare_remove(&cwd, name).map_err(|err| err.to_string())?;
+    let workspace_worktree_name = removal.worktree_name().to_string();
+    finish_prepared_worktree_removal_from_gtk(
+        state,
+        &workspace_worktree_name,
+        fallback_path,
+        removal,
+    )?;
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
@@ -637,6 +633,124 @@ pub(super) fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
     })
 }
 
+pub(super) fn finish_prepared_worktree_removal_from_gtk(
+    state: &SocketAppState,
+    worktree_name: &str,
+    fallback_path: PathBuf,
+    removal: worktree::PreparedWorktreeRemoval,
+) -> Result<(), String> {
+    let (workspace, surfaces, is_last_workspace) = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return Err(TerminalError::LockPoisoned.to_string()),
+        };
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name));
+        let surfaces = workspace
+            .as_ref()
+            .map(|workspace| model.list_surfaces(Some(&workspace.id)))
+            .unwrap_or_default();
+        let is_last_workspace = workspace.is_some() && model.list_workspaces().len() == 1;
+        (workspace, surfaces, is_last_workspace)
+    };
+    let surface_ids = surfaces
+        .iter()
+        .map(|surface| surface.id.clone())
+        .collect::<Vec<_>>();
+    if workspace.is_none() {
+        removal.finish(false).map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+    if is_last_workspace {
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| TerminalError::NotFound("workspace".to_string()).to_string())?;
+        let (replacement, previous_active_id) = {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return Err(TerminalError::LockPoisoned.to_string()),
+            };
+            let previous_active_id = model.active_workspace_id();
+            (
+                model.create_workspace("main", fallback_path.clone()),
+                previous_active_id,
+            )
+        };
+        if let Err(err) = spawn_workspace_terminal_gtk(state, &replacement) {
+            let mut err = err.to_string();
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                err = format!("{err}; workspace rollback failed: {rollback_err}");
+            }
+            return Err(err);
+        }
+        if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
+            let mut err = err.to_string();
+            if let Err(cleanup_err) =
+                forget_terminal_surface_gtk(state, &replacement.focused_surface_id)
+            {
+                err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+            }
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                err = format!("{err}; workspace rollback failed: {rollback_err}");
+            }
+            return Err(err);
+        }
+        if let Err(err) = removal.finish(false) {
+            let mut err = err.to_string();
+            if let Err(cleanup_err) =
+                forget_terminal_surface_gtk(state, &replacement.focused_surface_id)
+            {
+                err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+            }
+            if let Err(rollback_err) =
+                rollback_workspace_creation_gtk(state, &replacement.id, previous_active_id)
+            {
+                err = format!("{err}; workspace rollback failed: {rollback_err}");
+            }
+            if let Err(respawn_err) = spawn_terminal_surfaces_gtk(state, &surfaces) {
+                err = format!("{err}; terminal restore failed: {respawn_err}");
+            }
+            return Err(err);
+        }
+        {
+            let mut model = match state.model.lock() {
+                Ok(model) => model,
+                Err(_) => return Err(TerminalError::LockPoisoned.to_string()),
+            };
+            let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+        }
+        return Ok(());
+    }
+    close_terminal_surfaces(state, &surface_ids).map_err(|err| err.to_string())?;
+    if let Err(err) = removal.finish(false) {
+        let mut err = err.to_string();
+        if let Err(respawn_err) = spawn_terminal_surfaces_gtk(state, &surfaces) {
+            err = format!("{err}; terminal restore failed: {respawn_err}");
+        }
+        return Err(err);
+    }
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return Err(TerminalError::LockPoisoned.to_string()),
+        };
+        if let Some(workspace) = workspace {
+            let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+        }
+        if model.list_workspaces().is_empty() {
+            model.create_workspace("main", fallback_path);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(super) fn close_workspace_by_worktree_name(
     state: &SocketAppState,
     worktree_name: &str,
@@ -722,6 +836,22 @@ pub(super) fn close_workspace_by_worktree_name(
         if model.list_workspaces().is_empty() {
             model.create_workspace("main", fallback_path);
         }
+    }
+    Ok(())
+}
+
+pub(super) fn spawn_terminal_surfaces_gtk(
+    state: &SocketAppState,
+    surfaces: &[Surface],
+) -> Result<(), TerminalError> {
+    for surface in surfaces {
+        let base =
+            SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone());
+        let Some(request) = forktty_socket::spawn_request_for_surface_kind(base, &surface.kind)
+        else {
+            continue;
+        };
+        state.terminal.spawn(request)?;
     }
     Ok(())
 }

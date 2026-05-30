@@ -391,7 +391,7 @@ cargo run -p xtask -- check
 cargo test --workspace
 cargo clippy --workspace --features browser -- -D warnings
 cargo build -p forktty-ui-gtk --features browser
-desktop-file-validate packaging/linux/forktty.desktop
+desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```

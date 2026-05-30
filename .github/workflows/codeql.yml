@@ -1,8 +1,13 @@
 name: CodeQL
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "0 6 * * 1" # Weekly Monday 6AM UTC
+  workflow_dispatch:
 
 permissions:
   security-events: write
@@ -14,14 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        language: [javascript-typescript]
+        language: [rust, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
         with:
           languages: ${{ matrix.language }}
-
-      - uses: github/codeql-action/autobuild@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
+          build-mode: none
 
       - uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4

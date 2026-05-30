@@ -727,10 +727,7 @@ impl WorkspaceModel {
         // Pre-validate the workspace still owns this surface in its pane tree
         // before allocating an id, so failure paths don't leak monotonic ids.
         let workspace_ref = self.workspaces.get(&source.workspace_id)?;
-        if !leaf_surface_ids(&workspace_ref.pane_tree)
-            .iter()
-            .any(|id| id == surface_id)
-        {
+        if !has_leaf_surface_id(&workspace_ref.pane_tree, surface_id) {
             return None;
         }
         let new_id = self.next_surface_id();
@@ -787,7 +784,7 @@ impl WorkspaceModel {
         let Some(workspace) = self.workspaces.get_mut(&surface.workspace_id) else {
             return false;
         };
-        if !leaf_surface_ids(&workspace.pane_tree).contains(&surface_id.to_string()) {
+        if !has_leaf_surface_id(&workspace.pane_tree, surface_id) {
             return false;
         }
         workspace.focused_surface_id = surface_id.to_string();
@@ -803,9 +800,10 @@ impl WorkspaceModel {
         let source = self.surfaces.get(near_surface_id)?.clone();
         let workspace_id = source.workspace_id.clone();
         // Verify the surface lives in a leaf of its workspace.
-        if !leaf_surface_ids(&self.workspaces.get(&workspace_id)?.pane_tree)
-            .contains(&near_surface_id.to_string())
-        {
+        if !has_leaf_surface_id(
+            &self.workspaces.get(&workspace_id)?.pane_tree,
+            near_surface_id,
+        ) {
             return None;
         }
         let new_id = self.next_surface_id();
@@ -967,8 +965,7 @@ impl WorkspaceModel {
             if let Some(new_active) = remove_tab_from_leaf(&mut workspace.pane_tree, surface_id) {
                 if closing_focused_surface {
                     workspace.focused_surface_id = new_active;
-                } else if !leaf_surface_ids(&workspace.pane_tree)
-                    .contains(&workspace.focused_surface_id)
+                } else if !has_leaf_surface_id(&workspace.pane_tree, &workspace.focused_surface_id)
                 {
                     if let Some(first) = first_leaf_surface_id(&workspace.pane_tree) {
                         workspace.focused_surface_id = first;
@@ -2019,11 +2016,20 @@ fn browser_title_for(url: &str) -> String {
 }
 
 fn normalize_workspace_focus(workspace: &mut Workspace) {
-    let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
-    if !leaf_ids.contains(&workspace.focused_surface_id) {
-        if let Some(first_leaf) = leaf_ids.first() {
-            workspace.focused_surface_id = first_leaf.clone();
-        }
+    if has_leaf_surface_id(&workspace.pane_tree, &workspace.focused_surface_id) {
+        return;
+    }
+    if let Some(first_leaf) = first_leaf_surface_id(&workspace.pane_tree) {
+        workspace.focused_surface_id = first_leaf;
+    }
+}
+
+fn has_leaf_surface_id(node: &PaneNode, surface_id: &str) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, .. } => tabs.iter().any(|tab| tab == surface_id),
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .any(|child| has_leaf_surface_id(child, surface_id)),
     }
 }
 
@@ -3963,7 +3969,10 @@ mod tests {
         let PaneNode::Split { children, .. } = workspace.pane_tree else {
             panic!("expected split");
         };
-        assert_eq!(children[0].leaf_tabs().unwrap(), &[first_id.clone()]);
+        assert_eq!(
+            children[0].leaf_tabs().unwrap(),
+            std::slice::from_ref(&first_id)
+        );
         assert_eq!(
             children[1].leaf_tabs().unwrap(),
             &[second.id.clone(), tab2.id.clone()]
@@ -3991,7 +4000,10 @@ mod tests {
         let PaneNode::Split { children, .. } = workspace.pane_tree else {
             panic!("expected split");
         };
-        assert_eq!(children[0].leaf_tabs().unwrap(), &[first_id.clone()]);
+        assert_eq!(
+            children[0].leaf_tabs().unwrap(),
+            std::slice::from_ref(&first_id)
+        );
         assert_eq!(
             children[1].leaf_tabs().unwrap(),
             &[tab2.id.clone(), second.id.clone()]

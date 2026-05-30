@@ -198,6 +198,7 @@ pub(super) fn show_command_palette_with_query(
         .selection_mode(gtk::SelectionMode::Single)
         .build();
     list.add_css_class("command-list");
+    list.update_property(&[gtk::accessible::Property::Label("Command results")]);
 
     let mut command_rows = Vec::new();
     macro_rules! command {
@@ -286,11 +287,55 @@ pub(super) fn show_command_palette_with_query(
             dialog.close();
         }
     });
+    command!("Move Tab Left", None, {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if move_focused_tab(&state, TabMoveDirection::Left) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().rebuild_layout();
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
+    command!("Move Tab Right", None, {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if move_focused_tab(&state, TabMoveDirection::Right) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().rebuild_layout();
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
     command!("New Workspace", Some("Ctrl+Shift+N"), {
         let state = state.clone();
         let dialog = dialog.clone();
         move || {
             create_plain_workspace(&state);
+            dialog.close();
+        }
+    });
+    command!("Move Workspace Up", None, {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            move_active_workspace_relative(&state, -1);
+            dialog.close();
+        }
+    });
+    command!("Move Workspace Down", None, {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move || {
+            move_active_workspace_relative(&state, 1);
             dialog.close();
         }
     });
@@ -447,6 +492,34 @@ pub(super) fn show_command_palette_with_query(
             dialog.close();
         }
     });
+    command!("Swap Pane Previous", None, {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if swap_focused_pane_relative(&state, -1) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().rebuild_layout();
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
+    command!("Swap Pane Next", None, {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if swap_focused_pane_relative(&state, 1) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().rebuild_layout();
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
     if let Some(controller) = controller.clone() {
         command!("Toggle Maximize Pane", Some("Ctrl+Shift+Enter"), {
             let dialog = dialog.clone();
@@ -497,6 +570,17 @@ pub(super) fn show_command_palette_with_query(
     body.append(&empty);
 
     let command_rows = Rc::new(command_rows);
+    {
+        let rows_for_row_activation = command_rows.clone();
+        list.connect_row_activated(move |_, selected| {
+            if let Some((_, _, button)) = rows_for_row_activation
+                .iter()
+                .find(|(_, row, _)| row == selected && row.is_visible())
+            {
+                button.emit_clicked();
+            }
+        });
+    }
     let rows_for_search = command_rows.clone();
     let list_for_search = list.clone();
     let scroll_for_search = scroll.clone();
@@ -634,6 +718,15 @@ where
     let row = gtk::ListBoxRow::new();
     row.set_selectable(true);
     row.set_activatable(true);
+    if let Some(shortcut) = shortcut {
+        let shortcut = accessible_shortcut_text(shortcut);
+        row.update_property(&[
+            gtk::accessible::Property::Label(label),
+            gtk::accessible::Property::KeyShortcuts(shortcut.as_str()),
+        ]);
+    } else {
+        row.update_property(&[gtk::accessible::Property::Label(label)]);
+    }
 
     let item = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     item.add_css_class("command-item");
@@ -656,6 +749,7 @@ where
     button.add_css_class("flat");
     button.set_has_frame(false);
     button.set_halign(gtk::Align::Fill);
+    button.set_focusable(false);
     button.set_tooltip_text(Some(label));
     set_accessible_button_text(&button, label, shortcut);
     button.connect_clicked(move |_| action());

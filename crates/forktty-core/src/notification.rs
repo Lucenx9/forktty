@@ -16,7 +16,7 @@ pub struct NotificationDispatchError {
 /// command per emission, with one OS thread per spawn.
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
-const DESKTOP_ENTRY_ID: &str = "dev.forktty.ForkTTY";
+const DESKTOP_ENTRY_ID: &str = "dev.forktty.forktty";
 
 type DedupeKey = (
     NotificationKind,
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn desktop_entry_hint_matches_packaged_desktop_id() {
-        assert_eq!(DESKTOP_ENTRY_ID, "dev.forktty.ForkTTY");
+        assert_eq!(DESKTOP_ENTRY_ID, "dev.forktty.forktty");
     }
 
     #[test]

@@ -430,7 +430,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         }
         glib::ControlFlow::Continue
     });
-    install_session_autosave(&state);
+    install_session_autosave(&state, ui_alive.clone());
 
     let terminal_stack_for_settings = terminal_stack.borrow().clone();
     let settings_apply = settings_apply_callback(
@@ -472,7 +472,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         quake_mode,
     );
     if quake_mode {
-        install_global_quake_shortcut(&window);
+        install_global_quake_shortcut(&window, ui_alive.clone());
     }
     let state_for_close = state.clone();
     let alive_for_close = ui_alive.clone();
@@ -1035,10 +1035,13 @@ pub(super) fn resolve_pr(dir: &Path) -> Option<forktty_core::pr::PrInfo> {
     forktty_core::pr::parse_pr_view(&stdout)
 }
 
-pub(super) fn install_session_autosave(state: &SocketAppState) {
+pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell<bool>>) {
     let state = state.clone();
     let last_saved = Rc::new(RefCell::new(None::<String>));
     glib::timeout_add_local(Duration::from_secs(2), move || {
+        if !ui_alive.get() {
+            return glib::ControlFlow::Break;
+        }
         let data = match state.model.lock() {
             Ok(mut model) => {
                 let _ = model.repair_session_invariants();
@@ -1178,7 +1181,10 @@ pub(super) fn toggle_quake_window(window: &adw::ApplicationWindow) {
     }
 }
 
-pub(super) fn install_global_quake_shortcut(window: &adw::ApplicationWindow) {
+pub(super) fn install_global_quake_shortcut(
+    window: &adw::ApplicationWindow,
+    ui_alive: Rc<Cell<bool>>,
+) {
     let hotkey = HotKey::new(None, Code::F12);
     let Ok(manager) = GlobalHotKeyManager::new() else {
         eprintln!("Global F12 quake shortcut is not available on this desktop session");
@@ -1192,6 +1198,9 @@ pub(super) fn install_global_quake_shortcut(window: &adw::ApplicationWindow) {
     let window = window.clone();
     let hotkey_id = hotkey.id();
     glib::timeout_add_local(Duration::from_millis(100), move || {
+        if !ui_alive.get() {
+            return glib::ControlFlow::Break;
+        }
         let _keep_manager_alive = &manager;
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
             if event.id() == hotkey_id && event.state() == HotKeyState::Pressed {

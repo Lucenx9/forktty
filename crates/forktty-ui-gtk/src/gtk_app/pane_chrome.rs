@@ -241,29 +241,38 @@ pub(super) fn install_pane_reorder_dnd<W>(handle: &W, surface_id: &str, state: &
 where
     W: IsA<gtk::Widget>,
 {
-    install_internal_drag_source(handle, prefixed_dnd_payload(DND_PANE_PREFIX, surface_id));
+    install_pane_drag_source(handle, surface_id);
     let target_id = surface_id.to_string();
+    let target_id_for_drop = target_id.clone();
     let state_for_drop = state.clone();
-    handle.add_controller(internal_drop_target(
-        DND_PANE_PREFIX,
-        move |payload, _x, _y| {
-            let Some(source_id) = dnd_payload_id(&payload, DND_PANE_PREFIX) else {
-                return false;
-            };
-            if source_id == target_id {
-                return false;
-            }
-            let swapped = state_for_drop
-                .model
-                .lock()
-                .ok()
-                .is_some_and(|mut model| model.swap_panes(&source_id, &target_id));
-            if swapped {
-                save_session_from_state(&state_for_drop);
-            }
-            swapped
-        },
-    ));
+    let target = pane_drop_target(move |source_id, _x, _y| {
+        if source_id == target_id_for_drop {
+            return false;
+        }
+        let swapped = state_for_drop
+            .model
+            .lock()
+            .ok()
+            .is_some_and(|mut model| model.swap_panes(&source_id, &target_id_for_drop));
+        if swapped {
+            save_session_from_state(&state_for_drop);
+        }
+        swapped
+    });
+    target.set_preload(true);
+    target.connect_motion(move |target, _x, _y| {
+        let Some(source_id) = target
+            .value()
+            .and_then(|value| pane_dnd_id_from_value(&value))
+        else {
+            return gdk::DragAction::MOVE;
+        };
+        if source_id == target_id {
+            return gdk::DragAction::empty();
+        }
+        gdk::DragAction::MOVE
+    });
+    handle.add_controller(target);
 }
 
 pub(super) fn focus_surface_and<F: FnOnce(&SocketAppState)>(
