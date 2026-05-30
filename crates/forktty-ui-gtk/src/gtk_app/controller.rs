@@ -37,7 +37,17 @@ pub(super) struct PaneTabStrip {
     stack: gtk::Stack,
     tab_widgets: Vec<gtk::Box>,
     labels: Vec<gtk::Label>,
-    select_buttons: Vec<gtk::Button>,
+    select_areas: Vec<gtk::Box>,
+}
+
+struct TabStripRefresh {
+    active_id: Option<String>,
+    tabs: Vec<TabRefresh>,
+}
+
+struct TabRefresh {
+    title: String,
+    active: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -483,39 +493,58 @@ impl VteController {
         let focused_surface_id = model
             .active_workspace()
             .map(|workspace| workspace.focused_surface_id);
-        for (surface_id, chrome) in &self.chromes {
-            if let Some(surface) = model.surface(surface_id) {
-                update_pane_chrome(
-                    chrome,
-                    surface,
-                    focused_surface_id.as_deref() == Some(surface_id.as_str()),
-                );
-            }
-        }
-        self.refresh_tab_strips(&model);
+        let chrome_updates = self
+            .chromes
+            .keys()
+            .filter_map(|surface_id| {
+                model.surface(surface_id).map(|surface| {
+                    (
+                        surface_id.clone(),
+                        surface.clone(),
+                        focused_surface_id.as_deref() == Some(surface_id.as_str()),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let tab_strip_tabs = self
+            .pane_tab_strips
+            .borrow()
+            .iter()
+            .map(|strip| strip.tabs.clone())
+            .collect::<Vec<_>>();
+        let tab_updates = tab_strip_refreshes(&model, &tab_strip_tabs);
         // Browser navigation only mutates a surface's url (same layout structure),
         // so the layout signature is unchanged and rebuild_layout does not fire.
-        // Clone browser targets before touching live WebViews, then release the
-        // model lock so WebKit load callbacks can safely sync redirects/clicks
-        // back into the model.
+        // Snapshot before touching live GTK/WebKit widgets, then release the
+        // model lock so focus and load callbacks can safely sync back into it.
         #[cfg(feature = "browser")]
         let browser_targets = model
             .list_surfaces(None)
             .into_iter()
             .filter_map(|surface| match surface.kind {
-                forktty_core::SurfaceKind::Browser { url, .. } => Some((surface.id, url)),
+                forktty_core::SurfaceKind::Browser { url, .. } => {
+                    let active = focused_surface_id.as_deref() == Some(surface.id.as_str());
+                    Some((surface.id, (url, active)))
+                }
                 _ => None,
             })
             .collect::<BTreeMap<_, _>>();
         drop(model);
+        for (surface_id, surface, active) in chrome_updates {
+            if let Some(chrome) = self.chromes.get(&surface_id) {
+                update_pane_chrome(chrome, &surface, active);
+            }
+        }
+        self.refresh_tab_strips(&tab_updates);
         // Push the latest url into the live webview on each refresh tick, and
         // drop panes for surfaces that no longer exist to avoid leaking them.
         #[cfg(feature = "browser")]
         self.browser_panes.borrow_mut().retain(|surface_id, pane| {
-            if let Some(url) = browser_targets.get(surface_id) {
+            if let Some((url, active)) = browser_targets.get(surface_id) {
                 // Safe to call every tick: BrowserPaneWidget edge-triggers on the
                 // last *requested* url, so an unchanged url is a no-op.
                 pane.load_uri(url);
+                pane.set_active(*active);
                 true
             } else {
                 false
@@ -523,12 +552,9 @@ impl VteController {
         });
     }
 
-    fn refresh_tab_strips(&self, model: &WorkspaceModel) {
-        let Some(workspace) = model.active_workspace() else {
-            return;
-        };
-        for strip in self.pane_tab_strips.borrow().iter() {
-            let Some(active_id) = active_tab_for_tabs(&workspace.pane_tree, &strip.tabs) else {
+    fn refresh_tab_strips(&self, updates: &[TabStripRefresh]) {
+        for (strip, update) in self.pane_tab_strips.borrow().iter().zip(updates.iter()) {
+            let Some(active_id) = update.active_id.as_ref() else {
                 continue;
             };
             let previous_visible = strip
@@ -537,26 +563,25 @@ impl VteController {
                 .map(|name| name.to_string());
             if previous_visible.as_deref() != Some(active_id.as_str()) {
                 strip.stack.set_visible_child_name(active_id.as_str());
-                self.queue_focus_for_surface(&active_id);
+                self.queue_focus_for_surface(active_id);
             }
-            for (idx, surface_id) in strip.tabs.iter().enumerate() {
+            for (idx, tab_update) in update.tabs.iter().enumerate() {
                 if let Some(tab) = strip.tab_widgets.get(idx) {
-                    if surface_id == &active_id {
+                    if tab_update.active {
                         tab.add_css_class("active");
                     } else {
                         tab.remove_css_class("active");
                     }
-                    update_tab_tooltip(tab, model.surface(surface_id).map(surface_title));
+                    update_tab_tooltip(tab, Some(tab_update.title.clone()));
                 }
                 if let Some(label) = strip.labels.get(idx) {
-                    let title = model
-                        .surface(surface_id)
-                        .map(surface_title)
-                        .unwrap_or_else(|| "Terminal".to_string());
-                    label.set_label(&title);
-                    if let Some(select) = strip.select_buttons.get(idx) {
-                        update_tab_tooltip(select, Some(title.clone()));
-                        set_accessible_button_text(select, &format!("Select tab {title}"), None);
+                    label.set_label(&tab_update.title);
+                    if let Some(select) = strip.select_areas.get(idx) {
+                        update_tab_tooltip(select, Some(tab_update.title.clone()));
+                        select.update_property(&[gtk::accessible::Property::Label(&format!(
+                            "Select tab {}",
+                            tab_update.title
+                        ))]);
                     }
                 }
             }
@@ -652,9 +677,10 @@ impl VteController {
 
         let tabstrip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tabstrip.add_css_class("pane-tabstrip");
+        tabstrip.set_hexpand(true);
         let mut tab_widgets = Vec::with_capacity(tabs.len());
         let mut labels = Vec::with_capacity(tabs.len());
-        let mut select_buttons = Vec::with_capacity(tabs.len());
+        let mut select_areas = Vec::with_capacity(tabs.len());
 
         for (idx, (surface_id, title)) in tabs.iter().zip(titles.iter()).enumerate() {
             let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
@@ -674,23 +700,31 @@ impl VteController {
                 .build();
             label.add_css_class("pane-tab-label");
 
-            let select = gtk::Button::builder()
-                .has_frame(false)
-                .hexpand(true)
-                .build();
-            select.add_css_class("flat");
+            let select = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            select.set_hexpand(true);
+            select.set_valign(gtk::Align::Center);
+            select.set_focusable(true);
             select.add_css_class("pane-tab-select");
-            select.set_child(Some(&label));
+            let grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
+            grip.add_css_class("pane-tab-grip");
+            grip.set_tooltip_text(Some("Drag Tab"));
+            select.append(&grip);
+            select.append(&label);
             update_tab_tooltip(&select, Some(title.clone()));
-            set_accessible_button_text(&select, &format!("Select tab {title}"), None);
+            select.update_property(&[gtk::accessible::Property::Label(&format!(
+                "Select tab {title}"
+            ))]);
 
             let model_for_select = self.model.clone();
             let select_id = surface_id.clone();
-            select.connect_clicked(move |_| {
+            let primary_click = gtk::GestureClick::new();
+            primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
+            primary_click.connect_released(move |_, _n_press, _x, _y| {
                 if let Ok(mut m) = model_for_select.lock() {
                     let _ = m.select_tab(&select_id);
                 }
             });
+            select.add_controller(primary_click);
 
             let close = gtk::Button::builder()
                 .icon_name("forktty-close-symbolic")
@@ -717,13 +751,25 @@ impl VteController {
                 }
             });
 
+            if let Some(state) = &self.state {
+                install_tab_context_menu(&tab, surface_id, state, &self.parent_window);
+            }
+
             tab.append(&select);
             tab.append(&close);
+            install_internal_drag_source(&tab, prefixed_dnd_payload(DND_TAB_PREFIX, surface_id));
             tabstrip.append(&tab);
             tab_widgets.push(tab);
             labels.push(label);
-            select_buttons.push(select);
+            select_areas.push(select);
         }
+        install_tabstrip_drop_target(
+            &tabstrip,
+            &tab_widgets,
+            tabs,
+            self.model.clone(),
+            self.state.clone(),
+        );
         outer.append(&tabstrip);
 
         // Keep tab children mounted and switch the visible child in-place so a
@@ -745,7 +791,7 @@ impl VteController {
             stack,
             tab_widgets,
             labels,
-            select_buttons,
+            select_areas,
         });
 
         outer.upcast()
@@ -757,9 +803,14 @@ impl VteController {
             // Widget self-guards on the last requested url; calling unconditionally
             // is harmless and avoids the committed-uri divergence problem.
             pane.load_uri(url);
+            pane.set_active(self.is_surface_focused(surface_id));
             return pane.widget();
         }
         let pane = Rc::new(crate::browser_pane::BrowserPaneWidget::new(profile_id, url));
+        pane.set_active(self.is_surface_focused(surface_id));
+        if let Some(state) = &self.state {
+            install_pane_reorder_dnd(&pane.drag_handle(), surface_id, state);
+        }
         // Address-bar Enter navigates via the model so socket + manual share one path.
         let model = self.model.clone();
         let id = surface_id.to_string();
@@ -808,6 +859,15 @@ impl VteController {
             .borrow_mut()
             .insert(surface_id.to_string(), pane);
         widget
+    }
+
+    #[cfg(feature = "browser")]
+    fn is_surface_focused(&self, surface_id: &str) -> bool {
+        self.model
+            .lock()
+            .ok()
+            .and_then(|model| model.active_workspace())
+            .is_some_and(|workspace| workspace.focused_surface_id == surface_id)
     }
 
     #[cfg(feature = "browser")]
@@ -867,4 +927,341 @@ impl VteController {
         update_pane_chrome(chrome, &surface, active);
         chrome.pane.clone().upcast()
     }
+}
+
+fn tab_strip_refreshes(model: &WorkspaceModel, strip_tabs: &[Vec<String>]) -> Vec<TabStripRefresh> {
+    let workspace = model.active_workspace();
+    strip_tabs
+        .iter()
+        .map(|tabs| {
+            let active_id = workspace
+                .as_ref()
+                .and_then(|workspace| active_tab_for_tabs(&workspace.pane_tree, tabs));
+            let tabs = tabs
+                .iter()
+                .map(|surface_id| {
+                    let title = model
+                        .surface(surface_id)
+                        .map(surface_title)
+                        .unwrap_or_else(|| "Terminal".to_string());
+                    let active = active_id.as_deref() == Some(surface_id.as_str());
+                    TabRefresh { title, active }
+                })
+                .collect();
+            TabStripRefresh { active_id, tabs }
+        })
+        .collect()
+}
+
+fn install_tabstrip_drop_target(
+    tabstrip: &gtk::Box,
+    tab_widgets: &[gtk::Box],
+    surface_ids: &[String],
+    model: Arc<Mutex<WorkspaceModel>>,
+    state: Option<SocketAppState>,
+) {
+    let strip_for_drop = tabstrip.clone().upcast::<gtk::Widget>();
+    let tab_targets = surface_ids
+        .iter()
+        .cloned()
+        .zip(
+            tab_widgets
+                .iter()
+                .map(|tab| tab.clone().upcast::<gtk::Widget>()),
+        )
+        .collect::<Vec<_>>();
+
+    install_tab_drop_target_on(&strip_for_drop, &strip_for_drop, &tab_targets, model, state);
+}
+
+fn install_tab_drop_target_on(
+    handle: &gtk::Widget,
+    tabstrip: &gtk::Widget,
+    tab_targets: &[(String, gtk::Widget)],
+    model: Arc<Mutex<WorkspaceModel>>,
+    state: Option<SocketAppState>,
+) {
+    let handle_for_drop = handle.clone();
+    let strip_for_drop = tabstrip.clone();
+    let tab_targets = tab_targets.to_vec();
+    let tab_order = tab_targets
+        .iter()
+        .map(|(surface_id, _)| surface_id.clone())
+        .collect::<Vec<_>>();
+    let tab_targets_for_motion = tab_targets.clone();
+    let tab_order_for_motion = tab_order.clone();
+    let handle_for_motion = handle.clone();
+    let strip_for_motion = tabstrip.clone();
+    let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
+    target.set_preload(true);
+    target.connect_motion(move |target, x, y| {
+        let Some(payload) = target.value().and_then(|value| value.get::<String>().ok()) else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::MOVE;
+        };
+        let Some(source_id) = dnd_payload_id(&payload, DND_TAB_PREFIX) else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::empty();
+        };
+        let Some((strip_x, _)) = handle_for_motion.translate_coordinates(&strip_for_motion, x, y)
+        else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::MOVE;
+        };
+        let midpoints = tab_drop_midpoints(&strip_for_motion, &tab_targets_for_motion);
+        let Some((target_id, position)) =
+            tab_drop_target_at_x(&midpoints, strip_x).filter(|(target_id, position)| {
+                !tab_move_would_keep_order(&tab_order_for_motion, &source_id, target_id, *position)
+            })
+        else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::MOVE;
+        };
+        set_tab_drop_indicator(&tab_targets_for_motion, target_id, position);
+        gdk::DragAction::MOVE
+    });
+    let tab_targets_for_leave = tab_targets.clone();
+    target.connect_leave(move |_| {
+        clear_tab_drop_indicators(&tab_targets_for_leave);
+    });
+    target.connect_drop(move |_, value, x, y| {
+        clear_tab_drop_indicators(&tab_targets);
+        let Ok(payload) = value.get::<String>() else {
+            return false;
+        };
+        let Some(source_id) = dnd_payload_id(&payload, DND_TAB_PREFIX) else {
+            return false;
+        };
+        let Some((strip_x, _)) = handle_for_drop.translate_coordinates(&strip_for_drop, x, y)
+        else {
+            return false;
+        };
+        let midpoints = tab_drop_midpoints(&strip_for_drop, &tab_targets);
+        let Some((target_id, position)) =
+            tab_drop_target_at_x(&midpoints, strip_x).filter(|(target_id, position)| {
+                !tab_move_would_keep_order(&tab_order, &source_id, target_id, *position)
+            })
+        else {
+            return false;
+        };
+        let moved = model
+            .lock()
+            .ok()
+            .is_some_and(|mut model| model.move_tab(&source_id, target_id, position));
+        if moved {
+            if let Some(state) = state.as_ref() {
+                save_session_from_state(state);
+            }
+        }
+        moved
+    });
+    handle.add_controller(target);
+}
+
+fn tab_drop_midpoints(
+    tabstrip: &gtk::Widget,
+    tab_targets: &[(String, gtk::Widget)],
+) -> Vec<(String, f64)> {
+    tab_targets
+        .iter()
+        .filter_map(|(surface_id, tab)| {
+            let (tab_x, _) = tab.translate_coordinates(tabstrip, 0.0, 0.0)?;
+            Some((
+                surface_id.clone(),
+                tab_x + f64::from(tab.allocated_width()) / 2.0,
+            ))
+        })
+        .collect()
+}
+
+pub(super) fn tab_drop_target_at_x(
+    tab_midpoints: &[(String, f64)],
+    x: f64,
+) -> Option<(&str, forktty_core::MovePosition)> {
+    for (surface_id, midpoint) in tab_midpoints {
+        if x < *midpoint {
+            return Some((surface_id.as_str(), forktty_core::MovePosition::Before));
+        }
+    }
+    tab_midpoints
+        .last()
+        .map(|(surface_id, _)| (surface_id.as_str(), forktty_core::MovePosition::After))
+}
+
+pub(super) fn tab_move_would_keep_order(
+    tab_order: &[String],
+    source_id: &str,
+    target_id: &str,
+    position: forktty_core::MovePosition,
+) -> bool {
+    if source_id == target_id {
+        return true;
+    }
+    let source_index = tab_order
+        .iter()
+        .position(|surface_id| surface_id == source_id);
+    let target_index = tab_order
+        .iter()
+        .position(|surface_id| surface_id == target_id);
+    matches!(
+        (source_index, target_index, position),
+        (Some(source), Some(target), forktty_core::MovePosition::Before)
+            if source + 1 == target
+    ) || matches!(
+        (source_index, target_index, position),
+        (Some(source), Some(target), forktty_core::MovePosition::After)
+            if target + 1 == source
+    )
+}
+
+fn clear_tab_drop_indicators(tab_targets: &[(String, gtk::Widget)]) {
+    for (_, tab) in tab_targets {
+        tab.remove_css_class("drop-before");
+        tab.remove_css_class("drop-after");
+    }
+}
+
+fn set_tab_drop_indicator(
+    tab_targets: &[(String, gtk::Widget)],
+    target_id: &str,
+    position: forktty_core::MovePosition,
+) {
+    clear_tab_drop_indicators(tab_targets);
+    let Some((_, tab)) = tab_targets
+        .iter()
+        .find(|(surface_id, _)| surface_id == target_id)
+    else {
+        return;
+    };
+    match position {
+        forktty_core::MovePosition::Before => tab.add_css_class("drop-before"),
+        forktty_core::MovePosition::After => tab.add_css_class("drop-after"),
+    }
+}
+
+fn install_tab_context_menu(
+    tab: &gtk::Box,
+    surface_id: &str,
+    state: &SocketAppState,
+    parent: &adw::ApplicationWindow,
+) {
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
+    gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let tab_for_menu = tab.clone();
+    let state_for_menu = state.clone();
+    let parent_for_menu = parent.clone();
+    let surface_id_for_menu = surface_id.to_string();
+    let current_popover = Rc::new(RefCell::new(None::<gtk::Popover>));
+    let current_popover_for_menu = current_popover.clone();
+    gesture.connect_pressed(move |gesture, _n_press, x, y| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        if let Some(popover) = current_popover_for_menu.borrow_mut().take() {
+            popover.popdown();
+            if popover.parent().is_some() {
+                popover.unparent();
+            }
+        }
+        let popover = build_tab_context_menu(&state_for_menu, &surface_id_for_menu);
+        let current_popover_for_closed = current_popover_for_menu.clone();
+        popover.connect_closed(move |popover| {
+            let should_clear = current_popover_for_closed
+                .borrow()
+                .as_ref()
+                .is_some_and(|current| current == popover);
+            if should_clear {
+                current_popover_for_closed.borrow_mut().take();
+            }
+            if popover.parent().is_some() {
+                popover.unparent();
+            }
+        });
+        let (popover_x, popover_y) = tab_for_menu
+            .translate_coordinates(&parent_for_menu, x, y)
+            .unwrap_or((x, y));
+        popover.set_parent(&parent_for_menu);
+        popover.set_position(gtk::PositionType::Bottom);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            popover_x.round() as i32,
+            popover_y.round() as i32,
+            1,
+            1,
+        )));
+        *current_popover_for_menu.borrow_mut() = Some(popover.clone());
+        popover.popup();
+    });
+    tab.add_controller(gesture);
+}
+
+fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.add_css_class("ft-context-menu");
+    popover.set_has_arrow(false);
+    popover.set_autohide(true);
+
+    let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    menu.add_css_class("ft-menu");
+    if let Some((workspace, surface)) = terminal_context_snapshot(state, surface_id) {
+        add_terminal_context_menu_header(&menu, &workspace, &surface);
+        add_context_menu_separator(&menu);
+    }
+
+    let state_for_new_tab = state.clone();
+    let new_tab_id = surface_id.to_string();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-add-symbolic",
+        "New Tab",
+        false,
+        move || add_new_tab_surface(&state_for_new_tab, &new_tab_id),
+    );
+
+    let state_for_split = state.clone();
+    let split_id = surface_id.to_string();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-split-horizontal-symbolic",
+        "Split Right",
+        false,
+        move || {
+            focus_surface_and(&state_for_split, &split_id, |state| {
+                split_active_surface(state, SplitAxis::Horizontal)
+            });
+        },
+    );
+
+    let state_for_split = state.clone();
+    let split_id = surface_id.to_string();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-split-vertical-symbolic",
+        "Split Down",
+        false,
+        move || {
+            focus_surface_and(&state_for_split, &split_id, |state| {
+                split_active_surface(state, SplitAxis::Vertical)
+            });
+        },
+    );
+
+    add_context_menu_separator(&menu);
+
+    let state_for_close = state.clone();
+    let close_id = surface_id.to_string();
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-close-symbolic",
+        "Close Tab",
+        true,
+        move || {
+            close_tab_surface(&state_for_close, &close_id);
+        },
+    );
+
+    popover.set_child(Some(&menu));
+    popover
 }

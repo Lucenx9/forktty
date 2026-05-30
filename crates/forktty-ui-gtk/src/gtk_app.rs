@@ -5,11 +5,11 @@ use forktty_core::{
     ProgressEntry, SplitAxis, StatusEntry, Surface, WorkspaceModel, WorkspaceSelector,
     WorktreeNameError,
 };
+#[cfg(test)]
+use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, serve, socket_path_from_env, SocketAppState,
 };
-#[cfg(test)]
-use forktty_socket::default_socket_path;
 use forktty_terminal::vte::{
     send_text as vte_send_text, spawn_vte_terminal_with_callback, CursorBlinkMode, CursorShape,
     Format, TerminalExt, TerminalExtManual, VteTerminalWidget,
@@ -66,6 +66,17 @@ const PANED_RATIO_APPLY_FRAMES: u8 = 8;
 const PANED_RATIO_MAX_FRAMES: u8 = 30;
 const SPLIT_VERTICAL_SHORTCUT: &str = "Ctrl+Shift+E";
 const SPLIT_VERTICAL_ACCEL: &str = "<Control><Shift>E";
+const PREVIOUS_TAB_SHORTCUT: &str = "Ctrl+PageUp";
+const PREVIOUS_TAB_ACCEL: &str = "<Control>Page_Up";
+const NEXT_TAB_SHORTCUT: &str = "Ctrl+PageDown";
+const NEXT_TAB_ACCEL: &str = "<Control>Page_Down";
+const FIRST_TAB_SHORTCUT: &str = "Ctrl+Home";
+const FIRST_TAB_ACCEL: &str = "<Control>Home";
+const LAST_TAB_SHORTCUT: &str = "Ctrl+End";
+const LAST_TAB_ACCEL: &str = "<Control>End";
+const DND_WORKSPACE_PREFIX: &str = "forktty-workspace:";
+const DND_TAB_PREFIX: &str = "forktty-tab:";
+const DND_PANE_PREFIX: &str = "forktty-pane:";
 const RESTART_PANE_SHORTCUT: &str = "Ctrl+Shift+R";
 const RESTART_PANE_ACCEL: &str = "<Control><Shift>R";
 const EMPTY_LAYOUT_SIGNATURE: &str = "empty-layout";

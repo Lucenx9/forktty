@@ -119,6 +119,12 @@ pub enum SplitAxis {
     Vertical,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovePosition {
+    Before,
+    After,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotificationItem {
     pub id: String,
@@ -520,6 +526,36 @@ impl WorkspaceModel {
         Some(workspace.clone())
     }
 
+    pub fn move_workspace(
+        &mut self,
+        source_id: &str,
+        target_id: &str,
+        position: MovePosition,
+    ) -> bool {
+        if source_id == target_id {
+            return false;
+        }
+        let Some(source_index) = self.workspace_order.iter().position(|id| id == source_id) else {
+            return false;
+        };
+        if !self.workspace_order.iter().any(|id| id == target_id) {
+            return false;
+        }
+        let previous = self.workspace_order.clone();
+        let source = self.workspace_order.remove(source_index);
+        let Some(mut target_index) = self.workspace_order.iter().position(|id| id == target_id)
+        else {
+            self.workspace_order.insert(source_index, source);
+            return false;
+        };
+        if position == MovePosition::After {
+            target_index += 1;
+        }
+        let target_index = target_index.min(self.workspace_order.len());
+        self.workspace_order.insert(target_index, source);
+        previous != self.workspace_order
+    }
+
     pub fn close_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
         let id = self.workspace_id_for(selector)?;
         let removed = self.workspaces.remove(&id)?;
@@ -811,6 +847,58 @@ impl WorkspaceModel {
         }
         workspace.focused_surface_id = surface_id.to_string();
         true
+    }
+
+    pub fn move_tab(
+        &mut self,
+        source_surface_id: &str,
+        target_surface_id: &str,
+        position: MovePosition,
+    ) -> bool {
+        if source_surface_id == target_surface_id {
+            return false;
+        }
+        let Some(source) = self.surfaces.get(source_surface_id) else {
+            return false;
+        };
+        let Some(target) = self.surfaces.get(target_surface_id) else {
+            return false;
+        };
+        if source.workspace_id != target.workspace_id {
+            return false;
+        }
+        let Some(workspace) = self.workspaces.get_mut(&source.workspace_id) else {
+            return false;
+        };
+        move_tab_in_tree(
+            &mut workspace.pane_tree,
+            source_surface_id,
+            target_surface_id,
+            position,
+        )
+    }
+
+    pub fn swap_panes(&mut self, source_surface_id: &str, target_surface_id: &str) -> bool {
+        if source_surface_id == target_surface_id {
+            return false;
+        }
+        let Some(source) = self.surfaces.get(source_surface_id) else {
+            return false;
+        };
+        let Some(target) = self.surfaces.get(target_surface_id) else {
+            return false;
+        };
+        if source.workspace_id != target.workspace_id {
+            return false;
+        }
+        let Some(workspace) = self.workspaces.get_mut(&source.workspace_id) else {
+            return false;
+        };
+        swap_pane_leaves(
+            &mut workspace.pane_tree,
+            source_surface_id,
+            target_surface_id,
+        )
     }
 
     /// Update a browser surface's URL. Same-URL navigation is a successful no-op.
@@ -1531,6 +1619,219 @@ fn update_partition_ratio(
     }
 }
 
+fn move_tab_in_leaf(
+    node: &mut PaneNode,
+    source_surface_id: &str,
+    target_surface_id: &str,
+    position: MovePosition,
+) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, active } => {
+            let Some(source_index) = tabs.iter().position(|id| id == source_surface_id) else {
+                return false;
+            };
+            if !tabs.iter().any(|id| id == target_surface_id) {
+                return false;
+            }
+            let previous = tabs.clone();
+            let active_id = tabs.get(*active).cloned();
+            let source = tabs.remove(source_index);
+            let Some(mut target_index) = tabs.iter().position(|id| id == target_surface_id) else {
+                *tabs = previous;
+                return false;
+            };
+            if position == MovePosition::After {
+                target_index += 1;
+            }
+            let target_index = target_index.min(tabs.len());
+            tabs.insert(target_index, source);
+            if let Some(active_id) = active_id {
+                *active = tabs
+                    .iter()
+                    .position(|id| id == &active_id)
+                    .unwrap_or_else(|| tabs.len().saturating_sub(1));
+            } else {
+                *active = (*active).min(tabs.len().saturating_sub(1));
+            }
+            previous != *tabs
+        }
+        PaneNode::Split { children, .. } => children
+            .iter_mut()
+            .any(|child| move_tab_in_leaf(child, source_surface_id, target_surface_id, position)),
+    }
+}
+
+fn move_tab_in_tree(
+    node: &mut PaneNode,
+    source_surface_id: &str,
+    target_surface_id: &str,
+    position: MovePosition,
+) -> bool {
+    let Some(source_path) = leaf_path_for_surface(node, source_surface_id) else {
+        return false;
+    };
+    let Some(target_path) = leaf_path_for_surface(node, target_surface_id) else {
+        return false;
+    };
+    if source_path == target_path {
+        return move_tab_in_leaf(node, source_surface_id, target_surface_id, position);
+    }
+    move_tab_between_leaves(
+        node,
+        &source_path,
+        &target_path,
+        source_surface_id,
+        target_surface_id,
+        position,
+    )
+}
+
+fn move_tab_between_leaves(
+    node: &mut PaneNode,
+    source_path: &[usize],
+    target_path: &[usize],
+    source_surface_id: &str,
+    target_surface_id: &str,
+    position: MovePosition,
+) -> bool {
+    let source_can_move = matches!(
+        pane_node_at_path(node, source_path),
+        Some(PaneNode::Leaf { tabs, .. })
+            if tabs.len() > 1 && tabs.iter().any(|id| id == source_surface_id)
+    );
+    let target_can_receive = matches!(
+        pane_node_at_path(node, target_path),
+        Some(PaneNode::Leaf { tabs, .. }) if tabs.iter().any(|id| id == target_surface_id)
+    );
+    if !source_can_move || !target_can_receive {
+        return false;
+    }
+
+    let (moved_id, source_was_active) = {
+        let Some(PaneNode::Leaf { tabs, active }) = pane_node_at_path_mut(node, source_path) else {
+            return false;
+        };
+        let Some(source_index) = tabs.iter().position(|id| id == source_surface_id) else {
+            return false;
+        };
+        let active_id = tabs.get(*active).cloned();
+        let moved_id = tabs.remove(source_index);
+        let source_was_active = active_id.as_ref() == Some(&moved_id);
+        if source_was_active {
+            *active = source_index.min(tabs.len().saturating_sub(1));
+        } else if let Some(active_id) = active_id {
+            *active = tabs
+                .iter()
+                .position(|id| id == &active_id)
+                .unwrap_or_else(|| tabs.len().saturating_sub(1));
+        } else {
+            *active = (*active).min(tabs.len().saturating_sub(1));
+        }
+        (moved_id, source_was_active)
+    };
+
+    let Some(PaneNode::Leaf { tabs, active }) = pane_node_at_path_mut(node, target_path) else {
+        return false;
+    };
+    let previous = tabs.clone();
+    let active_id = tabs.get(*active).cloned();
+    let Some(mut target_index) = tabs.iter().position(|id| id == target_surface_id) else {
+        return false;
+    };
+    if position == MovePosition::After {
+        target_index += 1;
+    }
+    let target_index = target_index.min(tabs.len());
+    tabs.insert(target_index, moved_id);
+    if source_was_active {
+        *active = target_index;
+    } else if let Some(active_id) = active_id {
+        *active = tabs
+            .iter()
+            .position(|id| id == &active_id)
+            .unwrap_or_else(|| tabs.len().saturating_sub(1));
+    } else {
+        *active = (*active).min(tabs.len().saturating_sub(1));
+    }
+    previous != *tabs
+}
+
+fn swap_pane_leaves(node: &mut PaneNode, source_surface_id: &str, target_surface_id: &str) -> bool {
+    let Some(source_path) = leaf_path_for_surface(node, source_surface_id) else {
+        return false;
+    };
+    let Some(target_path) = leaf_path_for_surface(node, target_surface_id) else {
+        return false;
+    };
+    if source_path == target_path {
+        return false;
+    }
+    let Some(source_leaf) = pane_node_at_path(node, &source_path).cloned() else {
+        return false;
+    };
+    let Some(target_leaf) = pane_node_at_path(node, &target_path).cloned() else {
+        return false;
+    };
+    if let Some(target) = pane_node_at_path_mut(node, &source_path) {
+        *target = target_leaf;
+    } else {
+        return false;
+    }
+    if let Some(target) = pane_node_at_path_mut(node, &target_path) {
+        *target = source_leaf;
+        true
+    } else {
+        false
+    }
+}
+
+fn leaf_path_for_surface(node: &PaneNode, surface_id: &str) -> Option<Vec<usize>> {
+    let mut path = Vec::new();
+    if collect_leaf_path_for_surface(node, surface_id, &mut path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn collect_leaf_path_for_surface(node: &PaneNode, surface_id: &str, path: &mut Vec<usize>) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, .. } => tabs.iter().any(|id| id == surface_id),
+        PaneNode::Split { children, .. } => {
+            for (index, child) in children.iter().enumerate() {
+                path.push(index);
+                if collect_leaf_path_for_surface(child, surface_id, path) {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+    }
+}
+
+fn pane_node_at_path<'a>(node: &'a PaneNode, path: &[usize]) -> Option<&'a PaneNode> {
+    let mut current = node;
+    for index in path {
+        let PaneNode::Split { children, .. } = current else {
+            return None;
+        };
+        current = children.get(*index)?;
+    }
+    Some(current)
+}
+
+fn pane_node_at_path_mut<'a>(node: &'a mut PaneNode, path: &[usize]) -> Option<&'a mut PaneNode> {
+    let mut current = node;
+    for index in path {
+        let PaneNode::Split { children, .. } = current else {
+            return None;
+        };
+        current = children.get_mut(*index)?;
+    }
+    Some(current)
+}
+
 fn apply_partition_ratio(sizes: &mut [f64], split_at: usize, ratio: f64) {
     let len = sizes.len();
     if split_at == 0 || split_at >= len {
@@ -1891,6 +2192,46 @@ mod tests {
         assert_eq!(workspace.id, "workspace-1");
         assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 1);
         assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
+    }
+
+    #[test]
+    fn move_workspace_reorders_without_changing_active_workspace() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_workspace("one", "/tmp/one");
+        let second = model.create_workspace("two", "/tmp/two");
+        let third = model.create_workspace("three", "/tmp/three");
+
+        assert_eq!(model.active_workspace_id(), Some(third.id.clone()));
+        assert!(model.move_workspace(&third.id, &first.id, MovePosition::Before));
+        assert_eq!(
+            model
+                .list_workspaces()
+                .iter()
+                .map(|workspace| workspace.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![third.id.as_str(), first.id.as_str(), second.id.as_str()]
+        );
+        assert_eq!(model.active_workspace_id(), Some(third.id.clone()));
+        assert!(model.move_workspace(&third.id, &second.id, MovePosition::After));
+        assert_eq!(
+            model
+                .list_workspaces()
+                .iter()
+                .map(|workspace| workspace.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![first.id.as_str(), second.id.as_str(), third.id.as_str()]
+        );
+        assert!(!model.move_workspace(&second.id, &first.id, MovePosition::After));
+        assert_eq!(
+            model
+                .list_workspaces()
+                .iter()
+                .map(|workspace| workspace.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![first.id.as_str(), second.id.as_str(), third.id.as_str()]
+        );
+        assert!(!model.move_workspace(&third.id, &third.id, MovePosition::Before));
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]
@@ -3578,6 +3919,112 @@ mod tests {
         assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&first_id));
         // tab2 is still present.
         assert!(model.surface(&tab2.id).is_some());
+    }
+
+    #[test]
+    fn move_tab_reorders_within_leaf_and_preserves_active_tab() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        let tab3 = model.add_tab(&first_id).expect("add_tab");
+        assert!(model.select_tab(&tab2.id));
+
+        assert!(model.move_tab(&tab3.id, &first_id, MovePosition::Before));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Leaf { tabs, active } = workspace.pane_tree else {
+            panic!("expected a tab leaf");
+        };
+        assert_eq!(
+            tabs,
+            vec![tab3.id.clone(), first_id.clone(), tab2.id.clone()]
+        );
+        assert_eq!(tabs[active], tab2.id);
+        assert_eq!(workspace.focused_surface_id, tab2.id);
+        assert!(!model.move_tab(&first_id, &tab3.id, MovePosition::After));
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn move_tab_between_panes_when_source_leaf_keeps_a_tab() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        let second = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        assert!(model.select_tab(&tab2.id));
+
+        assert!(model.move_tab(&tab2.id, &second.id, MovePosition::After));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children[0].leaf_tabs().unwrap(), &[first_id.clone()]);
+        assert_eq!(
+            children[1].leaf_tabs().unwrap(),
+            &[second.id.clone(), tab2.id.clone()]
+        );
+        assert_eq!(children[1].leaf_active_id(), Some(&tab2.id));
+        assert_eq!(workspace.focused_surface_id, tab2.id);
+        assert!(!model.move_tab(&first_id, &second.id, MovePosition::Before));
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn move_inactive_tab_between_panes_preserves_focused_tab() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        let second = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        assert!(model.select_tab(&first_id));
+
+        assert!(model.move_tab(&tab2.id, &second.id, MovePosition::Before));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children[0].leaf_tabs().unwrap(), &[first_id.clone()]);
+        assert_eq!(
+            children[1].leaf_tabs().unwrap(),
+            &[tab2.id.clone(), second.id.clone()]
+        );
+        assert_eq!(children[1].leaf_active_id(), Some(&second.id));
+        assert_eq!(workspace.focused_surface_id, first_id);
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn swap_panes_exchanges_leaf_positions_without_changing_focus() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first_id = workspace.focused_surface_id.clone();
+        let second = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        let third = model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        assert!(model.focus_surface(&second.id));
+
+        assert!(model.swap_panes(&first_id, &third.id));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children[0].leaf_active_id(), Some(&third.id));
+        assert_eq!(children[2].leaf_active_id(), Some(&first_id));
+        assert_eq!(workspace.focused_surface_id, second.id);
+        assert!(!model.swap_panes(&second.id, &second.id));
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]

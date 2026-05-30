@@ -126,7 +126,8 @@ pub(super) fn empty_terminal_stage(
         create.connect_clicked(move |_| create_plain_workspace(&state_for_create));
         actions.append(&create);
         if let Some(parent) = parent {
-            let (open, _, _) = labeled_icon_button_parts("forktty-folder-open-symbolic", "Open Workspace");
+            let (open, _, _) =
+                labeled_icon_button_parts("forktty-folder-open-symbolic", "Open Workspace");
             let state_for_open = state.clone();
             let parent_for_open = parent.clone();
             open.connect_clicked(move |_| open_workspace_dialog(&parent_for_open, &state_for_open));

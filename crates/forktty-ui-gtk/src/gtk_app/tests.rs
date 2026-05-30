@@ -619,6 +619,68 @@ fn focus_relative_pane_ignores_extra_tabs_in_a_single_pane() {
 }
 
 #[test]
+fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (first, second, third) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        let second = model.add_tab(&first).unwrap().id;
+        let third = model.add_tab(&second).unwrap().id;
+        (first, second, third)
+    };
+
+    assert!(select_tab_in_focused_pane(&state, TabNavigation::Previous));
+    assert_eq!(
+        model
+            .lock()
+            .unwrap()
+            .active_workspace()
+            .unwrap()
+            .focused_surface_id,
+        second
+    );
+    assert!(select_tab_in_focused_pane(&state, TabNavigation::Next));
+    assert_eq!(
+        model
+            .lock()
+            .unwrap()
+            .active_workspace()
+            .unwrap()
+            .focused_surface_id,
+        third
+    );
+    assert!(select_tab_in_focused_pane(&state, TabNavigation::First));
+    assert_eq!(
+        model
+            .lock()
+            .unwrap()
+            .active_workspace()
+            .unwrap()
+            .focused_surface_id,
+        first
+    );
+    assert!(select_tab_in_focused_pane(&state, TabNavigation::Last));
+    assert_eq!(
+        model
+            .lock()
+            .unwrap()
+            .active_workspace()
+            .unwrap()
+            .focused_surface_id,
+        third
+    );
+}
+
+#[test]
 fn close_active_terminal_does_not_spawn_terminal_for_remaining_browser() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -1248,6 +1310,114 @@ fn active_layout_signature_ignores_active_tab_changes() {
         ),
         Some(first_surface_id)
     );
+}
+
+#[test]
+fn tab_drop_target_uses_whole_strip_geometry() {
+    let targets = vec![
+        ("surface-1".to_string(), 10.0),
+        ("surface-2".to_string(), 30.0),
+        ("surface-3".to_string(), 50.0),
+    ];
+
+    assert_eq!(
+        tab_drop_target_at_x(&targets, 0.0),
+        Some(("surface-1", forktty_core::MovePosition::Before))
+    );
+    assert_eq!(
+        tab_drop_target_at_x(&targets, 20.0),
+        Some(("surface-2", forktty_core::MovePosition::Before))
+    );
+    assert_eq!(
+        tab_drop_target_at_x(&targets, 60.0),
+        Some(("surface-3", forktty_core::MovePosition::After))
+    );
+    assert_eq!(tab_drop_target_at_x(&[], 20.0), None);
+}
+
+#[test]
+fn dnd_payload_id_accepts_only_its_own_prefix() {
+    let tab = prefixed_dnd_payload(DND_TAB_PREFIX, "surface-7");
+    assert_eq!(
+        dnd_payload_id(&tab, DND_TAB_PREFIX).as_deref(),
+        Some("surface-7")
+    );
+    // Pane/workspace payloads share the String content type but must be rejected
+    // by a tab drop target, otherwise a foreign drag would silently no-op on drop.
+    assert_eq!(dnd_payload_id(&tab, DND_PANE_PREFIX), None);
+    let workspace = prefixed_dnd_payload(DND_WORKSPACE_PREFIX, "workspace-1");
+    assert_eq!(dnd_payload_id(&workspace, DND_TAB_PREFIX), None);
+    // Empty id and unrelated junk are rejected.
+    assert_eq!(dnd_payload_id(DND_TAB_PREFIX, DND_TAB_PREFIX), None);
+    assert_eq!(dnd_payload_id("garbage", DND_TAB_PREFIX), None);
+}
+
+#[test]
+fn drop_position_splits_on_midpoint() {
+    assert_eq!(drop_position(0.0, 40), forktty_core::MovePosition::Before);
+    assert_eq!(drop_position(19.0, 40), forktty_core::MovePosition::Before);
+    assert_eq!(drop_position(20.0, 40), forktty_core::MovePosition::After);
+    // A zero/degenerate span must not divide by zero; the clamped half still splits.
+    assert_eq!(drop_position(0.0, 0), forktty_core::MovePosition::Before);
+    assert_eq!(drop_position(1.0, 0), forktty_core::MovePosition::After);
+}
+
+#[test]
+fn tab_drop_target_at_x_handles_edge_insertions() {
+    let targets = vec![
+        ("surface-1".to_string(), 10.0),
+        ("surface-2".to_string(), 30.0),
+    ];
+    // Dropping far left of every midpoint inserts before the first tab.
+    assert_eq!(
+        tab_drop_target_at_x(&targets, -50.0),
+        Some(("surface-1", forktty_core::MovePosition::Before))
+    );
+    // Dropping past the last midpoint appends after the last tab.
+    assert_eq!(
+        tab_drop_target_at_x(&targets, 9_999.0),
+        Some(("surface-2", forktty_core::MovePosition::After))
+    );
+}
+
+#[test]
+fn tab_move_would_keep_order_detects_adjacent_noops() {
+    let order = vec![
+        "surface-1".to_string(),
+        "surface-2".to_string(),
+        "surface-3".to_string(),
+    ];
+
+    assert!(tab_move_would_keep_order(
+        &order,
+        "surface-1",
+        "surface-1",
+        forktty_core::MovePosition::Before
+    ));
+    assert!(tab_move_would_keep_order(
+        &order,
+        "surface-1",
+        "surface-2",
+        forktty_core::MovePosition::Before
+    ));
+    assert!(tab_move_would_keep_order(
+        &order,
+        "surface-2",
+        "surface-1",
+        forktty_core::MovePosition::After
+    ));
+    assert!(!tab_move_would_keep_order(
+        &order,
+        "surface-1",
+        "surface-3",
+        forktty_core::MovePosition::Before
+    ));
+    assert!(!tab_move_would_keep_order(
+        &order,
+        "surface-3",
+        "surface-1",
+        forktty_core::MovePosition::After
+    ));
 }
 
 #[test]
