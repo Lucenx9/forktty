@@ -26,6 +26,11 @@ const MAX_BROWSER_URL_BYTES: usize = 8_192;
 const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+/// Max time to wait for a client to deliver a complete request line before the
+/// connection is dropped. Clients send a full `{json}\n` immediately, so this
+/// only fires on idle or slow-loris connections that would otherwise hold one
+/// of the [`MAX_SOCKET_CONNECTIONS`] permits indefinitely.
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 /// How often the background task snapshots the model and emits diffs.
@@ -1541,6 +1546,14 @@ fn spawn_request_for_surface(
 /// `Terminal` keeps the request as-is, `Ssh` rewrites the shell to the ssh
 /// binary and passes the host as the sole argument, and `Browser` returns
 /// `None` (browser panes never get a PTY backend).
+///
+/// The `Ssh` host is re-validated here, not only at the `workspace.create_ssh`
+/// entry point. A persisted (or tampered) session file is a distinct trust
+/// boundary: it is deserialized straight into `SurfaceKind::Ssh { host }` on
+/// restore and respawned through this function. Re-checking the host before it
+/// reaches the `ssh` argv stops a smuggled `-oProxyCommand=...` value from
+/// being executed when a workspace is restored. An invalid host yields `None`
+/// (the surface is not spawned) rather than a shell with injected options.
 pub fn spawn_request_for_surface_kind(
     request: SpawnRequest,
     kind: &forktty_core::SurfaceKind,
@@ -1548,6 +1561,9 @@ pub fn spawn_request_for_surface_kind(
     match kind {
         forktty_core::SurfaceKind::Terminal => Some(request),
         forktty_core::SurfaceKind::Ssh { host } => {
+            if !is_valid_ssh_host(host) {
+                return None;
+            }
             let mut request = request;
             request.shell = resolve_ssh_binary();
             Some(request.with_args([host.clone()]))
@@ -2985,9 +3001,17 @@ async fn handle_connection(
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     loop {
-        let line = match read_limited_line(&mut reader, MAX_REQUEST_SIZE).await {
-            None => break,
-            Some(Err(ReadLineError::TooLarge)) => {
+        let read = tokio::time::timeout(
+            REQUEST_READ_TIMEOUT,
+            read_limited_line(&mut reader, MAX_REQUEST_SIZE),
+        )
+        .await;
+        let line = match read {
+            // Idle or slow-loris client never finished a request line; drop the
+            // connection so its permit is returned to the pool.
+            Err(_elapsed) => break,
+            Ok(None) => break,
+            Ok(Some(Err(ReadLineError::TooLarge))) => {
                 let response = JsonRpcResponse::error(
                     Value::Null,
                     "request_too_large",
@@ -2996,7 +3020,7 @@ async fn handle_connection(
                 write_response(&mut writer, &response).await?;
                 break;
             }
-            Some(Err(ReadLineError::InvalidUtf8)) => {
+            Ok(Some(Err(ReadLineError::InvalidUtf8))) => {
                 let response = JsonRpcResponse::error(
                     Value::Null,
                     "parse_error",
@@ -3005,8 +3029,8 @@ async fn handle_connection(
                 write_response(&mut writer, &response).await?;
                 break;
             }
-            Some(Err(ReadLineError::Io(err))) => return Err(err.into()),
-            Some(Ok(line)) => line,
+            Ok(Some(Err(ReadLineError::Io(err)))) => return Err(err.into()),
+            Ok(Some(Ok(line))) => line,
         };
         let request = match serde_json::from_str::<JsonRpcRequest>(&line) {
             Ok(request) => request,
@@ -3384,6 +3408,52 @@ mod tests {
             backend.spawn_args("surface-ssh").unwrap(),
             vec!["user@example.test"]
         );
+    }
+
+    #[test]
+    fn spawn_request_revalidates_ssh_host_from_restored_surface() {
+        let base = SpawnRequest::for_surface(
+            &forktty_core::Surface {
+                id: "surface-ssh".to_string(),
+                workspace_id: "workspace-1".to_string(),
+                cwd: PathBuf::from("/tmp"),
+                title: "ssh".to_string(),
+                unread: false,
+                needs_attention: false,
+                kind: forktty_core::SurfaceKind::Terminal,
+            },
+            "/bin/sh",
+            "/tmp/forktty.sock",
+        );
+
+        // A valid host is spawned as a single argv element after the ssh binary.
+        let valid = spawn_request_for_surface_kind(
+            base.clone(),
+            &forktty_core::SurfaceKind::Ssh {
+                host: "user@example.test".to_string(),
+            },
+        )
+        .expect("valid ssh host should spawn");
+        assert_eq!(valid.args, vec!["user@example.test".to_string()]);
+
+        // A tampered/persisted host that would smuggle ssh options must not be
+        // spawned, even though it never passed `workspace.create_ssh`.
+        for malicious in [
+            "-oProxyCommand=touch /tmp/pwned",
+            "-l root",
+            "host with space",
+        ] {
+            assert!(
+                spawn_request_for_surface_kind(
+                    base.clone(),
+                    &forktty_core::SurfaceKind::Ssh {
+                        host: malicious.to_string(),
+                    },
+                )
+                .is_none(),
+                "malicious ssh host {malicious:?} must be rejected on respawn"
+            );
+        }
     }
 
     #[derive(Debug, Default)]
