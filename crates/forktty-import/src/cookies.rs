@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+use aes::cipher::{block_padding::Pkcs7, BlockModeDecrypt, KeyIvInit};
 use rusqlite::{types::ValueRef, Connection, OpenFlags};
 
 use crate::model::{BrowserFamily, ImportedCookie};
@@ -65,7 +65,7 @@ fn decrypt_chromium_value_bytes(blob: &[u8], key: &[u8; 16]) -> Option<Vec<u8>> 
     let iv = [0x20u8; 16];
     let mut buf = ct.to_vec();
     let pt = Aes128CbcDec::new(key.into(), &iv.into())
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
+        .decrypt_padded::<Pkcs7>(&mut buf)
         .ok()?;
     Some(pt.to_vec())
 }
@@ -271,14 +271,14 @@ mod tests {
 
     // A Chromium blob = version || AES-128-CBC(key, IV=16 spaces, PKCS7(plaintext)).
     fn make_chromium_blob(version: &[u8; 3], key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
-        use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+        use aes::cipher::{block_padding::Pkcs7, BlockModeEncrypt, KeyIvInit};
         type Enc = cbc::Encryptor<aes::Aes128>;
         let iv = [0x20u8; 16];
         let mut buf = plaintext.to_vec();
         let pad_len = 16 - (buf.len() % 16);
         buf.extend(std::iter::repeat_n(0u8, pad_len)); // room for padding
         let ct = Enc::new(key.into(), &iv.into())
-            .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
+            .encrypt_padded::<Pkcs7>(&mut buf, plaintext.len())
             .unwrap()
             .to_vec();
         let mut out = version.to_vec();
