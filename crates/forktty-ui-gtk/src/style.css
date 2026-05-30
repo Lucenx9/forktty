@@ -20,9 +20,9 @@
   --ft-bg-4: #282828;
   --ft-bg-overlay: #202020;
 
-  --ft-pane-bg: #181818;
-  --ft-pane-header: #1b1b1b;
-  --ft-pane-header-active: #1f1f1f;
+  --ft-pane-bg: #1c1c1c;
+  --ft-pane-header: #242424;
+  --ft-pane-header-active: #2e2e2e;
 
   --ft-border-subtle: #292929;
   --ft-border: #303030;
@@ -835,14 +835,13 @@ popover.ft-context-menu contents {
 
 .terminal-pane {
   background: var(--ft-pane-bg);
-  border: 0;
-  border-top: 2px solid transparent;
+  border: 1px solid transparent;
   transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .terminal-pane.active {
-  border-top-color: alpha(var(--ft-accent), 0.46);
-  box-shadow: inset 0 1px 0 alpha(var(--ft-accent), 0.16);
+  border-color: alpha(var(--ft-accent), 0.62);
+  box-shadow: inset 0 0 0 1px alpha(var(--ft-accent), 0.18);
 }
 
 .terminal-pane:focus-visible {
@@ -850,7 +849,7 @@ popover.ft-context-menu contents {
 }
 
 .terminal-pane.needs-attention {
-  border-top-color: var(--ft-warning);
+  border-color: var(--ft-warning);
 }
 
 .terminal-pane-header {
@@ -1174,13 +1173,13 @@ button.flat.pane-tab-close:active {
  * layouts keep one visual rhythm. */
 .browser-pane {
   background: var(--ft-pane-bg);
-  border-top: 2px solid transparent;
+  border: 1px solid transparent;
   transition: border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .browser-pane.active {
-  border-top-color: alpha(var(--ft-accent), 0.46);
-  box-shadow: inset 0 1px 0 alpha(var(--ft-accent), 0.16);
+  border-color: alpha(var(--ft-accent), 0.62);
+  box-shadow: inset 0 0 0 1px alpha(var(--ft-accent), 0.18);
 }
 
 .browser-toolbar {
