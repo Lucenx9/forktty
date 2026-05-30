@@ -3999,8 +3999,19 @@ fn describe_launcher_check(
         },
     };
     let current = current_launcher.map(|path| path.display().to_string());
+    // A recorded launcher that still resolves to a working executable keeps the
+    // hooks functional even if the process now runs from a different path. This
+    // is routine with AppImage desktop-integration, which copies the AppImage to
+    // a version-suffixed filename: hooks installed from `forktty.appimage` keep
+    // working when the desktop entry launches `forktty.appimage_<ver>.appimage`.
+    // Only flag staleness when the recorded launcher is actually broken, so the
+    // reminder is a real signal instead of firing on every launch.
+    let installed_usable = installed
+        .as_deref()
+        .is_some_and(|path| forktty_core::command_safety::is_executable_file(Path::new(path)));
     let status = match (&installed, &current) {
         (Some(installed_path), Some(current_path)) if installed_path == current_path => "ok",
+        (Some(_), _) if installed_usable => "ok",
         (Some(_), Some(_)) => "stale",
         (Some(_), None) => "current_launcher_unknown",
         (None, _) => "not_installed",
@@ -6961,6 +6972,33 @@ mod tests {
         assert_eq!(
             check["currentLauncher"],
             Value::String("/new/forktty".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn describe_launcher_check_treats_working_recorded_launcher_as_ok() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // The recorded launcher exists and is executable, but the process now
+        // runs from a different path (e.g. an AppImage version-suffixed copy).
+        // The hooks still work, so this must not be reported as stale.
+        let dir = tempfile::tempdir().unwrap();
+        let installed_launcher = dir.path().join("forktty.appimage");
+        fs::write(&installed_launcher, b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(&installed_launcher, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let spec = agent_spec("claude").unwrap();
+        let config_path = dir.path().join("settings.json");
+        let (_, config) = merge_hook_config(&json!({}), spec, &installed_launcher).unwrap();
+        fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
+
+        let current = dir.path().join("forktty.appimage_0_2_0-alpha_7.appimage");
+        let check = describe_launcher_check(spec, &config_path, Some(&current));
+        assert_eq!(check["status"], Value::String("ok".to_string()));
+        assert_eq!(
+            check["installedLauncher"],
+            Value::String(installed_launcher.display().to_string())
         );
     }
 
