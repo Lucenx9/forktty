@@ -54,6 +54,14 @@ struct BrowserPaneNavigation {
 
 type UriCommittedHandlers = std::rc::Rc<std::cell::RefCell<Vec<Box<dyn Fn(String)>>>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BrowserPaneShortcut {
+    FocusAddress,
+    Back,
+    Forward,
+    Reload,
+}
+
 impl BrowserPaneNavigation {
     fn load_uri(&self, url: &str) {
         if self.last_requested.borrow().as_str() == url {
@@ -76,12 +84,72 @@ impl BrowserPaneNavigation {
     }
 }
 
+fn browser_pane_shortcut(
+    key: gtk::gdk::Key,
+    modifiers: gtk::gdk::ModifierType,
+) -> Option<BrowserPaneShortcut> {
+    let control = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+    let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
+    if control && matches!(key, gtk::gdk::Key::l | gtk::gdk::Key::L) {
+        return Some(BrowserPaneShortcut::FocusAddress);
+    }
+    if alt && matches!(key, gtk::gdk::Key::d | gtk::gdk::Key::D) {
+        return Some(BrowserPaneShortcut::FocusAddress);
+    }
+    if alt && key == gtk::gdk::Key::Left {
+        return Some(BrowserPaneShortcut::Back);
+    }
+    if alt && key == gtk::gdk::Key::Right {
+        return Some(BrowserPaneShortcut::Forward);
+    }
+    if (control && matches!(key, gtk::gdk::Key::r | gtk::gdk::Key::R)) || key == gtk::gdk::Key::F5 {
+        return Some(BrowserPaneShortcut::Reload);
+    }
+    None
+}
+
+fn install_browser_shortcuts<W: IsA<gtk::Widget>>(
+    target: &W,
+    web_view: &WebView,
+    address: &gtk::Entry,
+) {
+    let controller = gtk::EventControllerKey::new();
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let web_view = web_view.clone();
+    let address = address.clone();
+    controller.connect_key_pressed(move |_, key, _, modifiers| {
+        match browser_pane_shortcut(key, modifiers) {
+            Some(BrowserPaneShortcut::FocusAddress) => {
+                address.grab_focus();
+                address.select_region(0, -1);
+            }
+            Some(BrowserPaneShortcut::Back) => {
+                if web_view.can_go_back() {
+                    web_view.go_back();
+                }
+            }
+            Some(BrowserPaneShortcut::Forward) => {
+                if web_view.can_go_forward() {
+                    web_view.go_forward();
+                }
+            }
+            Some(BrowserPaneShortcut::Reload) => {
+                web_view.reload();
+            }
+            None => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(controller);
+}
+
 /// A browser pane: an address bar (entry + back/forward/reload) above a WebView.
 ///
 /// Wired into the pane layout in a later task; unused until then.
 #[allow(dead_code)]
 pub struct BrowserPaneWidget {
     container: gtk::Box,
+    toolbar: gtk::Box,
     web_view: WebView,
     address: gtk::Entry,
     close: gtk::Button,
@@ -103,23 +171,25 @@ impl BrowserPaneWidget {
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         bar.add_css_class("browser-toolbar");
-        let back = gtk::Button::from_icon_name("go-previous-symbolic");
-        let forward = gtk::Button::from_icon_name("go-next-symbolic");
-        let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
+        bar.update_property(&[gtk::accessible::Property::Label("Browser navigation")]);
+        let back = gtk::Button::from_icon_name("forktty-back-symbolic");
+        let forward = gtk::Button::from_icon_name("forktty-forward-symbolic");
+        let reload = gtk::Button::from_icon_name("forktty-refresh-symbolic");
         back.set_sensitive(false);
         forward.set_sensitive(false);
         let address = gtk::Entry::new();
         address.set_hexpand(true);
         address.set_text(initial_url);
+        address.set_placeholder_text(Some("Enter URL"));
         address.add_css_class("browser-address");
-        address.set_tooltip_text(Some("Address"));
-        address.update_property(&[gtk::accessible::Property::Label("Address")]);
-        let close = gtk::Button::from_icon_name("window-close-symbolic");
+        address.set_tooltip_text(Some("Address bar (Ctrl+L)"));
+        address.update_property(&[gtk::accessible::Property::Label("Address bar")]);
+        let close = gtk::Button::from_icon_name("forktty-close-symbolic");
         close.add_css_class("pane-close-action");
         for (button, label) in [
-            (&back, "Back"),
-            (&forward, "Forward"),
-            (&reload, "Reload"),
+            (&back, "Back (Alt+Left)"),
+            (&forward, "Forward (Alt+Right)"),
+            (&reload, "Reload (Ctrl+R / F5)"),
             (&close, "Close Pane"),
         ] {
             button.add_css_class("flat");
@@ -136,6 +206,9 @@ impl BrowserPaneWidget {
         let session = crate::browser_session::session_for(profile_id);
         let web_view = WebView::builder().network_session(&session).build();
         web_view.set_vexpand(true);
+        install_browser_shortcuts(&container, &web_view, &address);
+        install_browser_shortcuts(&web_view, &web_view, &address);
+        install_browser_shortcuts(&address, &web_view, &address);
         sync_history_buttons(&web_view, &back, &forward);
 
         {
@@ -292,6 +365,7 @@ impl BrowserPaneWidget {
 
         let widget = Self {
             container,
+            toolbar: bar,
             web_view,
             address,
             close,
@@ -308,11 +382,24 @@ impl BrowserPaneWidget {
         self.container.clone().upcast()
     }
 
+    /// Drag handle used by the pane layout to reorder/swap browser panes.
+    pub fn drag_handle(&self) -> gtk::Widget {
+        self.toolbar.clone().upcast()
+    }
+
     /// The widget keyboard focus should land on when this pane is focused.
     /// The address entry is the natural keyboard entry point and is always
     /// realized (the WebView may not have loaded yet).
     pub fn focus_target(&self) -> gtk::Widget {
         self.address.clone().upcast()
+    }
+
+    pub fn set_active(&self, active: bool) {
+        if active {
+            self.container.add_css_class("active");
+        } else {
+            self.container.remove_css_class("active");
+        }
     }
 
     /// Connect a callback fired when focus enters this pane (the address bar
@@ -456,6 +543,40 @@ mod tests {
         assert_eq!(
             fill_js("e2", "a\"b"),
             "window.__forktty.fill(\"e2\",\"a\\\"b\")"
+        );
+    }
+
+    #[test]
+    fn browser_pane_shortcuts_match_common_browser_keys() {
+        use gtk::gdk::{Key, ModifierType};
+
+        assert_eq!(
+            browser_pane_shortcut(Key::l, ModifierType::CONTROL_MASK),
+            Some(BrowserPaneShortcut::FocusAddress)
+        );
+        assert_eq!(
+            browser_pane_shortcut(Key::d, ModifierType::ALT_MASK),
+            Some(BrowserPaneShortcut::FocusAddress)
+        );
+        assert_eq!(
+            browser_pane_shortcut(Key::Left, ModifierType::ALT_MASK),
+            Some(BrowserPaneShortcut::Back)
+        );
+        assert_eq!(
+            browser_pane_shortcut(Key::Right, ModifierType::ALT_MASK),
+            Some(BrowserPaneShortcut::Forward)
+        );
+        assert_eq!(
+            browser_pane_shortcut(Key::r, ModifierType::CONTROL_MASK),
+            Some(BrowserPaneShortcut::Reload)
+        );
+        assert_eq!(
+            browser_pane_shortcut(Key::F5, ModifierType::empty()),
+            Some(BrowserPaneShortcut::Reload)
+        );
+        assert_eq!(
+            browser_pane_shortcut(Key::Left, ModifierType::empty()),
+            None
         );
     }
 

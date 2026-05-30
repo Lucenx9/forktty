@@ -24,9 +24,9 @@ pub use command_safety::{validate_worktree_name, WorktreeNameError};
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig};
 pub use model::{
-    has_uri_scheme, normalize_browser_url, LogEntry, LogLevel, NotificationItem, NotificationKind,
-    PaneNode, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata, Surface, SurfaceId,
-    SurfaceKind, Workspace, WorkspaceId, WorkspaceModel, WorkspaceSelector,
+    has_uri_scheme, normalize_browser_url, LogEntry, LogLevel, MovePosition, NotificationItem,
+    NotificationKind, PaneNode, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata, Surface,
+    SurfaceId, SurfaceKind, Workspace, WorkspaceId, WorkspaceModel, WorkspaceSelector,
 };
 pub use notification::{dispatch_notification, NotificationDispatchError};
 pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};

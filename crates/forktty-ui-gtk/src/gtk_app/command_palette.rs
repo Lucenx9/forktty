@@ -54,6 +54,16 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
     );
     append_shortcut_group(
         &content,
+        "Tabs",
+        &[
+            ("Previous Tab", PREVIOUS_TAB_SHORTCUT),
+            ("Next Tab", NEXT_TAB_SHORTCUT),
+            ("First Tab", FIRST_TAB_SHORTCUT),
+            ("Last Tab", LAST_TAB_SHORTCUT),
+        ],
+    );
+    append_shortcut_group(
+        &content,
         "Workspaces",
         &[
             ("New Workspace", "Ctrl+Shift+N"),
@@ -74,6 +84,17 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Select All", "Ctrl+Shift+A"),
             ("Reset and Clear", "Command Palette / Context Menu"),
             ("Context Menu", "Right Click"),
+        ],
+    );
+    #[cfg(feature = "browser")]
+    append_shortcut_group(
+        &content,
+        "Browser",
+        &[
+            ("Focus Address", "Ctrl+L / Alt+D"),
+            ("Back", "Alt+Left"),
+            ("Forward", "Alt+Right"),
+            ("Reload", "Ctrl+R / F5"),
         ],
     );
 
@@ -209,6 +230,58 @@ pub(super) fn show_command_palette_with_query(
         move || {
             if let Some(surface_id) = focused_surface_id(&state) {
                 add_new_tab_surface(&state, &surface_id);
+            }
+            dialog.close();
+        }
+    });
+    command!("Previous Tab", Some(PREVIOUS_TAB_SHORTCUT), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::Previous) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
+    command!("Next Tab", Some(NEXT_TAB_SHORTCUT), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::Next) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
+    command!("First Tab", Some(FIRST_TAB_SHORTCUT), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::First) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
+            }
+            dialog.close();
+        }
+    });
+    command!("Last Tab", Some(LAST_TAB_SHORTCUT), {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            if select_tab_in_focused_pane(&state, TabNavigation::Last) {
+                if let Some(controller) = &controller {
+                    controller.borrow_mut().sync_model_focus_to_ui();
+                }
             }
             dialog.close();
         }

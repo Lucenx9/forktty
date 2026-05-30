@@ -52,32 +52,56 @@ pub(super) fn show_settings_dialog(
     stack.add_css_class("settings-stack");
     body.append(&stack);
 
-    let terminal_nav = settings_nav_button("forktty-terminal-symbolic", "Terminal");
-    let appearance_nav = settings_nav_button("forktty-theme-symbolic", "Appearance");
-    let workspaces_nav = settings_nav_button("forktty-grid-symbolic", "Workspaces");
-    let notifications_nav = settings_nav_button("forktty-notifications-symbolic", "Notifications");
-    let maintenance_nav = settings_nav_button("forktty-refresh-symbolic", "Maintenance");
-    appearance_nav.set_group(Some(&terminal_nav));
-    workspaces_nav.set_group(Some(&terminal_nav));
-    notifications_nav.set_group(Some(&terminal_nav));
-    maintenance_nav.set_group(Some(&terminal_nav));
+    let terminal_nav = settings_nav_button(
+        "forktty-terminal-symbolic",
+        "Terminal",
+        "Shell, font, scrollback",
+    );
+    let interface_nav = settings_nav_button(
+        "forktty-theme-symbolic",
+        "Interface",
+        "Window, palette, sidebar",
+    );
+    let worktrees_nav = settings_nav_button(
+        "forktty-grid-symbolic",
+        "Worktrees",
+        "Workspace creation, PR hints",
+    );
+    let alerts_nav = settings_nav_button(
+        "forktty-notifications-symbolic",
+        "Alerts",
+        "Notifications and command hook",
+    );
+    let advanced_nav =
+        settings_nav_button("forktty-refresh-symbolic", "Advanced", "Reset defaults");
+    interface_nav.set_group(Some(&terminal_nav));
+    worktrees_nav.set_group(Some(&terminal_nav));
+    alerts_nav.set_group(Some(&terminal_nav));
+    advanced_nav.set_group(Some(&terminal_nav));
+    nav.append(&settings_nav_heading("Essentials"));
     nav.append(&terminal_nav);
-    nav.append(&appearance_nav);
-    nav.append(&workspaces_nav);
+    nav.append(&interface_nav);
+    nav.append(&settings_nav_heading("Workflow"));
+    nav.append(&worktrees_nav);
     #[cfg(feature = "browser")]
     let browser_nav = {
-        let button = settings_nav_button("forktty-browser-symbolic", "Browser");
+        let button = settings_nav_button(
+            "forktty-browser-symbolic",
+            "Browser",
+            "Profiles, history, bookmarks",
+        );
         button.set_group(Some(&terminal_nav));
         nav.append(&button);
         button
     };
-    nav.append(&notifications_nav);
-    let nav_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    nav_spacer.set_vexpand(true);
-    nav.append(&nav_spacer);
-    nav.append(&maintenance_nav);
+    nav.append(&settings_nav_heading("System"));
+    nav.append(&alerts_nav);
+    nav.append(&advanced_nav);
 
-    let (terminal_page, terminal_content) = settings_page();
+    let (terminal_page, terminal_content) = settings_page(
+        "Terminal",
+        "Tune how shell sessions start and how terminal text behaves.",
+    );
     let (shell_section, shell_list) =
         settings_section("Shell", "Controls how new terminal sessions are started.");
     let shell_entry = adw::EntryRow::builder()
@@ -145,7 +169,10 @@ pub(super) fn show_settings_dialog(
     terminal_content.append(&behavior_section);
     stack.add_named(&terminal_page, Some("terminal"));
 
-    let (appearance_page, appearance_content) = settings_page();
+    let (interface_page, interface_content) = settings_page(
+        "Interface",
+        "Control the visible chrome, palette, and workspace sidebar.",
+    );
     let (theme_section, theme_list) = settings_section(
         "Theme",
         "Controls the color palette used inside terminal panes.",
@@ -157,7 +184,7 @@ pub(super) fn show_settings_dialog(
         &loaded.appearance.terminal_theme,
     );
     theme_list.append(&terminal_theme_row);
-    appearance_content.append(&theme_section);
+    interface_content.append(&theme_section);
 
     let (window_section, window_list) = settings_section("Window", "Controls the app window mode.");
     let (window_mode_row, window_mode) = settings_combo_row(
@@ -167,10 +194,8 @@ pub(super) fn show_settings_dialog(
         &loaded.appearance.window_mode,
     );
     window_list.append(&window_mode_row);
-    appearance_content.append(&window_section);
-    stack.add_named(&appearance_page, Some("appearance"));
+    interface_content.append(&window_section);
 
-    let (workspaces_page, workspaces_content) = settings_page();
     let (sidebar_section, sidebar_list) = settings_section(
         "Sidebar",
         "Controls workspace list visibility and placement.",
@@ -189,7 +214,13 @@ pub(super) fn show_settings_dialog(
         &loaded.appearance.sidebar_position,
     );
     sidebar_list.append(&sidebar_position_row);
-    workspaces_content.append(&sidebar_section);
+    interface_content.append(&sidebar_section);
+    stack.add_named(&interface_page, Some("interface"));
+
+    let (worktrees_page, worktrees_content) = settings_page(
+        "Worktrees",
+        "Configure repository workspace creation and branch status hints.",
+    );
 
     let (worktree_section, worktree_list) = settings_section(
         "Git Worktrees",
@@ -213,12 +244,15 @@ pub(super) fn show_settings_dialog(
         .build();
     pr_lookup.add_css_class("settings-row");
     worktree_list.append(&pr_lookup);
-    workspaces_content.append(&worktree_section);
-    stack.add_named(&workspaces_page, Some("workspaces"));
+    worktrees_content.append(&worktree_section);
+    stack.add_named(&worktrees_page, Some("worktrees"));
 
     #[cfg(feature = "browser")]
     {
-        let (browser_page, browser_content) = settings_page();
+        let (browser_page, browser_content) = settings_page(
+            "Browser",
+            "Manage data imported into ForkTTY browser profiles.",
+        );
         let (import_section, import_list) = settings_section(
             "Browser Data",
             "Import local browser profiles into ForkTTY browser profiles.",
@@ -241,7 +275,10 @@ pub(super) fn show_settings_dialog(
         });
     }
 
-    let (notifications_page, notifications_content) = settings_page();
+    let (alerts_page, alerts_content) = settings_page(
+        "Alerts",
+        "Choose where ForkTTY sends notifications and optional command hooks.",
+    );
     let (delivery_section, delivery_list) =
         settings_section("Delivery", "Controls where ForkTTY sends alerts.");
     let desktop_notifications = adw::SwitchRow::builder()
@@ -258,10 +295,10 @@ pub(super) fn show_settings_dialog(
         .build();
     notification_sound.add_css_class("settings-row");
     delivery_list.append(&notification_sound);
-    notifications_content.append(&delivery_section);
+    alerts_content.append(&delivery_section);
 
     let (notification_command_section, notification_command_list) = settings_section(
-        "Custom Command",
+        "Command Hook",
         "Run an optional command when a notification fires.",
     );
     let notification_command = adw::EntryRow::builder()
@@ -273,11 +310,14 @@ pub(super) fn show_settings_dialog(
     notification_command.add_css_class("settings-row");
     notification_command.set_input_purpose(gtk::InputPurpose::Terminal);
     notification_command_list.append(&notification_command);
-    notifications_content.append(&notification_command_section);
-    stack.add_named(&notifications_page, Some("notifications"));
+    alerts_content.append(&notification_command_section);
+    stack.add_named(&alerts_page, Some("alerts"));
 
-    let (maintenance_page, maintenance_content) = settings_page();
-    let (maintenance_section, maintenance_list) =
+    let (advanced_page, advanced_content) = settings_page(
+        "Advanced",
+        "Low-frequency actions that affect saved ForkTTY preferences.",
+    );
+    let (advanced_section, advanced_list) =
         settings_section("Reset", "Restore saved preferences to their defaults.");
     let reset_row = settings_action_row(
         "Reset to defaults",
@@ -287,17 +327,17 @@ pub(super) fn show_settings_dialog(
     reset.add_css_class("destructive-action");
     reset_row.add_suffix(&reset);
     reset_row.set_activatable_widget(Some(&reset));
-    maintenance_list.append(&reset_row);
-    maintenance_content.append(&maintenance_section);
-    stack.add_named(&maintenance_page, Some("maintenance"));
+    advanced_list.append(&reset_row);
+    advanced_content.append(&advanced_section);
+    stack.add_named(&advanced_page, Some("advanced"));
 
     connect_settings_nav(&terminal_nav, &stack, "terminal");
-    connect_settings_nav(&appearance_nav, &stack, "appearance");
-    connect_settings_nav(&workspaces_nav, &stack, "workspaces");
+    connect_settings_nav(&interface_nav, &stack, "interface");
+    connect_settings_nav(&worktrees_nav, &stack, "worktrees");
     #[cfg(feature = "browser")]
     connect_settings_nav(&browser_nav, &stack, "browser");
-    connect_settings_nav(&notifications_nav, &stack, "notifications");
-    connect_settings_nav(&maintenance_nav, &stack, "maintenance");
+    connect_settings_nav(&alerts_nav, &stack, "alerts");
+    connect_settings_nav(&advanced_nav, &stack, "advanced");
     terminal_nav.set_active(true);
     stack.set_visible_child_name("terminal");
 
@@ -652,24 +692,51 @@ fn apply_settings_dialog_chrome(window: &gtk::Window) {
     window.set_titlebar(Some(&titlebar));
 }
 
-pub(super) fn settings_nav_button(icon_name: &str, label: &str) -> gtk::ToggleButton {
+pub(super) fn settings_nav_heading(label: &str) -> gtk::Label {
+    let heading = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    heading.add_css_class("settings-nav-heading");
+    heading
+}
+
+pub(super) fn settings_nav_button(
+    icon_name: &str,
+    label: &str,
+    subtitle: &str,
+) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::new();
     button.add_css_class("settings-nav-item");
-    button.set_tooltip_text(Some(label));
-    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    let accessible_label = format!("{label}. {subtitle}");
+    button.set_tooltip_text(Some(&accessible_label));
+    button.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
 
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.set_halign(gtk::Align::Fill);
     let icon = gtk::Image::from_icon_name(icon_name);
     icon.add_css_class("settings-nav-icon");
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    text.set_hexpand(true);
+    text.add_css_class("settings-nav-copy");
     let label = gtk::Label::builder()
         .label(label)
         .xalign(0.0)
         .hexpand(true)
         .build();
     label.add_css_class("settings-nav-label");
+    let subtitle = gtk::Label::builder()
+        .label(subtitle)
+        .xalign(0.0)
+        .hexpand(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    subtitle.add_css_class("settings-nav-subtitle");
+    text.append(&label);
+    text.append(&subtitle);
     row.append(&icon);
-    row.append(&label);
+    row.append(&text);
     button.set_child(Some(&row));
     button
 }
@@ -687,9 +754,27 @@ pub(super) fn connect_settings_nav(
     });
 }
 
-pub(super) fn settings_page() -> (gtk::ScrolledWindow, gtk::Box) {
+pub(super) fn settings_page(title: &str, description: &str) -> (gtk::ScrolledWindow, gtk::Box) {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.add_css_class("settings-page");
+    let header = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    header.add_css_class("settings-page-header");
+    let title = gtk::Label::builder()
+        .label(title)
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    title.add_css_class("settings-page-title");
+    let description = gtk::Label::builder()
+        .label(description)
+        .xalign(0.0)
+        .hexpand(true)
+        .wrap(true)
+        .build();
+    description.add_css_class("settings-page-description");
+    header.append(&title);
+    header.append(&description);
+    content.append(&header);
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)

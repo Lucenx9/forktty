@@ -195,6 +195,7 @@ const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
 // Mirror the 30s budget used for Codex/Claude so a slow local socket round-trip
 // does not kill a Gemini hook sooner than the other providers.
 const GEMINI_HOOK_ENTRY_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
+const OPENCODE_HOOK_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 
 const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
@@ -3653,6 +3654,7 @@ import {{ spawnSync }} from "node:child_process";
 
 const FORKTTY_LAUNCHER = {launcher};
 const DISABLED_ENV = "FORKTTY_OPENCODE_HOOKS_DISABLED";
+const HOOK_TIMEOUT_MS = {timeout};
 
 function cloneJson(value) {{
   try {{
@@ -3695,6 +3697,7 @@ function runForkTTY(hookEvent, body) {{
     input: JSON.stringify(body ?? {{}}),
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
+    timeout: HOOK_TIMEOUT_MS,
   }});
   if (result.error) process.stderr.write(`ForkTTY OpenCode hook warning: ${{result.error.message}}\n`);
   if (result.stderr) process.stderr.write(result.stderr);
@@ -3736,6 +3739,7 @@ export const ForkTTYPlugin = async () => ({{
 "#,
         tag = OPENCODE_PLUGIN_TAG,
         launcher = launcher,
+        timeout = OPENCODE_HOOK_TIMEOUT_MS,
     ))
 }
 
@@ -6959,6 +6963,8 @@ mod tests {
                 let first = build_hook_setup_plan(spec, launcher).unwrap();
                 assert!(first.changed);
                 assert!(first.content.contains(OPENCODE_PLUGIN_TAG));
+                assert!(first.content.contains("const HOOK_TIMEOUT_MS = 30000;"));
+                assert!(first.content.contains("timeout: HOOK_TIMEOUT_MS,"));
                 assert_eq!(
                     extract_launcher_from_opencode_plugin(&first.content).as_deref(),
                     Some("/usr/bin/forktty")

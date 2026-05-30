@@ -43,7 +43,10 @@ pub(super) fn build_pane_chrome(
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     actions.add_css_class("terminal-pane-actions");
     actions.set_can_target(false);
-    let split_h = pane_action_button("forktty-split-horizontal-symbolic", "Split Right (Ctrl+Shift+H)");
+    let split_h = pane_action_button(
+        "forktty-split-horizontal-symbolic",
+        "Split Right (Ctrl+Shift+H)",
+    );
     let split_v = pane_action_button(
         "forktty-split-vertical-symbolic",
         &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
@@ -74,7 +77,10 @@ pub(super) fn build_pane_chrome(
     single_pane_actions.set_valign(gtk::Align::Start);
     single_pane_actions.set_visible(false);
     single_pane_actions.set_sensitive(false);
-    let single_split_h = pane_action_button("forktty-split-horizontal-symbolic", "Split Right (Ctrl+Shift+H)");
+    let single_split_h = pane_action_button(
+        "forktty-split-horizontal-symbolic",
+        "Split Right (Ctrl+Shift+H)",
+    );
     let single_split_v = pane_action_button(
         "forktty-split-vertical-symbolic",
         &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
@@ -90,6 +96,7 @@ pub(super) fn build_pane_chrome(
     terminal_overlay.add_overlay(&single_pane_actions);
 
     if let Some(state) = state {
+        install_pane_reorder_dnd(&header, surface_id, state);
         install_terminal_context_menu(widget, surface_id, state, parent);
         let surface_id_owned = surface_id.to_string();
         let state_for_h = state.clone();
@@ -228,6 +235,35 @@ pub(super) fn pane_action_button(icon_name: &str, tooltip: &str) -> gtk::Button 
     button.add_css_class("flat");
     button.add_css_class("terminal-pane-action");
     button
+}
+
+pub(super) fn install_pane_reorder_dnd<W>(handle: &W, surface_id: &str, state: &SocketAppState)
+where
+    W: IsA<gtk::Widget>,
+{
+    install_internal_drag_source(handle, prefixed_dnd_payload(DND_PANE_PREFIX, surface_id));
+    let target_id = surface_id.to_string();
+    let state_for_drop = state.clone();
+    handle.add_controller(internal_drop_target(
+        DND_PANE_PREFIX,
+        move |payload, _x, _y| {
+            let Some(source_id) = dnd_payload_id(&payload, DND_PANE_PREFIX) else {
+                return false;
+            };
+            if source_id == target_id {
+                return false;
+            }
+            let swapped = state_for_drop
+                .model
+                .lock()
+                .ok()
+                .is_some_and(|mut model| model.swap_panes(&source_id, &target_id));
+            if swapped {
+                save_session_from_state(&state_for_drop);
+            }
+            swapped
+        },
+    ));
 }
 
 pub(super) fn focus_surface_and<F: FnOnce(&SocketAppState)>(
