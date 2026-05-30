@@ -632,7 +632,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forktty-core"
-version = "0.2.0-alpha.5"
+version = "0.2.0-alpha.6"
 dependencies = [
  "chrono",
  "dirs",
@@ -651,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-import"
-version = "0.2.0-alpha.5"
+version = "0.2.0-alpha.6"
 dependencies = [
  "aes 0.9.1",
  "cbc 0.2.1",
@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-socket"
-version = "0.2.0-alpha.5"
+version = "0.2.0-alpha.6"
 dependencies = [
  "async-channel",
  "dirs",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-terminal"
-version = "0.2.0-alpha.5"
+version = "0.2.0-alpha.6"
 dependencies = [
  "forktty-core",
  "gtk4",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "forktty-ui-gtk"
-version = "0.2.0-alpha.5"
+version = "0.2.0-alpha.6"
 dependencies = [
  "async-channel",
  "dirs",
@@ -2950,7 +2950,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xtask"
-version = "0.2.0-alpha.5"
+version = "0.2.0-alpha.6"
 dependencies = [
  "serde_json",
 ]

@@ -17,7 +17,8 @@
     <name>Lucenx9</name>
   </developer>
   <releases>
-    <release version="0.2.0-alpha.5" date="2026-05-23" />
+    <release version="0.2.0-alpha.6" date="2026-05-30" type="development" />
+    <release version="0.2.0-alpha.5" date="2026-05-23" type="development" />
   </releases>
   <content_rating type="oars-1.1" />
 </component>

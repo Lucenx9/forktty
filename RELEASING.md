@@ -60,16 +60,16 @@ Signed tags (`-s`) are preferred; if you don't have a signing key,
 2. Title: `ForkTTY 0.2.0-alpha.N`.
 3. Body: copy the section you just moved in `CHANGELOG.md`, plus:
    - Supported distros (link to `docs/QA.md`).
-   - A note that the AppImage is the default download for this alpha,
+   - A note that the AppImage is the primary download for this alpha,
      while the `.deb` remains available for Debian/Ubuntu.
-   - The SHA256SUMS lines for the `.deb` and experimental AppImage.
+   - The SHA256SUMS lines for the `.deb` and AppImage.
 4. Tick "Set as a pre-release" while we are in alpha.
 5. Publish.
 
 Publishing the release triggers the `release-package` job in
 `.github/workflows/ci.yml`, which:
 
-- Builds the `.deb` and experimental AppImage from the tagged commit.
+- Builds the `.deb` and AppImage from the tagged commit.
 - Generates `SHA256SUMS` for both artifacts.
 - Uploads both artifacts and `SHA256SUMS` into the release.
 

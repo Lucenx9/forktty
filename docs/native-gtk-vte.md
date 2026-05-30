@@ -24,8 +24,8 @@ For a terminal-only development build on systems without WebKitGTK:
 cargo run -p forktty-ui-gtk --features gtk-vte
 ```
 
-The AppImage target is experimental and intended for alpha smoke testing
-alongside the Debian package. `scripts/build-appimage.sh` resolves the
+The AppImage target is the primary portable Linux package for alpha
+releases. `scripts/build-appimage.sh` resolves the
 `forktty` binary's `ldd` graph and bundles GTK4, libadwaita, VTE, and
 their direct dependencies into `AppDir/usr/lib`. It intentionally does
 not bundle glibc, GSettings schemas, GIO modules, fontconfig data, the
@@ -83,4 +83,4 @@ ForkTTY currently requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubunt
 
 ## Verification
 
-The full automated check list (Rust fmt/test/clippy/build, CLI tests, desktop entry validation, Debian packaging, and experimental AppImage packaging) lives in [release-qa.md](release-qa.md#automated-checks). Run that checklist before tagging an alpha.
+The full automated check list (Rust fmt/test/clippy/build, CLI tests, desktop entry validation, Debian packaging, and AppImage packaging) lives in [release-qa.md](release-qa.md#automated-checks). Run that checklist before tagging an alpha.

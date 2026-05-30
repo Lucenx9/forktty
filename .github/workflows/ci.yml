@@ -143,7 +143,7 @@ jobs:
           echo "$PWD/target/packaging/tools" >> "$GITHUB_PATH"
           echo "APPIMAGE_RUNTIME_FILE=$PWD/$runtime_path" >> "$GITHUB_ENV"
 
-      - name: Build experimental AppImage
+      - name: Build AppImage
         run: bash scripts/build-appimage.sh
 
       - name: Smoke packaged artifacts

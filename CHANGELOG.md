@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.6] - 2026-05-30
+
 ### Added
 - Added `events.subscribe` NDJSON streaming and `system.capabilities` discovery, with `forktty events` and `forktty capabilities` CLI entry points.
 - Added an optional source-build browser-pane path behind the `browser` feature: WebKitGTK6 pane surfaces, socket/CLI open/navigate/snapshot/click/fill/eval/back/forward/reload verbs, GUI open/close controls, persistent per-profile WebKit sessions, and browser profile CRUD.
@@ -11,6 +13,24 @@ All notable changes to ForkTTY are documented here.
 - Added browser import via the new `forktty-import` crate: `browser.import.discover`/`preview`/`run` socket verbs, `forktty browser import discover|preview|run` CLI, and a Settings "Import Browser Data" dialog that imports history and bookmarks from local Firefox/Chromium-family profiles (cookies are preview-only, not yet written) with rollback on failure.
 - Added SSH remote workspaces: `SurfaceKind::Ssh` panes spawned as `ssh <host>`, the `workspace.create_ssh` socket method, a `forktty ssh` CLI, sidebar `ssh:<host>` hints, and respawn on session restore.
 - Added per-pane tabs: `pane.new_tab`/`pane.select_tab` socket methods, `forktty new-tab`/`select-tab` CLI, and pane-chrome/command-palette tab controls.
+
+### Changed
+- Promoted the AppImage from an experimental smoke-test artifact to the primary portable Linux download while keeping host-runtime caveats for glibc, GSettings/GIO, fontconfig, desktop services, and GPU drivers.
+- Packaged builds, CI, and release QA now use `--features browser`, so browser panes and browser import ship in the `.deb` and AppImage.
+- Updated the RustCrypto stack (`aes`, `cbc`, `hmac`, `pbkdf2`, and `sha1`) together with the cookie decryption API changes.
+- Renamed Linux desktop/AppStream metadata to the reverse-DNS `dev.forktty.forktty` desktop id and refreshed app/icon assets across installed sizes.
+- Refined GTK topbar, settings, about, notifications, workspace/sidebar, tab, pane, and drag-and-drop visuals for a more consistent native dark UI.
+
+### Fixed
+- Fixed `forktty ssh <user@host>` routing so the documented CLI command reaches the socket handler instead of being rejected as an unknown argument.
+- Fixed mixed/phantom drag highlights by using typed drag-and-drop payloads for tabs, panes, and workspaces, with clearer drop acceptance.
+- Fixed pane navigation/swap desync handling so a missing focused surface no longer falls back to pane index 0.
+- Hardened session restore and config persistence with XDG state-dir migration, atomic saves, directory fsync, quarantine of corrupt/oversized files, and allocation-free pane-surface lookup.
+- Hardened socket CLI reads, import readers, browser profile import, worktree lifecycle rollback, and terminal AppImage hook launching against oversized input, unsafe paths, stale handles, and AppImage runtime leakage.
+- Fixed release and packaging docs so desktop validation paths, feature flags, and packaged artifact expectations match CI and the build scripts.
+
+### Security
+- Strengthened local robustness by bounding socket responses, browser/import file reads, config/session loads, and stdin payloads, while preserving owner-only Unix socket behavior and argv-based command execution.
 
 ### Documentation
 - Audited Markdown docs against the current Rust workspace, scripts, feature gates, socket methods, browser profile/storage behavior, packaging flow, and support links, and brought SPEC/ROADMAP/cmux-gap docs in line with the shipped SSH workspace, per-pane tab, and browser import surfaces.

@@ -8,8 +8,7 @@ package regressions that unit tests cannot see.
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace
-cargo test -p forktty-ui-gtk --features browser
+cargo test --workspace --features browser
 cargo clippy --workspace --features browser -- -D warnings
 cargo build -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
@@ -286,7 +285,7 @@ rebuilding.
   `OK` for the published `.deb`.
 - Remove the package and confirm `/usr/bin/forktty` and the desktop entry are removed.
 
-## Experimental AppImage Smoke
+## AppImage Smoke
 
 - Build or download the generated AppImage from `target/packaging/appimage/`.
 - Mark it executable and launch it directly.

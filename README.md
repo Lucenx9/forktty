@@ -10,15 +10,15 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.5)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.6)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
 
-[Download v0.2.0-alpha.5 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.5/forktty-0.2.0-alpha.5-x86_64.AppImage)
+[Download v0.2.0-alpha.6 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.6/forktty-0.2.0-alpha.6-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.5). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the default download for this alpha and remains experimental; the Debian package is still available for Debian/Ubuntu users.
+> **Status**: Early alpha (v0.2.0-alpha.6). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
   <img src="docs/assets/forktty-gtk-ubuntu.png" alt="ForkTTY GTK/VTE running on Ubuntu with workspaces and split terminal panes" width="960" />
@@ -34,11 +34,11 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 ## Install
 
 The fastest paths are the prebuilt artifacts from the
-[v0.2.0-alpha.5 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.5).
+[v0.2.0-alpha.6 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.6).
 Each release ships:
 
-- `forktty-0.2.0-alpha.5-x86_64.AppImage` — experimental, recommended for quick trials.
-- `forktty_0.2.0~alpha.5_amd64.deb` — Debian/Ubuntu package.
+- `forktty-0.2.0-alpha.6-x86_64.AppImage` — recommended portable Linux package.
+- `forktty_0.2.0~alpha.6_amd64.deb` — Debian/Ubuntu package.
 - `SHA256SUMS` — checksums for both artifacts.
 
 After downloading, verify checksums:
@@ -47,35 +47,35 @@ After downloading, verify checksums:
 sha256sum -c SHA256SUMS
 ```
 
-### AppImage (experimental)
+### AppImage
 
 ```bash
-chmod +x forktty-0.2.0-alpha.5-x86_64.AppImage
-./forktty-0.2.0-alpha.5-x86_64.AppImage
+chmod +x forktty-0.2.0-alpha.6-x86_64.AppImage
+./forktty-0.2.0-alpha.6-x86_64.AppImage
 ```
 
 The AppImage bundles the GTK4, libadwaita, VTE, and WebKitGTK shared libraries
 it links against, but it still depends on the host system for glibc, the
 GSettings/GIO data tree, Wayland/X11 session services, fontconfig, the
 OpenGL/Vulkan/Mesa driver stack, and desktop notification services.
-Treat the AppImage as a smoke-test artifact: it works on most modern
-distros that ship VTE 0.76+ and a recent glibc, but it is not as
-portable as a typical Linux binary and should be tested on the target
-distro before being relied on.
+It is the primary downloadable artifact for alpha releases and works on
+most modern distros that ship VTE 0.76+ and a recent glibc, but it should
+still be tested on the target distro/desktop environment before being
+relied on.
 
 If the AppImage launches but the GTK interface renders incorrectly, try
 an explicit GTK renderer from a terminal:
 
 ```bash
-GSK_RENDERER=ngl ./forktty-0.2.0-alpha.5-x86_64.AppImage
+GSK_RENDERER=ngl ./forktty-0.2.0-alpha.6-x86_64.AppImage
 ```
 
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo apt install ./forktty_0.2.0~alpha.5_amd64.deb
+sudo apt install ./forktty_0.2.0~alpha.6_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0~alpha.5_amd64.deb
+sudo dpkg -i forktty_0.2.0~alpha.6_amd64.deb
 sudo apt -f install
 ```
 
@@ -135,7 +135,7 @@ bash scripts/build-deb.sh
 sudo dpkg -i target/packaging/deb/forktty_*.deb
 ```
 
-Build the experimental AppImage locally (requires `appimagetool` on
+Build the AppImage locally (requires `appimagetool` on
 `PATH`, or `APPIMAGETOOL=/path/to/appimagetool`):
 
 ```bash
@@ -366,7 +366,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 - Linux only. There are no supported macOS or Windows builds.
 - VTE 0.76+ and libadwaita 1.4+ are required by the native terminal integration.
-- The AppImage bundles GTK4/libadwaita/VTE but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Treat it as experimental and smoke-test it on the target distro; prefer the `.deb` on Debian/Ubuntu when possible.
+- The AppImage bundles GTK4/libadwaita/VTE but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
