@@ -128,16 +128,26 @@ write_appimage_hicolor_index_theme() {
 [Icon Theme]
 Name=Hicolor
 Comment=Fallback icon theme
-Directories=16x16/apps,24x24/apps,32x32/apps,48x48/apps,64x64/apps,128x128/apps,256x256/apps,scalable/apps,scalable/actions
+Directories=16x16/apps,16x16/actions,24x24/apps,24x24/actions,32x32/apps,48x48/apps,64x64/apps,128x128/apps,256x256/apps,scalable/apps,scalable/actions
 
 [16x16/apps]
 Size=16
 Context=Applications
 Type=Fixed
 
+[16x16/actions]
+Size=16
+Context=Actions
+Type=Fixed
+
 [24x24/apps]
 Size=24
 Context=Applications
+Type=Fixed
+
+[24x24/actions]
+Size=24
+Context=Actions
 Type=Fixed
 
 [32x32/apps]
