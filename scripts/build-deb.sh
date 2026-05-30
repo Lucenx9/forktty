@@ -47,7 +47,7 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --features browser --release
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte --release
 
 rm -rf "$PKG_ROOT"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$PKG_ROOT/usr/bin/forktty"
@@ -71,7 +71,7 @@ Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://github.com/Lucenx9/forktty
-Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libvte-2.91-gtk4-0 (>= 0.76), libwebkitgtk-6.0-4, libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
+Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libvte-2.91-gtk4-0 (>= 0.76), libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
 Description: Linux-native multi-agent terminal
  ForkTTY is a Linux-native GTK4/libadwaita/VTE terminal for multi-agent
  workflows, programmable socket automation, and git worktree isolation.

@@ -14,11 +14,7 @@ BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
   "libvte-2.91-gtk4.so"
-  "libwebkitgtk-6.0.so"
-  "libjavascriptcoregtk-6.0.so"
-  "libsoup-3.0.so"
 )
-WEBKITGTK_PROCESS_BRIDGE="/tmp/forktty-webkitgtk"
 
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
@@ -118,109 +114,6 @@ copy_forktty_icon_assets() {
   if [[ -d "$source_dir" ]]; then
     mkdir -p "$target_dir"
     cp -a "$source_dir/." "$target_dir/"
-  fi
-}
-
-runtime_lib_dirs() {
-  printf '%s\n' \
-    /usr/lib \
-    /usr/lib64 \
-    /usr/libexec \
-    /usr/lib/x86_64-linux-gnu \
-    /usr/lib/aarch64-linux-gnu
-}
-
-first_existing_dir() {
-  local candidate
-
-  for candidate in "$@"; do
-    if [[ -d "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-patch_binary_path() {
-  local file="$1"
-  local from="$2"
-  local to="$3"
-
-  perl -0pi -e '
-    BEGIN {
-      ($from, $to) = splice(@ARGV, 0, 2);
-      die "replacement path is longer than source path\n" if length($to) > length($from);
-      $replacement = $to . ("\0" x (length($from) - length($to)));
-    }
-    s/\Q$from\E/$replacement/g;
-  ' "$from" "$to" "$file"
-}
-
-copy_appimage_webkitgtk_runtime() {
-  local source_dir=""
-  local candidate
-  local target_dir="$APPDIR/usr/lib/webkitgtk-6.0"
-  local lib_file
-  local helper
-
-  while IFS= read -r candidate; do
-    if [[ -d "$candidate/webkitgtk-6.0" ]]; then
-      source_dir="$candidate/webkitgtk-6.0"
-      break
-    fi
-  done < <(runtime_lib_dirs)
-
-  if [[ -z "$source_dir" ]]; then
-    echo "Failed to find WebKitGTK runtime process directory" >&2
-    exit 1
-  fi
-
-  mkdir -p "$(dirname "$target_dir")"
-  cp -a "$source_dir" "$target_dir"
-
-  for helper in WebKitWebProcess WebKitNetworkProcess WebKitGPUProcess jsc; do
-    if [[ -x "$target_dir/$helper" ]]; then
-      copy_appimage_runtime_libs "$target_dir/$helper"
-    fi
-  done
-
-  while IFS= read -r lib_file; do
-    if grep -aq "$source_dir" "$lib_file"; then
-      patch_binary_path "$lib_file" "$source_dir" "$WEBKITGTK_PROCESS_BRIDGE"
-    fi
-  done < <(find "$APPDIR/usr/lib" -maxdepth 1 -type f -name 'libwebkitgtk-6.0.so*')
-
-  if ! grep -aq "$WEBKITGTK_PROCESS_BRIDGE" "$APPDIR/usr/lib/libwebkitgtk-6.0.so."*; then
-    echo "Failed to patch WebKitGTK process path to $WEBKITGTK_PROCESS_BRIDGE" >&2
-    exit 1
-  fi
-}
-
-copy_appimage_gio_modules() {
-  local source_dir=""
-  local module
-  local target_dir="$APPDIR/usr/lib/gio/modules"
-
-  source_dir="$(first_existing_dir \
-    /usr/lib/gio/modules \
-    /usr/lib64/gio/modules \
-    /usr/lib/x86_64-linux-gnu/gio/modules \
-    /usr/lib/aarch64-linux-gnu/gio/modules || true)"
-  if [[ -z "$source_dir" ]]; then
-    echo "GIO modules directory not found; continuing without bundled GIO modules" >&2
-    return
-  fi
-
-  mkdir -p "$target_dir"
-  find "$source_dir" -maxdepth 1 -type f -name '*.so' -exec cp -a '{}' "$target_dir/" ';'
-  for module in "$target_dir"/*.so; do
-    [[ -e "$module" ]] || continue
-    copy_appimage_runtime_libs "$module"
-  done
-  if command -v gio-querymodules >/dev/null; then
-    gio-querymodules "$target_dir"
   fi
 }
 
@@ -327,7 +220,7 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --features browser --release
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte --release
 
 rm -rf "$APPDIR" "$APPIMAGE_PATH"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$APPDIR/usr/bin/forktty"
@@ -337,8 +230,6 @@ install -Dm644 "$APPSTREAM_FILE" "$APPDIR/usr/share/metainfo/$APPIMAGE_DESKTOP_I
 copy_forktty_icon_assets
 write_appimage_hicolor_index_theme
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
-copy_appimage_webkitgtk_runtime
-copy_appimage_gio_modules
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"
 ln -s usr/share/icons/hicolor/128x128/apps/forktty.png "$APPDIR/forktty.png"
@@ -355,16 +246,6 @@ if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"
 else
   export XDG_DATA_DIRS="$HERE/usr/share:/usr/local/share:/usr/share"
-fi
-if [ -d "$HERE/usr/lib/gio/modules" ]; then
-  export GIO_EXTRA_MODULES="$HERE/usr/lib/gio/modules${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
-fi
-if [ -d "$HERE/usr/lib/webkitgtk-6.0" ]; then
-  if [ ! -e "/tmp/forktty-webkitgtk" ] || [ -L "/tmp/forktty-webkitgtk" ]; then
-    ln -sfn "$HERE/usr/lib/webkitgtk-6.0" "/tmp/forktty-webkitgtk"
-  else
-    echo "ForkTTY AppImage warning: /tmp/forktty-webkitgtk exists and is not a symlink; bundled WebKit process helpers may be unavailable." >&2
-  fi
 fi
 exec "$HERE/usr/bin/forktty" "$@"
 APPRUN

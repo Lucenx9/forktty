@@ -21,14 +21,14 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 > **Status**: Early alpha (v0.2.0-alpha.6). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
-  <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY alpha.6 with workspace sidebar, split terminal panes, active pane focus, and a browser pane" width="960" />
+  <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY alpha.6 with workspace sidebar, split terminal panes, active pane focus, and agent status notifications" width="960" />
 </p>
 
 ## Why ForkTTY
 
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, OpenCode, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
-- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode, plus experimental WebKitGTK6 browser panes behind the `browser` feature.
+- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
 
 ## Install
@@ -54,8 +54,8 @@ chmod +x forktty-0.2.0-alpha.6-x86_64.AppImage
 ./forktty-0.2.0-alpha.6-x86_64.AppImage
 ```
 
-The AppImage bundles the GTK4, libadwaita, VTE, and WebKitGTK shared libraries
-it links against, but it still depends on the host system for glibc, the
+The AppImage bundles the GTK4, libadwaita, and VTE shared libraries it
+links against, but it still depends on the host system for glibc, the
 GSettings/GIO data tree, Wayland/X11 session services, fontconfig, the
 OpenGL/Vulkan/Mesa driver stack, and desktop notification services.
 It is the primary downloadable artifact for alpha releases and works on
@@ -90,24 +90,23 @@ Requirements:
 - Linux
 - [Rust 1.88+](https://rustup.rs/)
 - GTK4, libadwaita, VTE GTK4 development libraries
-- WebKitGTK 6 development files for the full GTK/browser build
 
 Debian / Ubuntu:
 
 ```bash
-sudo apt install build-essential libssl-dev libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev libwebkitgtk-6.0-dev desktop-file-utils
+sudo apt install build-essential libssl-dev libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev desktop-file-utils
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install gcc gcc-c++ openssl-devel gtk4-devel libadwaita-devel vte291-gtk4-devel webkitgtk6.0-devel desktop-file-utils
+sudo dnf install gcc gcc-c++ openssl-devel gtk4-devel libadwaita-devel vte291-gtk4-devel desktop-file-utils
 ```
 
 Arch / CachyOS:
 
 ```bash
-sudo pacman -S base-devel openssl gtk4 libadwaita vte4 webkitgtk-6.0 desktop-file-utils
+sudo pacman -S base-devel openssl gtk4 libadwaita vte4 desktop-file-utils
 ```
 
 ForkTTY requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
@@ -117,15 +116,24 @@ Clone and run:
 ```bash
 git clone https://github.com/Lucenx9/forktty.git
 cd forktty
-cargo run -p forktty-ui-gtk --features browser
+cargo run -p forktty-ui-gtk
 ```
 
-The full source and packaged builds use `--features browser`, which
-includes the GTK/VTE terminal runtime and WebKitGTK browser panes. For a
-terminal-only development build on systems without WebKitGTK, use:
+Packaged builds are GTK/VTE-only. The experimental WebKitGTK browser pane
+remains in source behind the opt-in `browser` feature; it is not shipped in
+the AppImage or `.deb` for this alpha.
+
+For the explicit terminal-only build used by release artifacts:
 
 ```bash
-cargo run -p forktty-ui-gtk --features gtk-vte
+cargo run -p forktty-ui-gtk --no-default-features --features gtk-vte
+```
+
+For the source-only browser experiment, install WebKitGTK 6 development files
+and opt in:
+
+```bash
+cargo run -p forktty-ui-gtk --features browser
 ```
 
 Build the Debian package locally:
@@ -210,8 +218,9 @@ forktty capabilities
 forktty events
 ```
 
-Source builds with the `browser` feature also expose browser-pane
-automation over the same socket:
+Source-only builds with the `browser` feature expose experimental browser-pane
+automation over the same socket. This is intentionally not included in the
+prebuilt AppImage or `.deb` for alpha.6:
 
 ```bash
 forktty browser open --profile Default https://example.com
@@ -300,11 +309,11 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded VTE terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, event-stream, capabilities, and browser automation.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, event-stream, and capabilities.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
-- Experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
+- Source-only experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
 ## Configuration
@@ -358,7 +367,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
 - Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.
-- ForkTTY makes no telemetry, update-check, or product network calls. Optional browser panes only load URLs the user or local socket automation opens.
+- ForkTTY makes no telemetry, update-check, or product network calls. The shipped AppImage and `.deb` do not embed a browser runtime.
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
@@ -371,7 +380,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
 - Full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
-- Browser panes are included in full source and packaged builds; use `--features gtk-vte` only for a terminal-only development build.
+- Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
 
 ## Troubleshooting
 
@@ -395,9 +404,10 @@ Useful commands:
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace --features browser
-cargo clippy --workspace --features browser -- -D warnings
-cargo build -p forktty-ui-gtk --features browser
+cargo test --workspace --no-default-features --features gtk-vte
+cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
+cargo test -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh

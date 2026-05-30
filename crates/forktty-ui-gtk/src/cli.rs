@@ -84,6 +84,11 @@ fn is_socket_cli_global_option(option: &str) -> bool {
 }
 
 fn is_socket_cli_command(command: &str) -> bool {
+    #[cfg(feature = "browser")]
+    if command == "browser" {
+        return true;
+    }
+
     matches!(
         command,
         "list"
@@ -141,7 +146,6 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "ping"
             | "capabilities"
             | "events"
-            | "browser"
             | "ssh"
     )
 }
@@ -1011,6 +1015,7 @@ mod tests {
                 OsString::from("--no-replay")
             ])
         );
+        #[cfg(feature = "browser")]
         assert_eq!(
             parse::<_, &str>(["forktty", "browser", "open", "https://example.com"]),
             CliAction::SocketCli(vec![
@@ -1018,6 +1023,11 @@ mod tests {
                 OsString::from("open"),
                 OsString::from("https://example.com")
             ])
+        );
+        #[cfg(not(feature = "browser"))]
+        assert_eq!(
+            parse::<_, &str>(["forktty", "browser", "open", "https://example.com"]),
+            CliAction::Unknown("browser".to_string())
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "ssh", "user@example.com"]),
@@ -1030,7 +1040,10 @@ mod tests {
 
     #[test]
     fn browser_is_recognized_as_socket_cli_command() {
+        #[cfg(feature = "browser")]
         assert!(is_socket_cli_command("browser"));
+        #[cfg(not(feature = "browser"))]
+        assert!(!is_socket_cli_command("browser"));
         assert!(is_socket_cli_command("capabilities"));
         assert!(is_socket_cli_command("events"));
         assert!(is_socket_cli_command("ssh"));

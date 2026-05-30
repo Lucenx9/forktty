@@ -14,7 +14,7 @@ name = "forktty"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["gtk-vte"]
 gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/vte"]
 browser = ["gtk-vte", "dep:webkit6", "dep:async-channel"]
 

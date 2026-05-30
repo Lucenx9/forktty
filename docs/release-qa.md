@@ -8,9 +8,10 @@ package regressions that unit tests cannot see.
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace --features browser
-cargo clippy --workspace --features browser -- -D warnings
-cargo build -p forktty-ui-gtk --features browser
+cargo test --workspace --no-default-features --features gtk-vte
+cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
+cargo test -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
@@ -38,15 +39,16 @@ or CLI parser tests), so they should be treated as regressions if they fail in C
   tests)
 
 Manual QA below should focus on runtime integration that headless tests cannot
-fully prove (GTK/VTE/WebKit lifecycle, desktop environment integration, and
-packaging/runtime service availability).
+fully prove (GTK/VTE lifecycle, desktop environment integration, and
+packaging/runtime service availability). Browser panes are source-only and
+experimental in this alpha; they have a separate opt-in smoke section.
 
 ## Manual Runtime Smoke
 
 - Start from a clean config/session directory.
-- Launch with `cargo run -p forktty-ui-gtk --features browser`.
+- Launch with `cargo run -p forktty-ui-gtk --no-default-features --features gtk-vte`.
 - Confirm the app opens a usable terminal in the current directory.
-- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --features browser`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
+- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --no-default-features --features gtk-vte`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
 - Split right and split down until at least three panes exist.
 - Move focus between panes with keyboard shortcuts and pointer clicks.
 - Copy and paste with `Ctrl+Shift+C` / `Ctrl+Shift+V`.
@@ -78,7 +80,7 @@ Run these after starting the GTK app so the daemon is listening on the
 default socket. Useful for catching protocol regressions without
 rebuilding.
 
-- Before starting the app, run `forktty ping` and confirm the error names the socket path and suggests `cargo run -p forktty-ui-gtk --features browser`, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
+- Before starting the app, run `forktty ping` and confirm the error names the socket path and suggests launching ForkTTY, an absolute `FORKTTY_SOCKET_PATH`, or `--socket <path>`.
 - Launch with `FORKTTY_SOCKET_PATH=" "` and confirm the app still binds the default socket path instead of disabling automation.
 - Launch with `FORKTTY_SOCKET_PATH=relative.sock` and confirm both the app and
   `forktty ping` ignore the relative env value and use the default socket path.
@@ -157,7 +159,10 @@ rebuilding.
 - `printf '{"id":"x","method":"metadata.set_status","params":{"workspace_id":"workspace-missing","key":"agent:test","label":"Test","value":"Running"}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"not_found"`.
 - `python3 -c 'import json,sys; sys.stdout.write(json.dumps({"id":"x","method":"surface.send_text","params":{"surface_id":"main:1","text":"x"*300000}})+"\n")' | nc -U "$XDG_RUNTIME_DIR/forktty.sock"` — response includes `"code":"payload_too_large"` (the 256 KiB `surface.send_text` cap).
 
-## Browser Pane Smoke
+## Source-Only Browser Pane Smoke
+
+This is not part of release artifact QA. Run it only when intentionally
+checking that the opt-in browser feature still builds and starts.
 
 - Launch with `cargo run -p forktty-ui-gtk --features browser`.
 - `forktty browser profile list` — returns the built-in Default profile.

@@ -114,7 +114,7 @@ fn is_appimage_runtime_env(key: &str) -> bool {
 fn appimage_runtime_dirs() -> Vec<String> {
     let mut dirs = ["APPDIR", "FORKTTY_APPIMAGE_DIR"]
         .iter()
-        .filter_map(|key| std::env::var_os(key))
+        .filter_map(std::env::var_os)
         .filter_map(|value| value.into_string().ok())
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();

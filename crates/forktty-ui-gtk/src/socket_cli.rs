@@ -68,6 +68,12 @@ Usage:
   forktty ping
   forktty capabilities [--json]
   forktty events [--no-replay]
+  forktty ssh <user@host>                          Open a new workspace running ssh <user@host>
+  forktty ssh <user@host> [--name <name>] [--cwd <path>]
+";
+
+#[cfg(feature = "browser")]
+const BROWSER_HELP_TEXT: &str = "\
   forktty browser open [--workspace-id <id>] [--axis horizontal|vertical] [--profile <id|name>] <url>
   forktty browser navigate [<surface-id>] <url>
   forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
@@ -89,9 +95,13 @@ Usage:
   forktty browser import discover
   forktty browser import preview [--all] [--history true|false] [--bookmarks true|false] [--cookies true|false] <source-id>...
   forktty browser import run [--all] [--profile <id|name>|--new-profile <name>|--separate-profiles] [--history true|false] [--bookmarks true|false] [--cookies true|false] <source-id>...
-  forktty ssh <user@host>                          Open a new workspace running ssh <user@host>
-  forktty ssh <user@host> [--name <name>] [--cwd <path>]
 ";
+
+fn print_help() {
+    print!("{HELP_TEXT}");
+    #[cfg(feature = "browser")]
+    print!("{BROWSER_HELP_TEXT}");
+}
 
 #[derive(Debug)]
 struct CliError {
@@ -575,7 +585,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
     let parsed = parse_global_args(argv)?;
     let mut args = parsed.args;
     if parsed.help || args.is_empty() {
-        print!("{HELP_TEXT}");
+        print_help();
         return Ok(());
     }
     let command = args.remove(0);
@@ -627,10 +637,15 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "ping" => handle_ping(&context, args),
         "capabilities" => handle_capabilities(&context, args),
         "events" => handle_events(&context, args),
+        #[cfg(feature = "browser")]
         "browser" => handle_browser(&context, args),
+        #[cfg(not(feature = "browser"))]
+        "browser" => Err(CliError::new(
+            "browser commands require building ForkTTY from source with --features browser",
+        )),
         "ssh" => handle_ssh(&context, args),
         "help" => {
-            print!("{HELP_TEXT}");
+            print_help();
             Ok(())
         }
         other => Err(CliError::new(format!("Unknown command: {other}"))),
@@ -807,6 +822,7 @@ fn non_blank_string_option<'a>(
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn required_non_blank_arg<'a>(arg: Option<&'a String>, message: &str) -> CliResult<&'a str> {
     let value = arg.ok_or_else(|| CliError::new(message))?;
     if value.trim().is_empty() {
@@ -815,10 +831,12 @@ fn required_non_blank_arg<'a>(arg: Option<&'a String>, message: &str) -> CliResu
     Ok(value)
 }
 
+#[cfg(any(feature = "browser", test))]
 fn required_trimmed_arg(arg: Option<&String>, message: &str) -> CliResult<String> {
     Ok(required_non_blank_arg(arg, message)?.trim().to_string())
 }
 
+#[cfg(any(feature = "browser", test))]
 fn parse_u64_option(
     options: &BTreeMap<String, FlagValue>,
     key: &str,
@@ -833,6 +851,7 @@ fn parse_u64_option(
         .map_err(|_| CliError::new(format!("{option_name} must be a number")))
 }
 
+#[cfg(any(feature = "browser", test))]
 fn insert_optional_trimmed_string_param(
     params: &mut Map<String, Value>,
     options: &BTreeMap<String, FlagValue>,
@@ -1777,6 +1796,7 @@ fn surface_id_from_workspace_list(workspaces: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(any(feature = "browser", test))]
 fn resolve_active_workspace_id(context: &CliContext) -> CliResult<String> {
     let workspaces = send_socket_request(&context.socket_path, "workspace.list", json!({}))?;
     active_workspace_id_from_list(&workspaces).ok_or_else(|| {
@@ -1784,6 +1804,7 @@ fn resolve_active_workspace_id(context: &CliContext) -> CliResult<String> {
     })
 }
 
+#[cfg(any(feature = "browser", test))]
 fn active_workspace_id_from_list(workspaces: &Value) -> Option<String> {
     let items = workspaces.as_array()?;
     let active = items
@@ -1793,6 +1814,7 @@ fn active_workspace_id_from_list(workspaces: &Value) -> Option<String> {
     string_field(active, "id").map(str::to_string)
 }
 
+#[cfg(any(feature = "browser", test))]
 fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let mut iter = args.into_iter();
     let sub = iter.next().unwrap_or_default();
@@ -1838,6 +1860,7 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(
@@ -1887,6 +1910,7 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser navigate")?;
@@ -1924,6 +1948,7 @@ fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_click(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser click")?;
@@ -1947,6 +1972,7 @@ fn browser_click(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     print_result_or_json(context, "Clicked", result)
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser fill")?;
@@ -1975,6 +2001,7 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     print_result_or_json(context, "Filled", result)
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(&parsed.options, &[], "browser eval")?;
@@ -1999,6 +2026,7 @@ fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     print_result_or_json(context, "Evaluated", result)
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_surface_cmd(
     context: &CliContext,
     args: Vec<String>,
@@ -2029,6 +2057,7 @@ fn browser_surface_cmd(
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let mut iter = args.into_iter();
     let sub = iter.next().unwrap_or_default();
@@ -2091,6 +2120,7 @@ fn browser_profile(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let mut iter = args.into_iter();
     let sub = iter.next().unwrap_or_default();
@@ -2186,6 +2216,7 @@ fn browser_history(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let mut iter = args.into_iter();
     let sub = iter.next().unwrap_or_default();
@@ -2284,6 +2315,7 @@ fn browser_bookmark(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_import(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let mut iter = args.into_iter();
     let sub = iter.next().unwrap_or_default();
@@ -2361,6 +2393,7 @@ fn browser_import(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_import_params_from_args(parsed: &ParsedFlags, command: &str) -> CliResult<Value> {
     let all = browser_import_bool_option(&parsed.options, "all", "--all")?.unwrap_or(false);
     if all && !parsed.positionals.is_empty() {
@@ -2403,6 +2436,7 @@ fn browser_import_params_from_args(parsed: &ParsedFlags, command: &str) -> CliRe
     Ok(Value::Object(params))
 }
 
+#[cfg(any(feature = "browser", test))]
 fn browser_import_bool_option(
     options: &BTreeMap<String, FlagValue>,
     key: &str,
@@ -5523,6 +5557,20 @@ mod tests {
                     "--socket requires an absolute path",
                 );
             },
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "browser"))]
+    fn browser_command_is_disabled_after_global_options_without_feature() {
+        assert_err_contains(
+            run_inner(os_strings(&[
+                "--json",
+                "browser",
+                "open",
+                "https://example.com",
+            ])),
+            "--features browser",
         );
     }
 

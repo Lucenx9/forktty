@@ -33,7 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            libwebkitgtk-6.0-dev appstream
+            appstream
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -52,13 +52,13 @@ jobs:
         run: cargo run -p xtask -- check
 
       - name: Rust tests
-        run: cargo test --workspace --features browser
+        run: cargo test --workspace --no-default-features --features gtk-vte
 
       - name: Rust clippy
-        run: cargo clippy --workspace --features browser -- -D warnings
+        run: cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings
 
-      - name: Full GTK/browser build
-        run: cargo build -p forktty-ui-gtk --features browser
+      - name: GTK/VTE build
+        run: cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
 
       - name: Validate desktop entry
         run: desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
@@ -68,6 +68,39 @@ jobs:
 
       - name: cargo audit
         run: cargo install cargo-audit --locked && cargo audit
+
+  browser-feature:
+    name: Browser Feature Check
+    runs-on: ubuntu-latest
+    if: github.event_name != 'release'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install browser build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev \
+            libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
+            libwebkitgtk-6.0-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: .
+
+      - name: Browser feature tests
+        run: cargo test -p forktty-ui-gtk --features browser
+
+      - name: Browser feature clippy
+        run: cargo clippy -p forktty-ui-gtk --features browser -- -D warnings
+
+      - name: Browser feature build
+        run: cargo build -p forktty-ui-gtk --features browser
 
   dependency-review:
     name: Dependency review
@@ -96,7 +129,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev \
-            libwebkitgtk-6.0-dev appstream curl
+            appstream curl
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable

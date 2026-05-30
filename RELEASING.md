@@ -14,9 +14,10 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
 2. Run the full QA checklist locally on at least one supported distro
    (see [`docs/QA.md`](docs/QA.md)):
    - `cargo fmt --all --check`
-   - `cargo clippy --workspace --features browser -- -D warnings`
-   - `cargo test --workspace --features browser`
-   - `cargo build -p forktty-ui-gtk --features browser`
+   - `cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings`
+   - `cargo test --workspace --no-default-features --features gtk-vte`
+   - `cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte`
+   - `cargo test -p forktty-ui-gtk --features browser`
    - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
    - `bash scripts/build-appimage.sh`
@@ -35,9 +36,10 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
      `## [<version>] - <YYYY-MM-DD>` section.
    - Leave an empty `## [Unreleased]` heading above it.
 4. Update the README download badge / link if it tracks the prerelease.
-   The packaged artifacts are built with `--features browser` (see
-   `scripts/build-deb.sh` and `scripts/build-appimage.sh`), so browser-pane
-   changes ship in the `.deb` and AppImage, not only in source builds.
+   The packaged artifacts are built with `--no-default-features --features gtk-vte`
+   (see `scripts/build-deb.sh` and `scripts/build-appimage.sh`). The browser
+   feature remains source-only and must stay covered by CI, but it is not shipped
+   in the `.deb` or AppImage for alpha releases.
 5. Commit:
    ```
    git commit -am "release: forktty 0.2.0-alpha.N"
