@@ -71,11 +71,35 @@ Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://github.com/Lucenx9/forktty
-Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libvte-2.91-gtk4-0 (>= 0.76), libwebkitgtk-6.0-4, libssl3, libssh2-1, zlib1g, libzstd1
+Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libvte-2.91-gtk4-0 (>= 0.76), libwebkitgtk-6.0-4, libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
 Description: Linux-native multi-agent terminal
  ForkTTY is a Linux-native GTK4/libadwaita/VTE terminal for multi-agent
  workflows, programmable socket automation, and git worktree isolation.
 CONTROL
+
+cat > "$PKG_ROOT/DEBIAN/postinst" <<'SCRIPT'
+#!/bin/sh
+set -e
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+exit 0
+SCRIPT
+
+cat > "$PKG_ROOT/DEBIAN/postrm" <<'SCRIPT'
+#!/bin/sh
+set -e
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+exit 0
+SCRIPT
+
+chmod 755 "$PKG_ROOT/DEBIAN/postinst" "$PKG_ROOT/DEBIAN/postrm"
 
 dpkg-deb --build --root-owner-group "$PKG_ROOT" "$DEB_PATH"
 dpkg-deb --info "$DEB_PATH" >/dev/null
