@@ -5043,29 +5043,40 @@ fn extract_hook_tool_name(payload: &Value) -> Option<String> {
 }
 
 fn extract_hook_tool_error(payload: &Value) -> bool {
-    let mut queue = VecDeque::from([payload]);
-    while let Some(current) = queue.pop_front() {
-        let Some(object) = current.as_object() else {
-            continue;
-        };
-        for key in ["is_error", "isError", "error"] {
-            match object.get(key) {
-                Some(Value::Bool(true)) => return true,
-                Some(Value::String(value)) if !value.trim().is_empty() => return true,
-                Some(Value::Object(value))
-                    if value.contains_key("message")
-                        || value.contains_key("type")
-                        || value.contains_key("code") =>
-                {
-                    return true
-                }
-                _ => {}
+    // Inspect only the documented error container — the tool result object
+    // (`tool_response`) and, as a fallback, the payload root — one level deep.
+    //
+    // A previous version walked the *entire* payload recursively and flagged an
+    // error on any `error`/`is_error`/`isError` key anywhere inside it. Codex
+    // PostToolUse payloads carry rich, nested tool output (e.g. MCP
+    // `structuredContent`, JSON-emitting commands) that legitimately contains
+    // nested `error` keys even on success, so the recursive scan produced
+    // spurious "error" log lines and notifications on routine Codex use. Both
+    // the Claude (`tool_response.is_error`) and MCP (`tool_response.isError`)
+    // contracts expose the flag at the top of the response, so a single-level
+    // check is sufficient and far less noisy.
+    [payload.get("tool_response"), Some(payload)]
+        .into_iter()
+        .flatten()
+        .any(object_signals_tool_error)
+}
+
+fn object_signals_tool_error(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    for key in ["is_error", "isError", "error"] {
+        match object.get(key) {
+            Some(Value::Bool(true)) => return true,
+            Some(Value::String(value)) if !value.trim().is_empty() => return true,
+            Some(Value::Object(value))
+                if value.contains_key("message")
+                    || value.contains_key("type")
+                    || value.contains_key("code") =>
+            {
+                return true
             }
-        }
-        for value in object.values() {
-            if value.is_object() {
-                queue.push_back(value);
-            }
+            _ => {}
         }
     }
     false
@@ -5968,14 +5979,33 @@ mod tests {
         assert_eq!(tool.chars().count(), HOOK_TOOL_LABEL_MAX);
         assert!(tool.ends_with("..."));
 
-        assert!(extract_hook_tool_error(
-            &json!({ "result": { "error": { "message": "bad" } } })
-        ));
+        // Documented top-level signals inside the tool result are detected.
         assert!(extract_hook_tool_error(
             &json!({ "tool_response": { "is_error": true } })
         ));
+        assert!(extract_hook_tool_error(
+            &json!({ "tool_response": { "isError": true } })
+        ));
+        assert!(extract_hook_tool_error(
+            &json!({ "tool_response": { "error": { "message": "bad" } } })
+        ));
         assert!(!extract_hook_tool_error(
             &json!({ "tool_response": { "is_error": false } })
+        ));
+        // Regression: Codex PostToolUse payloads carry nested tool output that
+        // can legitimately contain `error` keys on success. A non-error result
+        // with a deeply nested `error` object must NOT be flagged (previously a
+        // recursive scan produced spurious sidebar errors on routine use).
+        assert!(!extract_hook_tool_error(&json!({
+            "tool_name": "my_mcp_tool",
+            "tool_response": {
+                "isError": false,
+                "structuredContent": { "result": { "error": { "code": "NONE", "message": "no error" } } }
+            }
+        })));
+        // A deeply nested error outside the tool result is likewise ignored.
+        assert!(!extract_hook_tool_error(
+            &json!({ "result": { "error": { "message": "bad" } } })
         ));
 
         let actions = build_hook_actions(
