@@ -11,6 +11,37 @@ DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.desktop"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.metainfo.xml"
 
+referenced_forktty_symbolic_icons() {
+  grep -Roh '"forktty-[A-Za-z0-9_-]*-symbolic"' "$ROOT_DIR/crates/forktty-ui-gtk/src" |
+    tr -d '"' |
+    sort -u
+}
+
+verify_forktty_icon_assets() {
+  local root="$1"
+  local missing=0
+  local icon
+  local icon_path
+
+  if [[ ! -f "$root/usr/share/icons/hicolor/128x128/apps/forktty.png" ]]; then
+    echo "Missing packaged app icon: forktty.png" >&2
+    missing=1
+  fi
+
+  while IFS= read -r icon; do
+    [[ -n "$icon" ]] || continue
+    icon_path="$root/usr/share/icons/hicolor/scalable/actions/$icon.svg"
+    if [[ ! -f "$icon_path" ]]; then
+      echo "Missing packaged symbolic icon: $icon_path" >&2
+      missing=1
+    fi
+  done < <(referenced_forktty_symbolic_icons)
+
+  if [[ "$missing" -ne 0 ]]; then
+    exit 1
+  fi
+}
+
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
   exit 1
@@ -59,6 +90,7 @@ if [[ -d "$ROOT_DIR/packaging/linux/icons/hicolor" ]]; then
   cp -a "$ROOT_DIR/packaging/linux/icons/hicolor/." "$PKG_ROOT/usr/share/icons/hicolor/"
 fi
 install -Dm644 "$APPSTREAM_FILE" "$PKG_ROOT/usr/share/metainfo/$DESKTOP_ID.metainfo.xml"
+verify_forktty_icon_assets "$PKG_ROOT"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
 INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"

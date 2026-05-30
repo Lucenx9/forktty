@@ -117,6 +117,36 @@ copy_forktty_icon_assets() {
   fi
 }
 
+referenced_forktty_symbolic_icons() {
+  grep -Roh '"forktty-[A-Za-z0-9_-]*-symbolic"' "$ROOT_DIR/crates/forktty-ui-gtk/src" |
+    tr -d '"' |
+    sort -u
+}
+
+verify_forktty_icon_assets() {
+  local missing=0
+  local icon
+  local icon_path
+
+  if [[ ! -f "$APPDIR/usr/share/icons/hicolor/128x128/apps/forktty.png" ]]; then
+    echo "Missing packaged app icon: forktty.png" >&2
+    missing=1
+  fi
+
+  while IFS= read -r icon; do
+    [[ -n "$icon" ]] || continue
+    icon_path="$APPDIR/usr/share/icons/hicolor/scalable/actions/$icon.svg"
+    if [[ ! -f "$icon_path" ]]; then
+      echo "Missing packaged symbolic icon: $icon_path" >&2
+      missing=1
+    fi
+  done < <(referenced_forktty_symbolic_icons)
+
+  if [[ "$missing" -ne 0 ]]; then
+    exit 1
+  fi
+}
+
 write_appimage_hicolor_index_theme() {
   local index_file="$APPDIR/usr/share/icons/hicolor/index.theme"
 
@@ -228,6 +258,7 @@ install -Dm644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/$APPIMAGE_DESKTOP
 install -Dm644 "$ICON_FILE" "$APPDIR/usr/share/icons/hicolor/128x128/apps/forktty.png"
 install -Dm644 "$APPSTREAM_FILE" "$APPDIR/usr/share/metainfo/$APPIMAGE_DESKTOP_ID.appdata.xml"
 copy_forktty_icon_assets
+verify_forktty_icon_assets
 write_appimage_hicolor_index_theme
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 
