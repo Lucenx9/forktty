@@ -17,7 +17,7 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
    - `cargo clippy --workspace --features gtk-vte -- -D warnings`
    - `cargo test --workspace`
    - `cargo build -p forktty-ui-gtk --features gtk-vte`
-   - `desktop-file-validate packaging/linux/forktty.desktop`
+   - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
    - `bash scripts/build-appimage.sh`
    - If the release includes browser-pane changes, also run

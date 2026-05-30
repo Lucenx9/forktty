@@ -142,6 +142,7 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "capabilities"
             | "events"
             | "browser"
+            | "ssh"
     )
 }
 
@@ -1018,6 +1019,13 @@ mod tests {
                 OsString::from("https://example.com")
             ])
         );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "ssh", "user@example.com"]),
+            CliAction::SocketCli(vec![
+                OsString::from("ssh"),
+                OsString::from("user@example.com")
+            ])
+        );
     }
 
     #[test]
@@ -1025,6 +1033,7 @@ mod tests {
         assert!(is_socket_cli_command("browser"));
         assert!(is_socket_cli_command("capabilities"));
         assert!(is_socket_cli_command("events"));
+        assert!(is_socket_cli_command("ssh"));
         assert!(!is_socket_cli_command("explode"));
     }
 
