@@ -61,7 +61,7 @@ jobs:
         run: cargo build -p forktty-ui-gtk --features browser
 
       - name: Validate desktop entry
-        run: desktop-file-validate packaging/linux/forktty.desktop
+        run: desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 
       - name: Debian package
         run: bash scripts/build-deb.sh
