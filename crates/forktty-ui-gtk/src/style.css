@@ -840,7 +840,7 @@ popover.ft-context-menu contents {
 }
 
 .terminal-pane.active {
-  border-color: alpha(var(--ft-accent), 0.62);
+  border-color: alpha(var(--ft-accent), 0.70);
   box-shadow: inset 0 0 0 1px alpha(var(--ft-accent), 0.18);
 }
 
@@ -1178,7 +1178,7 @@ button.flat.pane-tab-close:active {
 }
 
 .browser-pane.active {
-  border-color: alpha(var(--ft-accent), 0.62);
+  border-color: alpha(var(--ft-accent), 0.70);
   box-shadow: inset 0 0 0 1px alpha(var(--ft-accent), 0.18);
 }
 
