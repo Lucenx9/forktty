@@ -12,7 +12,8 @@
     </p>
   </description>
   <launchable type="desktop-id">dev.forktty.forktty.desktop</launchable>
-  <url type="homepage">https://github.com/Lucenx9/forktty</url>
+  <url type="homepage">https://forktty-site.vercel.app/</url>
+  <url type="vcs-browser">https://github.com/Lucenx9/forktty</url>
   <developer id="dev.forktty">
     <name>Lucenx9</name>
   </developer>
