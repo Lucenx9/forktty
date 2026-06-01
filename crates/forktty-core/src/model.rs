@@ -1389,7 +1389,7 @@ impl WorkspaceModel {
 
     fn next_workspace_id(&mut self) -> WorkspaceId {
         loop {
-            self.next_workspace += 1;
+            self.next_workspace = self.next_workspace.checked_add(1).unwrap_or(1);
             let candidate = format!("workspace-{}", self.next_workspace);
             if !self.workspaces.contains_key(&candidate) {
                 return candidate;
@@ -1399,7 +1399,7 @@ impl WorkspaceModel {
 
     fn next_surface_id(&mut self) -> SurfaceId {
         loop {
-            self.next_surface += 1;
+            self.next_surface = self.next_surface.checked_add(1).unwrap_or(1);
             let candidate = format!("surface-{}", self.next_surface);
             if !self.surfaces.contains_key(&candidate) {
                 return candidate;
@@ -3402,6 +3402,39 @@ mod tests {
             .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
             .unwrap();
         assert_ne!(new_surface.id, blocker_id);
+    }
+
+    #[test]
+    fn next_ids_wrap_after_restored_max_numeric_suffixes() {
+        let max = u64::MAX;
+        let workspace_id = format!("workspace-{max}");
+        let surface_id = format!("surface-{max}");
+        let mut model = WorkspaceModel::new();
+        model.restore_session(SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: vec![Workspace {
+                id: workspace_id,
+                name: String::from("max ids"),
+                active: true,
+                working_dir: PathBuf::from("/tmp"),
+                git_branch: String::new(),
+                worktree_dir: None,
+                worktree_name: None,
+                pane_tree: PaneNode::single_leaf(surface_id.clone()),
+                focused_surface_id: surface_id.clone(),
+                needs_attention: false,
+                listening_ports: Vec::new(),
+                pr: None,
+            }],
+            active_workspace_id: None,
+            surfaces: Vec::new(),
+        });
+
+        let tab = model.add_tab(&surface_id).unwrap();
+        assert_eq!(tab.id, "surface-1");
+
+        let workspace = model.create_workspace("fresh", "/tmp/fresh");
+        assert_eq!(workspace.id, "workspace-1");
     }
 
     #[test]
