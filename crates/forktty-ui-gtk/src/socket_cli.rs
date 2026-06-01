@@ -4907,6 +4907,14 @@ struct TokenUsage {
     cache_creation: u64,
 }
 
+impl TokenUsage {
+    fn input_total(self) -> u64 {
+        self.input
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_creation)
+    }
+}
+
 fn gather_hook_enrichments(
     _context: &CliContext,
     spec: &AgentSpec,
@@ -4934,7 +4942,7 @@ fn build_token_progress_action(
     order: &str,
 ) -> Option<Value> {
     let usage = enrichments.token_usage?;
-    let total = usage.input + usage.cache_read + usage.cache_creation;
+    let total = usage.input_total();
     if total == 0 {
         return None;
     }
@@ -5249,7 +5257,7 @@ fn resolve_token_ceiling() -> u64 {
 }
 
 fn format_token_usage_block(usage: TokenUsage) -> String {
-    let total = usage.input + usage.cache_read + usage.cache_creation;
+    let total = usage.input_total();
     let ceiling = resolve_token_ceiling();
     let pct = if ceiling > 0 {
         ((total as f64 / ceiling as f64) * 100.0).round().min(100.0) as u64
@@ -6134,6 +6142,30 @@ mod tests {
         assert_eq!(progress["value"], 350);
         assert_eq!(progress["total"], 12345);
         assert_eq!(progress["hook_event_order"], "77");
+    }
+
+    #[test]
+    fn token_usage_totals_saturate_on_extreme_transcript_values() {
+        let usage = TokenUsage {
+            input: u64::MAX,
+            cache_read: 1,
+            cache_creation: 1,
+            output: 0,
+        };
+
+        let block = format_token_usage_block(usage);
+        assert!(block.contains("18,446,744,073,709,551,615 / 200,000 input tokens"));
+
+        let progress = build_token_progress_action(
+            agent_spec("claude").unwrap(),
+            &HookEnrichments {
+                token_usage: Some(usage),
+            },
+            "prompt-submit",
+            "88",
+        )
+        .unwrap();
+        assert_eq!(progress["value"], json!(u64::MAX));
     }
 
     #[test]
