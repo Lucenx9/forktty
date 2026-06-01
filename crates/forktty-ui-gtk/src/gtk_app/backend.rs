@@ -46,7 +46,7 @@ impl TerminalBackend for GtkVteBackend {
             .surfaces
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
-        surfaces.insert(
+        let previous = surfaces.insert(
             request.surface_id.clone(),
             TerminalSurfaceState {
                 surface_id: request.surface_id.clone(),
@@ -58,16 +58,33 @@ impl TerminalBackend for GtkVteBackend {
             },
         );
         drop(surfaces);
-        self.ready_surfaces
-            .lock()
-            .map_err(|_| TerminalError::LockPoisoned)?
-            .remove(&surface_id);
+        let was_ready = match self.ready_surfaces.lock() {
+            Ok(mut ready_surfaces) => ready_surfaces.remove(&surface_id),
+            Err(_) => {
+                if let Ok(mut surfaces) = self.surfaces.lock() {
+                    if let Some(previous) = previous {
+                        surfaces.insert(surface_id, previous);
+                    } else {
+                        surfaces.remove(&surface_id);
+                    }
+                }
+                return Err(TerminalError::LockPoisoned);
+            }
+        };
         if let Err(err) = self.send_command(GtkTerminalCommand::Spawn(request)) {
             if let Ok(mut surfaces) = self.surfaces.lock() {
-                surfaces.remove(&surface_id);
+                if let Some(previous) = previous {
+                    surfaces.insert(surface_id.clone(), previous);
+                } else {
+                    surfaces.remove(&surface_id);
+                }
             }
             if let Ok(mut ready_surfaces) = self.ready_surfaces.lock() {
-                ready_surfaces.remove(&surface_id);
+                if was_ready {
+                    ready_surfaces.insert(surface_id.clone());
+                } else {
+                    ready_surfaces.remove(&surface_id);
+                }
             }
             return Err(err);
         }

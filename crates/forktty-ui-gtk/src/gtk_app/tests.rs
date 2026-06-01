@@ -162,6 +162,33 @@ fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
 }
 
 #[test]
+fn gtk_backend_restores_existing_surface_when_duplicate_spawn_send_fails() {
+    let (tx, rx) = mpsc::channel();
+    let backend = GtkVteBackend::new(tx);
+    backend.spawn(test_spawn_request()).unwrap();
+    backend.mark_surface_ready("surface-1").unwrap();
+    drop(rx);
+
+    let mut duplicate = test_spawn_request();
+    duplicate.shell = "/bin/zsh".to_string();
+    duplicate.cwd = PathBuf::from("/tmp/changed");
+
+    let err = backend.spawn(duplicate).unwrap_err();
+
+    assert!(matches!(err, TerminalError::Backend(_)));
+    let mut surfaces = backend.surfaces().unwrap();
+    assert_eq!(surfaces.len(), 1);
+    let surface = surfaces.remove(0);
+    assert_eq!(surface.surface_id, "surface-1");
+    assert_eq!(surface.shell, "/bin/sh");
+    assert_eq!(surface.cwd, PathBuf::from("/tmp"));
+    let err = backend
+        .send_text("surface-1", "echo still-ready\n")
+        .unwrap_err();
+    assert!(matches!(err, TerminalError::Backend(_)));
+}
+
+#[test]
 fn gtk_backend_rolls_back_resize_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
     let backend = GtkVteBackend::new(tx);
