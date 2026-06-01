@@ -443,7 +443,7 @@ impl VteController {
                     .collect::<BTreeSet<_>>()
             })
             .unwrap_or_default();
-        let surfaces = {
+        let (surfaces, model_surface_ids) = {
             let Ok(model) = self.model.lock() else {
                 return;
             };
@@ -451,15 +451,38 @@ impl VteController {
                 return;
             };
             let statuses = model.list_status(&workspace.id);
-            model
+            let surfaces = model
                 .list_surfaces(Some(&workspace.id))
                 .into_iter()
                 .map(|surface| {
                     let blocked = surface_status_blocks_auto_spawn(&statuses, &surface.id);
                     (surface, blocked)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            // Reconcile against every workspace's surfaces, not just the active
+            // one, so a terminal backgrounded in another workspace is never
+            // mistaken for an orphan.
+            let model_surface_ids = model
+                .list_surfaces(None)
+                .into_iter()
+                .map(|surface| surface.id)
+                .collect::<BTreeSet<_>>();
+            (surfaces, model_surface_ids)
         };
+        // A surface restarted or closed on the GTK thread while a socket client
+        // concurrently removed it from the model can leave a backend terminal
+        // (PTY + widget) with no model counterpart. Tear those orphans down;
+        // the queued Close event drops the widget on the next rebuild.
+        for surface_id in
+            orphaned_backend_surfaces(&backend_surface_ids, &model_surface_ids, &self.pending_spawns)
+        {
+            match state.terminal.close(&surface_id) {
+                Ok(()) | Err(TerminalError::NotFound(_)) => {}
+                Err(err) => {
+                    eprintln!("Failed to reap orphaned terminal surface {surface_id}: {err}");
+                }
+            }
+        }
         for (surface, auto_spawn_blocked) in surfaces {
             if auto_spawn_blocked {
                 continue;
@@ -954,6 +977,25 @@ impl VteController {
         update_pane_chrome(chrome, &surface, active);
         chrome.pane.clone().upcast()
     }
+}
+
+/// Backend terminal surfaces that no longer map to any model surface are orphans
+/// that must be torn down: this happens when a surface is restarted or closed on
+/// the GTK thread while a socket client concurrently removes the same surface
+/// from the model, so the GTK path re-spawns (or pre-spawns a replacement) into
+/// the backend after the model entry is gone, stranding a hidden PTY and widget.
+/// Surfaces with an in-flight spawn are excluded because their backend entry
+/// exists before the matching `Spawn` command commits the widget.
+pub(super) fn orphaned_backend_surfaces(
+    backend_ids: &BTreeSet<String>,
+    model_ids: &BTreeSet<String>,
+    pending: &BTreeSet<String>,
+) -> Vec<String> {
+    backend_ids
+        .iter()
+        .filter(|id| !model_ids.contains(*id) && !pending.contains(*id))
+        .cloned()
+        .collect()
 }
 
 fn tab_strip_refreshes(model: &WorkspaceModel, strip_tabs: &[Vec<String>]) -> Vec<TabStripRefresh> {

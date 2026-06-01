@@ -217,6 +217,29 @@ fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
 }
 
 #[test]
+fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
+    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
+    let backend = to_set(&["surface-1", "surface-2", "surface-3"]);
+    let model = to_set(&["surface-1"]);
+    // surface-3 has an in-flight spawn; its backend entry is committed before the
+    // model entry becomes observable, so it must not be reaped.
+    let pending = to_set(&["surface-3"]);
+
+    let orphans = orphaned_backend_surfaces(&backend, &model, &pending);
+
+    assert_eq!(orphans, vec!["surface-2".to_string()]);
+}
+
+#[test]
+fn orphaned_backend_surfaces_keeps_fully_modeled_backend() {
+    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
+    let backend = to_set(&["surface-1", "surface-2"]);
+    let model = to_set(&["surface-1", "surface-2", "surface-3"]);
+
+    assert!(orphaned_backend_surfaces(&backend, &model, &BTreeSet::new()).is_empty());
+}
+
+#[test]
 fn gtk_backend_rejects_send_text_after_surface_exits() {
     let (tx, _rx) = mpsc::channel();
     let backend = GtkVteBackend::new(tx);
