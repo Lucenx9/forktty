@@ -772,7 +772,7 @@ impl WorkspaceModel {
         right_leaves: &[SurfaceId],
         ratio: f64,
     ) -> bool {
-        if left_leaves.is_empty() || right_leaves.is_empty() {
+        if left_leaves.is_empty() || right_leaves.is_empty() || !ratio.is_finite() {
             return false;
         }
         let ratio = ratio.clamp(0.01, 0.99);
@@ -2551,6 +2551,26 @@ mod tests {
         assert!(sizes.iter().all(|size| size.is_finite() && *size > 0.0));
         assert!(sizes[0] < sizes[1]);
         // Validation requires every size to be strictly positive and finite.
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn update_split_partition_ratio_rejects_non_finite_input() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let second = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+
+        let left = vec![workspace.focused_surface_id.clone()];
+        let right = vec![second.id.clone()];
+        assert!(!model.update_split_partition_ratio(&workspace.id, &left, &right, f64::NAN));
+
+        let workspace = model.list_workspaces().remove(0);
+        let PaneNode::Split { sizes, .. } = workspace.pane_tree else {
+            panic!("expected split pane tree");
+        };
+        assert_eq!(sizes, vec![0.5, 0.5]);
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
