@@ -9,6 +9,7 @@ use crate::model::{ImportedBookmark, ImportedVisit};
 
 const MAX_CHROMIUM_BOOKMARKS_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHROMIUM_BOOKMARK_NODES: usize = 100_000;
+const MAX_FIREFOX_BOOKMARKS: usize = 100_000;
 
 fn open_ro(path: &Path) -> rusqlite::Result<Connection> {
     Connection::open_with_flags(
@@ -43,12 +44,16 @@ pub fn read_firefox_history(places: &Path) -> rusqlite::Result<Vec<ImportedVisit
 /// Bookmark title falls back to the place title. Only `http`/`https` URLs are returned.
 pub fn read_firefox_bookmarks(places: &Path) -> rusqlite::Result<Vec<ImportedBookmark>> {
     let conn = open_ro(places)?;
-    let mut stmt = conn.prepare(
+    // Use `MAX_FIREFOX_BOOKMARKS` limit to prevent memory/CPU stalls on oversized profiles.
+    let query = format!(
         "SELECT p.url, COALESCE(b.title, p.title, '') AS title
          FROM moz_bookmarks b
          JOIN moz_places p ON b.fk = p.id
-         WHERE b.type = 1 AND (p.url LIKE 'http://%' OR p.url LIKE 'https://%')",
-    )?;
+         WHERE b.type = 1 AND (p.url LIKE 'http://%' OR p.url LIKE 'https://%')
+         LIMIT {}",
+        MAX_FIREFOX_BOOKMARKS
+    );
+    let mut stmt = conn.prepare(&query)?;
     let rows = stmt
         .query_map([], |row| {
             Ok(ImportedBookmark {
