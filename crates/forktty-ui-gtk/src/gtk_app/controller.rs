@@ -473,9 +473,11 @@ impl VteController {
         // concurrently removed it from the model can leave a backend terminal
         // (PTY + widget) with no model counterpart. Tear those orphans down;
         // the queued Close event drops the widget on the next rebuild.
-        for surface_id in
-            orphaned_backend_surfaces(&backend_surface_ids, &model_surface_ids, &self.pending_spawns)
-        {
+        for surface_id in orphaned_backend_surfaces(
+            &backend_surface_ids,
+            &model_surface_ids,
+            &self.pending_spawns,
+        ) {
             match state.terminal.close(&surface_id) {
                 Ok(()) | Err(TerminalError::NotFound(_)) => {}
                 Err(err) => {
@@ -686,6 +688,91 @@ impl VteController {
         }
     }
 
+    fn build_tab_widget(
+        &self,
+        surface_id: &str,
+        title: &str,
+        is_active: bool,
+        is_last_tab: bool,
+    ) -> (gtk::Box, gtk::Label, gtk::Box) {
+        let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        tab.add_css_class("pane-tab");
+        tab.set_valign(gtk::Align::Center);
+        update_tab_tooltip(&tab, Some(title.to_string()));
+        if is_active {
+            tab.add_css_class("active");
+        }
+
+        let label = gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .max_width_chars(18)
+            .single_line_mode(true)
+            .build();
+        label.add_css_class("pane-tab-label");
+
+        let select = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        select.set_hexpand(true);
+        select.set_valign(gtk::Align::Center);
+        select.set_focusable(true);
+        select.add_css_class("pane-tab-select");
+        let grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
+        grip.add_css_class("pane-tab-grip");
+        grip.set_tooltip_text(Some("Drag Tab"));
+        select.append(&grip);
+        select.append(&label);
+        update_tab_tooltip(&select, Some(title.to_string()));
+        select.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Select tab {title}"
+        ))]);
+
+        let model_for_select = self.model.clone();
+        let select_id = surface_id.to_string();
+        let primary_click = gtk::GestureClick::new();
+        primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
+        primary_click.connect_released(move |_, _n_press, _x, _y| {
+            if let Ok(mut m) = model_for_select.lock() {
+                let _ = m.select_tab(&select_id);
+            }
+        });
+        select.add_controller(primary_click);
+
+        let close = gtk::Button::builder()
+            .icon_name("forktty-close-symbolic")
+            .has_frame(false)
+            .build();
+        close.add_css_class("flat");
+        close.add_css_class("pane-tab-close");
+        close.set_tooltip_text(Some("Close Tab"));
+        set_accessible_button_text(&close, "Close Tab", None);
+
+        let state_for_close = self.state.clone();
+        let parent_for_close = self.parent_window.clone();
+        let close_id = surface_id.to_string();
+        close.connect_clicked(move |_| {
+            if is_last_tab {
+                if let Some(state) = &state_for_close {
+                    show_close_pane_confirmation(&parent_for_close, state, &close_id);
+                }
+                return;
+            }
+            if let Some(state) = &state_for_close {
+                close_tab_surface(state, &close_id);
+            }
+        });
+
+        if let Some(state) = &self.state {
+            install_tab_context_menu(&tab, surface_id, state, &self.parent_window);
+        }
+
+        tab.append(&select);
+        tab.append(&close);
+        install_tab_drag_source(&tab, surface_id);
+
+        (tab, label, select)
+    }
+
     fn pane_widget_for(&self, surface_id: &str) -> gtk::Widget {
         let kind = self
             .model
@@ -733,81 +820,8 @@ impl VteController {
         let mut select_areas = Vec::with_capacity(tabs.len());
 
         for (idx, (surface_id, title)) in tabs.iter().zip(titles.iter()).enumerate() {
-            let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-            tab.add_css_class("pane-tab");
-            tab.set_valign(gtk::Align::Center);
-            update_tab_tooltip(&tab, Some(title.clone()));
-            if idx == active {
-                tab.add_css_class("active");
-            }
-
-            let label = gtk::Label::builder()
-                .label(title)
-                .xalign(0.0)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .max_width_chars(18)
-                .single_line_mode(true)
-                .build();
-            label.add_css_class("pane-tab-label");
-
-            let select = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-            select.set_hexpand(true);
-            select.set_valign(gtk::Align::Center);
-            select.set_focusable(true);
-            select.add_css_class("pane-tab-select");
-            let grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
-            grip.add_css_class("pane-tab-grip");
-            grip.set_tooltip_text(Some("Drag Tab"));
-            select.append(&grip);
-            select.append(&label);
-            update_tab_tooltip(&select, Some(title.clone()));
-            select.update_property(&[gtk::accessible::Property::Label(&format!(
-                "Select tab {title}"
-            ))]);
-
-            let model_for_select = self.model.clone();
-            let select_id = surface_id.clone();
-            let primary_click = gtk::GestureClick::new();
-            primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
-            primary_click.connect_released(move |_, _n_press, _x, _y| {
-                if let Ok(mut m) = model_for_select.lock() {
-                    let _ = m.select_tab(&select_id);
-                }
-            });
-            select.add_controller(primary_click);
-
-            let close = gtk::Button::builder()
-                .icon_name("forktty-close-symbolic")
-                .has_frame(false)
-                .build();
-            close.add_css_class("flat");
-            close.add_css_class("pane-tab-close");
-            close.set_tooltip_text(Some("Close Tab"));
-            set_accessible_button_text(&close, "Close Tab", None);
-
-            let state_for_close = self.state.clone();
-            let parent_for_close = self.parent_window.clone();
-            let close_id = surface_id.clone();
-            let is_last_tab = tabs.len() == 1;
-            close.connect_clicked(move |_| {
-                if is_last_tab {
-                    if let Some(state) = &state_for_close {
-                        show_close_pane_confirmation(&parent_for_close, state, &close_id);
-                    }
-                    return;
-                }
-                if let Some(state) = &state_for_close {
-                    close_tab_surface(state, &close_id);
-                }
-            });
-
-            if let Some(state) = &self.state {
-                install_tab_context_menu(&tab, surface_id, state, &self.parent_window);
-            }
-
-            tab.append(&select);
-            tab.append(&close);
-            install_tab_drag_source(&tab, surface_id);
+            let (tab, label, select) =
+                self.build_tab_widget(surface_id, title, idx == active, tabs.len() == 1);
             tabstrip.append(&tab);
             tab_widgets.push(tab);
             labels.push(label);
