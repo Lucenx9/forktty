@@ -625,7 +625,7 @@ mod tests {
             return; // Test environment does not provide a local data dir
         }
         let profile = ProfileId::default();
-        let path = history_path(profile.clone()).expect("expected Some path");
+        let path = history_path(profile).expect("expected Some path");
         assert!(path.ends_with("history.sqlite"));
 
         let path_str = path.to_string_lossy();
@@ -640,7 +640,7 @@ mod tests {
             return; // Test environment does not provide a local data dir
         }
         let profile = ProfileId::default();
-        let path = bookmarks_path(profile.clone()).expect("expected Some path");
+        let path = bookmarks_path(profile).expect("expected Some path");
         assert!(path.ends_with("bookmarks.json"));
 
         let path_str = path.to_string_lossy();
