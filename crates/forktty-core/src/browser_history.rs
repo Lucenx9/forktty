@@ -618,4 +618,34 @@ mod tests {
         };
         assert!(err.to_string().contains("exceeds limit"));
     }
+
+    #[test]
+    fn test_history_path() {
+        if dirs::data_local_dir().is_none() {
+            return; // Test environment does not provide a local data dir
+        }
+        let profile = ProfileId::default();
+        let path = history_path(profile.clone()).expect("expected Some path");
+        assert!(path.ends_with("history.sqlite"));
+
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("forktty"));
+        assert!(path_str.contains("browser_profiles"));
+        assert!(path_str.contains(&profile.to_string()));
+    }
+
+    #[test]
+    fn test_bookmarks_path() {
+        if dirs::data_local_dir().is_none() {
+            return; // Test environment does not provide a local data dir
+        }
+        let profile = ProfileId::default();
+        let path = bookmarks_path(profile.clone()).expect("expected Some path");
+        assert!(path.ends_with("bookmarks.json"));
+
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("forktty"));
+        assert!(path_str.contains("browser_profiles"));
+        assert!(path_str.contains(&profile.to_string()));
+    }
 }
