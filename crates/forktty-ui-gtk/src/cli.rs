@@ -1153,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_shell_resolution_does_not_quarantine_bad_config() {
+    fn doctor_shell_resolution_falls_back_to_env_for_bad_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "{ broken").unwrap();
@@ -1166,6 +1166,16 @@ mod tests {
         assert!(warning
             .as_deref()
             .is_some_and(|message| message.contains("could not be loaded")));
+    }
+
+    #[test]
+    fn doctor_shell_resolution_does_not_quarantine_bad_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "{ broken").unwrap();
+
+        let _ = resolve_shell_from_path(Some(&path), Some("/bin/sh".to_string()));
+
         assert!(
             path.exists(),
             "doctor must not quarantine config while diagnosing it"
