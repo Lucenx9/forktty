@@ -6154,7 +6154,7 @@ mod tests {
         };
 
         let block = format_token_usage_block(usage);
-        assert!(block.contains("18,446,744,073,709,551,615 / 200,000 input tokens"));
+        assert!(block.contains("18,446,744,073,709,551,615 / 300,000 input tokens"));
 
         let progress = build_token_progress_action(
             agent_spec("claude").unwrap(),
