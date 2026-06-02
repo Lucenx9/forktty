@@ -4266,7 +4266,7 @@ fn single_agent_command(
     Ok((spec, args[1..].to_vec()))
 }
 
-fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+fn parse_hook_args(args: &[String]) -> Result<(&'static AgentSpec, String), ()> {
     let agent_name = args
         .first()
         .map(|value| normalize_agent_name(value))
@@ -4284,7 +4284,7 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             ))
         );
         print!("{HOOK_CONTINUE_JSON}");
-        return Ok(());
+        return Err(());
     };
     if !is_supported_hook_event(&event) {
         eprintln!(
@@ -4296,7 +4296,7 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             ))
         );
         print!("{HOOK_CONTINUE_JSON}");
-        return Ok(());
+        return Err(());
     }
     if let Some(extra) = args.get(2) {
         eprintln!(
@@ -4307,10 +4307,13 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             ))
         );
         print!("{HOOK_CONTINUE_JSON}");
-        return Ok(());
+        return Err(());
     }
+    Ok((spec, event))
+}
 
-    let payload = match read_optional_stdin_json() {
+fn read_hook_payload() -> Value {
+    match read_optional_stdin_json() {
         Ok(payload) => payload,
         Err(err) => {
             eprintln!(
@@ -4322,7 +4325,35 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             );
             Value::Null
         }
+    }
+}
+
+fn send_hook_actions(context: &CliContext, actions: Vec<(String, Value)>) {
+    if !should_send_hook_actions(context) {
+        return;
+    }
+    for (method, params) in actions {
+        if let Err(err) = send_socket_request_with_timeout(
+            &context.socket_path,
+            &method,
+            params,
+            HOOK_STATUS_TIMEOUT,
+        ) {
+            eprintln!(
+                "{}",
+                sanitize_for_terminal(&format!("ForkTTY hook warning: {}", err.message))
+            );
+            break;
+        }
+    }
+}
+
+fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let Ok((spec, event)) = parse_hook_args(&args) else {
+        return Ok(());
     };
+
+    let payload = read_hook_payload();
     let order = next_hook_event_order();
     let actions = build_hook_actions(spec, &event, &payload, &order);
     hook_debug(
@@ -4340,22 +4371,8 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             }
         ),
     );
-    if should_send_hook_actions(context) {
-        for (method, params) in actions {
-            if let Err(err) = send_socket_request_with_timeout(
-                &context.socket_path,
-                &method,
-                params,
-                HOOK_STATUS_TIMEOUT,
-            ) {
-                eprintln!(
-                    "{}",
-                    sanitize_for_terminal(&format!("ForkTTY hook warning: {}", err.message))
-                );
-                break;
-            }
-        }
-    }
+    send_hook_actions(context, actions);
+
     let enrichments = gather_hook_enrichments(context, spec, &event, &payload);
     if let Some(token_action) = build_token_progress_action(spec, &enrichments, &event, &order) {
         if should_send_hook_actions(context) {
