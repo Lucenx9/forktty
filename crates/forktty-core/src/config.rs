@@ -765,6 +765,19 @@ mod tests {
         assert!(error.to_string().contains("terminal_theme"));
     }
 
+    fn assert_recovery_and_get_quarantined_path(
+        config: AppConfig,
+        recovery: Option<ConfigRecovery>,
+    ) -> (ConfigRecovery, PathBuf) {
+        assert_eq!(config, AppConfig::default());
+        let recovery = recovery.expect("expected recovery details");
+        let quarantined_path = recovery
+            .quarantined_path
+            .clone()
+            .expect("expected quarantined path");
+        (recovery, quarantined_path)
+    }
+
     #[test]
     fn recovery_quarantines_corrupt_config_and_returns_defaults() {
         let dir = tempfile::tempdir().unwrap();
@@ -773,13 +786,10 @@ mod tests {
 
         let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
 
-        assert_eq!(config, AppConfig::default());
         assert!(!path.exists(), "bad config should be renamed aside");
-        let recovery = recovery.expect("expected recovery details");
+        let (recovery, quarantined_path) =
+            assert_recovery_and_get_quarantined_path(config, recovery);
         assert!(recovery.reason.contains("TOML"));
-        let quarantined_path = recovery
-            .quarantined_path
-            .expect("expected quarantined path");
         assert!(quarantined_path.exists());
         assert!(quarantined_path
             .file_name()
@@ -799,15 +809,11 @@ mod tests {
 
         let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
 
-        assert_eq!(config, AppConfig::default());
         assert!(
             fs::symlink_metadata(&path).is_err(),
             "broken config symlink should be renamed aside"
         );
-        let quarantined_path = recovery
-            .expect("expected recovery details")
-            .quarantined_path
-            .expect("expected quarantined path");
+        let (_, quarantined_path) = assert_recovery_and_get_quarantined_path(config, recovery);
         assert!(fs::symlink_metadata(&quarantined_path)
             .unwrap()
             .file_type()
@@ -823,15 +829,11 @@ mod tests {
 
         let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
 
-        assert_eq!(config, AppConfig::default());
         assert!(
             !path.exists(),
             "bad config directory should be renamed aside"
         );
-        let quarantined_path = recovery
-            .expect("expected recovery details")
-            .quarantined_path
-            .expect("expected quarantined path");
+        let (_, quarantined_path) = assert_recovery_and_get_quarantined_path(config, recovery);
         assert!(quarantined_path.is_dir());
         assert_eq!(
             fs::read_to_string(quarantined_path.join("note.txt")).unwrap(),
