@@ -594,13 +594,22 @@ mod tests {
         let recovery = recovery.expect("Expected ConfigRecovery when loading bad config");
         assert!(recovery.reason.contains("TOML parse error"));
 
-        let quarantined_path = recovery.quarantined_path.expect("Expected quarantined path");
-        assert!(quarantined_path.file_name().unwrap().to_string_lossy().contains(".bad-"));
+        let quarantined_path = recovery
+            .quarantined_path
+            .expect("Expected quarantined path");
+        assert!(quarantined_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains(".bad-"));
 
         // Original config should be moved
         assert!(!path.exists());
         assert!(quarantined_path.exists());
-        assert_eq!(fs::read_to_string(&quarantined_path).unwrap(), "invalid_toml = { [ ] }");
+        assert_eq!(
+            fs::read_to_string(&quarantined_path).unwrap(),
+            "invalid_toml = { [ ] }"
+        );
     }
 
     #[test]
