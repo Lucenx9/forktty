@@ -210,6 +210,17 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
 pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
     let mut events = Vec::new();
 
+    diff_workspace_changes(prev, next, &mut events);
+    diff_surface_changes(prev, next, &mut events);
+    diff_active_workspace(prev, next, &mut events);
+    diff_per_workspace_fields(prev, next, &mut events);
+    diff_per_surface_fields(prev, next, &mut events);
+    diff_notifications(prev, next, &mut events);
+
+    events
+}
+
+fn diff_workspace_changes(prev: &Snapshot, next: &Snapshot, events: &mut Vec<ModelEvent>) {
     // Workspace removes, then adds.
     for id in prev.workspaces.keys() {
         if !next.workspaces.contains_key(id) {
@@ -224,7 +235,9 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             });
         }
     }
+}
 
+fn diff_surface_changes(prev: &Snapshot, next: &Snapshot, events: &mut Vec<ModelEvent>) {
     // Surface removes, then adds.
     for id in prev.surfaces.keys() {
         if !next.surfaces.contains_key(id) {
@@ -240,14 +253,18 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             });
         }
     }
+}
 
+fn diff_active_workspace(prev: &Snapshot, next: &Snapshot, events: &mut Vec<ModelEvent>) {
     // Active workspace selection.
     if prev.active_workspace_id != next.active_workspace_id {
         events.push(ModelEvent::WorkspaceSelected {
             id: next.active_workspace_id.clone(),
         });
     }
+}
 
+fn diff_per_workspace_fields(prev: &Snapshot, next: &Snapshot, events: &mut Vec<ModelEvent>) {
     // Per-workspace field changes. Workspaces new in `next` are diffed against a
     // default so replay (and same-tick creation) still advertises their metadata.
     let default_ws = WsSnap::default();
@@ -259,12 +276,8 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
                 surface_id: next_ws.focused_surface_id.clone(),
             });
         }
-        for event in diff_status(id, &prev_ws.status, &next_ws.status) {
-            events.push(event);
-        }
-        for event in diff_progress(id, &prev_ws.progress, &next_ws.progress) {
-            events.push(event);
-        }
+        diff_status(id, &prev_ws.status, &next_ws.status, events);
+        diff_progress(id, &prev_ws.progress, &next_ws.progress, events);
         if prev_ws.ports != next_ws.ports {
             events.push(ModelEvent::PortsChanged {
                 workspace_id: id.clone(),
@@ -278,7 +291,9 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             });
         }
     }
+}
 
+fn diff_per_surface_fields(prev: &Snapshot, next: &Snapshot, events: &mut Vec<ModelEvent>) {
     // Surface title and URL changes. New surfaces are diffed against an empty
     // default so a titled/browsed surface advertises its state on replay too.
     let default_surf = SurfSnap::default();
@@ -299,7 +314,9 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             }
         }
     }
+}
 
+fn diff_notifications(prev: &Snapshot, next: &Snapshot, events: &mut Vec<ModelEvent>) {
     // New notifications (edge-triggered on id).
     for (id, notif) in &next.notifications {
         if !prev.notifications.contains_key(id) {
@@ -311,16 +328,14 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             });
         }
     }
-
-    events
 }
 
 fn diff_status(
     workspace_id: &str,
     prev: &BTreeMap<String, String>,
     next: &BTreeMap<String, String>,
-) -> Vec<ModelEvent> {
-    let mut events = Vec::new();
+    events: &mut Vec<ModelEvent>,
+) {
     for (key, value) in next {
         if prev.get(key) != Some(value) {
             events.push(ModelEvent::StatusChanged {
@@ -339,15 +354,14 @@ fn diff_status(
             });
         }
     }
-    events
 }
 
 fn diff_progress(
     workspace_id: &str,
     prev: &BTreeMap<String, (f64, Option<f64>)>,
     next: &BTreeMap<String, (f64, Option<f64>)>,
-) -> Vec<ModelEvent> {
-    let mut events = Vec::new();
+    events: &mut Vec<ModelEvent>,
+) {
     for (key, value) in next {
         if prev.get(key) != Some(value) {
             events.push(ModelEvent::ProgressChanged {
@@ -368,7 +382,6 @@ fn diff_progress(
             });
         }
     }
-    events
 }
 
 #[cfg(test)]
