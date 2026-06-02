@@ -473,9 +473,11 @@ impl VteController {
         // concurrently removed it from the model can leave a backend terminal
         // (PTY + widget) with no model counterpart. Tear those orphans down;
         // the queued Close event drops the widget on the next rebuild.
-        for surface_id in
-            orphaned_backend_surfaces(&backend_surface_ids, &model_surface_ids, &self.pending_spawns)
-        {
+        for surface_id in orphaned_backend_surfaces(
+            &backend_surface_ids,
+            &model_surface_ids,
+            &self.pending_spawns,
+        ) {
             match state.terminal.close(&surface_id) {
                 Ok(()) | Err(TerminalError::NotFound(_)) => {}
                 Err(err) => {
