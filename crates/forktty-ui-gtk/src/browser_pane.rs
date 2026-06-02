@@ -192,10 +192,16 @@ pub struct BrowserPaneWidget {
 
 #[allow(dead_code)]
 impl BrowserPaneWidget {
-    pub fn new(profile_id: &str, initial_url: &str) -> Self {
-        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        container.add_css_class("browser-pane");
-
+    fn build_toolbar(
+        initial_url: &str,
+    ) -> (
+        gtk::Box,
+        gtk::Button,
+        gtk::Button,
+        gtk::Button,
+        gtk::Entry,
+        gtk::Button,
+    ) {
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         bar.add_css_class("browser-toolbar");
         bar.update_property(&[gtk::accessible::Property::Label("Browser navigation")]);
@@ -243,38 +249,30 @@ impl BrowserPaneWidget {
         bar.append(&reload);
         bar.append(&address);
         bar.append(&close);
+        (bar, back, forward, reload, address, close)
+    }
 
-        let session = crate::browser_session::session_for(profile_id);
-        let web_view = WebView::builder().network_session(&session).build();
-        web_view.set_vexpand(true);
-        install_browser_shortcuts(&container, &web_view, &address);
-        install_browser_shortcuts(&web_view, &web_view, &address);
-        install_browser_shortcuts(&address, &web_view, &address);
-        sync_history_buttons(&web_view, &back, &forward);
+    fn inject_driver_script(web_view: &WebView) {
+        use webkit6::{UserContentInjectedFrames, UserScript, UserScriptInjectionTime};
+        let content_manager = web_view
+            .user_content_manager()
+            .expect("WebView always has a default UserContentManager");
+        let script = UserScript::new(
+            DRIVER_JS,
+            UserContentInjectedFrames::TopFrame,
+            UserScriptInjectionTime::Start,
+            &[],
+            &[],
+        );
+        content_manager.add_script(&script);
+    }
 
-        {
-            use webkit6::{UserContentInjectedFrames, UserScript, UserScriptInjectionTime};
-            let content_manager = web_view
-                .user_content_manager()
-                .expect("WebView always has a default UserContentManager");
-            let script = UserScript::new(
-                DRIVER_JS,
-                UserContentInjectedFrames::TopFrame,
-                UserScriptInjectionTime::Start,
-                &[],
-                &[],
-            );
-            content_manager.add_script(&script);
-        }
-
-        let navigation = BrowserPaneNavigation {
-            web_view: web_view.clone(),
-            address: address.clone(),
-            last_requested: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
-        };
-        let committed_uri_handlers: UriCommittedHandlers =
-            std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-
+    fn connect_navigation_buttons(
+        web_view: &WebView,
+        back: &gtk::Button,
+        forward: &gtk::Button,
+        reload: &gtk::Button,
+    ) {
         {
             let wv = web_view.downgrade();
             let back_button = back.downgrade();
@@ -319,15 +317,12 @@ impl BrowserPaneWidget {
                 }
             });
         }
+    }
 
-        // Parse profile_id → ProfileId for history/bookmark stores.
-        let profile = profile_id
-            .parse::<forktty_core::ProfileId>()
-            .unwrap_or_default();
-
-        // Address-bar completion: a ListStore with one text column, populated from
-        // history + bookmarks. Built before the load-changed connection so it can
-        // be refreshed from there.
+    fn setup_address_completion(
+        address: &gtk::Entry,
+        profile: forktty_core::ProfileId,
+    ) -> impl Fn(forktty_core::ProfileId) {
         let completion_model = gtk::ListStore::new(&[glib::Type::STRING]);
         let completion = gtk::EntryCompletion::new();
         completion.set_model(Some(&completion_model));
@@ -336,7 +331,6 @@ impl BrowserPaneWidget {
         completion.set_popup_completion(true);
         address.set_completion(Some(&completion));
 
-        // Populate the completion model from history + bookmarks.
         let populate_completion = {
             let model = completion_model.clone();
             move |profile: forktty_core::ProfileId| {
@@ -365,7 +359,20 @@ impl BrowserPaneWidget {
         };
         // Initial population.
         populate_completion(profile);
+        populate_completion
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn connect_history_tracking<F: Fn(forktty_core::ProfileId) + 'static>(
+        web_view: &WebView,
+        address: &gtk::Entry,
+        back: &gtk::Button,
+        forward: &gtk::Button,
+        profile: forktty_core::ProfileId,
+        populate_completion: F,
+        last_requested: std::rc::Rc<std::cell::RefCell<String>>,
+        committed_uri_handlers: UriCommittedHandlers,
+    ) {
         // Connect load-changed: sync the committed URI into the toolbar, record
         // visits on Committed, and refresh completion. Updating last_requested
         // here prevents later UI refresh ticks from reloading the stale model URL
@@ -375,7 +382,7 @@ impl BrowserPaneWidget {
             let back_button = back.downgrade();
             let forward_button = forward.downgrade();
             let address = address.downgrade();
-            let last_requested = navigation.last_requested.clone();
+            let last_requested = last_requested.clone();
             let committed_uri_handlers = committed_uri_handlers.clone();
             web_view.connect_load_changed(move |wv, event| {
                 if let (Some(back_button), Some(forward_button)) =
@@ -432,6 +439,50 @@ impl BrowserPaneWidget {
                 }
             });
         }
+    }
+
+    pub fn new(profile_id: &str, initial_url: &str) -> Self {
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        container.add_css_class("browser-pane");
+
+        let (bar, back, forward, reload, address, close) = Self::build_toolbar(initial_url);
+
+        let session = crate::browser_session::session_for(profile_id);
+        let web_view = WebView::builder().network_session(&session).build();
+        web_view.set_vexpand(true);
+        install_browser_shortcuts(&container, &web_view, &address);
+        install_browser_shortcuts(&web_view, &web_view, &address);
+        install_browser_shortcuts(&address, &web_view, &address);
+        sync_history_buttons(&web_view, &back, &forward);
+
+        Self::inject_driver_script(&web_view);
+
+        let navigation = BrowserPaneNavigation {
+            web_view: web_view.clone(),
+            address: address.clone(),
+            last_requested: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
+        };
+        let committed_uri_handlers: UriCommittedHandlers =
+            std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+
+        Self::connect_navigation_buttons(&web_view, &back, &forward, &reload);
+
+        let profile = profile_id
+            .parse::<forktty_core::ProfileId>()
+            .unwrap_or_default();
+
+        let populate_completion = Self::setup_address_completion(&address, profile);
+
+        Self::connect_history_tracking(
+            &web_view,
+            &address,
+            &back,
+            &forward,
+            profile,
+            populate_completion,
+            navigation.last_requested.clone(),
+            committed_uri_handlers.clone(),
+        );
 
         container.append(&bar);
         container.append(&web_view);
