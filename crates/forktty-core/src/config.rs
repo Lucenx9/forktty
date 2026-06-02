@@ -599,6 +599,93 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_rejects_empty_shell() {
+        let mut config = AppConfig::default();
+        config.general.shell = "   ".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("general.shell must not be empty"));
+    }
+
+    #[test]
+    fn validate_config_rejects_non_executable_shell() {
+        let mut config = AppConfig::default();
+        config.general.shell = "not_an_absolute_path".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("general.shell must be an absolute path"));
+    }
+
+    fn dummy_executable_path() -> String {
+        std::env::current_exe().unwrap().to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_theme_source() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.general.theme_source = "light".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("general.theme_source must be 'dark'"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_worktree_layout() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.general.worktree_layout = "invalid_layout".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("general.worktree_layout must be one of: nested, sibling, outer-nested"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_sidebar_position() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.appearance.sidebar_position = "top".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("appearance.sidebar_position must be 'left' or 'right'"));
+    }
+
+    #[test]
+    fn validate_config_rejects_out_of_range_font_size() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.appearance.font_size = 7;
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("appearance.font_size must be between 8 and 64"));
+
+        config.appearance.font_size = 65;
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("appearance.font_size must be between 8 and 64"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_terminal_renderer() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.appearance.terminal_renderer = "magic".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, vte"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_terminal_theme() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.appearance.terminal_theme = "nonexistent_theme".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("appearance.terminal_theme must be one of:"));
+    }
+
+    #[test]
+    fn validate_config_rejects_invalid_window_mode() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.appearance.window_mode = "fullscreen".to_string();
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("appearance.window_mode must be one of: normal, quake"));
+    }
+
+    #[test]
     fn default_shell_ignores_relative_or_missing_shell_env() {
         let relative = default_shell_from_env(Some("zsh".to_string()));
         assert!(Path::new(&relative).is_absolute());
