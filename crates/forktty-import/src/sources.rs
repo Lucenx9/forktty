@@ -45,15 +45,17 @@ fn scan_firefox_profiles(root: &Path) -> Vec<SourceProfile> {
     let mut profiles = Vec::new();
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() && has_firefox_importable_data(&path) {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                profiles.push(SourceProfile {
-                    family: BrowserFamily::Firefox,
-                    display_name: name,
-                    path: path.to_string_lossy().into_owned(),
-                    is_default: false,
-                });
+            if entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                let path = entry.path();
+                if has_firefox_importable_data(&path) {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    profiles.push(SourceProfile {
+                        family: BrowserFamily::Firefox,
+                        display_name: name,
+                        path: path.to_string_lossy().into_owned(),
+                        is_default: false,
+                    });
+                }
             }
         }
     }
