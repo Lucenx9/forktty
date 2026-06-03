@@ -60,8 +60,8 @@ pub struct TerminalRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalCell {
     pub text: String,
-    pub foreground: TerminalRgb,
-    pub background: TerminalRgb,
+    pub foreground: Option<TerminalRgb>,
+    pub background: Option<TerminalRgb>,
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
@@ -193,8 +193,8 @@ impl GhosttyCore {
             let mut row_cells = Vec::new();
             while let Some(cell) = cells.next() {
                 let style = cell.style()?;
-                let mut cell_foreground = cell.fg_color()?.map_or(foreground, TerminalRgb::from);
-                let mut cell_background = cell.bg_color()?.map_or(background, TerminalRgb::from);
+                let mut cell_foreground = cell.fg_color()?.map(TerminalRgb::from);
+                let mut cell_background = cell.bg_color()?.map(TerminalRgb::from);
                 if style.inverse {
                     std::mem::swap(&mut cell_foreground, &mut cell_background);
                 }
@@ -309,8 +309,9 @@ mod tests {
         assert_eq!(row.cells[1].text, "e");
         assert_eq!(row.cells[2].text, "d");
         assert_eq!(row.cells[4].text, "o");
-        assert_ne!(row.cells[0].foreground, frame.foreground);
-        assert_eq!(row.cells[4].foreground, frame.foreground);
+        assert!(row.cells[0].foreground.is_some());
+        assert_eq!(row.cells[4].foreground, None);
+        assert_eq!(row.cells[4].background, None);
     }
 
     #[test]

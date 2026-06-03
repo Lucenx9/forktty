@@ -1,5 +1,5 @@
 use super::*;
-use forktty_terminal::ghostty::core::{TerminalFrame, TerminalRgb, TerminalRow};
+use forktty_terminal::ghostty::core::{TerminalCell, TerminalFrame, TerminalRgb, TerminalRow};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +148,7 @@ impl TerminalRenderer {
         height: i32,
         frame: &TerminalFrame,
     ) {
-        let default_background = RendererColor::from_terminal_rgb(frame.background);
+        let default_background = self.palette.background;
         default_background.set_cairo_source(cr);
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
@@ -157,7 +157,7 @@ impl TerminalRenderer {
         for (row_idx, row) in frame.rows.iter().enumerate() {
             let y = row_idx as f64 * metrics.height;
             for (col_idx, cell) in row.cells.iter().enumerate() {
-                let background = RendererColor::from_terminal_rgb(cell.background);
+                let background = self.cell_background(cell);
                 if background != default_background {
                     background.set_cairo_source(cr);
                     cr.rectangle(
@@ -211,8 +211,8 @@ impl TerminalRenderer {
                 continue;
             }
             let style = RendererCellStyle {
-                foreground: RendererColor::from_terminal_rgb(cell.foreground),
-                background: RendererColor::from_terminal_rgb(cell.background),
+                foreground: self.cell_foreground(cell),
+                background: self.cell_background(cell),
                 bold: cell.bold,
                 italic: cell.italic,
                 underline: cell.underline,
@@ -231,6 +231,32 @@ impl TerminalRenderer {
             runs.push(run);
         }
         runs
+    }
+
+    fn cell_foreground(&self, cell: &TerminalCell) -> RendererColor {
+        let mut foreground = cell
+            .foreground
+            .map_or(self.palette.foreground, RendererColor::from_terminal_rgb);
+        let mut background = cell
+            .background
+            .map_or(self.palette.background, RendererColor::from_terminal_rgb);
+        if cell.inverse {
+            std::mem::swap(&mut foreground, &mut background);
+        }
+        foreground
+    }
+
+    fn cell_background(&self, cell: &TerminalCell) -> RendererColor {
+        let mut foreground = cell
+            .foreground
+            .map_or(self.palette.foreground, RendererColor::from_terminal_rgb);
+        let mut background = cell
+            .background
+            .map_or(self.palette.background, RendererColor::from_terminal_rgb);
+        if cell.inverse {
+            std::mem::swap(&mut foreground, &mut background);
+        }
+        background
     }
 
     fn cell_metrics(&self, cr: &gtk::cairo::Context) -> RendererCellMetrics {
@@ -295,7 +321,7 @@ impl RendererTextRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forktty_terminal::ghostty::core::{TerminalCell, TerminalRow, TerminalRgb};
+    use forktty_terminal::ghostty::core::{TerminalCell, TerminalRgb, TerminalRow};
 
     #[test]
     fn terminal_renderer_maps_theme_colors_to_ansi_palette() {
@@ -339,12 +365,12 @@ mod tests {
         };
         let row = TerminalRow {
             cells: vec![
-                test_cell("r", red, default_bg),
-                test_cell("e", red, default_bg),
-                test_cell("d", red, default_bg),
-                test_cell(" ", default_fg, default_bg),
-                test_cell("o", default_fg, default_bg),
-                test_cell("k", default_fg, default_bg),
+                test_cell("r", Some(red), None),
+                test_cell("e", Some(red), None),
+                test_cell("d", Some(red), None),
+                test_cell(" ", None, None),
+                test_cell("o", None, None),
+                test_cell("k", None, None),
             ],
         };
 
@@ -356,9 +382,41 @@ mod tests {
         assert_eq!(runs[0].foreground, RendererColor::from_terminal_rgb(red));
         assert_eq!(runs[1].start_col, 3);
         assert_eq!(runs[1].text, " ok");
+        assert_eq!(
+            runs[1].foreground,
+            RendererColor::from_terminal_rgb(default_fg)
+        );
+        assert_eq!(
+            runs[1].background,
+            RendererColor::from_terminal_rgb(default_bg)
+        );
     }
 
-    fn test_cell(text: &str, foreground: TerminalRgb, background: TerminalRgb) -> TerminalCell {
+    #[test]
+    fn terminal_renderer_resolves_default_cells_from_config_palette() {
+        let mut config = config::AppConfig::default();
+        config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let default_cell = test_cell("x", None, None);
+
+        assert_eq!(
+            renderer.cell_background(&default_cell).to_string(),
+            DRACULA_TERMINAL_COLORS.background
+        );
+        assert_eq!(
+            renderer.cell_foreground(&default_cell).to_string(),
+            DRACULA_TERMINAL_COLORS.foreground
+        );
+    }
+
+    fn test_cell(
+        text: &str,
+        foreground: Option<TerminalRgb>,
+        background: Option<TerminalRgb>,
+    ) -> TerminalCell {
         TerminalCell {
             text: text.to_string(),
             foreground,
