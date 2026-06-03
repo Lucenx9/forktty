@@ -104,7 +104,7 @@ impl VteController {
             GtkTerminalCommand::Spawn(request) => self.spawn(request),
             GtkTerminalCommand::SendText { surface_id, text } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
-                    vte_send_text(widget, &text);
+                    widget.send_text(&text);
                 } else {
                     eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
                 }
@@ -115,7 +115,7 @@ impl VteController {
                 rows,
             } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
-                    widget.set_size(cols.into(), rows.into());
+                    widget.resize_cells(cols, rows);
                 }
             }
             GtkTerminalCommand::Close { surface_id } => {
@@ -315,7 +315,7 @@ impl VteController {
     fn gtk_focused_widget(&self) -> Option<VteTerminalWidget> {
         self.widgets
             .values()
-            .find(|widget| widget.has_focus())
+            .find(|widget| widget.has_terminal_focus())
             .cloned()
     }
 
@@ -326,7 +326,7 @@ impl VteController {
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
-        widget.copy_clipboard_format(Format::Text);
+        widget.copy_text();
         true
     }
 
@@ -334,7 +334,7 @@ impl VteController {
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
-        widget.paste_clipboard();
+        widget.paste_from_clipboard();
         true
     }
 
@@ -342,7 +342,7 @@ impl VteController {
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
-        widget.select_all();
+        widget.select_all_text();
         true
     }
 
@@ -350,7 +350,7 @@ impl VteController {
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
-        reset_and_redraw_terminal(&widget);
+        widget.reset_and_clear();
         true
     }
 
@@ -360,7 +360,7 @@ impl VteController {
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
-        widget.copy_clipboard_format(Format::Text);
+        widget.copy_text();
         true
     }
 
@@ -368,7 +368,7 @@ impl VteController {
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
-        widget.paste_clipboard();
+        widget.paste_from_clipboard();
         true
     }
 
@@ -376,7 +376,7 @@ impl VteController {
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
-        widget.select_all();
+        widget.select_all_text();
         true
     }
 
@@ -384,13 +384,13 @@ impl VteController {
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
-        reset_and_redraw_terminal(&widget);
+        widget.reset_and_clear();
         true
     }
 
     fn queue_focus_for_surface(&self, surface_id: &str) {
         if let Some(widget) = self.widgets.get(surface_id) {
-            queue_widget_focus(widget.clone().upcast());
+            queue_widget_focus(widget.widget());
         } else {
             // Browser panes are not in self.widgets; hand keyboard focus to the
             // pane's focus target so keyboard-only nav reaches the browser.

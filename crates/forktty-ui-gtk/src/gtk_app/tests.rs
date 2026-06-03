@@ -232,6 +232,13 @@ fn gtk_terminal_backend_blocks_send_until_ready() {
 }
 
 #[test]
+fn terminal_widget_ops_reset_sends_form_feed() {
+    let widget = TestTerminalWidget::default();
+    widget.reset_and_clear();
+    assert_eq!(widget.sent_text(), vec!["\x0c"]);
+}
+
+#[test]
 fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
     let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
     let backend = to_set(&["surface-1", "surface-2", "surface-3"]);
