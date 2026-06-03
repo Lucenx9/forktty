@@ -698,7 +698,7 @@ git commit -m "feat: add ghostty clipboard and selection"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/controller.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs`
 
-- [ ] **Step 1: Write failing context-menu test**
+- [x] **Step 1: Write failing context-menu test**
 
 ```rust
 #[test]
@@ -710,23 +710,23 @@ fn context_menu_copy_targets_focused_ghostty_widget() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `cargo test -p forktty-ui-gtk context_menu_copy_targets_focused_ghostty_widget --no-default-features --features gtk-ghostty`
 
 Expected: FAIL until context menu uses Ghostty widget methods.
 
-- [ ] **Step 3: Implement context menu parity**
+- [x] **Step 3: Implement context menu parity**
 
 Route copy/paste/select-all/reset actions through `TerminalWidgetOps` methods for focused and active widgets; keep split/new-tab/close items unchanged.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-ui-gtk context_menu --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/controller.rs crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs crates/forktty-ui-gtk/src/gtk_app/tests.rs

@@ -143,6 +143,15 @@ pub(super) trait TerminalWidgetOps {
     fn resize_cells(&self, cols: u16, rows: u16);
 }
 
+#[cfg(test)]
+pub(super) fn copy_terminal_if_focused(widget: &impl TerminalWidgetOps) -> bool {
+    if !widget.has_terminal_focus() {
+        return false;
+    }
+    widget.copy_text();
+    true
+}
+
 #[cfg(feature = "gtk-vte")]
 impl TerminalWidgetOps for VteTerminalWidget {
     fn widget(&self) -> gtk::Widget {
@@ -239,12 +248,17 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 #[derive(Debug, Default)]
 pub(super) struct TestTerminalWidget {
     sent_text: RefCell<Vec<String>>,
+    calls: RefCell<Vec<String>>,
 }
 
 #[cfg(test)]
 impl TestTerminalWidget {
     pub(super) fn sent_text(&self) -> Vec<String> {
         self.sent_text.borrow().clone()
+    }
+
+    pub(super) fn calls(&self) -> Vec<String> {
+        self.calls.borrow().clone()
     }
 }
 
@@ -258,7 +272,9 @@ impl TerminalWidgetOps for TestTerminalWidget {
         true
     }
 
-    fn copy_text(&self) {}
+    fn copy_text(&self) {
+        self.calls.borrow_mut().push("copy_text".to_string());
+    }
 
     fn paste_from_clipboard(&self) {}
 

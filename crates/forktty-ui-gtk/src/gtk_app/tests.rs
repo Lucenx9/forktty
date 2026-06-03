@@ -239,6 +239,15 @@ fn terminal_widget_ops_reset_sends_form_feed() {
 }
 
 #[test]
+fn context_menu_copy_targets_focused_ghostty_widget() {
+    let widget = TestTerminalWidget::default();
+
+    assert!(copy_terminal_if_focused(&widget));
+
+    assert_eq!(widget.calls(), vec!["copy_text"]);
+}
+
+#[test]
 fn ghostty_runtime_marks_surface_ready_after_spawn() {
     let runtime = TestTerminalRuntimeHarness::new();
 
