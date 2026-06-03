@@ -5678,7 +5678,7 @@ mod tests {
     }
 
     #[test]
-    fn socket_response_errors_preserve_method_path_and_codes() {
+    fn socket_response_errors_preserve_method_path_and_codes_workspace_not_found() {
         with_socket_response(
             |request| {
                 format!(
@@ -5703,7 +5703,10 @@ mod tests {
                 assert!(err.message.contains("not_found: Workspace not found"));
             },
         );
+    }
 
+    #[test]
+    fn socket_response_errors_preserve_method_path_and_codes_stale_response() {
         with_socket_response(
             |_| {
                 format!(
@@ -5723,7 +5726,10 @@ mod tests {
                 assert!(err.message.contains("stale-response"));
             },
         );
+    }
 
+    #[test]
+    fn socket_response_errors_preserve_method_path_and_codes_request_too_large() {
         with_socket_response(
             |_| {
                 format!(
@@ -5747,7 +5753,10 @@ mod tests {
                 assert!(!err.message.contains("response id mismatch"));
             },
         );
+    }
 
+    #[test]
+    fn socket_response_errors_preserve_method_path_and_codes_server_busy() {
         with_socket_response(
             |_| {
                 format!(
@@ -5769,7 +5778,10 @@ mod tests {
                 assert!(!err.message.contains("response id mismatch"));
             },
         );
+    }
 
+    #[test]
+    fn socket_response_errors_preserve_method_path_and_codes_invalid_json() {
         with_socket_response(
             |_| "not json\n".to_string(),
             |socket_path| {
@@ -5779,7 +5791,10 @@ mod tests {
                 assert!(err.message.contains("Invalid socket response"));
             },
         );
+    }
 
+    #[test]
+    fn socket_response_errors_preserve_method_path_and_codes_response_too_large() {
         with_socket_response(
             |_| format!("{}\n", "x".repeat(MAX_SOCKET_RESPONSE_BYTES + 1)),
             |socket_path| {
