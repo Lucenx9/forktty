@@ -316,7 +316,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         model.clone(),
     )));
     controller.borrow_mut().attach_state(state.clone());
-    install_terminal_navigation_fallback(&content, &window, &controller);
+    install_terminal_navigation_fallback(&window, &window, &controller);
 
     #[cfg(feature = "browser")]
     {

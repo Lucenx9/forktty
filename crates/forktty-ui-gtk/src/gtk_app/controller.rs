@@ -392,7 +392,7 @@ impl TerminalController {
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
-        widget.write_input(input);
+        forward_terminal_navigation_input(&widget, input);
         true
     }
 

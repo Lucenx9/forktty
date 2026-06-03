@@ -276,16 +276,14 @@ impl GhosttyTerminalWidget {
     where
         W: IsA<gtk::Widget>,
     {
-        let runtime = self.runtime.clone();
-        let drawing_area = self.drawing_area.clone();
+        let widget = self.clone();
         let key_controller = gtk::EventControllerKey::new();
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
             let Some(input) = translate_gtk_navigation_key(key, modifiers) else {
                 return glib::Propagation::Proceed;
             };
-            write_terminal_input(&runtime, &drawing_area, input);
-            drawing_area.grab_focus();
+            forward_terminal_navigation_input(&widget, input);
             glib::Propagation::Stop
         });
         target.add_controller(key_controller);
@@ -306,9 +304,6 @@ impl GhosttyTerminalWidget {
         Ok(events)
     }
 
-    pub(super) fn write_input(&self, input: TerminalInput) {
-        write_terminal_input(&self.runtime, &self.drawing_area, input);
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -428,6 +423,8 @@ fn write_terminal_input(
 pub(super) trait TerminalWidgetOps {
     fn widget(&self) -> gtk::Widget;
     fn has_terminal_focus(&self) -> bool;
+    fn write_input(&self, input: TerminalInput);
+    fn grab_terminal_focus(&self);
     fn copy_text(&self);
     fn paste_from_clipboard(&self);
     fn select_all_text(&self);
@@ -447,6 +444,14 @@ pub(super) fn copy_terminal_if_focused(widget: &impl TerminalWidgetOps) -> bool 
     true
 }
 
+pub(super) fn forward_terminal_navigation_input(
+    widget: &impl TerminalWidgetOps,
+    input: TerminalInput,
+) {
+    widget.write_input(input);
+    widget.grab_terminal_focus();
+}
+
 impl TerminalWidgetOps for GhosttyTerminalWidget {
     fn widget(&self) -> gtk::Widget {
         self.drawing_area.clone().upcast()
@@ -454,6 +459,14 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 
     fn has_terminal_focus(&self) -> bool {
         self.drawing_area.has_focus()
+    }
+
+    fn write_input(&self, input: TerminalInput) {
+        write_terminal_input(&self.runtime, &self.drawing_area, input);
+    }
+
+    fn grab_terminal_focus(&self) {
+        self.drawing_area.grab_focus();
     }
 
     fn copy_text(&self) {
@@ -507,6 +520,8 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 #[derive(Debug, Default)]
 pub(super) struct TestTerminalWidget {
     sent_text: RefCell<Vec<String>>,
+    inputs: RefCell<Vec<TerminalInput>>,
+    focus_calls: Cell<usize>,
     calls: RefCell<Vec<String>>,
 }
 
@@ -519,6 +534,14 @@ impl TestTerminalWidget {
     pub(super) fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
     }
+
+    pub(super) fn inputs(&self) -> Vec<TerminalInput> {
+        self.inputs.borrow().clone()
+    }
+
+    pub(super) fn focus_calls(&self) -> usize {
+        self.focus_calls.get()
+    }
 }
 
 #[cfg(test)]
@@ -529,6 +552,14 @@ impl TerminalWidgetOps for TestTerminalWidget {
 
     fn has_terminal_focus(&self) -> bool {
         true
+    }
+
+    fn write_input(&self, input: TerminalInput) {
+        self.inputs.borrow_mut().push(input);
+    }
+
+    fn grab_terminal_focus(&self) {
+        self.focus_calls.set(self.focus_calls.get() + 1);
     }
 
     fn copy_text(&self) {

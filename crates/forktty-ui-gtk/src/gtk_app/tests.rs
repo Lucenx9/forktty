@@ -248,6 +248,19 @@ fn context_menu_copy_targets_focused_ghostty_widget() {
 }
 
 #[test]
+fn terminal_navigation_forwarder_claims_focus_after_writing_input() {
+    use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
+
+    let widget = TestTerminalWidget::default();
+    let input = TerminalInput::Key(TerminalKeyInput::new(TerminalKey::ArrowUp));
+
+    forward_terminal_navigation_input(&widget, input.clone());
+
+    assert_eq!(widget.inputs(), vec![input]);
+    assert_eq!(widget.focus_calls(), 1);
+}
+
+#[test]
 fn ghostty_runtime_marks_surface_ready_after_spawn() {
     let runtime = TestTerminalRuntimeHarness::new();
 
