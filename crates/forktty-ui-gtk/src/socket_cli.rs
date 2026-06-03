@@ -6762,7 +6762,7 @@ mod tests {
     }
 
     #[test]
-    fn hook_setup_preserves_unrelated_json_and_preflights_all_configs() {
+    fn hook_setup_preflights_all_configs_and_prevents_partial_writes() {
         let dir = tempfile::tempdir().unwrap();
         let codex_home = dir.path().join("codex");
         let claude_dir = dir.path().join("claude");
@@ -6792,8 +6792,28 @@ mod tests {
                     fs::read_to_string(&codex_path).unwrap(),
                     "{\"customKey\":{\"keepMe\":true}}\n"
                 );
+            },
+        );
+    }
 
-                fs::write(&claude_path, "{}\n").unwrap();
+    #[test]
+    fn hook_setup_preserves_unrelated_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let codex_path = codex_home.join("hooks.json");
+        fs::write(&codex_path, "{\"customKey\":{\"keepMe\":true}}\n").unwrap();
+
+        let codex_home_s = codex_home.display().to_string();
+        let home_s = dir.path().display().to_string();
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", None),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let context = test_context();
                 handle_hooks_setup(&context, strings(&["codex"])).unwrap();
                 let parsed = read_json(&codex_path);
                 assert_eq!(parsed["customKey"]["keepMe"], true);
