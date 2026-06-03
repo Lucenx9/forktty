@@ -31,7 +31,7 @@ pub(super) fn build_ui(app: &adw::Application) {
 
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let (terminal_tx, terminal_rx) = mpsc::channel();
-    let backend = Arc::new(GtkVteBackend::new(terminal_tx));
+    let backend = Arc::new(GtkTerminalBackend::new(terminal_tx));
     #[cfg(feature = "browser")]
     let (browser_cmd_tx, browser_cmd_rx) =
         async_channel::unbounded::<forktty_core::BrowserCommand>();

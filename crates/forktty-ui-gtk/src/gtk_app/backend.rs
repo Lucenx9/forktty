@@ -17,13 +17,13 @@ pub(super) enum GtkTerminalCommand {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct GtkVteBackend {
+pub(super) struct GtkTerminalBackend {
     sender: mpsc::Sender<GtkTerminalCommand>,
     surfaces: Arc<Mutex<BTreeMap<String, TerminalSurfaceState>>>,
     ready_surfaces: Arc<Mutex<BTreeSet<String>>>,
 }
 
-impl GtkVteBackend {
+impl GtkTerminalBackend {
     pub(super) fn new(sender: mpsc::Sender<GtkTerminalCommand>) -> Self {
         Self {
             sender,
@@ -39,7 +39,7 @@ impl GtkVteBackend {
     }
 }
 
-impl TerminalBackend for GtkVteBackend {
+impl TerminalBackend for GtkTerminalBackend {
     fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
         let surface_id = request.surface_id.clone();
         let mut surfaces = self

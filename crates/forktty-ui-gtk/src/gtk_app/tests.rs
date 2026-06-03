@@ -153,7 +153,7 @@ impl TerminalBackend for CloseFailsBackend {
 fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
     drop(rx);
-    let backend = GtkVteBackend::new(tx);
+    let backend = GtkTerminalBackend::new(tx);
 
     let err = backend.spawn(test_spawn_request()).unwrap_err();
 
@@ -164,7 +164,7 @@ fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
 #[test]
 fn gtk_backend_restores_existing_surface_when_duplicate_spawn_send_fails() {
     let (tx, rx) = mpsc::channel();
-    let backend = GtkVteBackend::new(tx);
+    let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
     backend.mark_surface_ready("surface-1").unwrap();
     drop(rx);
@@ -191,7 +191,7 @@ fn gtk_backend_restores_existing_surface_when_duplicate_spawn_send_fails() {
 #[test]
 fn gtk_backend_rolls_back_resize_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
-    let backend = GtkVteBackend::new(tx);
+    let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
     drop(rx);
 
@@ -206,7 +206,7 @@ fn gtk_backend_rolls_back_resize_when_ui_channel_is_closed() {
 #[test]
 fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
-    let backend = GtkVteBackend::new(tx);
+    let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
     drop(rx);
 
@@ -214,6 +214,21 @@ fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
 
     assert!(matches!(err, TerminalError::Backend(_)));
     assert_eq!(backend.surfaces().unwrap().len(), 1);
+}
+
+#[test]
+fn gtk_terminal_backend_blocks_send_until_ready() {
+    let (tx, _rx) = mpsc::channel();
+    let backend = GtkTerminalBackend::new(tx);
+    backend.spawn(test_spawn_request()).unwrap();
+
+    assert!(matches!(
+        backend.send_text("surface-1", "echo before-ready\n"),
+        Err(TerminalError::NotReady(surface)) if surface == "surface-1"
+    ));
+
+    backend.mark_surface_ready("surface-1").unwrap();
+    backend.send_text("surface-1", "echo ready\n").unwrap();
 }
 
 #[test]
@@ -242,7 +257,7 @@ fn orphaned_backend_surfaces_keeps_fully_modeled_backend() {
 #[test]
 fn gtk_backend_rejects_send_text_after_surface_exits() {
     let (tx, _rx) = mpsc::channel();
-    let backend = GtkVteBackend::new(tx);
+    let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
     backend.mark_surface_ready("surface-1").unwrap();
     backend.send_text("surface-1", "echo ok\n").unwrap();
@@ -1110,7 +1125,7 @@ fn close_worktree_workspace_keeps_model_when_backend_close_fails() {
     let fallback_dir = tempfile::tempdir().unwrap();
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let (tx, rx) = mpsc::channel();
-    let terminal = Arc::new(GtkVteBackend::new(tx));
+    let terminal = Arc::new(GtkTerminalBackend::new(tx));
     let state = SocketAppState::new(
         model.clone(),
         terminal.clone(),
@@ -1209,7 +1224,7 @@ fn worktree_create_removes_created_worktree_when_spawn_fails() {
     }
     let (tx, rx) = mpsc::channel();
     drop(rx);
-    let terminal = Arc::new(GtkVteBackend::new(tx));
+    let terminal = Arc::new(GtkTerminalBackend::new(tx));
     let state = SocketAppState::new(
         model.clone(),
         terminal,
