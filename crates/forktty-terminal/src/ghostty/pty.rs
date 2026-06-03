@@ -37,6 +37,7 @@ impl PtySession {
         };
         let pty = openpty(Some(&winsize), None).map_err(io_error)?;
         set_nonblocking(&pty.master)?;
+        let slave_fd = pty.slave.as_raw_fd();
         let slave_stdin = duplicate_fd(&pty.slave)?;
         let slave_stdout = duplicate_fd(&pty.slave)?;
         let slave_stderr = pty.slave;
@@ -55,8 +56,14 @@ impl PtySession {
             .stdout(Stdio::from(File::from(slave_stdout)))
             .stderr(Stdio::from(File::from(slave_stderr)));
         unsafe {
-            command.pre_exec(|| {
+            command.pre_exec(move || {
                 setsid().map_err(io_error)?;
+                // Acquire the slave pty as the controlling terminal so programs
+                // that open /dev/tty (fzf, less, ssh/sudo password prompts, ...)
+                // work regardless of whether the child shell sets one up itself.
+                if libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0) == -1 {
+                    return Err(io::Error::last_os_error());
+                }
                 Ok(())
             });
         }
@@ -219,6 +226,33 @@ mod tests {
         assert_eq!(
             session.wait_timeout(Duration::from_secs(2)).unwrap().code(),
             Some(0)
+        );
+    }
+
+    #[test]
+    fn pty_child_acquires_controlling_terminal() {
+        // fzf, less, ssh password prompts, ... open /dev/tty directly, which only
+        // works when the child owns the pty as its controlling terminal. Use a
+        // non-shell child (sleep): unlike bash, it never re-opens its tty by name,
+        // so it has a controlling terminal only if the pty layer set one
+        // (setsid + TIOCSCTTY). We read the controlling-tty device from
+        // /proc/<pid>/stat (field `tty_nr`, 0 when there is none).
+        let request = test_spawn_request_for_shell("/bin/sleep").with_args(["2"]);
+        let session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        let pid = session.child.id();
+
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let after_comm = stat.rsplit_once(')').expect("stat has comm field").1;
+        let tty_nr: i64 = after_comm
+            .split_whitespace()
+            .nth(4)
+            .expect("stat has tty_nr field")
+            .parse()
+            .expect("tty_nr is an integer");
+
+        assert_ne!(
+            tty_nr, 0,
+            "child has no controlling terminal (tty_nr=0); /dev/tty would fail with ENXIO"
         );
     }
 
