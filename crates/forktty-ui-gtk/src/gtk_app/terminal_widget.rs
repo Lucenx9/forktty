@@ -86,6 +86,15 @@ impl GhosttyTerminalWidget {
             });
             drawing_area.add_controller(key_controller);
         }
+        {
+            let runtime = runtime.clone();
+            drawing_area.connect_resize(move |area, width, height| {
+                if let Err(err) = runtime.borrow_mut().resize_pixels(width, height, 10, 20) {
+                    eprintln!("Failed to resize terminal runtime: {err}");
+                }
+                area.queue_draw();
+            });
+        }
         Self {
             drawing_area,
             runtime,

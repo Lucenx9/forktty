@@ -501,7 +501,7 @@ git commit -m "feat: translate gtk input for ghostty terminals"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs`
 
-- [ ] **Step 1: Write failing parity tests**
+- [x] **Step 1: Write failing parity tests**
 
 ```rust
 #[test]
@@ -519,23 +519,23 @@ fn allocation_resize_updates_pty_and_core() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `cargo test -p forktty-ui-gtk terminal_runtime --no-default-features --features gtk-ghostty`
 
 Expected: FAIL because controller/runtime parity is incomplete.
 
-- [ ] **Step 3: Implement parity**
+- [x] **Step 3: Implement parity**
 
 Route `GtkTerminalCommand::SendText` to `TerminalRuntime::write_text`, `Resize` to `resize_cells`, and drawing-area allocation to cell measurement based resize. Save session resize metadata as before.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-ui-gtk terminal_runtime --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/controller.rs crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs
