@@ -46,7 +46,10 @@ fn scan_firefox_profiles(root: &Path) -> Vec<SourceProfile> {
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && has_firefox_importable_data(&path) {
+            let is_profile_dir = entry
+                .file_type()
+                .is_ok_and(|ft| ft.is_dir() || (ft.is_symlink() && path.is_dir()));
+            if is_profile_dir && has_firefox_importable_data(&path) {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 profiles.push(SourceProfile {
                     family: BrowserFamily::Firefox,
@@ -345,6 +348,27 @@ mod tests {
         assert_eq!(browser.profiles.len(), 1);
         assert_eq!(browser.profiles[0].display_name, "xyz.default");
         assert!(!browser.profiles[0].is_default);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_firefox_fallback_scan_follows_symlinked_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let ff = dir.path().join(".mozilla/firefox");
+        let target = dir.path().join("external/default");
+        fs::create_dir_all(&ff).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("places.sqlite"), b"x").unwrap();
+        std::os::unix::fs::symlink(&target, ff.join("linked.default")).unwrap();
+
+        let browser = discover_firefox(&ff).unwrap();
+
+        assert_eq!(browser.profiles.len(), 1);
+        assert_eq!(browser.profiles[0].display_name, "linked.default");
+        assert_eq!(
+            browser.profiles[0].path,
+            ff.join("linked.default").to_string_lossy()
+        );
     }
 
     #[test]
