@@ -478,7 +478,7 @@ impl BrowserPaneWidget {
     /// Connect a callback fired when focus enters this pane (the address bar
     /// or the WebView). Used to keep `WorkspaceModel::focused_surface_id` in
     /// sync so split/close commands target the pane the user is interacting
-    /// with, mirroring the VTE `has-focus` handler.
+    /// with, mirroring the Ghostty focus handler.
     pub fn connect_focus_in<F: Fn() + 'static>(&self, f: F) {
         let f = std::rc::Rc::new(f);
         for target in [

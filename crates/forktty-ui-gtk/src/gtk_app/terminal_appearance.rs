@@ -1,25 +1,6 @@
 use super::*;
 
-#[cfg(feature = "gtk-vte")]
-pub(super) fn apply_vte_appearance(widget: &VteTerminalWidget) {
-    let config = config::load_config().unwrap_or_default();
-    let font = terminal_font_description(widget, &config);
-    widget.add_css_class("vte-terminal");
-    widget.set_font(Some(&font));
-    widget.set_scrollback_lines(i64::from(config.appearance.scrollback_lines));
-    widget.set_audible_bell(config.appearance.terminal_audible_bell);
-    widget.set_mouse_autohide(true);
-    widget.set_scroll_on_keystroke(true);
-    widget.set_allow_hyperlink(true);
-    widget.set_bold_is_bright(false);
-    widget.set_cursor_blink_mode(CursorBlinkMode::System);
-    widget.set_cursor_shape(CursorShape::Block);
-    widget.set_word_char_exceptions("-#%&+,./:=?@_~");
-    apply_terminal_colors(widget, terminal_colors_for_config(&config));
-}
-
-#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
-pub(super) fn apply_vte_appearance(widget: &VteTerminalWidget) {
+pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
     let gtk_widget = widget.widget();
     let font = terminal_font_description(&gtk_widget, &config);
@@ -147,31 +128,6 @@ pub(super) const GRUVBOX_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
         "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
     ],
 };
-
-#[cfg(feature = "gtk-vte")]
-pub(super) fn apply_terminal_colors(widget: &VteTerminalWidget, colors: &TerminalColors) {
-    let foreground = rgba(colors.foreground);
-    let background = rgba(colors.background);
-    let ansi = colors
-        .ansi
-        .iter()
-        .map(|color| rgba(color))
-        .collect::<Vec<_>>();
-    let ansi_refs = ansi.iter().collect::<Vec<&gdk::RGBA>>();
-
-    widget.set_colors(Some(&foreground), Some(&background), &ansi_refs);
-    widget.set_color_bold(Some(&rgba(colors.bold)));
-    widget.set_color_cursor(Some(&rgba(colors.cursor)));
-    widget.set_color_cursor_foreground(Some(&rgba(colors.cursor_foreground)));
-    widget.set_color_highlight(Some(&rgba(colors.highlight)));
-    widget.set_color_highlight_foreground(Some(&rgba(colors.highlight_foreground)));
-}
-
-#[cfg(feature = "gtk-vte")]
-pub(super) fn reset_and_redraw_terminal(widget: &VteTerminalWidget) {
-    widget.reset(true, true);
-    vte_send_text(widget, "\x0c");
-}
 
 pub(super) fn terminal_font_description(
     widget: &impl IsA<gtk::Widget>,

@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn build_pane_chrome(
     surface_id: &str,
-    widget: &VteTerminalWidget,
+    widget: &GhosttyTerminalWidget,
     state: Option<&SocketAppState>,
     parent: &adw::ApplicationWindow,
 ) -> PaneChrome {

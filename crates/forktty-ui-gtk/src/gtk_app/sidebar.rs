@@ -41,7 +41,7 @@ pub(super) struct SidebarUi {
 pub(super) fn schedule_sidebar_refresh(
     ui: SidebarUi,
     state: SocketAppState,
-    controller: Rc<RefCell<VteController>>,
+    controller: Rc<RefCell<TerminalController>>,
 ) {
     glib::idle_add_local_once(move || {
         refresh_sidebar(&ui, &state, &controller, true);
@@ -52,7 +52,7 @@ fn install_workspace_reorder_dnd<W>(
     handle: &W,
     workspace_id: &str,
     state: &SocketAppState,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
     ui: &SidebarUi,
 ) where
     W: IsA<gtk::Widget>,
@@ -189,7 +189,7 @@ pub(super) fn relative_pane_target(
 pub(super) fn refresh_sidebar(
     ui: &SidebarUi,
     state: &SocketAppState,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
     force: bool,
 ) {
     let snapshot = sidebar_snapshot(state);
@@ -713,7 +713,7 @@ pub(super) fn workspace_meta_line(
 pub(super) fn select_sidebar_workspace(
     state: &SocketAppState,
     workspace_id: &str,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
 ) {
     if let Err(err) = select_workspace_with_terminal(state, workspace_id) {
         eprintln!("Failed to spawn selected workspace terminal: {err}");

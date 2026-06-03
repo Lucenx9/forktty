@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-#[cfg(feature = "vte")]
-pub mod vte;
 #[cfg(feature = "ghostty-vt")]
 pub mod ghostty;
 pub mod spawn;
@@ -422,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn child_environment_is_available_without_vte_feature() {
+    fn child_environment_is_available_without_terminal_ui_feature() {
         let request = SpawnRequest {
             surface_id: "surface-1".to_string(),
             workspace_id: "workspace-1".to_string(),

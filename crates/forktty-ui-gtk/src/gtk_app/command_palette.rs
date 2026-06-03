@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn show_command_palette_with_controller(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
-    controller: Option<Rc<RefCell<VteController>>>,
+    controller: Option<Rc<RefCell<TerminalController>>>,
 ) {
     show_command_palette_with_query(parent, state, "", controller);
 }
@@ -157,7 +157,7 @@ pub(super) fn show_command_palette_with_query(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
     initial_query: &str,
-    controller: Option<Rc<RefCell<VteController>>>,
+    controller: Option<Rc<RefCell<TerminalController>>>,
 ) {
     let dialog = gtk::Window::builder()
         .title("Command Palette")

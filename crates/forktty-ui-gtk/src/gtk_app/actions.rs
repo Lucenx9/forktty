@@ -14,7 +14,7 @@ pub(super) fn install_actions(
     window: &adw::ApplicationWindow,
     state: &SocketAppState,
     sidebar_shell: &gtk::Box,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
     settings_apply: SettingsApplyCallback,
     quake_mode: bool,
 ) {

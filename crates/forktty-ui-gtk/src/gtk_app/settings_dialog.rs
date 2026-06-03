@@ -116,7 +116,7 @@ pub(super) fn show_settings_dialog(
     terminal_content.append(&shell_section);
 
     let (font_section, font_list) =
-        settings_section("Text", "Applied immediately to all open VTE panes.");
+        settings_section("Text", "Applied immediately to all open Ghostty panes.");
     let font_family = font_family_combo(parent, &loaded.appearance.font_family);
     font_family.set_tooltip_text(Some("Terminal font family"));
     font_family.set_hexpand(false);
@@ -148,7 +148,7 @@ pub(super) fn show_settings_dialog(
     terminal_content.append(&font_section);
 
     let (behavior_section, behavior_list) =
-        settings_section("Behavior", "Runtime behavior for VTE panes.");
+        settings_section("Behavior", "Runtime behavior for Ghostty panes.");
     let (scrollback_lines_row, scrollback_lines) = settings_number_row(
         "Scrollback lines",
         "Set to 0 to disable saved scrollback for each pane.",

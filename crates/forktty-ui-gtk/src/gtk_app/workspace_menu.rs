@@ -68,7 +68,7 @@ fn active_focused_surface_blocks_auto_spawn(state: &SocketAppState) -> Result<bo
 pub(super) fn build_workspace_context_menu(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
     workspace: &forktty_core::Workspace,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
@@ -321,7 +321,7 @@ pub(super) fn terminal_context_snapshot(
 pub(super) fn build_terminal_context_menu(
     state: &SocketAppState,
     surface_id: &str,
-    terminal: &VteTerminalWidget,
+    terminal: &GhosttyTerminalWidget,
     parent: &adw::ApplicationWindow,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
@@ -493,7 +493,7 @@ pub(super) fn build_terminal_context_menu(
 }
 
 pub(super) fn install_terminal_context_menu(
-    widget: &VteTerminalWidget,
+    widget: &GhosttyTerminalWidget,
     surface_id: &str,
     state: &SocketAppState,
     parent: &adw::ApplicationWindow,

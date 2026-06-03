@@ -79,7 +79,7 @@ pub(super) fn notification_target_label(
 
 pub(super) fn open_notification_target(
     state: &SocketAppState,
-    controller: Option<&Rc<RefCell<VteController>>>,
+    controller: Option<&Rc<RefCell<TerminalController>>>,
     notification: &NotificationItem,
 ) -> bool {
     let (workspace_id, surface_id) = {
@@ -151,7 +151,7 @@ pub(super) fn open_notification_target(
 pub(super) fn show_notification_panel(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
-    controller: Option<Rc<RefCell<VteController>>>,
+    controller: Option<Rc<RefCell<TerminalController>>>,
 ) {
     let notifications = state
         .model

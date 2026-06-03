@@ -10,11 +10,6 @@ use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, serve, socket_path_from_env, SocketAppState,
 };
-#[cfg(feature = "gtk-vte")]
-use forktty_terminal::vte::{
-    send_text as vte_send_text, spawn_vte_terminal_with_callback, CursorBlinkMode, CursorShape,
-    Format, TerminalExt, TerminalExtManual, VteTerminalWidget,
-};
 use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
 use global_hotkey::{
     hotkey::{Code, HotKey},

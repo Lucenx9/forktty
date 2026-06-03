@@ -1,8 +1,6 @@
 use super::*;
-#[cfg(feature = "gtk-ghostty")]
 use forktty_terminal::ghostty::events::GhosttyEvent;
 
-#[cfg(feature = "gtk-ghostty")]
 #[derive(Debug, Clone)]
 pub(super) struct GhosttyTerminalWidget {
     drawing_area: gtk::DrawingArea,
@@ -10,39 +8,20 @@ pub(super) struct GhosttyTerminalWidget {
     selection: Rc<RefCell<TerminalSelection>>,
 }
 
-#[cfg(feature = "gtk-ghostty")]
-pub(super) type VteTerminalWidget = GhosttyTerminalWidget;
-
 pub(super) fn spawn_terminal_with_callback<F>(
     request: &SpawnRequest,
     on_spawn_result: F,
-) -> Result<VteTerminalWidget, TerminalError>
+) -> Result<GhosttyTerminalWidget, TerminalError>
 where
     F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
 {
     spawn_terminal_with_callback_impl(request, on_spawn_result)
 }
 
-#[cfg(feature = "gtk-vte")]
 fn spawn_terminal_with_callback_impl<F>(
     request: &SpawnRequest,
     on_spawn_result: F,
-) -> Result<VteTerminalWidget, TerminalError>
-where
-    F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
-{
-    spawn_vte_terminal_with_callback(request, move |result| {
-        on_spawn_result(result.map(|pid| TerminalSpawnPid(pid.0)).map_err(|err| {
-            TerminalError::Backend(err.to_string())
-        }));
-    })
-}
-
-#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
-fn spawn_terminal_with_callback_impl<F>(
-    request: &SpawnRequest,
-    on_spawn_result: F,
-) -> Result<VteTerminalWidget, TerminalError>
+) -> Result<GhosttyTerminalWidget, TerminalError>
 where
     F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
 {
@@ -56,7 +35,6 @@ where
     Ok(widget)
 }
 
-#[cfg(feature = "gtk-ghostty")]
 impl GhosttyTerminalWidget {
     pub(super) fn new(runtime: TerminalRuntime) -> Self {
         let drawing_area = gtk::DrawingArea::new();
@@ -152,42 +130,6 @@ pub(super) fn copy_terminal_if_focused(widget: &impl TerminalWidgetOps) -> bool 
     true
 }
 
-#[cfg(feature = "gtk-vte")]
-impl TerminalWidgetOps for VteTerminalWidget {
-    fn widget(&self) -> gtk::Widget {
-        self.clone().upcast()
-    }
-
-    fn has_terminal_focus(&self) -> bool {
-        self.has_focus()
-    }
-
-    fn copy_text(&self) {
-        self.copy_clipboard_format(Format::Text);
-    }
-
-    fn paste_from_clipboard(&self) {
-        self.paste_clipboard();
-    }
-
-    fn select_all_text(&self) {
-        self.select_all();
-    }
-
-    fn reset_and_clear(&self) {
-        reset_and_redraw_terminal(self);
-    }
-
-    fn send_text(&self, text: &str) {
-        vte_send_text(self, text);
-    }
-
-    fn resize_cells(&self, cols: u16, rows: u16) {
-        self.set_size(cols.into(), rows.into());
-    }
-}
-
-#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
 impl TerminalWidgetOps for GhosttyTerminalWidget {
     fn widget(&self) -> gtk::Widget {
         self.drawing_area.clone().upcast()

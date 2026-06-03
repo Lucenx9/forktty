@@ -9,7 +9,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DOCTOR_MAX_CONFIG_SIZE_BYTES: u64 = 1_048_576;
 const DOCTOR_MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
 const APPIMAGE_GTK_RUNTIME_LIBS: &[&str] =
-    &["libgtk-4.so", "libadwaita-1.so", "libvte-2.91-gtk4.so"];
+    &["libgtk-4.so", "libadwaita-1.so", "libghostty-vt.so"];
 
 const HELP_TEXT: &str = "\
 forktty — Linux-native multi-agent terminal
@@ -201,7 +201,7 @@ fn parse_doctor_options(args: &[OsString]) -> Result<DoctorOptions, String> {
 
 struct DoctorReport {
     version: &'static str,
-    feature_gtk_vte: bool,
+    feature_gtk_ghostty: bool,
     config: PathState,
     data_dir: PathState,
     state_dir: PathState,
@@ -332,14 +332,14 @@ fn collect_report() -> DoctorReport {
     append_hook_warnings(&mut warnings, &hooks);
     append_appimage_runtime_warnings(
         &mut warnings,
-        cfg!(feature = "gtk-vte"),
+        cfg!(feature = "gtk-ghostty"),
         std::env::var_os("APPIMAGE"),
         std::env::var_os("APPDIR"),
     );
 
     DoctorReport {
         version: VERSION,
-        feature_gtk_vte: cfg!(feature = "gtk-vte"),
+        feature_gtk_ghostty: cfg!(feature = "gtk-ghostty"),
         config,
         data_dir,
         state_dir,
@@ -563,11 +563,11 @@ fn append_hook_warnings(warnings: &mut Vec<String>, hooks: &[HookState]) {
 
 fn append_appimage_runtime_warnings(
     warnings: &mut Vec<String>,
-    gtk_vte_enabled: bool,
+    gtk_ghostty_enabled: bool,
     appimage_env: Option<OsString>,
     appdir_env: Option<OsString>,
 ) {
-    if !gtk_vte_enabled {
+    if !gtk_ghostty_enabled {
         return;
     }
     let Some(appimage) = trimmed_os_string(appimage_env) else {
@@ -575,13 +575,13 @@ fn append_appimage_runtime_warnings(
     };
     let Some(appdir) = trimmed_os_string(appdir_env).map(PathBuf::from) else {
         warnings.push(format!(
-            "AppImage {appimage} did not expose APPDIR; doctor cannot verify bundled GTK/VTE runtime libraries."
+            "AppImage {appimage} did not expose APPDIR; doctor cannot verify bundled GTK/Ghostty runtime libraries."
         ));
         return;
     };
     if !appdir.is_dir() {
         warnings.push(format!(
-            "AppImage {appimage} APPDIR {} is not a directory; doctor cannot verify bundled GTK/VTE runtime libraries.",
+            "AppImage {appimage} APPDIR {} is not a directory; doctor cannot verify bundled GTK/Ghostty runtime libraries.",
             appdir.display()
         ));
         return;
@@ -593,7 +593,7 @@ fn append_appimage_runtime_warnings(
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         warnings.push(format!(
-            "AppImage {appimage} does not bundle GTK/VTE runtime libraries (missing {}); this build depends on host packages.",
+            "AppImage {appimage} does not bundle GTK/Ghostty runtime libraries (missing {}); this build depends on host packages.",
             missing.join(", ")
         ));
     }
@@ -803,8 +803,8 @@ fn format_report(report: &DoctorReport) -> String {
     let mut out = String::new();
     out.push_str(&format!("forktty {} doctor report\n", report.version));
     out.push_str(&format!(
-        "  built with gtk-vte feature: {}\n",
-        report.feature_gtk_vte
+        "  built with gtk-ghostty feature: {}\n",
+        report.feature_gtk_ghostty
     ));
     out.push('\n');
 
@@ -871,7 +871,7 @@ fn format_report_json(report: &DoctorReport) -> String {
         .collect();
     json!({
         "version": report.version,
-        "feature_gtk_vte": report.feature_gtk_vte,
+        "feature_gtk_ghostty": report.feature_gtk_ghostty,
         "config": path_state_json(&report.config),
         "data_dir": path_state_json(&report.data_dir),
         "state_dir": path_state_json(&report.state_dir),
@@ -1116,7 +1116,7 @@ mod tests {
         };
         let clean = DoctorReport {
             version: "test",
-            feature_gtk_vte: false,
+            feature_gtk_ghostty: false,
             config: missing("config"),
             data_dir: missing("data"),
             state_dir: missing("state"),
@@ -1533,7 +1533,7 @@ mod tests {
 
         assert!(warnings.iter().any(|warning| {
             warning.contains("AppImage /tmp/ForkTTY.AppImage")
-                && warning.contains("does not bundle GTK/VTE runtime libraries")
+                && warning.contains("does not bundle GTK/Ghostty runtime libraries")
                 && warning.contains("libgtk-4.so")
         }));
     }
@@ -1545,7 +1545,7 @@ mod tests {
         fs::create_dir_all(&libdir).unwrap();
         fs::write(libdir.join("libgtk-4.so.1"), "").unwrap();
         fs::write(libdir.join("libadwaita-1.so.0"), "").unwrap();
-        fs::write(libdir.join("libvte-2.91-gtk4.so.0"), "").unwrap();
+        fs::write(libdir.join("libghostty-vt.so.0"), "").unwrap();
         let mut warnings = Vec::new();
 
         append_appimage_runtime_warnings(
@@ -1580,7 +1580,7 @@ mod tests {
 
         assert!(warnings
             .iter()
-            .any(|warning| { warning.contains("does not bundle GTK/VTE runtime libraries") }));
+            .any(|warning| { warning.contains("does not bundle GTK/Ghostty runtime libraries") }));
     }
 
     #[test]

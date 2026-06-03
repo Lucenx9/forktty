@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
     anchor: &W,
     state: &SocketAppState,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
 ) {
     let popover = gtk::Popover::new();
     popover.add_css_class("ft-workspace-popover");

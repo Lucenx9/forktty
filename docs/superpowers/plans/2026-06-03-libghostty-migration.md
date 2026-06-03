@@ -744,23 +744,23 @@ git commit -m "feat: route terminal context actions to ghostty widget"
 - Delete: `crates/forktty-terminal/src/vte.rs`
 - Modify: all source files returned by `rg -n "vte4|gtk-vte|gtk_vte|Vte|VTE|vte" crates`
 
-- [ ] **Step 1: Write failing absence checks**
+- [x] **Step 1: Write failing absence checks**
 
 Run: `rg -n "use vte4|vte4::|gtk-vte|forktty-terminal/vte|feature = \"vte\"|feature = \"gtk-vte\"" crates Cargo.toml`
 
 Expected before cleanup: output contains VTE references.
 
-- [ ] **Step 2: Remove VTE**
+- [x] **Step 2: Remove VTE**
 
 Delete `vte.rs`, remove `vte4` from manifests, remove `gtk-vte` and `vte` features, ensure `browser = ["gtk-ghostty", ...]`, and update cfgs in `main.rs`, `socket_cli.rs`, `cli.rs`, and GTK modules.
 
-- [ ] **Step 3: Regenerate lockfile**
+- [x] **Step 3: Regenerate lockfile**
 
 Run: `cargo update -p vte4 -p vte4-sys`
 
 If Cargo refuses because packages are no longer present, run: `cargo generate-lockfile`.
 
-- [ ] **Step 4: Run absence checks**
+- [x] **Step 4: Run absence checks**
 
 Run: `rg -n "use vte4|vte4::|gtk-vte|forktty-terminal/vte|feature = \"vte\"|feature = \"gtk-vte\"" crates Cargo.toml Cargo.lock`
 
@@ -770,7 +770,7 @@ Run: `rg -n "vte4|vte4-sys" Cargo.lock`
 
 Expected: no output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock crates/forktty-terminal crates/forktty-ui-gtk

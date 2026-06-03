@@ -15,7 +15,6 @@ path = "src/main.rs"
 
 [features]
 default = ["gtk-ghostty"]
-gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/vte"]
 gtk-ghostty = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/ghostty-vt"]
 browser = ["gtk-ghostty", "dep:webkit6", "dep:async-channel", "forktty-socket/browser"]
 

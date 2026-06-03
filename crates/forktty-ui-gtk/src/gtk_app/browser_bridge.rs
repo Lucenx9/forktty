@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(feature = "browser")]
 pub(super) fn handle_browser_command(
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
     cmd: forktty_core::BrowserCommand,
 ) {
     use crate::browser_pane::{click_js, fill_js};

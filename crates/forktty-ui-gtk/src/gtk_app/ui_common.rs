@@ -227,7 +227,7 @@ pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
         .build();
     version.add_css_class("about-version");
     let description = gtk::Label::builder()
-        .label("A native GTK/VTE terminal for panes, worktrees, and automation.")
+        .label("A native GTK/Ghostty terminal for panes, worktrees, and automation.")
         .wrap(true)
         .justify(gtk::Justification::Center)
         .max_width_chars(44)

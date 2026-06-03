@@ -310,7 +310,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         );
     }
 
-    let controller = Rc::new(RefCell::new(VteController::new(
+    let controller = Rc::new(RefCell::new(TerminalController::new(
         terminal_stack.borrow().clone(),
         window.clone(),
         model.clone(),
@@ -362,7 +362,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         if !alive_for_terminal_timer.get() {
             return glib::ControlFlow::Break;
         }
-        // VTE/GTK on Wayland can become unstable if several terminals are
+        // Ghostty/GTK on Wayland can become unstable if several terminals are
         // created and spawned in the same main-loop turn during session restore.
         // Handle one backend command per frame so restored panes realize
         // incrementally.
@@ -602,7 +602,7 @@ pub(super) fn settings_apply_callback(
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
     terminal_stack: &gtk::Box,
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
 ) -> SettingsApplyCallback {
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
@@ -620,7 +620,7 @@ pub(super) fn settings_apply_callback(
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
-                apply_vte_appearance(widget);
+                apply_terminal_appearance(widget);
             }
             controller.model.clone()
         };
@@ -852,7 +852,7 @@ pub(super) fn save_session_from_state(state: &SocketAppState) {
 /// Recompute each workspace's listening-port hint from its surfaces' child PIDs.
 /// Runs on a slow cadence; the sidebar refresh timer renders the updated model.
 pub(super) fn refresh_listening_ports(
-    controller: &Rc<RefCell<VteController>>,
+    controller: &Rc<RefCell<TerminalController>>,
     in_flight: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
 ) {

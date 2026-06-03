@@ -220,8 +220,8 @@ pub(super) fn terminal_failure_guidance(message: &str) -> String {
         || lower.contains("permission denied")
     {
         "Check the shell path and permissions in Settings, then restart this pane."
-    } else if lower.contains("vte") || lower.contains("pty") {
-        "The VTE/PTY backend failed. Restart this pane after checking the terminal backend."
+    } else if lower.contains("pty") {
+        "The Ghostty/PTY backend failed. Restart this pane after checking the terminal backend."
     } else {
         "Check Settings, then restart this pane."
     };

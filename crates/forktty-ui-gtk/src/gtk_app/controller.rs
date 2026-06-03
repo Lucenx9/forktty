@@ -13,12 +13,12 @@ pub(super) struct PaneChrome {
 pub(super) type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
 pub(super) type SettingsApplyCallback = Rc<dyn Fn(&config::AppConfig)>;
 
-pub(super) struct VteController {
+pub(super) struct TerminalController {
     container: gtk::Box,
     parent_window: adw::ApplicationWindow,
     pub(super) model: Arc<Mutex<WorkspaceModel>>,
     state: Option<SocketAppState>,
-    pub(super) widgets: BTreeMap<String, VteTerminalWidget>,
+    pub(super) widgets: BTreeMap<String, GhosttyTerminalWidget>,
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeSet<String>,
     last_layout_signature: Option<String>,
@@ -71,7 +71,7 @@ pub(super) fn remove_surface_pid_for_spawn(
     true
 }
 
-impl VteController {
+impl TerminalController {
     pub(super) fn new(
         container: gtk::Box,
         parent_window: adw::ApplicationWindow,
@@ -188,8 +188,8 @@ impl VteController {
                         Some(&surface_status_key(&request.surface_id)),
                     );
                 }
-                apply_vte_appearance(&widget);
-                attach_vte_signal_handlers(
+                apply_terminal_appearance(&widget);
+                attach_terminal_signal_handlers(
                     &widget,
                     &self.model,
                     &request,
@@ -304,7 +304,7 @@ impl VteController {
         self.rebuild_layout();
     }
 
-    fn model_focused_widget(&self) -> Option<VteTerminalWidget> {
+    fn model_focused_widget(&self) -> Option<GhosttyTerminalWidget> {
         let surface_id = {
             let model = self.model.lock().ok()?;
             model.active_workspace()?.focused_surface_id
@@ -312,7 +312,7 @@ impl VteController {
         self.widgets.get(&surface_id).cloned()
     }
 
-    fn gtk_focused_widget(&self) -> Option<VteTerminalWidget> {
+    fn gtk_focused_widget(&self) -> Option<GhosttyTerminalWidget> {
         self.widgets
             .values()
             .find(|widget| widget.has_terminal_focus())
@@ -875,7 +875,7 @@ impl VteController {
             }
         });
         // Keep model focus in sync when the browser pane gains focus, mirroring
-        // the VTE has-focus handler, so focus-driven split/close target this pane.
+        // the terminal focus handler, so focus-driven split/close target this pane.
         {
             let focus_model = self.model.clone();
             let focus_id = surface_id.to_string();

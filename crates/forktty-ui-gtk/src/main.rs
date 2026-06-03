@@ -1,7 +1,7 @@
 mod cli;
 mod socket_cli;
 
-#[cfg(any(feature = "gtk-vte", feature = "gtk-ghostty"))]
+#[cfg(feature = "gtk-ghostty")]
 mod gtk_app;
 
 #[cfg(feature = "browser")]
@@ -35,13 +35,13 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg(any(feature = "gtk-vte", feature = "gtk-ghostty"))]
+#[cfg(feature = "gtk-ghostty")]
 fn launch_app() -> ExitCode {
     gtk_app::run();
     ExitCode::SUCCESS
 }
 
-#[cfg(not(any(feature = "gtk-vte", feature = "gtk-ghostty")))]
+#[cfg(not(feature = "gtk-ghostty"))]
 fn launch_app() -> ExitCode {
     println!(
         "forktty-ui-gtk built without GTK/Ghostty. Rebuild with `--features gtk-ghostty` after installing GTK4, libadwaita, git, and Zig for the vendored libghostty-vt build."
