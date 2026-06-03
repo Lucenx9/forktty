@@ -1,6 +1,6 @@
 # Release QA Checklist
 
-Use this before tagging an alpha release. The goal is to catch GTK/VTE and
+Use this before tagging an alpha release. The goal is to catch GTK/Ghostty and
 package regressions that unit tests cannot see.
 
 ## Automated Checks
@@ -8,9 +8,9 @@ package regressions that unit tests cannot see.
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace --no-default-features --features gtk-vte
-cargo clippy --workspace --no-default-features --features gtk-vte -- -D warnings
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
+cargo test --workspace --no-default-features --features gtk-ghostty
+cargo clippy --workspace --no-default-features --features gtk-ghostty -- -D warnings
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 cargo test -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
@@ -39,16 +39,16 @@ or CLI parser tests), so they should be treated as regressions if they fail in C
   tests)
 
 Manual QA below should focus on runtime integration that headless tests cannot
-fully prove (GTK/VTE lifecycle, desktop environment integration, and
+fully prove (GTK/Ghostty lifecycle, desktop environment integration, and
 packaging/runtime service availability). Browser panes are source-only and
 experimental in this alpha; they have a separate opt-in smoke section.
 
 ## Manual Runtime Smoke
 
 - Start from a clean config/session directory.
-- Launch with `cargo run -p forktty-ui-gtk --no-default-features --features gtk-vte`.
+- Launch with `cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty`.
 - Confirm the app opens a usable terminal in the current directory.
-- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --no-default-features --features gtk-vte`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
+- Relaunch from a clean config with an invalid shell environment (`SHELL=relative-shell cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty`) and confirm ForkTTY falls back to a usable absolute shell instead of opening a dead pane.
 - Split right and split down until at least three panes exist.
 - Move focus between panes with keyboard shortcuts and pointer clicks.
 - Copy and paste with `Ctrl+Shift+C` / `Ctrl+Shift+V`.
@@ -136,7 +136,7 @@ rebuilding.
 - `forktty clear-status --key=` — exits with `--key requires a value` instead of clearing every status entry in the targeted workspace.
 - `forktty clear-progress --kee build` — exits with `clear metadata: unknown option --kee` instead of clearing every progress entry in the targeted workspace.
 - `printf '{"id":"x","method":"metadata.clear_progress","params":{"key":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `key`; progress entries are left intact.
-- `forktty send-text "echo hello\n"` — text reaches the focused VTE pane.
+- `forktty send-text "echo hello\n"` — text reaches the focused Ghostty pane.
 - `forktty send-text --txt "echo hello"` — exits with `send-text: unknown option --txt` instead of sending the wrong text or target.
 - `forktty --socket <stub> send-text "echo explicit" </dev/zero` — sends the explicit text without waiting to drain stdin.
 - `forktty --socket <stub> send-text -- --socket --json` — sends the literal text `--socket --json`; flags after `--` are not parsed.
@@ -307,6 +307,6 @@ checking that the opt-in browser feature still builds and starts.
 
 - Ubuntu 24.04 or newer, GNOME Wayland.
 - Ubuntu 24.04 or newer, X11 session if available.
-- Debian testing/stable where VTE 0.76+ is available.
+- Debian testing/stable where Ghostty 0.76+ is available.
 - One Arch/CachyOS system for rolling-release dependency drift.
-- One Fedora-family system; note that the dependency package names differ from Debian (e.g. `vte291-gtk4-devel` instead of `libvte-2.91-gtk4-dev`).
+- One Fedora-family system; note that the dependency package names differ from Debian (e.g. `git zig` instead of `git zig`).

@@ -12,14 +12,14 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
 [![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.6)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://rustup.rs/)
-[![GTK4](https://img.shields.io/badge/GTK4%20%2B%20VTE-native-blue.svg)](docs/native-gtk-vte.md)
+[![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
 [Website](https://forktty-site.vercel.app/) ·
 [Download v0.2.0-alpha.6 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.6/forktty-0.2.0-alpha.6-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.6). ForkTTY is Linux-only and the GTK/VTE runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
+> **Status**: Early alpha (v0.2.0-alpha.6). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
   <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY alpha.6 with workspace sidebar, split terminal panes, active pane focus, and agent status notifications" width="960" />
@@ -29,7 +29,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, OpenCode, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
-- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded VTE terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
+- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
 
 ## Install
@@ -55,12 +55,12 @@ chmod +x forktty-0.2.0-alpha.6-x86_64.AppImage
 ./forktty-0.2.0-alpha.6-x86_64.AppImage
 ```
 
-The AppImage bundles the GTK4, libadwaita, and VTE shared libraries it
+The AppImage bundles the GTK4, libadwaita, git, Zig, and libghostty-vt shared libraries it
 links against, but it still depends on the host system for glibc, the
 GSettings/GIO data tree, Wayland/X11 session services, fontconfig, the
 OpenGL/Vulkan/Mesa driver stack, and desktop notification services.
 It is the primary downloadable artifact for alpha releases and works on
-most modern distros that ship VTE 0.76+ and a recent glibc, but it should
+most modern distros that ship a recent glibc, but it should
 still be tested on the target distro/desktop environment before being
 relied on.
 
@@ -90,29 +90,29 @@ Requirements:
 
 - Linux
 - [Rust 1.93+](https://rustup.rs/)
-- GTK4, libadwaita, VTE GTK4 development libraries
+- GTK4, libadwaita, git and Zig for the vendored libghostty-vt build
 - `git` and Zig for the vendored `libghostty-vt-sys` build path used during
   the libghostty-vt terminal migration
 
 Debian / Ubuntu:
 
 ```bash
-sudo apt install build-essential libssl-dev libgtk-4-dev libadwaita-1-dev libvte-2.91-gtk4-dev desktop-file-utils
+sudo apt install build-essential libssl-dev libgtk-4-dev libadwaita-1-dev git zig desktop-file-utils
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install gcc gcc-c++ openssl-devel gtk4-devel libadwaita-devel vte291-gtk4-devel desktop-file-utils
+sudo dnf install gcc gcc-c++ openssl-devel gtk4-devel libadwaita-devel git zig desktop-file-utils
 ```
 
 Arch / CachyOS:
 
 ```bash
-sudo pacman -S base-devel openssl gtk4 libadwaita vte4 desktop-file-utils
+sudo pacman -S base-devel openssl gtk4 libadwaita desktop-file-utils
 ```
 
-ForkTTY requires libadwaita 1.4+ and VTE 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
+ForkTTY requires libadwaita 1.4+ and Ghostty 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
 
 Clone and run:
 
@@ -122,14 +122,14 @@ cd forktty
 cargo run -p forktty-ui-gtk
 ```
 
-Packaged builds are GTK/VTE-only. The experimental WebKitGTK browser pane
+Packaged builds are GTK/Ghostty-only. The experimental WebKitGTK browser pane
 remains in source behind the opt-in `browser` feature; it is not shipped in
 the AppImage or `.deb` for this alpha.
 
 For the explicit terminal-only build used by release artifacts:
 
 ```bash
-cargo run -p forktty-ui-gtk --no-default-features --features gtk-vte
+cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 ```
 
 For the source-only browser experiment, install WebKitGTK 6 development files
@@ -309,13 +309,13 @@ the same local socket pipeline. Manual hook-event commands can pass
 
 ## Features
 
-- Native GTK4/libadwaita desktop shell with embedded VTE terminals.
+- Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
 - Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, event-stream, and capabilities.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
-- Prompt-aware notifications from VTE shell integration signals, bounded visible prompt fallback, VTE bell, and hook/socket events.
+- Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events.
 - Source-only experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
@@ -349,19 +349,19 @@ sound = true
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
-`scrollback_lines` controls VTE scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
+`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
 
 See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 
 ## Session Restore
 
-GTK/VTE sessions are stored as:
+GTK/Ghostty sessions are stored as:
 
 ```text
 ~/.local/share/forktty/session-v2.json
 ```
 
-ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. Restore does not preserve running PTY processes or scrollback; new VTE terminals are spawned for restored panes. Corrupt or structurally invalid session files are quarantined.
+ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. Restore does not preserve running PTY processes or scrollback; new Ghostty-backed terminals are spawned for restored panes. Corrupt or structurally invalid session files are quarantined.
 
 ## Security Summary
 
@@ -377,10 +377,10 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 ## Known Limitations
 
 - Linux only. There are no supported macOS or Windows builds.
-- VTE 0.76+ and libadwaita 1.4+ are required by the native terminal integration.
-- The AppImage bundles GTK4/libadwaita/VTE but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
+- libadwaita 1.4+ are required by the native terminal integration.
+- The AppImage bundles GTK4/libadwaita/Ghostty but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
-- Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because VTE owns the child PTY.
+- Byte-level OSC 9/99 parsing from the old PTY-owner path is not fully ported because ForkTTY owns the child PTY.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
 - Full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
@@ -407,16 +407,16 @@ Useful commands:
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo test --workspace --all-targets --no-default-features --features gtk-vte
-cargo clippy --workspace --all-targets --no-default-features --features gtk-vte -- -D warnings
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte
+cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
+cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 cargo test -p forktty-ui-gtk --all-targets --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```
 
-See [SPEC.md](SPEC.md), [ROADMAP.md](ROADMAP.md), and [docs/native-gtk-vte.md](docs/native-gtk-vte.md).
+See [SPEC.md](SPEC.md), [ROADMAP.md](ROADMAP.md), and [docs/native-gtk-ghostty.md](docs/native-gtk-ghostty.md).
 Use [docs/release-qa.md](docs/release-qa.md) before tagging alpha releases.
 
 ## Inspiration

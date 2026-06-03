@@ -1102,7 +1102,16 @@ mod tests {
     }
 
     #[test]
-    fn doctor_strict_exit_code_depends_on_warnings() {
+    fn doctor_reports_gtk_ghostty_and_libghostty_runtime() {
+        let report = minimal_doctor_report(true);
+
+        let text = format_report(&report);
+
+        assert!(text.contains("built with gtk-ghostty feature: true"));
+        assert!(text.contains("forktty test doctor report"));
+    }
+
+    fn minimal_doctor_report(feature_gtk_ghostty: bool) -> DoctorReport {
         let missing = |label| PathState {
             label,
             path: None,
@@ -1114,9 +1123,9 @@ mod tests {
             size: None,
             error: None,
         };
-        let clean = DoctorReport {
+        DoctorReport {
             version: "test",
-            feature_gtk_ghostty: false,
+            feature_gtk_ghostty,
             config: missing("config"),
             data_dir: missing("data"),
             state_dir: missing("state"),
@@ -1127,7 +1136,12 @@ mod tests {
             shell_executable: false,
             hooks: Vec::new(),
             warnings: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn doctor_strict_exit_code_depends_on_warnings() {
+        let clean = minimal_doctor_report(false);
         assert_eq!(
             doctor_exit_code(
                 &clean,

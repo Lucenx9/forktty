@@ -37,7 +37,7 @@ directly.
 
 ## Supported platforms
 
-The current supported runtime baseline is libadwaita 1.4+ and VTE 0.76+,
+The current supported runtime baseline is libadwaita 1.4+,
 which matches Ubuntu 24.04 LTS and newer distro packages. See
 [`docs/QA.md`](docs/QA.md) for the full coverage grid and the per-distro
 expectations.

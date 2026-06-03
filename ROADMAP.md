@@ -1,6 +1,6 @@
 # ForkTTY Roadmap
 
-This roadmap tracks the native GTK/VTE implementation that replaced the old Tauri/React path.
+This roadmap tracks the native GTK/Ghostty implementation that replaced the old Tauri/React path.
 
 ## Implemented
 
@@ -8,7 +8,7 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 
 - [x] Rust workspace split into `forktty-core`, `forktty-terminal`, `forktty-socket`, and `forktty-ui-gtk`.
 - [x] GTK4/libadwaita application shell.
-- [x] VTE terminal panes with configured shell, font, colors, send-text, resize, close, bell, and child-exit handling.
+- [x] Ghostty-backed terminal panes with configured shell, font, colors, send-text, resize, close, bell, and child-exit handling.
 - [x] Direct Unix socket JSON-RPC dispatch without a frontend bridge.
 - [x] Native socket CLI and agent hook installer in the `forktty` binary over the socket API.
 - [x] `events.subscribe` NDJSON change stream and `system.capabilities` discovery, with `forktty events`/`forktty capabilities` CLI.
@@ -44,14 +44,14 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 - [x] Desktop notifications through `notify-rust`.
 - [x] Custom `notification_command` with argv execution and title/body environment variables.
 - [x] Agent status, progress, and log metadata through socket API.
-- [x] Prompt notifications from VTE shell termprops and bounded visible-tail fallback.
-- [x] VTE bell and child-exit notifications.
+- [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
+- [x] Ghostty bell and child-exit notifications.
 - [x] Explicit notification `kind` support.
 
 ### Appearance
 
 - [x] Auto/Light/Dark theme-source selection in Settings.
-- [x] Per-pane VTE scrollback and audible-bell controls.
+- [x] Per-pane Ghostty scrollback and audible-bell controls.
 - [x] Sidebar position (`left`/`right`) and visibility persistence.
 
 ### Session, Config, and Security
@@ -74,15 +74,15 @@ This roadmap tracks the native GTK/VTE implementation that replaced the old Taur
 
 ## Backlog
 
-- [ ] Port or replace byte-level OSC 9/99 parsing now that VTE owns the PTY.
-- [ ] Runtime GTK/VTE smoke tests for keyboard, split, notification, and socket workflows.
+- [ ] Port or replace byte-level OSC 9/99 parsing now that Ghostty owns the PTY.
+- [ ] Runtime GTK/Ghostty smoke tests for keyboard, split, notification, and socket workflows.
 - [ ] Manual QA matrix for `.deb` across Debian/Ubuntu, Fedora-family, Arch/CachyOS.
 - [ ] Persistent scrollback, opt-in and bounded.
 - [ ] More complete command palette search/filter parity.
 - [ ] Rich branch picker UI with query highlighting.
 - [ ] Better notification inbox grouping and actions.
 - [ ] Full theme customization.
-- [ ] Ghostty theme import for the native VTE color palette.
+- [ ] Ghostty theme import for the native Ghostty color palette.
 - [ ] Multi-window support.
 - [ ] Browser visit recording and history/bookmark address-bar completion.
 - [ ] MCP/server integration.

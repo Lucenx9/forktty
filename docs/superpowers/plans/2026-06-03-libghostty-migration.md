@@ -841,7 +841,7 @@ git commit -m "feat: normalize legacy vte renderer config"
 - Modify: `scripts/build-appimage.sh`
 - Modify: Linux metadata files if VTE is mentioned
 
-- [ ] **Step 1: Write failing doctor tests**
+- [x] **Step 1: Write failing doctor tests**
 
 ```rust
 #[test]
@@ -856,23 +856,23 @@ fn doctor_reports_gtk_ghostty_and_libghostty_runtime() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `cargo test -p forktty-ui-gtk doctor_reports_gtk_ghostty_and_libghostty_runtime --no-default-features --features gtk-ghostty`
 
 Expected: FAIL because doctor still reports `gtk-vte`.
 
-- [ ] **Step 3: Update docs and scripts**
+- [x] **Step 3: Update docs and scripts**
 
 Replace build commands with `--no-default-features --features gtk-ghostty`, remove VTE package names (`libvte-2.91-gtk4-dev`, `vte291-gtk4-devel`, `vte4`, `libvte-2.91-gtk4-0`), add `zig` and `git` build requirements, and make AppImage/deb copy or depend on `libghostty-vt.so.0.1.0` produced by `libghostty-vt-sys`.
 
-- [ ] **Step 4: Run absence checks**
+- [x] **Step 4: Run absence checks**
 
 Run: `rg -n "VTE|vte|gtk-vte|libvte|vte291" README.md CONTRIBUTING.md SPEC.md SECURITY.md PRIVACY.md SUPPORT.md ROADMAP.md RELEASING.md docs scripts packaging crates`
 
 Expected: only intentional historical note for `terminal_renderer = "vte"` legacy compatibility, if present.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/cli.rs crates/forktty-ui-gtk/src/socket_cli.rs README.md CONTRIBUTING.md SPEC.md SECURITY.md PRIVACY.md SUPPORT.md ROADMAP.md RELEASING.md docs scripts packaging

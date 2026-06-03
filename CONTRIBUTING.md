@@ -5,7 +5,7 @@ development environment, what to run before opening a PR, and how patches
 are reviewed.
 
 ForkTTY is Linux-only and currently in alpha (`0.2.0-alpha.x`). The GTK4 +
-VTE shell is the primary implementation.
+ForkTTY hook is the primary implementation.
 
 ## Quick links
 
@@ -22,7 +22,7 @@ You will need:
 
 - Linux
 - Rust 1.93+ (install via [rustup](https://rustup.rs/))
-- GTK4, libadwaita, and VTE GTK4 development libraries
+- GTK4, libadwaita, git, Zig, and libghostty-vt GTK4 development libraries
 - `git` and Zig for the vendored `libghostty-vt-sys` build path used during
   the libghostty-vt terminal migration
 - WebKitGTK 6 development files when working on the optional browser-pane feature
@@ -34,7 +34,7 @@ Clone and build:
 ```bash
 git clone https://github.com/Lucenx9/forktty.git
 cd forktty
-cargo run -p forktty-ui-gtk --features gtk-vte
+cargo run -p forktty-ui-gtk --features gtk-ghostty
 ```
 
 ## Workflow
@@ -60,9 +60,9 @@ Run these locally before pushing. CI runs the same set in
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo clippy --workspace --features gtk-vte -- -D warnings
+cargo clippy --workspace --features gtk-ghostty -- -D warnings
 cargo test --workspace
-cargo build -p forktty-ui-gtk --features gtk-vte
+cargo build -p forktty-ui-gtk --features gtk-ghostty
 desktop-file-validate packaging/linux/forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
@@ -99,7 +99,7 @@ quarantine, validation rejections) over tests that mock internals.
 ## Code style
 
 - Run `cargo fmt`; do not hand-format.
-- Keep `clippy --workspace --features gtk-vte -- -D warnings` clean.
+- Keep `clippy --workspace --features gtk-ghostty -- -D warnings` clean.
 - Match the surrounding style in the file you are editing. Do not
   introduce new abstractions to "make room" for hypothetical future
   changes.

@@ -78,10 +78,18 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte --release
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
 
 rm -rf "$PKG_ROOT"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$PKG_ROOT/usr/bin/forktty"
+GHOSTTY_LIB="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0' -print -quit)"
+if [[ -z "$GHOSTTY_LIB" ]]; then
+  echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
+  exit 1
+fi
+install -Dm755 "$GHOSTTY_LIB" "$PKG_ROOT/usr/lib/libghostty-vt.so.0.1.0"
+ln -s libghostty-vt.so.0.1.0 "$PKG_ROOT/usr/lib/libghostty-vt.so.0"
+ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
 install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"
@@ -103,9 +111,9 @@ Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://forktty-site.vercel.app/
-Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libvte-2.91-gtk4-0 (>= 0.76), libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
+Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
 Description: Linux-native multi-agent terminal
- ForkTTY is a Linux-native GTK4/libadwaita/VTE terminal for multi-agent
+ ForkTTY is a Linux-native GTK4/libadwaita/Ghostty terminal for multi-agent
  workflows, programmable socket automation, and git worktree isolation.
 CONTROL
 

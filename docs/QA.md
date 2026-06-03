@@ -6,7 +6,7 @@ detailed runtime checklist) and [`../RELEASING.md`](../RELEASING.md)
 (the end-to-end release flow).
 
 ForkTTY is Linux-only. The supported runtime baseline is libadwaita 1.4+
-and VTE 0.76+, which matches Ubuntu 24.04 LTS and newer distro packages.
+and Ghostty 0.76+, which matches Ubuntu 24.04 LTS and newer distro packages.
 
 ## Supported platforms
 
@@ -17,7 +17,7 @@ and VTE 0.76+, which matches Ubuntu 24.04 LTS and newer distro packages.
 | Arch / CachyOS / Manjaro | Rolling                                | `pacman`        |
 
 Other distros are best-effort: they should work if libadwaita 1.4+
-and VTE 0.76+ are available, but they are not part of the release gate.
+and Ghostty 0.76+ are available, but they are not part of the release gate.
 
 ## Display server coverage
 
@@ -39,7 +39,7 @@ should be one of:
 | Area                                  | Ubuntu / Debian (Wayland) | Ubuntu / Debian (X11) | Fedora (Wayland) | Arch / CachyOS (Wayland) |
 | ------------------------------------- | ------------------------- | --------------------- | ---------------- | ------------------------ |
 | Install dependencies (per README)     |                           |                       |                  |                          |
-| `cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte` | |                 |                  |                          |
+| `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty` | |                 |                  |                          |
 | Source-only browser build: `cargo build -p forktty-ui-gtk --features browser` | |             |                  |                          |
 | `bash scripts/build-deb.sh`           |                           |                       |                  | n/a                      |
 | `bash scripts/build-appimage.sh`      |                           |                       |                  |                          |

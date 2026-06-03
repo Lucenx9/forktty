@@ -1,7 +1,7 @@
 # cmux Gap Features
 
 Features present in [cmux](https://github.com/manaflow-ai/cmux) (macOS, Swift/AppKit, libghostty)
-that ForkTTY (Linux, Rust, GTK4/VTE) does not yet have, ordered by user impact vs. cost.
+that ForkTTY (Linux, Rust, GTK4/Ghostty) does not yet have, ordered by user impact vs. cost.
 Source: README, `docs/cli-contract.md`, and `CLI/` of the cmux repo as of 2026-05-23.
 
 This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
@@ -9,7 +9,7 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 ## Legend
 
 - **Impact**: perceived user value.
-- **Cost**: implementation effort on the GTK/VTE + Rust stack.
+- **Cost**: implementation effort on the GTK/Ghostty + Rust stack.
 - **Status**: `backlog` (in ROADMAP), `new` (not yet tracked), `partial`.
 
 ---
@@ -47,9 +47,9 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
   [agent-browser](https://github.com/vercel-labs/agent-browser) (Apache-2.0): accessibility-tree
   snapshot, element refs, click, fill forms, evaluate JS. Plus cookie/history import from 20+
   browsers and browser profiles.
-- ForkTTY SP1 has a browser pane as a new surface kind (`SurfaceKind::Browser`) embedding WebKitGTK6 behind the opt-in `browser` cargo feature. Alpha release artifacts ship GTK/VTE-only, so the browser remains source-only while the core agent orchestration path stabilizes. The source build exposes socket verbs `browser.open`/`browser.navigate`, an in-pane address bar (back/forward/reload), and `forktty browser open|navigate` CLI. SP2 adds the scriptable socket verbs (`browser.snapshot`/`browser.click`/`browser.fill`/`browser.eval`) plus socket-driven `back`/`forward`/`reload` via a socket->GTK command channel, with `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (element refs come from a pragmatic ARIA DOM walk; full AT-SPI is not claimed). SP3 P1/P2 adds persistent per-profile WebKit sessions plus `browser.profile.*` socket/CLI verbs; P3 adds core history/bookmark stores, socket verbs, and CLI mirrors, with GTK completion/visit-recording still pending. P4 adds browser import via the `forktty-import` crate, `browser.import.discover`/`preview`/`run` socket/CLI verbs, and a Settings "Import Browser Data" dialog.
+- ForkTTY SP1 has a browser pane as a new surface kind (`SurfaceKind::Browser`) embedding WebKitGTK6 behind the opt-in `browser` cargo feature. Alpha release artifacts ship GTK/Ghostty-only, so the browser remains source-only while the core agent orchestration path stabilizes. The source build exposes socket verbs `browser.open`/`browser.navigate`, an in-pane address bar (back/forward/reload), and `forktty browser open|navigate` CLI. SP2 adds the scriptable socket verbs (`browser.snapshot`/`browser.click`/`browser.fill`/`browser.eval`) plus socket-driven `back`/`forward`/`reload` via a socket->GTK command channel, with `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (element refs come from a pragmatic ARIA DOM walk; full AT-SPI is not claimed). SP3 P1/P2 adds persistent per-profile WebKit sessions plus `browser.profile.*` socket/CLI verbs; P3 adds core history/bookmark stores, socket verbs, and CLI mirrors, with GTK completion/visit-recording still pending. P4 adds browser import via the `forktty-import` crate, `browser.import.discover`/`preview`/`run` socket/CLI verbs, and a Settings "Import Browser Data" dialog.
 - Scope (Linux):
-  - Embed WebKitGTK 6 (`webkitgtk-6.0`) as a pane kind alongside VTE.
+  - Embed WebKitGTK 6 (`webkitgtk-6.0`) as a pane kind alongside Ghostty-backed terminal.
   - Expose a socket verb set mirroring agent-browser (`open`, `navigate`, `snapshot`, `click`, `fill`, `eval`).
   - Defer external browser import; ship read/navigate/script/profile first.
 
@@ -83,7 +83,7 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 
 - **Impact**: low-medium · **Cost**: low · **Status**: backlog (theme import only)
 - cmux reads `~/.config/ghostty/config` for themes/fonts/colors.
-- Scope: import Ghostty theme/font/color keys into the VTE palette on startup; map the subset VTE
+- Scope: import Ghostty theme/font/color keys into the Ghostty palette on startup; map the subset Ghostty
   supports, ignore the rest.
 
 ---
@@ -94,5 +94,5 @@ This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
 - Cloud VM backend + account/auth + vault (cmux `vm`/`cloud`/`auth`/`vault`): conflicts with
   ForkTTY's local-first posture and no telemetry/update-checks by default.
 - Optional user-enabled tools, such as PR resolution through `gh`, may contact external services.
-- libghostty GPU renderer (ForkTTY uses VTE intentionally).
+- libghostty GPU renderer (ForkTTY uses Ghostty intentionally).
 - Sparkle auto-update (ForkTTY ships no update-check by design; AppImage/.deb handle distribution).

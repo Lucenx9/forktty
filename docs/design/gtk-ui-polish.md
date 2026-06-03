@@ -12,7 +12,7 @@
 
 ### Goals
 
-- Eliminate visual noise that hides hierarchy or duplicates information: the purple window outline, the `VTE` badge, `ACTIVE`/`IDLE` text pills, duplicated CWD strings, the `Ready` filler label, the centered `ForkTTY` title.
+- Eliminate visual noise that hides hierarchy or duplicates information: the purple window outline, the `Ghostty` badge, `ACTIVE`/`IDLE` text pills, duplicated CWD strings, the `Ready` filler label, the centered `ForkTTY` title.
 - Give the chrome a real Zed/Ghostty-style minimal-dense feel: thinner titlebar, denser sidebar, pane header that disappears for single-pane workspaces, a real global status bar.
 - Make the design system internally consistent so future styling is additive (real text hierarchy, no aliased semantic tokens, pane surfaces derived from `--ft-bg-*`).
 - Add Ctrl+B sidebar toggle with persistence in `AppConfig`.
@@ -102,7 +102,7 @@ In `style.css`:
 
 ### Problem
 
-`gtk_app.rs:1516-1559` builds a 260px sidebar with two stacked headers (`ForkTTY` brand + `VTE` mode pill at the top, `Ready` + keycap at the bottom). Workspace rows have a `X panes` pill regardless of pane count. No toggle.
+`gtk_app.rs:1516-1559` builds a 260px sidebar with two stacked headers (`ForkTTY` brand + runtime mode pill at the top, `Ready` + keycap at the bottom). Workspace rows have a `X panes` pill regardless of pane count. No toggle.
 
 ### Change
 
@@ -112,7 +112,7 @@ In `style.css`:
 - Remove the `sidebar_footer` box entirely (`gtk_app.rs:1541-1555`) and the lines that append it. The `ready` label and `palette_hint` move to the new global status bar (Section 6). Drop their construction here.
 - Sidebar header rebuilt:
   - Remove `sidebar_title` showing `ForkTTY`.
-  - Remove `sidebar_mode` showing `VTE`.
+  - Remove `sidebar_mode` showing `Ghostty`.
   - New layout: small uppercase label `WORKSPACES` (class `.sidebar-section-label`) on the left, a flat `+` button (icon `tab-new-symbolic`, class `.sidebar-add`) on the right. The `+` button delegates to the same action as the titlebar `new_workspace` (`win.new-workspace` or whatever action name exists).
 
 #### 4.2 Row density (`refresh_sidebar` in `gtk_app.rs:1983` and CSS)
@@ -145,7 +145,7 @@ In `style.css`:
 - Single-workspace state: no `1 pane` pill anywhere.
 - Two-pane workspace: small `2` next to name.
 - Ctrl+B hides the sidebar; pressing again restores. Restart the app: state persists.
-- No `ForkTTY` label or `VTE` badge anywhere in the sidebar.
+- No `ForkTTY` label or `Ghostty` badge anywhere in the sidebar.
 
 ---
 

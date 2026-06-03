@@ -14,9 +14,9 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
 2. Run the full QA checklist locally on at least one supported distro
    (see [`docs/QA.md`](docs/QA.md)):
    - `cargo fmt --all --check`
-   - `cargo clippy --workspace --all-targets --no-default-features --features gtk-vte -- -D warnings`
-   - `cargo test --workspace --all-targets --no-default-features --features gtk-vte`
-   - `cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte`
+   - `cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings`
+   - `cargo test --workspace --all-targets --no-default-features --features gtk-ghostty`
+   - `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty`
    - `cargo test -p forktty-ui-gtk --all-targets --features browser`
    - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
@@ -36,7 +36,7 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
      `## [<version>] - <YYYY-MM-DD>` section.
    - Leave an empty `## [Unreleased]` heading above it.
 4. Update the README download badge / link if it tracks the prerelease.
-   The packaged artifacts are built with `--no-default-features --features gtk-vte`
+   The packaged artifacts are built with `--no-default-features --features gtk-ghostty`
    (see `scripts/build-deb.sh` and `scripts/build-appimage.sh`). The browser
    feature remains source-only and must stay covered by CI, but it is not shipped
    in the `.deb` or AppImage for alpha releases.

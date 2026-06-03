@@ -1,6 +1,6 @@
 # ForkTTY Technical Specification
 
-ForkTTY is a Linux-only native terminal for running multiple coding agents in parallel. The primary implementation is now Rust + GTK4/libadwaita + VTE, with direct Unix socket automation and git worktree isolation.
+ForkTTY is a Linux-only native terminal for running multiple coding agents in parallel. The primary implementation is now Rust + GTK4/libadwaita + Ghostty, with direct Unix socket automation and git worktree isolation.
 
 ## Runtime Architecture
 
@@ -10,14 +10,14 @@ forktty-core
   browser profile/history stores
 
 forktty-terminal
-  TerminalBackend trait, headless test backend, VTE adapter
+  TerminalBackend trait, headless test backend, Ghostty adapter
 
 forktty-socket
   Tokio Unix socket server, newline-delimited JSON-RPC, direct dispatch,
   events stream, capabilities discovery
 
 forktty-ui-gtk
-  GTK4/libadwaita app shell, VTE panes, sidebar, dialogs, quake mode,
+  GTK4/libadwaita app shell, Ghostty panes, sidebar, dialogs, quake mode,
   socket CLI, agent hook installer over the socket API, and optional
   WebKitGTK6 browser panes behind the `browser` feature
 ```
@@ -30,7 +30,7 @@ only by the optional browser-pane feature.
 | Layer | Technology | Use |
 | ----- | ---------- | --- |
 | UI shell | GTK4 + libadwaita | Native Linux window, header, dialogs, sidebar |
-| Terminal | VTE GTK4 | Embedded terminal widget and child PTY owner |
+| Terminal | Ghostty GTK4 | Embedded terminal widget and child PTY owner |
 | Browser feature | WebKitGTK6 | Optional browser-pane surface, page scripting, and per-profile web data |
 | State | Rust `WorkspaceModel` | Workspaces, panes, surfaces, metadata, notifications |
 | Git | `git2` | Worktree create/attach/remove/merge/status |
@@ -61,13 +61,13 @@ Each surface has:
 - surface kind (`Terminal` or `Browser { url, profile }`);
 - unread/attention state.
 
-Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`; leaf nodes reference surface IDs. GTK renders the active workspace tree into nested `gtk::Paned` containers and reuses VTE widgets by surface ID.
+Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`; leaf nodes reference surface IDs. GTK renders the active workspace tree into nested `gtk::Paned` containers and reuses Ghostty widgets by surface ID.
 
 ## Terminal Lifecycle
 
 1. A workspace or split creates a surface in `WorkspaceModel`.
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
-3. The VTE adapter creates a VTE terminal, applies appearance (font, colors, scrollback) settings, and spawns the configured shell.
+3. The Ghostty adapter creates a Ghostty-backed terminal, applies appearance (font, colors, scrollback) settings, and spawns the configured shell.
 4. Child processes inherit:
    - `TERM=xterm-256color`
    - `COLORTERM=truecolor`
@@ -77,9 +77,9 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
    - `FORKTTY_SURFACE_ID`
    - `FORKTTY_SOCKET_PATH`
 5. Socket methods and GTK actions can send text, split, focus, close, or resize surfaces.
-6. Closing a pane/workspace closes the corresponding VTE surface.
+6. Closing a pane/workspace closes the corresponding Ghostty surface.
 
-VTE owns the child PTY. Prompt/status detection uses VTE shell integration termprops, bell/child-exit signals, and a bounded visible-tail prompt fallback.
+ForkTTY owns the child PTY. Prompt/status detection uses ForkTTY hook integration termprops, bell/child-exit signals, and a bounded visible-tail prompt fallback.
 
 ## Session Persistence
 
@@ -175,7 +175,7 @@ Implemented categories:
 | Events | `events.subscribe` |
 | Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`, `browser.import.discover`, `browser.import.preview`, `browser.import.run` |
 
-Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged VTE pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 
@@ -193,7 +193,7 @@ Error responses include a structured `code` field so clients can branch on outco
 
 ## Browser Pane Feature
 
-The `browser` cargo feature builds WebKitGTK6 panes alongside VTE panes.
+The `browser` cargo feature builds WebKitGTK6 panes alongside Ghostty panes.
 Browser surfaces are part of `WorkspaceModel` and carry a URL plus a
 `ProfileId`. The socket can open/navigate browser surfaces and, when a
 GTK browser command channel is available, run snapshot/click/fill/eval and
@@ -232,10 +232,10 @@ Worktree and hook paths are canonicalized. Hook execution is limited to `.forktt
 Notification sources:
 
 - explicit socket/hook `notification.create`;
-- VTE shell `precmd`, `preexec`, and `postexec` termprops;
-- VTE progress termprops;
-- VTE bell;
-- VTE child exit;
+- ForkTTY hook `precmd`, `preexec`, and `postexec` termprops;
+- ForkTTY progress termprops;
+- Ghostty bell;
+- Ghostty child exit;
 - bounded visible-tail prompt fallback for common agent prompts.
 
 Notifications update in-app unread state and may dispatch through `notify-rust` and `notification_command`. Custom commands are argv-executed, not `sh -c`; title/body are passed through environment variables.
@@ -258,7 +258,7 @@ Residual risks:
 
 - User-authored hooks and notification commands run with user privileges.
 - A same-user process can interact with user-owned runtime resources.
-- VTE owns the PTY, so byte-level OSC 9/99 parsing from the legacy PTY-owner path is not fully ported.
+- Ghostty owns the PTY, so byte-level OSC 9/99 parsing from the legacy PTY-owner path is not fully ported.
 
 ## Test Strategy
 
@@ -271,6 +271,6 @@ Current automated coverage:
 
 Backlog validation:
 
-- runtime smoke tests for GTK/VTE interactions;
+- runtime smoke tests for GTK/Ghostty interactions;
 - manual package QA across supported Linux environments;
 - persistent scrollback tests once scrollback persistence exists.

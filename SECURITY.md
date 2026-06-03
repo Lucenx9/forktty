@@ -35,7 +35,7 @@ ForkTTY makes no telemetry, update-check, or product-service network calls and d
 | Component | Current protection |
 | --------- | ------------------ |
 | Unix socket | Defaults to `$XDG_RUNTIME_DIR/forktty.sock`; fallback is `/tmp/forktty-<uid>/forktty.sock`; parent directory and socket permissions are owner-only; request lines are capped at 1 MiB; live ForkTTY sockets are probed before stale cleanup. |
-| VTE shell spawn | Configured shell must be an absolute executable file. Spawned shells receive controlled terminal identity/color variables (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`) plus ForkTTY socket/workspace targeting variables. User-provided extra environment cannot override reserved terminal or `FORKTTY_*` keys. |
+| ForkTTY hook spawn | Configured shell must be an absolute executable file. Spawned shells receive controlled terminal identity/color variables (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`) plus ForkTTY socket/workspace targeting variables. User-provided extra environment cannot override reserved terminal or `FORKTTY_*` keys. |
 | ForkTTY config | `~/.config/forktty/config.toml` must be a regular file and no larger than 1 MiB before parsing. Saved config validates shell, font size, sidebar position, renderer, window mode, worktree layout, and notification command. |
 | Session restore | `session-v2.json` is size-bounded, regular-file checked, structurally validated, and quarantined on invalid input. |
 | Notification command | Empty disables it. If set, it is parsed with `shell_words`; the first token must be an absolute executable file; argv execution is used; no `sh -c`; title/body are passed through environment variables. |
@@ -75,7 +75,7 @@ Do not point `notification_command` at a script unless you trust that script wit
 - Worktree operations modify local Git checkouts and branches; users should review changes before merging or removing worktrees.
 - Session files and logs can contain local paths, branch names, workspace names, and notification text.
 - Optional browser profile data can contain cookies, cache, localStorage, history, bookmarks, and URLs for pages the user opens.
-- VTE owns the child PTY, so byte-level terminal escape parsing is intentionally narrower than the legacy PTY-owner path.
+- ForkTTY owns the child PTY, so byte-level terminal escape parsing is intentionally narrower than the legacy PTY-owner path.
 
 ## Dependencies and CI
 

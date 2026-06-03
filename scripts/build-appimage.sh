@@ -13,7 +13,7 @@ APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.metainfo.xml"
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
-  "libvte-2.91-gtk4.so"
+  "libghostty-vt.so"
 )
 
 if [[ -z "$VERSION" ]]; then
@@ -250,7 +250,7 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-vte --release
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
 
 rm -rf "$APPDIR" "$APPIMAGE_PATH"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$APPDIR/usr/bin/forktty"
