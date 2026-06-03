@@ -11,6 +11,7 @@ use libghostty_vt::{
         EncoderSize as GhosttyMouseEncoderSize, Event as GhosttyMouseEvent,
         Position as GhosttyMousePosition,
     },
+    paste,
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::CellWide,
     style::RgbColor,
@@ -468,11 +469,12 @@ impl GhosttyCore {
 
     pub fn paste_bytes(&self, text: &str) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        if self.bracketed_paste {
+        let bracketed = self.bracketed_paste || !paste::is_safe(text);
+        if bracketed {
             bytes.extend_from_slice(b"\x1b[200~");
         }
         bytes.extend_from_slice(text.as_bytes());
-        if self.bracketed_paste {
+        if bracketed {
             bytes.extend_from_slice(b"\x1b[201~");
         }
         Ok(bytes)
@@ -1005,6 +1007,33 @@ mod tests {
     }
 
     #[test]
+    fn unsafe_paste_uses_bracketed_paste_even_when_mode_is_off() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert_eq!(
+            core.paste_bytes("echo one\necho two").unwrap(),
+            b"\x1b[200~echo one\necho two\x1b[201~"
+        );
+    }
+
+    #[test]
+    fn safe_paste_stays_raw_when_bracketed_mode_is_off() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert_eq!(core.paste_bytes("echo one").unwrap(), b"echo one");
+    }
+
+    #[test]
     fn bracketed_paste_tracks_decset_2004() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 80,
@@ -1013,10 +1042,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(
-            core.paste_bytes("line 1\nline 2").unwrap(),
-            b"line 1\nline 2"
-        );
+        assert_eq!(core.paste_bytes("line 1").unwrap(), b"line 1");
 
         core.feed(b"\x1b[?2004h").unwrap();
 
@@ -1029,7 +1055,7 @@ mod tests {
 
         assert_eq!(
             core.paste_bytes("line 1\nline 2").unwrap(),
-            b"line 1\nline 2"
+            b"\x1b[200~line 1\nline 2\x1b[201~"
         );
     }
 
