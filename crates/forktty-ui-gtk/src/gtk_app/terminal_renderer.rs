@@ -1,5 +1,7 @@
 use super::*;
-use forktty_terminal::ghostty::core::{TerminalCell, TerminalFrame, TerminalRgb, TerminalRow};
+use forktty_terminal::ghostty::core::{
+    TerminalCell, TerminalCellWidth, TerminalFrame, TerminalRgb, TerminalRow,
+};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,7 +206,7 @@ impl TerminalRenderer {
         let mut runs = Vec::new();
         let mut current: Option<RendererTextRun> = None;
         for (col, cell) in row.cells.iter().enumerate() {
-            if cell.text.is_empty() || cell.invisible {
+            if !cell_renders_text(cell) {
                 if let Some(run) = current.take() {
                     runs.push(run);
                 }
@@ -326,6 +328,15 @@ impl RendererTextRun {
             strikethrough: self.strikethrough,
         }
     }
+}
+
+fn cell_renders_text(cell: &TerminalCell) -> bool {
+    !cell.text.is_empty()
+        && !cell.invisible
+        && !matches!(
+            cell.width,
+            TerminalCellWidth::SpacerTail | TerminalCellWidth::SpacerHead
+        )
 }
 
 #[cfg(test)]
@@ -454,6 +465,22 @@ mod tests {
         assert!(renderer.text_runs_for_row(&row).is_empty());
     }
 
+    #[test]
+    fn terminal_renderer_does_not_emit_text_runs_for_wide_spacer_cells() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut spacer = test_cell("x", None, None);
+        spacer.width = TerminalCellWidth::SpacerTail;
+        let row = TerminalRow {
+            cells: vec![spacer],
+        };
+
+        assert!(renderer.text_runs_for_row(&row).is_empty());
+    }
+
     fn test_cell(
         text: &str,
         foreground: Option<TerminalRgb>,
@@ -463,6 +490,7 @@ mod tests {
             text: text.to_string(),
             foreground,
             background,
+            width: TerminalCellWidth::Narrow,
             bold: false,
             italic: false,
             underline: false,

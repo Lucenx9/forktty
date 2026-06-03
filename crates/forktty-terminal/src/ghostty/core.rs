@@ -2,6 +2,7 @@ use super::{events::GhosttyEvent, metadata::MetadataParser};
 use libghostty_vt::{
     fmt::{Format, Formatter, FormatterOptions},
     render::{CellIterator, CursorViewport, RowIterator},
+    screen::CellWide,
     style::RgbColor,
     RenderState, Terminal, TerminalOptions,
 };
@@ -62,6 +63,7 @@ pub struct TerminalCell {
     pub text: String,
     pub foreground: Option<TerminalRgb>,
     pub background: Option<TerminalRgb>,
+    pub width: TerminalCellWidth,
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
@@ -75,6 +77,25 @@ pub struct TerminalCursor {
     pub x: u16,
     pub y: u16,
     pub visible: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalCellWidth {
+    Narrow,
+    Wide,
+    SpacerTail,
+    SpacerHead,
+}
+
+impl From<CellWide> for TerminalCellWidth {
+    fn from(value: CellWide) -> Self {
+        match value {
+            CellWide::Narrow => Self::Narrow,
+            CellWide::Wide => Self::Wide,
+            CellWide::SpacerTail => Self::SpacerTail,
+            CellWide::SpacerHead => Self::SpacerHead,
+        }
+    }
 }
 
 impl GhosttyCore {
@@ -194,12 +215,14 @@ impl GhosttyCore {
             let mut row_cells = Vec::new();
             while let Some(cell) = cells.next() {
                 let style = cell.style()?;
+                let width = TerminalCellWidth::from(cell.raw_cell()?.wide()?);
                 let cell_foreground = cell.fg_color()?.map(TerminalRgb::from);
                 let cell_background = cell.bg_color()?.map(TerminalRgb::from);
                 row_cells.push(TerminalCell {
                     text: cell.graphemes()?.into_iter().collect(),
                     foreground: cell_foreground,
                     background: cell_background,
+                    width,
                     bold: style.bold,
                     italic: style.italic,
                     underline: !matches!(style.underline, libghostty_vt::style::Underline::None),
@@ -347,6 +370,27 @@ mod tests {
 
         assert_eq!(frame.rows[0].cells[0].text, "s");
         assert!(frame.rows[0].cells[0].invisible);
+    }
+
+    #[test]
+    fn core_render_frame_marks_wide_and_spacer_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed("橋x".as_bytes()).unwrap();
+
+        let frame = core.render_frame().unwrap();
+        let row = &frame.rows[0];
+
+        assert_eq!(row.cells[0].text, "橋");
+        assert_eq!(row.cells[0].width, TerminalCellWidth::Wide);
+        assert_eq!(row.cells[1].width, TerminalCellWidth::SpacerTail);
+        assert_eq!(row.cells[2].text, "x");
+        assert_eq!(row.cells[2].width, TerminalCellWidth::Narrow);
     }
 
     #[test]
