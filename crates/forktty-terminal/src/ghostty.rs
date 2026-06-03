@@ -4,3 +4,5 @@ pub mod core;
 pub mod events;
 #[cfg(feature = "ghostty-vt")]
 pub mod metadata;
+#[cfg(feature = "ghostty-vt")]
+pub mod pty;
