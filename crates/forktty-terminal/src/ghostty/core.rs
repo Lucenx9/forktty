@@ -23,6 +23,7 @@ pub struct GhosttyCore {
     render_state: RenderState<'static>,
     metadata: MetadataParser,
     events: Rc<RefCell<Vec<GhosttyEvent>>>,
+    bracketed_paste: bool,
 }
 
 impl GhosttyCore {
@@ -64,6 +65,7 @@ impl GhosttyCore {
             render_state: RenderState::new()?,
             metadata: MetadataParser::new(),
             events,
+            bracketed_paste: false,
         })
     }
 
@@ -110,6 +112,24 @@ impl GhosttyCore {
 
     pub fn select_all_text(&self) -> Result<String> {
         self.format_plain_text(false)
+    }
+
+    pub fn paste_bytes(&self, text: &str) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        if self.bracketed_paste {
+            bytes.extend_from_slice(b"\x1b[200~");
+        }
+        bytes.extend_from_slice(text.as_bytes());
+        if self.bracketed_paste {
+            bytes.extend_from_slice(b"\x1b[201~");
+        }
+        Ok(bytes)
+    }
+
+    #[cfg(test)]
+    pub fn set_bracketed_paste_for_test(&mut self, enabled: bool) -> Result<()> {
+        self.bracketed_paste = enabled;
+        Ok(())
     }
 
     fn format_plain_text(&self, trim: bool) -> Result<String> {
@@ -162,5 +182,38 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| matches!(event, GhosttyEvent::PtyWrite(bytes) if !bytes.is_empty())));
+    }
+
+    #[test]
+    fn bracketed_paste_wraps_unsafe_multiline_text_when_enabled() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.set_bracketed_paste_for_test(true).unwrap();
+
+        assert_eq!(
+            core.paste_bytes("echo one\necho two").unwrap(),
+            b"\x1b[200~echo one\necho two\x1b[201~"
+        );
+    }
+
+    #[test]
+    fn select_all_uses_formatter_for_scrollback() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"one\r\ntwo\r\nthree").unwrap();
+        let text = core.select_all_text().unwrap();
+
+        assert!(text.contains("one"));
+        assert!(text.contains("three"));
     }
 }

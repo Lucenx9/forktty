@@ -86,6 +86,14 @@ impl TerminalRuntime {
         self.write_text("\x0c")
     }
 
+    pub(super) fn paste_text(&mut self, text: &str) -> Result<(), TerminalError> {
+        let bytes = self
+            .core
+            .paste_bytes(text)
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        self.write_bytes(&bytes)
+    }
+
     pub(super) fn pump_pty(&mut self) -> Result<Vec<GhosttyEvent>, TerminalError> {
         let mut events = Vec::new();
         let bytes = self

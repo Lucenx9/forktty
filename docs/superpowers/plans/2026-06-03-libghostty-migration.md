@@ -644,7 +644,7 @@ git commit -m "feat: complete ghostty terminal lifecycle"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/controller.rs`
 
-- [ ] **Step 1: Write failing clipboard tests**
+- [x] **Step 1: Write failing clipboard tests**
 
 ```rust
 #[test]
@@ -667,17 +667,17 @@ fn select_all_uses_formatter_for_scrollback() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `cargo test -p forktty-terminal paste_bytes select_all_text --no-default-features --features ghostty-vt`
 
 Expected: FAIL until paste/select-all helpers exist.
 
-- [ ] **Step 3: Implement clipboard and selection**
+- [x] **Step 3: Implement clipboard and selection**
 
 Track drag selection in grid coordinates, format selected visible cells as plain text, use `GhosttyCore::select_all_text` for scrollback, write clipboard via GTK clipboard, paste through `paste::is_safe` plus bracketed paste mode, and implement reset as `core.reset()` plus PTY write `\x0c`.
 
-- [ ] **Step 4: Run clipboard tests**
+- [x] **Step 4: Run clipboard tests**
 
 Run: `cargo test -p forktty-terminal ghostty::core --no-default-features --features ghostty-vt`
 
@@ -685,7 +685,7 @@ Run: `cargo test -p forktty-ui-gtk terminal_clipboard --no-default-features --fe
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/terminal_clipboard.rs crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs crates/forktty-ui-gtk/src/gtk_app/controller.rs crates/forktty-terminal/src/ghostty/core.rs

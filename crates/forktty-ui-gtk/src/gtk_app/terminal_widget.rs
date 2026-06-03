@@ -7,6 +7,7 @@ use forktty_terminal::ghostty::events::GhosttyEvent;
 pub(super) struct GhosttyTerminalWidget {
     drawing_area: gtk::DrawingArea,
     runtime: Rc<RefCell<TerminalRuntime>>,
+    selection: Rc<RefCell<TerminalSelection>>,
 }
 
 #[cfg(feature = "gtk-ghostty")]
@@ -64,6 +65,7 @@ impl GhosttyTerminalWidget {
         drawing_area.set_focusable(true);
         drawing_area.add_css_class("ghostty-terminal");
         let runtime = Rc::new(RefCell::new(runtime));
+        let selection = Rc::new(RefCell::new(TerminalSelection::default()));
         let renderer = TerminalRenderer::from_config(&config::load_config().unwrap_or_default());
         {
             let runtime = runtime.clone();
@@ -100,6 +102,7 @@ impl GhosttyTerminalWidget {
         Self {
             drawing_area,
             runtime,
+            selection,
         }
     }
 
@@ -187,7 +190,9 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 
     fn copy_text(&self) {
         if let Some(display) = gtk::gdk::Display::default() {
-            display.clipboard().set_text(&self.runtime.borrow().visible_text());
+            let runtime_text = self.runtime.borrow().visible_text();
+            let text = copy_source_text(&self.selection.borrow(), &runtime_text);
+            display.clipboard().set_text(&text);
         }
     }
 
@@ -201,7 +206,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
                     let Ok(Some(text)) = result else {
                         return;
                     };
-                    if let Err(err) = runtime.borrow_mut().write_text(text.as_str()) {
+                    if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
                         eprintln!("Failed to paste into terminal: {err}");
                     }
                     drawing_area.queue_draw();
@@ -210,10 +215,14 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
     }
 
     fn select_all_text(&self) {
+        self.selection
+            .borrow_mut()
+            .select_text(self.runtime.borrow().visible_text());
         self.copy_text();
     }
 
     fn reset_and_clear(&self) {
+        self.selection.borrow_mut().clear();
         self.with_runtime(TerminalRuntime::reset_and_clear);
     }
 
