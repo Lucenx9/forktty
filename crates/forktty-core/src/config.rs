@@ -379,10 +379,10 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
     }
     if !matches!(
         config.appearance.terminal_renderer.as_str(),
-        "auto" | "dom" | "canvas" | "webgl" | "vte"
+        "auto" | "dom" | "canvas" | "webgl" | "ghostty" | "vte"
     ) {
         return Err(ConfigError::Invalid(
-            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, vte"
+            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty"
                 .to_string(),
         ));
     }
@@ -419,11 +419,9 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     config.appearance.sidebar_position =
         normalize_config_choice(&config.appearance.sidebar_position, &["left", "right"])
             .unwrap_or_else(default_sidebar_position);
-    config.appearance.terminal_renderer = normalize_config_choice(
-        &config.appearance.terminal_renderer,
-        &["auto", "dom", "canvas", "webgl", "vte"],
-    )
-    .unwrap_or_else(default_terminal_renderer);
+    config.appearance.terminal_renderer =
+        normalize_terminal_renderer_choice(&config.appearance.terminal_renderer)
+            .unwrap_or_else(default_terminal_renderer);
     config.appearance.terminal_theme =
         normalize_config_choice(&config.appearance.terminal_theme, TERMINAL_THEME_CHOICES)
             .unwrap_or_else(default_terminal_theme);
@@ -445,6 +443,18 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
 fn normalize_config_choice(value: &str, allowed: &[&str]) -> Option<String> {
     let normalized = value.trim().to_ascii_lowercase();
     allowed.contains(&normalized.as_str()).then_some(normalized)
+}
+
+fn normalize_terminal_renderer_choice(value: &str) -> Option<String> {
+    normalize_config_choice(value, &["auto", "dom", "canvas", "webgl", "ghostty", "vte"]).map(
+        |choice| {
+            if choice == "vte" {
+                "auto".to_string()
+            } else {
+                choice
+            }
+        },
+    )
 }
 
 fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
@@ -734,7 +744,7 @@ mod tests {
         config.appearance.terminal_renderer = "magic".to_string();
         let err = validate_config(&config).unwrap_err();
         assert!(err.to_string().contains(
-            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, vte"
+            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty"
         ));
     }
 
@@ -772,11 +782,32 @@ mod tests {
     }
 
     #[test]
-    fn accepts_vte_renderer_for_gtk_path() {
+    fn accepts_legacy_vte_renderer_for_config_compatibility() {
         let mut config = AppConfig::default();
         config.general.shell = "/bin/sh".to_string();
         config.appearance.terminal_renderer = "vte".to_string();
         validate_config(&config).unwrap();
+    }
+
+    #[test]
+    fn legacy_vte_renderer_normalizes_to_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+
+            [appearance]
+            terminal_renderer = "vte"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(config.appearance.terminal_renderer, "auto");
     }
 
     #[test]
@@ -844,7 +875,7 @@ mod tests {
         assert_eq!(config.general.worktree_layout, "sibling");
         assert!(config.general.enable_pr_lookup);
         assert_eq!(config.appearance.sidebar_position, "right");
-        assert_eq!(config.appearance.terminal_renderer, "vte");
+        assert_eq!(config.appearance.terminal_renderer, "auto");
         assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_TOKYO_NIGHT);
         assert_eq!(config.appearance.window_mode, "quake");
     }

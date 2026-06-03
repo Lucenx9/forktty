@@ -784,7 +784,7 @@ git commit -m "refactor: remove vte terminal backend"
 - Modify: `README.md`
 - Modify: `SPEC.md`
 
-- [ ] **Step 1: Write failing config tests**
+- [x] **Step 1: Write failing config tests**
 
 ```rust
 #[test]
@@ -798,23 +798,23 @@ fn legacy_vte_renderer_normalizes_to_auto() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `cargo test -p forktty-core legacy_vte_renderer_normalizes_to_auto`
 
 Expected: FAIL because current normalization preserves `vte`.
 
-- [ ] **Step 3: Implement compatibility**
+- [x] **Step 3: Implement compatibility**
 
 Update validation to accept `"vte"` only as legacy input, normalize it to `"auto"` during load, and update error text to `auto, dom, canvas, webgl, ghostty`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-core config`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-core/src/config.rs README.md SPEC.md
