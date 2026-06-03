@@ -113,6 +113,17 @@ struct RendererTextRun {
     strikethrough: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RendererCursorOverlay {
+    col: usize,
+    row: usize,
+    text: String,
+    foreground: RendererColor,
+    background: RendererColor,
+    bold: bool,
+    italic: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RendererFrameDefaults {
     foreground: RendererColor,
@@ -197,15 +208,8 @@ impl TerminalRenderer {
             }
         }
 
-        if let Some(cursor) = frame.cursor.filter(|cursor| cursor.visible) {
-            self.palette.cursor.set_cairo_source(cr);
-            cr.rectangle(
-                f64::from(cursor.x) * metrics.width,
-                f64::from(cursor.y) * metrics.height,
-                metrics.width,
-                metrics.height,
-            );
-            let _ = cr.stroke();
+        if let Some(cursor) = self.cursor_overlay_for_frame(frame) {
+            self.draw_cursor_overlay(cr, &cursor, metrics);
         }
     }
 
@@ -257,6 +261,26 @@ impl TerminalRenderer {
             runs.push(run);
         }
         runs
+    }
+
+    fn cursor_overlay_for_frame(&self, frame: &TerminalFrame) -> Option<RendererCursorOverlay> {
+        let cursor = frame.cursor.filter(|cursor| cursor.visible)?;
+        let row = frame.rows.get(usize::from(cursor.y))?;
+        let cell = row.cells.get(usize::from(cursor.x))?;
+        let text = if cell_renders_text(cell) {
+            cell.text.clone()
+        } else {
+            String::new()
+        };
+        Some(RendererCursorOverlay {
+            col: usize::from(cursor.x),
+            row: usize::from(cursor.y),
+            text,
+            foreground: self.palette.cursor_foreground,
+            background: self.palette.cursor,
+            bold: cell.bold,
+            italic: cell.italic,
+        })
     }
 
     #[cfg(test)]
@@ -366,6 +390,37 @@ impl TerminalRenderer {
             cr.line_to(x + width, y + metrics.height * 0.58);
             let _ = cr.stroke();
         }
+    }
+
+    fn draw_cursor_overlay(
+        &self,
+        cr: &gtk::cairo::Context,
+        cursor: &RendererCursorOverlay,
+        metrics: RendererCellMetrics,
+    ) {
+        let x = cursor.col as f64 * metrics.width;
+        let y = cursor.row as f64 * metrics.height;
+        cursor.background.set_cairo_source(cr);
+        cr.rectangle(x, y, metrics.width, metrics.height);
+        let _ = cr.fill();
+
+        if cursor.text.is_empty() {
+            return;
+        }
+
+        cursor.foreground.set_cairo_source(cr);
+        let layout = pangocairo::functions::create_layout(cr);
+        let mut font = self.font.clone();
+        if cursor.bold {
+            font.set_weight(gtk::pango::Weight::Bold);
+        }
+        if cursor.italic {
+            font.set_style(gtk::pango::Style::Italic);
+        }
+        layout.set_font_description(Some(&font));
+        layout.set_text(&cursor.text);
+        cr.move_to(x, y);
+        pangocairo::functions::show_layout(cr, &layout);
     }
 }
 
@@ -589,6 +644,39 @@ mod tests {
         assert!(renderer.text_runs_for_row(&row).is_empty());
     }
 
+    #[test]
+    fn terminal_renderer_builds_block_cursor_overlay_from_cell_text() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let frame = test_frame(
+            TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            TerminalRow {
+                cells: vec![test_cell("a", None, None), test_cell("b", None, None)],
+            },
+        )
+        .with_cursor(1, 0);
+
+        let overlay = renderer.cursor_overlay_for_frame(&frame).unwrap();
+
+        assert_eq!(overlay.col, 1);
+        assert_eq!(overlay.row, 0);
+        assert_eq!(overlay.text, "b");
+        assert_eq!(overlay.background, renderer.palette.cursor);
+        assert_eq!(overlay.foreground, renderer.palette.cursor_foreground);
+    }
+
     fn test_cell(
         text: &str,
         foreground: Option<TerminalRgb>,
@@ -620,6 +708,21 @@ mod tests {
             foreground,
             cursor: None,
             rows: vec![row],
+        }
+    }
+
+    trait TestFrameCursor {
+        fn with_cursor(self, x: u16, y: u16) -> Self;
+    }
+
+    impl TestFrameCursor for TerminalFrame {
+        fn with_cursor(mut self, x: u16, y: u16) -> Self {
+            self.cursor = Some(forktty_terminal::ghostty::core::TerminalCursor {
+                x,
+                y,
+                visible: true,
+            });
+            self
         }
     }
 }
