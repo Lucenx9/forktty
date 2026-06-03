@@ -148,7 +148,7 @@ impl VteController {
         let spawn_pid_surface_id = request.surface_id.clone();
         self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
         let spawn_token = self.next_spawn_token;
-        match spawn_vte_terminal_with_callback(&request, move |result| match result {
+        match spawn_terminal_with_callback(&request, move |result| match result {
             Ok(pid) => {
                 spawn_pids.borrow_mut().insert(
                     spawn_pid_surface_id.clone(),

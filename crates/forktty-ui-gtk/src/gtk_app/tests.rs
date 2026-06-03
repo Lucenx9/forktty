@@ -239,6 +239,16 @@ fn terminal_widget_ops_reset_sends_form_feed() {
 }
 
 #[test]
+fn ghostty_runtime_marks_surface_ready_after_spawn() {
+    let runtime = TestTerminalRuntimeHarness::new();
+
+    runtime.spawn(test_spawn_request());
+
+    assert!(runtime.backend_ready("surface-1"));
+    assert!(runtime.child_pid("surface-1").is_some());
+}
+
+#[test]
 fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
     let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
     let backend = to_set(&["surface-1", "surface-2", "surface-3"]);

@@ -1,5 +1,101 @@
 use super::*;
 
+#[cfg(feature = "gtk-ghostty")]
+#[derive(Debug, Clone)]
+pub(super) struct GhosttyTerminalWidget {
+    drawing_area: gtk::DrawingArea,
+    runtime: Rc<RefCell<TerminalRuntime>>,
+}
+
+#[cfg(feature = "gtk-ghostty")]
+pub(super) type VteTerminalWidget = GhosttyTerminalWidget;
+
+pub(super) fn spawn_terminal_with_callback<F>(
+    request: &SpawnRequest,
+    on_spawn_result: F,
+) -> Result<VteTerminalWidget, TerminalError>
+where
+    F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
+{
+    spawn_terminal_with_callback_impl(request, on_spawn_result)
+}
+
+#[cfg(feature = "gtk-vte")]
+fn spawn_terminal_with_callback_impl<F>(
+    request: &SpawnRequest,
+    on_spawn_result: F,
+) -> Result<VteTerminalWidget, TerminalError>
+where
+    F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
+{
+    spawn_vte_terminal_with_callback(request, move |result| {
+        on_spawn_result(result.map(|pid| TerminalSpawnPid(pid.0)).map_err(|err| {
+            TerminalError::Backend(err.to_string())
+        }));
+    })
+}
+
+#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+fn spawn_terminal_with_callback_impl<F>(
+    request: &SpawnRequest,
+    on_spawn_result: F,
+) -> Result<VteTerminalWidget, TerminalError>
+where
+    F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
+{
+    let runtime = TerminalRuntime::spawn(
+        request,
+        forktty_terminal::ghostty::pty::PtySize { cols: 80, rows: 24 },
+    )?;
+    let pid = runtime.child_pid();
+    let widget = GhosttyTerminalWidget::new(runtime);
+    on_spawn_result(Ok(pid));
+    Ok(widget)
+}
+
+#[cfg(feature = "gtk-ghostty")]
+impl GhosttyTerminalWidget {
+    pub(super) fn new(runtime: TerminalRuntime) -> Self {
+        let drawing_area = gtk::DrawingArea::new();
+        drawing_area.set_hexpand(true);
+        drawing_area.set_vexpand(true);
+        drawing_area.set_focusable(true);
+        drawing_area.add_css_class("ghostty-terminal");
+        let runtime = Rc::new(RefCell::new(runtime));
+        {
+            let runtime = runtime.clone();
+            drawing_area.set_draw_func(move |_area, cr, width, height| {
+                cr.set_source_rgb(0.094, 0.094, 0.094);
+                let _ = cr.paint();
+                cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+                let _ = cr.fill();
+                cr.set_source_rgb(0.84, 0.84, 0.84);
+                cr.move_to(8.0, 18.0);
+                let _ = cr.show_text(&runtime.borrow().visible_text());
+            });
+        }
+        Self {
+            drawing_area,
+            runtime,
+        }
+    }
+
+    pub(super) fn downgrade(&self) -> glib::WeakRef<gtk::DrawingArea> {
+        self.drawing_area.downgrade()
+    }
+
+    pub(super) fn grab_focus(&self) -> bool {
+        self.drawing_area.grab_focus()
+    }
+
+    fn with_runtime(&self, f: impl FnOnce(&mut TerminalRuntime) -> Result<(), TerminalError>) {
+        if let Err(err) = f(&mut self.runtime.borrow_mut()) {
+            eprintln!("Terminal runtime operation failed: {err}");
+        }
+        self.drawing_area.queue_draw();
+    }
+}
+
 pub(super) trait TerminalWidgetOps {
     fn widget(&self) -> gtk::Widget;
     fn has_terminal_focus(&self) -> bool;
@@ -13,6 +109,7 @@ pub(super) trait TerminalWidgetOps {
     fn resize_cells(&self, cols: u16, rows: u16);
 }
 
+#[cfg(feature = "gtk-vte")]
 impl TerminalWidgetOps for VteTerminalWidget {
     fn widget(&self) -> gtk::Widget {
         self.clone().upcast()
@@ -44,6 +141,57 @@ impl TerminalWidgetOps for VteTerminalWidget {
 
     fn resize_cells(&self, cols: u16, rows: u16) {
         self.set_size(cols.into(), rows.into());
+    }
+}
+
+#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+impl TerminalWidgetOps for GhosttyTerminalWidget {
+    fn widget(&self) -> gtk::Widget {
+        self.drawing_area.clone().upcast()
+    }
+
+    fn has_terminal_focus(&self) -> bool {
+        self.drawing_area.has_focus()
+    }
+
+    fn copy_text(&self) {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&self.runtime.borrow().visible_text());
+        }
+    }
+
+    fn paste_from_clipboard(&self) {
+        let runtime = self.runtime.clone();
+        let drawing_area = self.drawing_area.clone();
+        if let Some(display) = gtk::gdk::Display::default() {
+            display
+                .clipboard()
+                .read_text_async(None::<&gio::Cancellable>, move |result| {
+                    let Ok(Some(text)) = result else {
+                        return;
+                    };
+                    if let Err(err) = runtime.borrow_mut().write_text(text.as_str()) {
+                        eprintln!("Failed to paste into terminal: {err}");
+                    }
+                    drawing_area.queue_draw();
+                });
+        }
+    }
+
+    fn select_all_text(&self) {
+        self.copy_text();
+    }
+
+    fn reset_and_clear(&self) {
+        self.with_runtime(TerminalRuntime::reset_and_clear);
+    }
+
+    fn send_text(&self, text: &str) {
+        self.with_runtime(|runtime| runtime.write_text(text));
+    }
+
+    fn resize_cells(&self, cols: u16, rows: u16) {
+        self.with_runtime(|runtime| runtime.resize_cells(cols, rows));
     }
 }
 

@@ -128,6 +128,10 @@ impl PtySession {
         self.size
     }
 
+    pub fn child_id(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn wait_timeout(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
         loop {

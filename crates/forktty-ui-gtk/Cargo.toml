@@ -14,9 +14,10 @@ name = "forktty"
 path = "src/main.rs"
 
 [features]
-default = ["gtk-vte"]
+default = ["gtk-ghostty"]
 gtk-vte = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/vte"]
-browser = ["gtk-vte", "dep:webkit6", "dep:async-channel", "forktty-socket/browser"]
+gtk-ghostty = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/ghostty-vt"]
+browser = ["gtk-ghostty", "dep:webkit6", "dep:async-channel", "forktty-socket/browser"]
 
 [dependencies]
 forktty-core = { path = "../forktty-core" }

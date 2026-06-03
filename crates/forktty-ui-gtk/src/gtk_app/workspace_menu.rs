@@ -345,7 +345,7 @@ pub(super) fn build_terminal_context_menu(
         "forktty-copy-symbolic",
         "Copy",
         false,
-        move || terminal_for_copy.copy_clipboard_format(Format::Text),
+        move || terminal_for_copy.copy_text(),
     );
 
     let terminal_for_paste = terminal.clone();
@@ -355,7 +355,7 @@ pub(super) fn build_terminal_context_menu(
         "forktty-paste-symbolic",
         "Paste",
         false,
-        move || terminal_for_paste.paste_clipboard(),
+        move || terminal_for_paste.paste_from_clipboard(),
     );
 
     let terminal_for_select = terminal.clone();
@@ -365,7 +365,7 @@ pub(super) fn build_terminal_context_menu(
         "forktty-select-all-symbolic",
         "Select All",
         false,
-        move || terminal_for_select.select_all(),
+        move || terminal_for_select.select_all_text(),
     );
 
     let terminal_for_reset = terminal.clone();
@@ -375,7 +375,7 @@ pub(super) fn build_terminal_context_menu(
         "forktty-clear-symbolic",
         "Reset and Clear",
         false,
-        move || reset_and_redraw_terminal(&terminal_for_reset),
+        move || terminal_for_reset.reset_and_clear(),
     );
 
     add_context_menu_separator(&menu);
@@ -501,7 +501,9 @@ pub(super) fn install_terminal_context_menu(
     let gesture = gtk::GestureClick::new();
     gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let widget_for_menu = widget.downgrade();
+    let gtk_widget = widget.widget();
+    let widget_for_menu = gtk_widget.downgrade();
+    let terminal_for_menu = widget.clone();
     let state_for_menu = state.clone();
     let parent_for_menu = parent.clone();
     let surface_id_for_menu = surface_id.to_string();
@@ -526,7 +528,7 @@ pub(super) fn install_terminal_context_menu(
         let popover = build_terminal_context_menu(
             &state_for_menu,
             &surface_id_for_menu,
-            &widget_for_menu,
+            &terminal_for_menu,
             &parent_for_menu,
         );
         let current_popover_for_closed = current_popover_for_menu.clone();
@@ -556,5 +558,5 @@ pub(super) fn install_terminal_context_menu(
         *current_popover_for_menu.borrow_mut() = Some(popover.clone());
         popover.popup();
     });
-    widget.add_controller(gesture);
+    gtk_widget.add_controller(gesture);
 }

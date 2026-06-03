@@ -372,7 +372,7 @@ git commit -m "feat: own terminal pty lifecycle"
 - Create: `crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs`
 - Create: `crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs`
 
-- [ ] **Step 1: Write failing GTK runtime tests**
+- [x] **Step 1: Write failing GTK runtime tests**
 
 ```rust
 #[test]
@@ -384,23 +384,23 @@ fn ghostty_runtime_marks_surface_ready_after_spawn() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-ui-gtk ghostty_runtime_marks_surface_ready_after_spawn --no-default-features --features gtk-ghostty`
 
 Expected: FAIL because feature/runtime are missing.
 
-- [ ] **Step 3: Implement feature and skeleton**
+- [x] **Step 3: Implement feature and skeleton**
 
 Add `gtk-ghostty = ["dep:adw", "dep:gtk4", "dep:global-hotkey", "dep:libloading", "forktty-terminal/ghostty-vt"]`; make `default = ["gtk-ghostty"]`; create a `GhosttyTerminalWidget` wrapping `gtk::DrawingArea` and `TerminalRuntime` owning `GhosttyCore` and `PtySession` on GTK main thread.
 
-- [ ] **Step 4: Run focused build**
+- [x] **Step 4: Run focused build**
 
 Run: `cargo test -p forktty-ui-gtk terminal_runtime --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/Cargo.toml crates/forktty-ui-gtk/src/main.rs crates/forktty-ui-gtk/src/gtk_app.rs crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs

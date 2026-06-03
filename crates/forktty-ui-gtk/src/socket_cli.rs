@@ -4023,7 +4023,7 @@ fn describe_launcher_check(
     })
 }
 
-#[cfg(feature = "gtk-vte")]
+#[cfg(any(feature = "gtk-vte", feature = "gtk-ghostty"))]
 pub(crate) fn hook_setup_reminder_message() -> Option<String> {
     let current_launcher = stable_hook_launcher_path();
     let statuses = AGENTS
@@ -4040,7 +4040,7 @@ pub(crate) fn hook_setup_reminder_message() -> Option<String> {
     hook_setup_reminder_message_for_statuses(statuses.iter().map(String::as_str))
 }
 
-#[cfg(any(test, feature = "gtk-vte"))]
+#[cfg(any(test, feature = "gtk-vte", feature = "gtk-ghostty"))]
 fn hook_setup_reminder_message_for_statuses<'a>(
     statuses: impl IntoIterator<Item = &'a str>,
 ) -> Option<String> {

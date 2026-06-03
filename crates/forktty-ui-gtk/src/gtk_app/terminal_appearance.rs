@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(feature = "gtk-vte")]
 pub(super) fn apply_vte_appearance(widget: &VteTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
     let font = terminal_font_description(widget, &config);
@@ -15,6 +16,29 @@ pub(super) fn apply_vte_appearance(widget: &VteTerminalWidget) {
     widget.set_cursor_shape(CursorShape::Block);
     widget.set_word_char_exceptions("-#%&+,./:=?@_~");
     apply_terminal_colors(widget, terminal_colors_for_config(&config));
+}
+
+#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+pub(super) fn apply_vte_appearance(widget: &VteTerminalWidget) {
+    let config = config::load_config().unwrap_or_default();
+    let gtk_widget = widget.widget();
+    let font = terminal_font_description(&gtk_widget, &config);
+    gtk_widget.add_css_class("ghostty-terminal");
+    gtk_widget.add_css_class("monospace");
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(&format!(
+        ".ghostty-terminal {{ font: {}; background: {}; color: {}; }}",
+        font,
+        terminal_colors_for_config(&config).background,
+        terminal_colors_for_config(&config).foreground
+    ));
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
 
 pub(super) struct TerminalColors {
@@ -124,6 +148,7 @@ pub(super) const GRUVBOX_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
     ],
 };
 
+#[cfg(feature = "gtk-vte")]
 pub(super) fn apply_terminal_colors(widget: &VteTerminalWidget, colors: &TerminalColors) {
     let foreground = rgba(colors.foreground);
     let background = rgba(colors.background);
@@ -142,6 +167,7 @@ pub(super) fn apply_terminal_colors(widget: &VteTerminalWidget, colors: &Termina
     widget.set_color_highlight_foreground(Some(&rgba(colors.highlight_foreground)));
 }
 
+#[cfg(feature = "gtk-vte")]
 pub(super) fn reset_and_redraw_terminal(widget: &VteTerminalWidget) {
     widget.reset(true, true);
     vte_send_text(widget, "\x0c");

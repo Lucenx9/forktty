@@ -8,6 +8,7 @@ pub(super) fn terminal_focus_click_should_claim(
     !terminal_has_focus || model_focused_surface_id.is_some_and(|focused| focused != surface_id)
 }
 
+#[cfg(feature = "gtk-vte")]
 pub(super) fn attach_vte_signal_handlers(
     widget: &VteTerminalWidget,
     model: &Arc<Mutex<WorkspaceModel>>,
@@ -227,12 +228,75 @@ pub(super) fn attach_vte_signal_handlers(
     });
 }
 
+#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+pub(super) fn attach_vte_signal_handlers(
+    widget: &VteTerminalWidget,
+    model: &Arc<Mutex<WorkspaceModel>>,
+    request: &SpawnRequest,
+    _surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    _state: Option<SocketAppState>,
+    _spawn_token: u64,
+) {
+    let surface_id = request.surface_id.clone();
+    let focus_model = model.clone();
+    let gtk_widget = widget.widget();
+    gtk_widget.connect_has_focus_notify(move |terminal| {
+        if terminal.has_focus() {
+            terminal.add_css_class("focused-terminal");
+            if let Ok(mut model) = focus_model.lock() {
+                let _ = model.focus_surface(&surface_id);
+                let _ = model.mark_surface_unread(&surface_id, false);
+            }
+        } else {
+            terminal.remove_css_class("focused-terminal");
+        }
+    });
+
+    let surface_id = request.surface_id.clone();
+    let focus_click_model = model.clone();
+    let focus_click = gtk::GestureClick::new();
+    focus_click.set_button(gtk::gdk::BUTTON_PRIMARY);
+    focus_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let widget_for_focus_click = widget.downgrade();
+    focus_click.connect_pressed(move |gesture, _n_press, _x, _y| {
+        let Some(widget_for_focus_click) = widget_for_focus_click.upgrade() else {
+            return;
+        };
+        let model_focused_surface_id = focus_click_model
+            .lock()
+            .ok()
+            .and_then(|model| model.active_workspace())
+            .map(|workspace| workspace.focused_surface_id);
+        if !terminal_focus_click_should_claim(
+            widget_for_focus_click.has_focus(),
+            model_focused_surface_id.as_deref(),
+            &surface_id,
+        ) {
+            return;
+        }
+
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        widget_for_focus_click.grab_focus();
+        if let Ok(mut model) = focus_click_model.lock() {
+            let _ = model.focus_surface(&surface_id);
+            let _ = model.mark_surface_unread(&surface_id, false);
+        }
+    });
+    gtk_widget.add_controller(focus_click);
+}
+
 pub(super) fn surface_status_key(surface_id: &str) -> String {
     format!("surface:{surface_id}:status")
 }
 
+#[cfg(feature = "gtk-vte")]
 pub(super) fn vte_terminal_signal_exists(name: &str) -> bool {
     glib::subclass::SignalId::lookup(name, VteTerminalWidget::static_type()).is_some()
+}
+
+#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+pub(super) fn vte_terminal_signal_exists(_name: &str) -> bool {
+    false
 }
 
 pub(super) fn emit_prompt_notification(
@@ -296,6 +360,7 @@ pub(super) fn visible_text_tail(text: &str) -> String {
     chars.into_iter().collect()
 }
 
+#[cfg(feature = "gtk-vte")]
 pub(super) fn visible_terminal_tail(terminal: &VteTerminalWidget) -> String {
     const PROMPT_SCAN_ROWS: i64 = 8;
 

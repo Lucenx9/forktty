@@ -10,6 +10,7 @@ use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, serve, socket_path_from_env, SocketAppState,
 };
+#[cfg(feature = "gtk-vte")]
 use forktty_terminal::vte::{
     send_text as vte_send_text, spawn_vte_terminal_with_callback, CursorBlinkMode, CursorShape,
     Format, TerminalExt, TerminalExtManual, VteTerminalWidget,
@@ -96,6 +97,7 @@ mod settings_dialog;
 mod sidebar;
 mod socket_server;
 mod terminal_appearance;
+mod terminal_runtime;
 mod terminal_signals;
 mod terminal_widget;
 mod ui_common;
@@ -120,6 +122,7 @@ use settings_dialog::*;
 use sidebar::*;
 use socket_server::*;
 use terminal_appearance::*;
+use terminal_runtime::*;
 use terminal_signals::*;
 use terminal_widget::*;
 use ui_common::*;

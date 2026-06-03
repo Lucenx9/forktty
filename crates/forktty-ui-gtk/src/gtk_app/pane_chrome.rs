@@ -69,7 +69,7 @@ pub(super) fn build_pane_chrome(
     let terminal_overlay = gtk::Overlay::new();
     terminal_overlay.set_hexpand(true);
     terminal_overlay.set_vexpand(true);
-    terminal_overlay.set_child(Some(widget));
+    terminal_overlay.set_child(Some(&widget.widget()));
 
     let single_pane_actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     single_pane_actions.add_css_class("single-pane-actions");
