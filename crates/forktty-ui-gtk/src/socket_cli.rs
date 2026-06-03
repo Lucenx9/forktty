@@ -6168,18 +6168,21 @@ mod tests {
             output: 0,
         };
 
-        let block = format_token_usage_block(usage);
-        assert!(block.contains("18,446,744,073,709,551,615 / 200,000 input tokens"));
+        let (block, progress) = with_env(&[("FORKTTY_HOOK_TOKEN_CEILING", None)], || {
+            let block = format_token_usage_block(usage);
+            let progress = build_token_progress_action(
+                agent_spec("claude").unwrap(),
+                &HookEnrichments {
+                    token_usage: Some(usage),
+                },
+                "prompt-submit",
+                "88",
+            )
+            .unwrap();
+            (block, progress)
+        });
 
-        let progress = build_token_progress_action(
-            agent_spec("claude").unwrap(),
-            &HookEnrichments {
-                token_usage: Some(usage),
-            },
-            "prompt-submit",
-            "88",
-        )
-        .unwrap();
+        assert!(block.contains("18,446,744,073,709,551,615 / 200,000 input tokens"));
         assert_eq!(progress["value"], json!(u64::MAX));
     }
 
