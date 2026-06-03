@@ -47,8 +47,6 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Split Down", SPLIT_VERTICAL_SHORTCUT),
             ("Restart Pane", RESTART_PANE_SHORTCUT),
             ("Close Pane", "Ctrl+Shift+W"),
-            ("Focus Previous Pane", "Ctrl+Alt+Left"),
-            ("Focus Next Pane", "Ctrl+Alt+Right"),
             ("Maximize Pane", "Ctrl+Shift+Enter"),
         ],
     );
@@ -468,7 +466,7 @@ pub(super) fn show_command_palette_with_query(
             }
         }
     });
-    command!("Focus Previous Pane", Some("Ctrl+Alt+Left"), {
+    command!("Focus Previous Pane", None, {
         let state = state.clone();
         let dialog = dialog.clone();
         let controller = controller.clone();
@@ -480,7 +478,7 @@ pub(super) fn show_command_palette_with_query(
             dialog.close();
         }
     });
-    command!("Focus Next Pane", Some("Ctrl+Alt+Right"), {
+    command!("Focus Next Pane", None, {
         let state = state.clone();
         let dialog = dialog.clone();
         let controller = controller.clone();

@@ -181,7 +181,6 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+H`: split pane right
 - `Ctrl+Shift+E`: split pane down
 - `Ctrl+Shift+T`: new tab in the focused pane
-- `Ctrl+Alt+Left` / `Ctrl+Alt+Right`: focus previous/next pane
 - `Ctrl+Shift+W`: close pane
 - `Ctrl+B` or `F9`: toggle workspace sidebar
 - `Ctrl+Shift+M`: notifications

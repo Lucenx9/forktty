@@ -37,18 +37,6 @@ pub(super) enum TerminalInput {
     Key(TerminalKeyInput),
 }
 
-#[cfg(test)]
-fn encode_gtk_key(
-    key: gtk::gdk::Key,
-    modifiers: gtk::gdk::ModifierType,
-    text: Option<&str>,
-) -> Option<Vec<u8>> {
-    match translate_gtk_key(key, modifiers, text)? {
-        TerminalInput::Bytes(bytes) => Some(bytes),
-        TerminalInput::Key(_) => None,
-    }
-}
-
 pub(super) fn translate_gtk_key(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
@@ -205,16 +193,7 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
                 | gtk::gdk::Key::Home
                 | gtk::gdk::Key::End
         );
-    let pane_focus_action = ctrl
-        && alt
-        && matches!(
-            key,
-            gtk::gdk::Key::Left
-                | gtk::gdk::Key::KP_Left
-                | gtk::gdk::Key::Right
-                | gtk::gdk::Key::KP_Right
-        );
-    ctrl_shift_app_action || ctrl_app_action || tab_navigation_action || pane_focus_action
+    ctrl_shift_app_action || ctrl_app_action || tab_navigation_action
 }
 
 #[cfg(test)]
@@ -305,11 +284,37 @@ mod tests {
     }
 
     #[test]
-    fn key_translation_leaves_ctrl_alt_arrows_for_pane_shortcuts() {
+    fn key_translation_routes_ctrl_alt_arrows_through_terminal_core() {
+        use forktty_terminal::ghostty::core::{
+            TerminalKey, TerminalKeyInput, TerminalKeyModifiers,
+        };
+
         let pane_shortcut = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK;
 
-        assert!(encode_gtk_key(gtk::gdk::Key::Left, pane_shortcut, None).is_none());
-        assert!(encode_gtk_key(gtk::gdk::Key::Right, pane_shortcut, None).is_none());
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::Left, pane_shortcut, None).unwrap(),
+            TerminalInput::Key(
+                TerminalKeyInput::new(TerminalKey::ArrowLeft).with_modifiers(
+                    TerminalKeyModifiers {
+                        shift: false,
+                        alt: true,
+                        ctrl: true,
+                    }
+                )
+            )
+        );
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::Right, pane_shortcut, None).unwrap(),
+            TerminalInput::Key(
+                TerminalKeyInput::new(TerminalKey::ArrowRight).with_modifiers(
+                    TerminalKeyModifiers {
+                        shift: false,
+                        alt: true,
+                        ctrl: true,
+                    }
+                )
+            )
+        );
     }
 
     #[test]

@@ -193,8 +193,6 @@ pub(super) fn install_actions(
     app.set_accels_for_action("app.paste", &["<Control><Shift>V"]);
     app.set_accels_for_action("app.select-all", &["<Control><Shift>A"]);
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
-    app.set_accels_for_action("app.focus-previous-pane", &["<Control><Alt>Left"]);
-    app.set_accels_for_action("app.focus-next-pane", &["<Control><Alt>Right"]);
     app.set_accels_for_action("app.toggle-maximize-pane", &["<Control><Shift>Return"]);
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
     app.set_accels_for_action("app.settings", &["<Control>comma"]);
