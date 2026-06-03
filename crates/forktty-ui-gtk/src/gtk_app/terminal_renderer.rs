@@ -204,7 +204,7 @@ impl TerminalRenderer {
         let mut runs = Vec::new();
         let mut current: Option<RendererTextRun> = None;
         for (col, cell) in row.cells.iter().enumerate() {
-            if cell.text.is_empty() {
+            if cell.text.is_empty() || cell.invisible {
                 if let Some(run) = current.take() {
                     runs.push(run);
                 }
@@ -234,9 +234,14 @@ impl TerminalRenderer {
     }
 
     fn cell_foreground(&self, cell: &TerminalCell) -> RendererColor {
+        let default_foreground = if cell.bold {
+            self.palette.bold
+        } else {
+            self.palette.foreground
+        };
         let mut foreground = cell
             .foreground
-            .map_or(self.palette.foreground, RendererColor::from_terminal_rgb);
+            .map_or(default_foreground, RendererColor::from_terminal_rgb);
         let mut background = cell
             .background
             .map_or(self.palette.background, RendererColor::from_terminal_rgb);
@@ -247,9 +252,14 @@ impl TerminalRenderer {
     }
 
     fn cell_background(&self, cell: &TerminalCell) -> RendererColor {
+        let default_foreground = if cell.bold {
+            self.palette.bold
+        } else {
+            self.palette.foreground
+        };
         let mut foreground = cell
             .foreground
-            .map_or(self.palette.foreground, RendererColor::from_terminal_rgb);
+            .map_or(default_foreground, RendererColor::from_terminal_rgb);
         let mut background = cell
             .background
             .map_or(self.palette.background, RendererColor::from_terminal_rgb);
@@ -412,6 +422,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn terminal_renderer_uses_bold_palette_for_default_bold_cells() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut bold_cell = test_cell("x", None, None);
+        bold_cell.bold = true;
+
+        assert_eq!(
+            renderer.cell_foreground(&bold_cell).to_string(),
+            FORKTTY_DARK_TERMINAL_COLORS.bold
+        );
+    }
+
+    #[test]
+    fn terminal_renderer_does_not_emit_text_runs_for_invisible_cells() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut invisible_cell = test_cell("x", None, None);
+        invisible_cell.invisible = true;
+        let row = TerminalRow {
+            cells: vec![invisible_cell],
+        };
+
+        assert!(renderer.text_runs_for_row(&row).is_empty());
+    }
+
     fn test_cell(
         text: &str,
         foreground: Option<TerminalRgb>,
@@ -426,6 +468,7 @@ mod tests {
             underline: false,
             strikethrough: false,
             inverse: false,
+            invisible: false,
         }
     }
 }

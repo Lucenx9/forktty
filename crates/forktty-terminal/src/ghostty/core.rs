@@ -67,6 +67,7 @@ pub struct TerminalCell {
     pub underline: bool,
     pub strikethrough: bool,
     pub inverse: bool,
+    pub invisible: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,11 +194,8 @@ impl GhosttyCore {
             let mut row_cells = Vec::new();
             while let Some(cell) = cells.next() {
                 let style = cell.style()?;
-                let mut cell_foreground = cell.fg_color()?.map(TerminalRgb::from);
-                let mut cell_background = cell.bg_color()?.map(TerminalRgb::from);
-                if style.inverse {
-                    std::mem::swap(&mut cell_foreground, &mut cell_background);
-                }
+                let cell_foreground = cell.fg_color()?.map(TerminalRgb::from);
+                let cell_background = cell.bg_color()?.map(TerminalRgb::from);
                 row_cells.push(TerminalCell {
                     text: cell.graphemes()?.into_iter().collect(),
                     foreground: cell_foreground,
@@ -207,6 +205,7 @@ impl GhosttyCore {
                     underline: !matches!(style.underline, libghostty_vt::style::Underline::None),
                     strikethrough: style.strikethrough,
                     inverse: style.inverse,
+                    invisible: style.invisible,
                 });
             }
             frame.rows.push(TerminalRow { cells: row_cells });
@@ -312,6 +311,42 @@ mod tests {
         assert!(row.cells[0].foreground.is_some());
         assert_eq!(row.cells[4].foreground, None);
         assert_eq!(row.cells[4].background, None);
+    }
+
+    #[test]
+    fn core_render_frame_preserves_inverse_as_style_not_swapped_colors() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[31;7mX\x1b[0m").unwrap();
+
+        let frame = core.render_frame().unwrap();
+        let cell = &frame.rows[0].cells[0];
+
+        assert!(cell.inverse);
+        assert!(cell.foreground.is_some());
+        assert_eq!(cell.background, None);
+    }
+
+    #[test]
+    fn core_render_frame_marks_invisible_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[8msecret\x1b[0m").unwrap();
+
+        let frame = core.render_frame().unwrap();
+
+        assert_eq!(frame.rows[0].cells[0].text, "s");
+        assert!(frame.rows[0].cells[0].invisible);
     }
 
     #[test]
