@@ -32,8 +32,12 @@ impl TerminalRuntime {
     }
 
     pub(super) fn write_text(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.write_bytes(text.as_bytes())
+    }
+
+    pub(super) fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), TerminalError> {
         self.pty
-            .write_all(text.as_bytes())
+            .write_all(bytes)
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 

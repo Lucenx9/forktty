@@ -461,7 +461,7 @@ git commit -m "feat: render ghostty terminal surface"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs`
 
-- [ ] **Step 1: Write failing input tests**
+- [x] **Step 1: Write failing input tests**
 
 ```rust
 #[test]
@@ -471,23 +471,23 @@ fn key_translation_encodes_enter_and_ctrl_c() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-ui-gtk terminal_input --no-default-features --features gtk-ghostty`
 
 Expected: FAIL because input module is missing.
 
-- [ ] **Step 3: Implement input**
+- [x] **Step 3: Implement input**
 
 Translate GTK `EventControllerKey`, mouse press/release/motion/scroll, focus gained/lost, and IM text into `GhosttyCore` encoder methods, then write encoded bytes to PTY. Preserve app accelerators by returning `glib::Propagation::Proceed` for ForkTTY shortcuts.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-ui-gtk terminal_input --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/terminal_input.rs crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs

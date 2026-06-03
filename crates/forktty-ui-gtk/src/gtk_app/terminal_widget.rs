@@ -70,6 +70,22 @@ impl GhosttyTerminalWidget {
                 renderer.draw_plain_text(cr, width, height, &runtime.borrow().visible_text());
             });
         }
+        {
+            let runtime = runtime.clone();
+            let drawing_area_for_key = drawing_area.clone();
+            let key_controller = gtk::EventControllerKey::new();
+            key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+                let Some(bytes) = encode_gtk_key(key, modifiers, None) else {
+                    return glib::Propagation::Proceed;
+                };
+                if let Err(err) = runtime.borrow_mut().write_bytes(&bytes) {
+                    eprintln!("Failed to write terminal key input: {err}");
+                }
+                drawing_area_for_key.queue_draw();
+                glib::Propagation::Stop
+            });
+            drawing_area.add_controller(key_controller);
+        }
         Self {
             drawing_area,
             runtime,
