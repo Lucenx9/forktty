@@ -260,6 +260,7 @@ pub struct TerminalCursor {
     pub x: u16,
     pub y: u16,
     pub visible: bool,
+    pub at_wide_tail: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,10 +388,11 @@ impl GhosttyCore {
         let cursor = if snapshot.cursor_visible()? {
             snapshot
                 .cursor_viewport()?
-                .map(|CursorViewport { x, y, .. }| TerminalCursor {
+                .map(|CursorViewport { x, y, at_wide_tail }| TerminalCursor {
                     x,
                     y,
                     visible: true,
+                    at_wide_tail,
                 })
         } else {
             None
@@ -903,6 +905,23 @@ mod tests {
         assert_eq!(row.cells[1].width, TerminalCellWidth::SpacerTail);
         assert_eq!(row.cells[2].text, "x");
         assert_eq!(row.cells[2].width, TerminalCellWidth::Narrow);
+    }
+
+    #[test]
+    fn core_render_frame_preserves_wide_tail_cursor_state() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed("橋\x08".as_bytes()).unwrap();
+
+        let cursor = core.render_frame().unwrap().cursor.unwrap();
+
+        assert_eq!(cursor.x, 1);
+        assert!(cursor.at_wide_tail);
     }
 
     #[test]

@@ -118,6 +118,7 @@ struct RendererTextRun {
 struct RendererCursorOverlay {
     col: usize,
     row: usize,
+    cell_span: usize,
     text: String,
     foreground: RendererColor,
     background: RendererColor,
@@ -277,15 +278,20 @@ impl TerminalRenderer {
     fn cursor_overlay_for_frame(&self, frame: &TerminalFrame) -> Option<RendererCursorOverlay> {
         let cursor = frame.cursor.filter(|cursor| cursor.visible)?;
         let row = frame.rows.get(usize::from(cursor.y))?;
-        let cell = row.cells.get(usize::from(cursor.x))?;
+        let mut col = usize::from(cursor.x);
+        if cursor.at_wide_tail && col > 0 {
+            col -= 1;
+        }
+        let cell = row.cells.get(col)?;
         let text = if cell_renders_text(cell) {
             cell.text.clone()
         } else {
             String::new()
         };
         Some(RendererCursorOverlay {
-            col: usize::from(cursor.x),
+            col,
             row: usize::from(cursor.y),
+            cell_span: cell_grid_span(cell),
             text,
             foreground: self.palette.cursor_foreground,
             background: self.palette.cursor,
@@ -412,7 +418,12 @@ impl TerminalRenderer {
         let x = cursor.col as f64 * metrics.width;
         let y = cursor.row as f64 * metrics.height;
         cursor.background.set_cairo_source(cr);
-        cr.rectangle(x, y, metrics.width, metrics.height);
+        cr.rectangle(
+            x,
+            y,
+            cursor.cell_span as f64 * metrics.width,
+            metrics.height,
+        );
         let _ = cr.fill();
 
         if cursor.text.is_empty() {
@@ -723,6 +734,41 @@ mod tests {
         assert_eq!(overlay.foreground, renderer.palette.cursor_foreground);
     }
 
+    #[test]
+    fn terminal_renderer_places_wide_tail_cursor_over_wide_cell() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut wide = test_cell("橋", None, None);
+        wide.width = TerminalCellWidth::Wide;
+        let mut spacer = test_cell("", None, None);
+        spacer.width = TerminalCellWidth::SpacerTail;
+        let frame = test_frame(
+            TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            TerminalRow {
+                cells: vec![wide, spacer],
+            },
+        )
+        .with_wide_tail_cursor(1, 0);
+
+        let overlay = renderer.cursor_overlay_for_frame(&frame).unwrap();
+
+        assert_eq!(overlay.col, 0);
+        assert_eq!(overlay.text, "橋");
+        assert_eq!(overlay.cell_span, 2);
+    }
+
     fn test_cell(
         text: &str,
         foreground: Option<TerminalRgb>,
@@ -759,6 +805,7 @@ mod tests {
 
     trait TestFrameCursor {
         fn with_cursor(self, x: u16, y: u16) -> Self;
+        fn with_wide_tail_cursor(self, x: u16, y: u16) -> Self;
     }
 
     impl TestFrameCursor for TerminalFrame {
@@ -767,6 +814,17 @@ mod tests {
                 x,
                 y,
                 visible: true,
+                at_wide_tail: false,
+            });
+            self
+        }
+
+        fn with_wide_tail_cursor(mut self, x: u16, y: u16) -> Self {
+            self.cursor = Some(forktty_terminal::ghostty::core::TerminalCursor {
+                x,
+                y,
+                visible: true,
+                at_wide_tail: true,
             });
             self
         }
