@@ -65,14 +65,28 @@ pub(super) fn translate_gtk_key(
     }
     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
     let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
+    let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
     let terminal_modifiers = terminal_key_modifiers(modifiers);
     let spec = match key {
         gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => GhosttyKeySpec {
             key: GhosttyKey::Enter,
             ctrl,
         },
-        gtk::gdk::Key::BackSpace => return Some(TerminalInput::Bytes(vec![0x7f])),
-        gtk::gdk::Key::Tab => return Some(TerminalInput::Bytes(b"\t".to_vec())),
+        gtk::gdk::Key::BackSpace => {
+            return Some(TerminalInput::Bytes(if alt {
+                vec![0x1b, 0x7f]
+            } else {
+                vec![0x7f]
+            }));
+        }
+        gtk::gdk::Key::Tab => {
+            return Some(TerminalInput::Bytes(if shift {
+                b"\x1b[Z".to_vec()
+            } else {
+                b"\t".to_vec()
+            }));
+        }
+        gtk::gdk::Key::ISO_Left_Tab => return Some(TerminalInput::Bytes(b"\x1b[Z".to_vec())),
         gtk::gdk::Key::Escape => return Some(TerminalInput::Bytes(b"\x1b".to_vec())),
         gtk::gdk::Key::Up | gtk::gdk::Key::KP_Up => {
             return Some(terminal_key_input(TerminalKey::ArrowUp, terminal_modifiers));
@@ -558,6 +572,46 @@ mod tests {
         assert!(translate_gtk_key(gtk::gdk::Key::Page_Down, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::Home, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::End, ctrl, None).is_none());
+    }
+
+    #[test]
+    fn shift_tab_sends_backtab_escape_sequence() {
+        let shift = gtk::gdk::ModifierType::SHIFT_MASK;
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::Tab, shift, None).unwrap(),
+            TerminalInput::Bytes(b"\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::ISO_Left_Tab, shift, None).unwrap(),
+            TerminalInput::Bytes(b"\x1b[Z".to_vec())
+        );
+    }
+
+    #[test]
+    fn plain_tab_sends_horizontal_tab() {
+        let none = gtk::gdk::ModifierType::empty();
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::Tab, none, None).unwrap(),
+            TerminalInput::Bytes(b"\t".to_vec())
+        );
+    }
+
+    #[test]
+    fn alt_backspace_sends_meta_delete() {
+        let alt = gtk::gdk::ModifierType::ALT_MASK;
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::BackSpace, alt, None).unwrap(),
+            TerminalInput::Bytes(b"\x1b\x7f".to_vec())
+        );
+    }
+
+    #[test]
+    fn plain_backspace_sends_delete() {
+        let none = gtk::gdk::ModifierType::empty();
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::BackSpace, none, None).unwrap(),
+            TerminalInput::Bytes(vec![0x7f])
+        );
     }
 
     #[test]
