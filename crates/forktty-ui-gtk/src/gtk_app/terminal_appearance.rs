@@ -1,4 +1,11 @@
 use super::*;
+use std::cell::RefCell;
+
+thread_local! {
+    // A single display-global provider, reused across spawns and settings changes.
+    // Adding a fresh provider on every call would accumulate stale rules on the display.
+    static TERMINAL_CSS_PROVIDER: RefCell<Option<gtk::CssProvider>> = const { RefCell::new(None) };
+}
 
 pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
@@ -6,20 +13,26 @@ pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     let font = terminal_font_description(&gtk_widget, &config);
     gtk_widget.add_css_class("ghostty-terminal");
     gtk_widget.add_css_class("monospace");
-    let provider = gtk::CssProvider::new();
-    provider.load_from_data(&format!(
+    let colors = terminal_colors_for_config(&config);
+    let css = format!(
         ".ghostty-terminal {{ font: {}; background: {}; color: {}; }}",
-        font,
-        terminal_colors_for_config(&config).background,
-        terminal_colors_for_config(&config).foreground
-    ));
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
+        font, colors.background, colors.foreground
+    );
+    TERMINAL_CSS_PROVIDER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let provider = slot.get_or_insert_with(|| {
+            let provider = gtk::CssProvider::new();
+            if let Some(display) = gtk::gdk::Display::default() {
+                gtk::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
+            provider
+        });
+        provider.load_from_data(&css);
+    });
 }
 
 pub(super) struct TerminalColors {
