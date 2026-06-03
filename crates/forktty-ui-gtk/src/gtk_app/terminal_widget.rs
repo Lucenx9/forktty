@@ -29,18 +29,20 @@ fn spawn_terminal_with_callback_impl<F>(
 where
     F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
 {
-    let runtime = TerminalRuntime::spawn(
+    let config = config::load_config().unwrap_or_default();
+    let runtime = TerminalRuntime::spawn_with_scrollback_lines(
         request,
         forktty_terminal::ghostty::pty::PtySize { cols: 80, rows: 24 },
+        config.appearance.scrollback_lines as usize,
     )?;
     let pid = runtime.child_pid();
-    let widget = GhosttyTerminalWidget::new(runtime);
+    let widget = GhosttyTerminalWidget::new_with_config(runtime, &config);
     on_spawn_result(Ok(pid));
     Ok(widget)
 }
 
 impl GhosttyTerminalWidget {
-    pub(super) fn new(runtime: TerminalRuntime) -> Self {
+    fn new_with_config(runtime: TerminalRuntime, config: &config::AppConfig) -> Self {
         let drawing_area = gtk::DrawingArea::new();
         drawing_area.set_hexpand(true);
         drawing_area.set_vexpand(true);
@@ -48,9 +50,8 @@ impl GhosttyTerminalWidget {
         drawing_area.add_css_class("ghostty-terminal");
         let runtime = Rc::new(RefCell::new(runtime));
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
-        let config = config::load_config().unwrap_or_default();
-        let font = terminal_font_description(&drawing_area, &config);
-        let renderer = TerminalRenderer::from_config_with_font(&config, font);
+        let font = terminal_font_description(&drawing_area, config);
+        let renderer = TerminalRenderer::from_config_with_font(config, font);
         let im_context = gtk::IMMulticontext::new();
         im_context.set_client_widget(Some(&drawing_area));
         {
@@ -303,7 +304,6 @@ impl GhosttyTerminalWidget {
         }
         Ok(events)
     }
-
 }
 
 #[derive(Debug, Clone, Copy)]

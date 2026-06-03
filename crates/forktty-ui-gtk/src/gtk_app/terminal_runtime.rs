@@ -20,11 +20,24 @@ pub(super) struct TerminalRuntime {
 }
 
 impl TerminalRuntime {
+    #[cfg(test)]
     pub(super) fn spawn(request: &SpawnRequest, size: PtySize) -> Result<Self, TerminalError> {
+        Self::spawn_with_scrollback_lines(
+            request,
+            size,
+            config::AppConfig::default().appearance.scrollback_lines as usize,
+        )
+    }
+
+    pub(super) fn spawn_with_scrollback_lines(
+        request: &SpawnRequest,
+        size: PtySize,
+        scrollback_lines: usize,
+    ) -> Result<Self, TerminalError> {
         let core = GhosttyCore::new(GhosttyCoreOptions {
             cols: size.cols,
             rows: size.rows,
-            scrollback_lines: config::AppConfig::default().appearance.scrollback_lines as usize,
+            scrollback_lines,
         })
         .map_err(|err| TerminalError::Backend(err.to_string()))?;
         let pty = PtySession::spawn(request, size)
@@ -434,6 +447,26 @@ mod tests {
         assert!(scrolled.contains("one"));
         assert_ne!(scrolled, bottom);
         assert!(runtime.pty_writes().is_empty());
+    }
+
+    #[test]
+    fn configured_zero_scrollback_disables_viewport_history() {
+        let mut runtime = TerminalRuntime::spawn_with_scrollback_lines(
+            &test_request(),
+            PtySize { cols: 12, rows: 2 },
+            0,
+        )
+        .unwrap();
+
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour")
+            .unwrap();
+        let bottom = frame_text(&runtime.render_frame().unwrap());
+
+        assert!(bottom.contains("three"));
+        assert!(bottom.contains("four"));
+        let _ = runtime.scroll_viewport_lines(-10).unwrap();
+        assert_eq!(frame_text(&runtime.render_frame().unwrap()), bottom);
     }
 
     #[test]
