@@ -44,7 +44,9 @@ impl GhosttyTerminalWidget {
         drawing_area.add_css_class("ghostty-terminal");
         let runtime = Rc::new(RefCell::new(runtime));
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
-        let renderer = TerminalRenderer::from_config(&config::load_config().unwrap_or_default());
+        let config = config::load_config().unwrap_or_default();
+        let font = terminal_font_description(&drawing_area, &config);
+        let renderer = TerminalRenderer::from_config_with_font(&config, font);
         {
             let runtime = runtime.clone();
             let renderer = renderer.clone();

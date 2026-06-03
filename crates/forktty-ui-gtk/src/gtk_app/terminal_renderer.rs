@@ -77,13 +77,23 @@ impl RendererPalette {
 #[derive(Debug, Clone)]
 pub(super) struct TerminalRenderer {
     palette: RendererPalette,
+    font: gtk::pango::FontDescription,
 }
 
 impl TerminalRenderer {
-    pub(super) fn from_config(config: &config::AppConfig) -> Self {
+    pub(super) fn from_config_with_font(
+        config: &config::AppConfig,
+        font: gtk::pango::FontDescription,
+    ) -> Self {
         Self {
             palette: RendererPalette::from_terminal_colors(terminal_colors_for_config(config)),
+            font,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn font_description(&self) -> gtk::pango::FontDescription {
+        self.font.clone()
     }
 
     pub(super) fn draw_plain_text(
@@ -97,8 +107,13 @@ impl TerminalRenderer {
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
         self.palette.foreground.set_cairo_source(cr);
-        cr.move_to(8.0, 18.0);
-        let _ = cr.show_text(text);
+        let layout = pangocairo::functions::create_layout(cr);
+        layout.set_font_description(Some(&self.font));
+        layout.set_text(text);
+        layout.set_width((width.saturating_sub(16).max(1)) * gtk::pango::SCALE);
+        layout.set_wrap(gtk::pango::WrapMode::Char);
+        cr.move_to(8.0, 8.0);
+        pangocairo::functions::show_layout(cr, &layout);
     }
 }
 
@@ -113,5 +128,14 @@ mod tests {
 
         assert_eq!(palette.ansi.len(), 16);
         assert_eq!(palette.background.to_string(), "#181818");
+    }
+
+    #[test]
+    fn terminal_renderer_uses_configured_terminal_font() {
+        let config = config::AppConfig::default();
+        let font = gtk::pango::FontDescription::from_string("JetBrainsMono Nerd Font Mono 13");
+        let renderer = TerminalRenderer::from_config_with_font(&config, font.clone());
+
+        assert_eq!(renderer.font_description(), font);
     }
 }
