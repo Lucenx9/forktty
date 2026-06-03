@@ -132,6 +132,10 @@ impl PtySession {
         self.child.id()
     }
 
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
+
     pub fn wait_timeout(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
         loop {

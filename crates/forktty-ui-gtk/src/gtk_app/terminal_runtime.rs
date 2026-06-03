@@ -4,6 +4,7 @@ use forktty_terminal::ghostty::{
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
 };
+use std::os::unix::process::ExitStatusExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TerminalSpawnPid(pub i32);
@@ -13,6 +14,7 @@ pub(super) struct TerminalRuntime {
     core: GhosttyCore,
     pty: PtySession,
     size: PtySize,
+    exit_reported: bool,
     #[cfg(test)]
     pty_writes: Vec<Vec<u8>>,
 }
@@ -31,6 +33,7 @@ impl TerminalRuntime {
             core,
             pty,
             size,
+            exit_reported: false,
             #[cfg(test)]
             pty_writes: Vec::new(),
         })
@@ -84,14 +87,27 @@ impl TerminalRuntime {
     }
 
     pub(super) fn pump_pty(&mut self) -> Result<Vec<GhosttyEvent>, TerminalError> {
+        let mut events = Vec::new();
         let bytes = self
             .pty
             .read_available()
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
-        if bytes.is_empty() {
-            return Ok(Vec::new());
+        if !bytes.is_empty() {
+            events.extend(self.feed_pty_bytes(&bytes)?);
         }
-        self.feed_pty_bytes(&bytes)
+        if !self.exit_reported {
+            if let Some(status) = self
+                .pty
+                .try_wait()
+                .map_err(|err| TerminalError::Backend(err.to_string()))?
+            {
+                self.exit_reported = true;
+                events.push(GhosttyEvent::ChildExit {
+                    status: exit_status_code(status),
+                });
+            }
+        }
+        Ok(events)
     }
 
     pub(super) fn feed_pty_bytes(
@@ -130,11 +146,19 @@ fn pixel_cells(pixels: i32, cell_pixels: i32) -> u16 {
     ((pixels.max(1) / cell_pixels).max(1)).min(i32::from(u16::MAX)) as u16
 }
 
+fn exit_status_code(status: std::process::ExitStatus) -> i32 {
+    status
+        .code()
+        .or_else(|| status.signal().map(|signal| 128 + signal))
+        .unwrap_or(1)
+}
+
 #[cfg(test)]
 pub(super) struct TestTerminalRuntimeHarness {
     backend: GtkTerminalBackend,
     _receiver: mpsc::Receiver<GtkTerminalCommand>,
     runtimes: RefCell<BTreeMap<String, TerminalRuntime>>,
+    statuses: RefCell<BTreeMap<String, String>>,
 }
 
 #[cfg(test)]
@@ -145,6 +169,7 @@ impl TestTerminalRuntimeHarness {
             backend: GtkTerminalBackend::new(sender),
             _receiver: receiver,
             runtimes: RefCell::new(BTreeMap::new()),
+            statuses: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -223,6 +248,37 @@ impl TestTerminalRuntimeHarness {
             (size.cols, size.rows)
         })
     }
+
+    pub(super) fn simulate_child_exit(&self, surface_id: &str, status: i32) {
+        self.backend.mark_surface_not_ready(surface_id).unwrap();
+        self.statuses
+            .borrow_mut()
+            .insert(surface_id.to_string(), format!("Exited ({status})"));
+    }
+
+    pub(super) fn status_text(&self, surface_id: &str) -> String {
+        self.statuses
+            .borrow()
+            .get(surface_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn restart_pane(&self, surface_id: &str) {
+        self.runtimes.borrow_mut().remove(surface_id);
+        self.statuses.borrow_mut().remove(surface_id);
+        let mut request = SpawnRequest {
+            surface_id: surface_id.to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
+        self.spawn(request);
+    }
 }
 
 #[cfg(test)]
@@ -248,5 +304,19 @@ mod tests {
         harness.resize_pixels("surface-1", 800, 480, 10, 20);
 
         assert_eq!(harness.runtime_size("surface-1"), Some((80, 24)));
+    }
+
+    #[test]
+    fn child_exit_marks_surface_not_ready_and_restart_respawns() {
+        let harness = TestTerminalRuntimeHarness::new_ready("surface-1");
+
+        harness.simulate_child_exit("surface-1", 7);
+
+        assert!(!harness.backend_ready("surface-1"));
+        assert!(harness.status_text("surface-1").contains("Exited (7)"));
+
+        harness.restart_pane("surface-1");
+
+        assert!(harness.backend_ready("surface-1"));
     }
 }

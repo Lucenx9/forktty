@@ -597,7 +597,7 @@ git commit -m "feat: handle ghostty terminal effects"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/workspace_ops.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/tests.rs`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 ```rust
 #[test]
@@ -611,23 +611,23 @@ fn child_exit_marks_surface_not_ready_and_restart_respawns() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `cargo test -p forktty-ui-gtk child_exit_marks_surface_not_ready_and_restart_respawns --no-default-features --features gtk-ghostty`
 
 Expected: FAIL until child watcher and restart path are connected.
 
-- [ ] **Step 3: Implement lifecycle**
+- [x] **Step 3: Implement lifecycle**
 
 Poll or receive child-exit messages from `PtySession`, remove PID by spawn token, mark backend not ready, set status/notifications, keep closed surfaces from re-spawning, and preserve session restore auto-spawn behavior for terminal and SSH surfaces only.
 
-- [ ] **Step 4: Run lifecycle tests**
+- [x] **Step 4: Run lifecycle tests**
 
 Run: `cargo test -p forktty-ui-gtk lifecycle --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs crates/forktty-ui-gtk/src/gtk_app/controller.rs crates/forktty-ui-gtk/src/gtk_app/workspace_ops.rs crates/forktty-ui-gtk/src/gtk_app/tests.rs

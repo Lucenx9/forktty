@@ -4,6 +4,7 @@ pub enum GhosttyEvent {
     TitleChanged(String),
     PtyWrite(Vec<u8>),
     VisibleContentChanged,
+    ChildExit { status: i32 },
     Metadata(TerminalMetadataEvent),
 }
 

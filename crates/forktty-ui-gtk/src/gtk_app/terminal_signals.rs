@@ -235,9 +235,9 @@ pub(super) fn attach_vte_signal_handlers(
     widget: &VteTerminalWidget,
     model: &Arc<Mutex<WorkspaceModel>>,
     request: &SpawnRequest,
-    _surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
-    _state: Option<SocketAppState>,
-    _spawn_token: u64,
+    surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    state: Option<SocketAppState>,
+    spawn_token: u64,
 ) {
     let surface_id = request.surface_id.clone();
     let focus_model = model.clone();
@@ -291,6 +291,8 @@ pub(super) fn attach_vte_signal_handlers(
     let pump_model = model.clone();
     let pump_workspace_id = request.workspace_id.clone();
     let pump_surface_id = request.surface_id.clone();
+    let pump_state = state.clone();
+    let pump_surface_pids = surface_pids.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
         if pump_widget_weak.upgrade().is_none() {
             return glib::ControlFlow::Break;
@@ -298,6 +300,23 @@ pub(super) fn attach_vte_signal_handlers(
         match pump_widget.pump_pty_events() {
             Ok(events) if events.is_empty() => {}
             Ok(events) => {
+                for event in &events {
+                    if matches!(event, GhosttyEvent::ChildExit { .. }) {
+                        if let Some(state) = &pump_state {
+                            match state.terminal.mark_surface_not_ready(&pump_surface_id) {
+                                Ok(()) | Err(TerminalError::NotFound(_)) => {}
+                                Err(err) => eprintln!(
+                                    "Failed to mark terminal surface not ready {pump_surface_id}: {err}"
+                                ),
+                            }
+                        }
+                        let _ = remove_surface_pid_for_spawn(
+                            &mut pump_surface_pids.borrow_mut(),
+                            &pump_surface_id,
+                            spawn_token,
+                        );
+                    }
+                }
                 apply_ghostty_events_to_model(
                     &pump_model,
                     &pump_workspace_id,
@@ -355,6 +374,40 @@ pub(super) fn apply_ghostty_events_to_model(
                         format!("{metadata:?}"),
                         Some("blue".to_string()),
                     );
+                }
+            }
+            GhosttyEvent::ChildExit { status } => {
+                if let Ok(mut model) = model.lock() {
+                    if model.surface(surface_id).is_none() {
+                        continue;
+                    }
+                    if *status == 0 {
+                        let _ = model.set_status(
+                            workspace_id,
+                            surface_status_key(surface_id),
+                            "Terminal",
+                            "Closed",
+                            None,
+                        );
+                        continue;
+                    }
+                    let _ = model.set_status(
+                        workspace_id,
+                        surface_status_key(surface_id),
+                        "Terminal",
+                        format!("Exited ({status})"),
+                        Some("yellow".to_string()),
+                    );
+                    let notification = model.create_notification(
+                        "Terminal exited",
+                        format!(
+                            "Process exited with status {status}. Use Restart Pane to spawn it again."
+                        ),
+                        NotificationKind::Info,
+                        Some(workspace_id.to_string()),
+                        Some(surface_id.to_string()),
+                    );
+                    dispatch_notification_with_loaded_config(&notification);
                 }
             }
             GhosttyEvent::PtyWrite(_) | GhosttyEvent::VisibleContentChanged => {}
