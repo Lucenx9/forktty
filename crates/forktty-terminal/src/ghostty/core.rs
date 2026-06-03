@@ -495,6 +495,38 @@ mod tests {
     }
 
     #[test]
+    fn core_render_frame_tracks_dynamic_default_colors() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b]10;#112233\x07\x1b]11;#445566\x07")
+            .unwrap();
+
+        let frame = core.render_frame().unwrap();
+
+        assert_eq!(
+            frame.foreground,
+            TerminalRgb {
+                red: 0x11,
+                green: 0x22,
+                blue: 0x33,
+            }
+        );
+        assert_eq!(
+            frame.background,
+            TerminalRgb {
+                red: 0x44,
+                green: 0x55,
+                blue: 0x66,
+            }
+        );
+    }
+
+    #[test]
     fn core_render_frame_preserves_inverse_as_style_not_swapped_colors() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 20,

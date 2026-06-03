@@ -113,6 +113,12 @@ struct RendererTextRun {
     strikethrough: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RendererFrameDefaults {
+    foreground: RendererColor,
+    background: RendererColor,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct RendererCellMetrics {
     width: f64,
@@ -150,7 +156,8 @@ impl TerminalRenderer {
         height: i32,
         frame: &TerminalFrame,
     ) {
-        let default_background = self.palette.background;
+        let defaults = self.frame_defaults(frame);
+        let default_background = defaults.background;
         default_background.set_cairo_source(cr);
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
@@ -159,7 +166,7 @@ impl TerminalRenderer {
         for (row_idx, row) in frame.rows.iter().enumerate() {
             let y = row_idx as f64 * metrics.height;
             for (col_idx, cell) in row.cells.iter().enumerate() {
-                let background = self.cell_background(cell);
+                let background = self.cell_background_for_frame(frame, cell);
                 if background != default_background {
                     background.set_cairo_source(cr);
                     cr.rectangle(
@@ -172,7 +179,7 @@ impl TerminalRenderer {
                 }
             }
 
-            for run in self.text_runs_for_row(row) {
+            for run in self.text_runs_for_frame_row(frame, row) {
                 run.foreground.set_cairo_source(cr);
                 let layout = pangocairo::functions::create_layout(cr);
                 let mut font = self.font.clone();
@@ -202,7 +209,24 @@ impl TerminalRenderer {
         }
     }
 
+    #[cfg(test)]
     fn text_runs_for_row(&self, row: &TerminalRow) -> Vec<RendererTextRun> {
+        self.text_runs_for_row_with_defaults(row, self.palette_defaults())
+    }
+
+    fn text_runs_for_frame_row(
+        &self,
+        frame: &TerminalFrame,
+        row: &TerminalRow,
+    ) -> Vec<RendererTextRun> {
+        self.text_runs_for_row_with_defaults(row, self.frame_defaults(frame))
+    }
+
+    fn text_runs_for_row_with_defaults(
+        &self,
+        row: &TerminalRow,
+        defaults: RendererFrameDefaults,
+    ) -> Vec<RendererTextRun> {
         let mut runs = Vec::new();
         let mut current: Option<RendererTextRun> = None;
         for (col, cell) in row.cells.iter().enumerate() {
@@ -213,8 +237,8 @@ impl TerminalRenderer {
                 continue;
             }
             let style = RendererCellStyle {
-                foreground: self.cell_foreground(cell),
-                background: self.cell_background(cell),
+                foreground: self.cell_foreground_with_defaults(cell, defaults),
+                background: self.cell_background_with_defaults(cell, defaults),
                 bold: cell.bold,
                 italic: cell.italic,
                 underline: cell.underline,
@@ -235,40 +259,81 @@ impl TerminalRenderer {
         runs
     }
 
+    #[cfg(test)]
     fn cell_foreground(&self, cell: &TerminalCell) -> RendererColor {
+        self.cell_foreground_with_defaults(cell, self.palette_defaults())
+    }
+
+    fn cell_foreground_with_defaults(
+        &self,
+        cell: &TerminalCell,
+        defaults: RendererFrameDefaults,
+    ) -> RendererColor {
         let default_foreground = if cell.bold {
             self.palette.bold
         } else {
-            self.palette.foreground
+            defaults.foreground
         };
         let mut foreground = cell
             .foreground
             .map_or(default_foreground, RendererColor::from_terminal_rgb);
         let mut background = cell
             .background
-            .map_or(self.palette.background, RendererColor::from_terminal_rgb);
+            .map_or(defaults.background, RendererColor::from_terminal_rgb);
         if cell.inverse {
             std::mem::swap(&mut foreground, &mut background);
         }
         foreground
     }
 
+    #[cfg(test)]
     fn cell_background(&self, cell: &TerminalCell) -> RendererColor {
+        self.cell_background_with_defaults(cell, self.palette_defaults())
+    }
+
+    fn cell_background_for_frame(
+        &self,
+        frame: &TerminalFrame,
+        cell: &TerminalCell,
+    ) -> RendererColor {
+        self.cell_background_with_defaults(cell, self.frame_defaults(frame))
+    }
+
+    fn cell_background_with_defaults(
+        &self,
+        cell: &TerminalCell,
+        defaults: RendererFrameDefaults,
+    ) -> RendererColor {
         let default_foreground = if cell.bold {
             self.palette.bold
         } else {
-            self.palette.foreground
+            defaults.foreground
         };
         let mut foreground = cell
             .foreground
             .map_or(default_foreground, RendererColor::from_terminal_rgb);
         let mut background = cell
             .background
-            .map_or(self.palette.background, RendererColor::from_terminal_rgb);
+            .map_or(defaults.background, RendererColor::from_terminal_rgb);
         if cell.inverse {
             std::mem::swap(&mut foreground, &mut background);
         }
         background
+    }
+
+    #[cfg(test)]
+    fn palette_defaults(&self) -> RendererFrameDefaults {
+        RendererFrameDefaults {
+            foreground: self.palette.foreground,
+            background: self.palette.background,
+        }
+    }
+
+    fn frame_defaults(&self, frame: &TerminalFrame) -> RendererFrameDefaults {
+        RendererFrameDefaults {
+            foreground: RendererColor::from_terminal_rgb(frame.foreground),
+            background: RendererColor::from_terminal_rgb(frame.background),
+        }
     }
 
     fn cell_metrics(&self, cr: &gtk::cairo::Context) -> RendererCellMetrics {
@@ -434,6 +499,49 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_resolves_default_cells_from_frame_colors() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let foreground = TerminalRgb {
+            red: 0x11,
+            green: 0x22,
+            blue: 0x33,
+        };
+        let background = TerminalRgb {
+            red: 0x44,
+            green: 0x55,
+            blue: 0x66,
+        };
+        let frame = test_frame(
+            foreground,
+            background,
+            TerminalRow {
+                cells: vec![test_cell("x", None, None)],
+            },
+        );
+
+        let runs = renderer.text_runs_for_frame_row(&frame, &frame.rows[0]);
+
+        assert_eq!(
+            runs[0].foreground,
+            RendererColor::from_terminal_rgb(foreground)
+        );
+        assert_eq!(
+            runs[0].background,
+            RendererColor::from_terminal_rgb(background)
+        );
+        assert_eq!(
+            renderer
+                .cell_background_for_frame(&frame, &frame.rows[0].cells[0])
+                .to_string(),
+            "#445566"
+        );
+    }
+
+    #[test]
     fn terminal_renderer_uses_bold_palette_for_default_bold_cells() {
         let config = config::AppConfig::default();
         let renderer = TerminalRenderer::from_config_with_font(
@@ -497,6 +605,21 @@ mod tests {
             strikethrough: false,
             inverse: false,
             invisible: false,
+        }
+    }
+
+    fn test_frame(
+        foreground: TerminalRgb,
+        background: TerminalRgb,
+        row: TerminalRow,
+    ) -> TerminalFrame {
+        TerminalFrame {
+            cols: row.cells.len() as u16,
+            row_count: 1,
+            background,
+            foreground,
+            cursor: None,
+            rows: vec![row],
         }
     }
 }
