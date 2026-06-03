@@ -5678,7 +5678,7 @@ mod tests {
     }
 
     #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_workspace_not_found() {
+    fn socket_response_errors_preserve_method_path_and_codes() {
         with_socket_response(
             |request| {
                 format!(
@@ -5703,10 +5703,7 @@ mod tests {
                 assert!(err.message.contains("not_found: Workspace not found"));
             },
         );
-    }
 
-    #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_stale_response() {
         with_socket_response(
             |_| {
                 format!(
@@ -5726,10 +5723,7 @@ mod tests {
                 assert!(err.message.contains("stale-response"));
             },
         );
-    }
 
-    #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_request_too_large() {
         with_socket_response(
             |_| {
                 format!(
@@ -5753,10 +5747,7 @@ mod tests {
                 assert!(!err.message.contains("response id mismatch"));
             },
         );
-    }
 
-    #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_server_busy() {
         with_socket_response(
             |_| {
                 format!(
@@ -5778,10 +5769,7 @@ mod tests {
                 assert!(!err.message.contains("response id mismatch"));
             },
         );
-    }
 
-    #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_invalid_json() {
         with_socket_response(
             |_| "not json\n".to_string(),
             |socket_path| {
@@ -5791,10 +5779,7 @@ mod tests {
                 assert!(err.message.contains("Invalid socket response"));
             },
         );
-    }
 
-    #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_response_too_large() {
         with_socket_response(
             |_| format!("{}\n", "x".repeat(MAX_SOCKET_RESPONSE_BYTES + 1)),
             |socket_path| {
@@ -6169,6 +6154,7 @@ mod tests {
         };
 
         let block = format_token_usage_block(usage);
+        // u64::MAX is 18446744073709551615, so 18,446,744,073,709,551,615
         assert!(block.contains("18,446,744,073,709,551,615 / 200,000 input tokens"));
 
         let progress = build_token_progress_action(
@@ -6777,7 +6763,7 @@ mod tests {
     }
 
     #[test]
-    fn hook_setup_preflights_all_configs_and_prevents_partial_writes() {
+    fn hook_setup_preserves_unrelated_json_and_preflights_all_configs() {
         let dir = tempfile::tempdir().unwrap();
         let codex_home = dir.path().join("codex");
         let claude_dir = dir.path().join("claude");
@@ -6807,28 +6793,8 @@ mod tests {
                     fs::read_to_string(&codex_path).unwrap(),
                     "{\"customKey\":{\"keepMe\":true}}\n"
                 );
-            },
-        );
-    }
 
-    #[test]
-    fn hook_setup_preserves_unrelated_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let codex_home = dir.path().join("codex");
-        fs::create_dir_all(&codex_home).unwrap();
-        let codex_path = codex_home.join("hooks.json");
-        fs::write(&codex_path, "{\"customKey\":{\"keepMe\":true}}\n").unwrap();
-
-        let codex_home_s = codex_home.display().to_string();
-        let home_s = dir.path().display().to_string();
-        with_env(
-            &[
-                ("CODEX_HOME", Some(&codex_home_s)),
-                ("CLAUDE_CONFIG_DIR", None),
-                ("HOME", Some(&home_s)),
-            ],
-            || {
-                let context = test_context();
+                fs::write(&claude_path, "{}\n").unwrap();
                 handle_hooks_setup(&context, strings(&["codex"])).unwrap();
                 let parsed = read_json(&codex_path);
                 assert_eq!(parsed["customKey"]["keepMe"], true);
