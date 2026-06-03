@@ -7,15 +7,19 @@ license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "ForkTTY terminal backend trait with headless and VTE adapters"
+description = "ForkTTY terminal backend trait with headless and Ghostty adapters"
 
 [features]
 default = []
 vte = ["dep:vte4", "dep:gtk4"]
+ghostty-vt = ["dep:libghostty-vt", "dep:nix", "dep:libc"]
 
 [dependencies]
 forktty-core = { path = "../forktty-core" }
 serde.workspace = true
 thiserror.workspace = true
+libc = { workspace = true, optional = true }
+libghostty-vt = { workspace = true, optional = true }
+nix = { workspace = true, optional = true, features = ["fs", "ioctl", "process", "signal", "term"] }
 gtk4 = { version = "0.10", optional = true }
 vte4 = { version = "0.9", features = ["v0_76"], optional = true }

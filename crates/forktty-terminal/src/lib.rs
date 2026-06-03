@@ -7,6 +7,9 @@ use thiserror::Error;
 
 #[cfg(feature = "vte")]
 pub mod vte;
+#[cfg(feature = "ghostty-vt")]
+pub mod ghostty;
+pub mod spawn;
 
 #[derive(Error, Debug)]
 pub enum TerminalError {
@@ -416,5 +419,24 @@ mod tests {
             vec!["user@example.com"]
         );
         assert_eq!(backend.spawn_shell("surface-ssh").unwrap(), "/usr/bin/ssh");
+    }
+
+    #[test]
+    fn child_environment_is_available_without_vte_feature() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+
+        let env = crate::spawn::child_environment(&request);
+
+        assert!(env.iter().any(|entry| entry == "TERM=xterm-256color"));
+        assert!(env.iter().any(|entry| entry == "COLORTERM=truecolor"));
+        assert!(env.iter().any(|entry| entry == "TERM_PROGRAM=ForkTTY"));
     }
 }

@@ -21,8 +21,10 @@ VTE shell is the primary implementation.
 You will need:
 
 - Linux
-- Rust 1.88+ (install via [rustup](https://rustup.rs/))
+- Rust 1.93+ (install via [rustup](https://rustup.rs/))
 - GTK4, libadwaita, and VTE GTK4 development libraries
+- `git` and Zig for the vendored `libghostty-vt-sys` build path used during
+  the libghostty-vt terminal migration
 - WebKitGTK 6 development files when working on the optional browser-pane feature
 
 Distro-specific install commands are in the [README](README.md#build-from-source).
