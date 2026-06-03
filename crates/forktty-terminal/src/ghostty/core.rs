@@ -1,6 +1,7 @@
 use super::{events::GhosttyEvent, metadata::MetadataParser};
 use libghostty_vt::{
     fmt::{Format, Formatter, FormatterOptions},
+    focus::Event as GhosttyFocusEvent,
     key::{
         Action as GhosttyKeyAction, Encoder as GhosttyKeyEncoder, Event as GhosttyKeyEvent,
         Key as GhosttyKey, Mods as GhosttyKeyMods,
@@ -13,6 +14,8 @@ use libghostty_vt::{
 use std::{cell::RefCell, rc::Rc};
 
 pub type Result<T> = std::result::Result<T, libghostty_vt::Error>;
+
+const FOCUS_MODE_TAIL_LIMIT: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhosttyCoreOptions {
@@ -28,6 +31,8 @@ pub struct GhosttyCore {
     metadata: MetadataParser,
     events: Rc<RefCell<Vec<GhosttyEvent>>>,
     bracketed_paste: bool,
+    focus_reporting: bool,
+    focus_mode_tail: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,10 +229,13 @@ impl GhosttyCore {
             metadata: MetadataParser::new(),
             events,
             bracketed_paste: false,
+            focus_reporting: false,
+            focus_mode_tail: Vec::new(),
         })
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<GhosttyEvent>> {
+        self.update_focus_reporting_mode(bytes);
         let metadata_events = self
             .metadata
             .feed(bytes)
@@ -354,10 +362,36 @@ impl GhosttyCore {
         Ok(bytes)
     }
 
+    pub fn encode_focus(&self, focused: bool) -> Result<Vec<u8>> {
+        if !self.focus_reporting {
+            return Ok(Vec::new());
+        }
+
+        let event = if focused {
+            GhosttyFocusEvent::Gained
+        } else {
+            GhosttyFocusEvent::Lost
+        };
+        let mut bytes = [0; 8];
+        let written = event.encode(&mut bytes)?;
+        Ok(bytes[..written].to_vec())
+    }
+
     #[cfg(test)]
     pub fn set_bracketed_paste_for_test(&mut self, enabled: bool) -> Result<()> {
         self.bracketed_paste = enabled;
         Ok(())
+    }
+
+    fn update_focus_reporting_mode(&mut self, bytes: &[u8]) {
+        let mut scan = self.focus_mode_tail.clone();
+        scan.extend_from_slice(bytes);
+        scan_focus_reporting_sequences(&scan, &mut self.focus_reporting);
+        self.focus_mode_tail = if scan.len() > FOCUS_MODE_TAIL_LIMIT {
+            scan[scan.len() - FOCUS_MODE_TAIL_LIMIT..].to_vec()
+        } else {
+            scan
+        };
     }
 
     fn format_plain_text(&self, trim: bool) -> Result<String> {
@@ -372,6 +406,38 @@ impl GhosttyCore {
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
+}
+
+fn scan_focus_reporting_sequences(bytes: &[u8], focus_reporting: &mut bool) {
+    let mut index = 0;
+    while index + 3 < bytes.len() {
+        if bytes[index] != 0x1b || bytes[index + 1] != b'[' || bytes[index + 2] != b'?' {
+            index += 1;
+            continue;
+        }
+
+        let params_start = index + 3;
+        let mut end = params_start;
+        while end < bytes.len() {
+            let byte = bytes[end];
+            if (0x40..=0x7e).contains(&byte) {
+                if matches!(byte, b'h' | b'l')
+                    && csi_private_params_contain_focus_mode(&bytes[params_start..end])
+                {
+                    *focus_reporting = byte == b'h';
+                }
+                break;
+            }
+            end += 1;
+        }
+        index = end.saturating_add(1);
+    }
+}
+
+fn csi_private_params_contain_focus_mode(params: &[u8]) -> bool {
+    params
+        .split(|byte| *byte == b';')
+        .any(|param| param == b"1004")
 }
 
 #[cfg(test)]
@@ -469,6 +535,53 @@ mod tests {
 
             assert_eq!(bytes, expected, "encoded {key:?}");
         }
+    }
+
+    #[test]
+    fn core_focus_reporting_is_silent_until_enabled() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert_eq!(core.encode_focus(true).unwrap(), Vec::<u8>::new());
+        assert_eq!(core.encode_focus(false).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn core_focus_reporting_tracks_decset_1004() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[?1004h").unwrap();
+
+        assert_eq!(core.encode_focus(true).unwrap(), b"\x1b[I");
+        assert_eq!(core.encode_focus(false).unwrap(), b"\x1b[O");
+
+        core.feed(b"\x1b[?1004l").unwrap();
+
+        assert_eq!(core.encode_focus(true).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn core_focus_reporting_tracks_chunked_decset_1004() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[?10").unwrap();
+        core.feed(b"04h").unwrap();
+
+        assert_eq!(core.encode_focus(true).unwrap(), b"\x1b[I");
     }
 
     #[test]

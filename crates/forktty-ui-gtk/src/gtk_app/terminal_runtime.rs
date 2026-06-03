@@ -66,6 +66,17 @@ impl TerminalRuntime {
         self.write_bytes(&bytes)
     }
 
+    pub(super) fn write_focus(&mut self, focused: bool) -> Result<(), TerminalError> {
+        let bytes = self
+            .core
+            .encode_focus(focused)
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        self.write_bytes(&bytes)
+    }
+
     pub(super) fn resize_pixels(
         &mut self,
         width_px: i32,
@@ -352,6 +363,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(runtime.pty_writes().last().unwrap(), b"\x1bOA");
+    }
+
+    #[test]
+    fn focus_event_writes_only_when_reporting_is_enabled() {
+        let mut request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        runtime.write_focus(true).unwrap();
+        assert!(runtime.pty_writes().is_empty());
+
+        runtime.feed_pty_bytes(b"\x1b[?1004h").unwrap();
+        runtime.write_focus(true).unwrap();
+        runtime.write_focus(false).unwrap();
+
+        assert_eq!(
+            runtime.pty_writes(),
+            vec![b"\x1b[I".to_vec(), b"\x1b[O".to_vec()]
+        );
     }
 
     #[test]

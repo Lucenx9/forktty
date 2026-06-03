@@ -80,6 +80,26 @@ impl GhosttyTerminalWidget {
             drawing_area.add_controller(key_controller);
         }
         {
+            let runtime_for_enter = runtime.clone();
+            let runtime_for_leave = runtime.clone();
+            let drawing_area_for_enter = drawing_area.clone();
+            let drawing_area_for_leave = drawing_area.clone();
+            let focus_controller = gtk::EventControllerFocus::new();
+            focus_controller.connect_enter(move |_| {
+                if let Err(err) = runtime_for_enter.borrow_mut().write_focus(true) {
+                    eprintln!("Failed to write terminal focus input: {err}");
+                }
+                drawing_area_for_enter.queue_draw();
+            });
+            focus_controller.connect_leave(move |_| {
+                if let Err(err) = runtime_for_leave.borrow_mut().write_focus(false) {
+                    eprintln!("Failed to write terminal focus input: {err}");
+                }
+                drawing_area_for_leave.queue_draw();
+            });
+            drawing_area.add_controller(focus_controller);
+        }
+        {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             drawing_area.connect_resize(move |area, width, height| {
