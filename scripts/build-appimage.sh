@@ -107,6 +107,22 @@ copy_appimage_runtime_libs() {
   echo "Bundled $copied shared libraries into $lib_dir" >&2
 }
 
+copy_vendored_ghostty_runtime_lib() {
+  local lib_dir="$APPDIR/usr/lib"
+  local ghostty_lib
+
+  ghostty_lib="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0' -print -quit)"
+  if [[ -z "$ghostty_lib" ]]; then
+    echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
+    exit 1
+  fi
+
+  rm -f "$lib_dir"/libghostty-vt.so*
+  install -Dm755 "$ghostty_lib" "$lib_dir/libghostty-vt.so.0.1.0"
+  ln -s libghostty-vt.so.0.1.0 "$lib_dir/libghostty-vt.so.0"
+  ln -s libghostty-vt.so.0 "$lib_dir/libghostty-vt.so"
+}
+
 copy_forktty_icon_assets() {
   local source_dir="$ROOT_DIR/packaging/linux/icons/hicolor"
   local target_dir="$APPDIR/usr/share/icons/hicolor"
@@ -261,6 +277,7 @@ copy_forktty_icon_assets
 verify_forktty_icon_assets
 write_appimage_hicolor_index_theme
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
+copy_vendored_ghostty_runtime_lib
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"
 ln -s usr/share/icons/hicolor/128x128/apps/forktty.png "$APPDIR/forktty.png"
