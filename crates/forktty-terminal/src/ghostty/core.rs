@@ -15,7 +15,7 @@ use std::{cell::RefCell, rc::Rc};
 
 pub type Result<T> = std::result::Result<T, libghostty_vt::Error>;
 
-const FOCUS_MODE_TAIL_LIMIT: usize = 64;
+const TERMINAL_MODE_TAIL_LIMIT: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhosttyCoreOptions {
@@ -32,7 +32,7 @@ pub struct GhosttyCore {
     events: Rc<RefCell<Vec<GhosttyEvent>>>,
     bracketed_paste: bool,
     focus_reporting: bool,
-    focus_mode_tail: Vec<u8>,
+    terminal_mode_tail: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,12 +230,12 @@ impl GhosttyCore {
             events,
             bracketed_paste: false,
             focus_reporting: false,
-            focus_mode_tail: Vec::new(),
+            terminal_mode_tail: Vec::new(),
         })
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<GhosttyEvent>> {
-        self.update_focus_reporting_mode(bytes);
+        self.update_terminal_private_modes(bytes);
         let metadata_events = self
             .metadata
             .feed(bytes)
@@ -383,12 +383,16 @@ impl GhosttyCore {
         Ok(())
     }
 
-    fn update_focus_reporting_mode(&mut self, bytes: &[u8]) {
-        let mut scan = self.focus_mode_tail.clone();
+    fn update_terminal_private_modes(&mut self, bytes: &[u8]) {
+        let mut scan = self.terminal_mode_tail.clone();
         scan.extend_from_slice(bytes);
-        scan_focus_reporting_sequences(&scan, &mut self.focus_reporting);
-        self.focus_mode_tail = if scan.len() > FOCUS_MODE_TAIL_LIMIT {
-            scan[scan.len() - FOCUS_MODE_TAIL_LIMIT..].to_vec()
+        scan_terminal_private_mode_sequences(
+            &scan,
+            &mut self.focus_reporting,
+            &mut self.bracketed_paste,
+        );
+        self.terminal_mode_tail = if scan.len() > TERMINAL_MODE_TAIL_LIMIT {
+            scan[scan.len() - TERMINAL_MODE_TAIL_LIMIT..].to_vec()
         } else {
             scan
         };
@@ -408,7 +412,11 @@ impl GhosttyCore {
     }
 }
 
-fn scan_focus_reporting_sequences(bytes: &[u8], focus_reporting: &mut bool) {
+fn scan_terminal_private_mode_sequences(
+    bytes: &[u8],
+    focus_reporting: &mut bool,
+    bracketed_paste: &mut bool,
+) {
     let mut index = 0;
     while index + 3 < bytes.len() {
         if bytes[index] != 0x1b || bytes[index + 1] != b'[' || bytes[index + 2] != b'?' {
@@ -421,10 +429,15 @@ fn scan_focus_reporting_sequences(bytes: &[u8], focus_reporting: &mut bool) {
         while end < bytes.len() {
             let byte = bytes[end];
             if (0x40..=0x7e).contains(&byte) {
-                if matches!(byte, b'h' | b'l')
-                    && csi_private_params_contain_focus_mode(&bytes[params_start..end])
-                {
-                    *focus_reporting = byte == b'h';
+                if matches!(byte, b'h' | b'l') {
+                    let enabled = byte == b'h';
+                    let params = &bytes[params_start..end];
+                    if csi_private_params_contain(params, b"1004") {
+                        *focus_reporting = enabled;
+                    }
+                    if csi_private_params_contain(params, b"2004") {
+                        *bracketed_paste = enabled;
+                    }
                 }
                 break;
             }
@@ -434,10 +447,10 @@ fn scan_focus_reporting_sequences(bytes: &[u8], focus_reporting: &mut bool) {
     }
 }
 
-fn csi_private_params_contain_focus_mode(params: &[u8]) -> bool {
+fn csi_private_params_contain(params: &[u8], expected: &[u8]) -> bool {
     params
         .split(|byte| *byte == b';')
-        .any(|param| param == b"1004")
+        .any(|param| param == expected)
 }
 
 #[cfg(test)]
@@ -710,6 +723,53 @@ mod tests {
         assert_eq!(
             core.paste_bytes("echo one\necho two").unwrap(),
             b"\x1b[200~echo one\necho two\x1b[201~"
+        );
+    }
+
+    #[test]
+    fn bracketed_paste_tracks_decset_2004() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert_eq!(
+            core.paste_bytes("line 1\nline 2").unwrap(),
+            b"line 1\nline 2"
+        );
+
+        core.feed(b"\x1b[?2004h").unwrap();
+
+        assert_eq!(
+            core.paste_bytes("line 1\nline 2").unwrap(),
+            b"\x1b[200~line 1\nline 2\x1b[201~"
+        );
+
+        core.feed(b"\x1b[?2004l").unwrap();
+
+        assert_eq!(
+            core.paste_bytes("line 1\nline 2").unwrap(),
+            b"line 1\nline 2"
+        );
+    }
+
+    #[test]
+    fn bracketed_paste_tracks_chunked_decset_2004() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[?20").unwrap();
+        core.feed(b"04h").unwrap();
+
+        assert_eq!(
+            core.paste_bytes("pasted").unwrap(),
+            b"\x1b[200~pasted\x1b[201~"
         );
     }
 
