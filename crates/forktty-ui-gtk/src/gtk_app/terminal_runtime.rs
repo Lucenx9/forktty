@@ -1,6 +1,9 @@
 use super::*;
 use forktty_terminal::ghostty::{
-    core::{GhosttyCore, GhosttyCoreOptions, TerminalFrame, TerminalKeyInput, TerminalMouseInput},
+    core::{
+        GhosttyCore, GhosttyCoreOptions, GhosttyThemeColors, TerminalFrame, TerminalKeyInput,
+        TerminalMouseInput, TerminalRgb,
+    },
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
 };
@@ -19,6 +22,30 @@ pub(super) struct TerminalRuntime {
     pty_writes: Vec<Vec<u8>>,
 }
 
+fn configured_theme_colors() -> GhosttyThemeColors {
+    let config = config::load_config().unwrap_or_default();
+    let colors = terminal_colors_for_config(&config);
+    GhosttyThemeColors {
+        foreground: parse_hex_rgb(colors.foreground),
+        background: parse_hex_rgb(colors.background),
+        palette: std::array::from_fn(|index| parse_hex_rgb(colors.ansi[index])),
+    }
+}
+
+fn parse_hex_rgb(hex: &str) -> TerminalRgb {
+    let hex = hex.trim().trim_start_matches('#');
+    let channel = |range: std::ops::Range<usize>| {
+        hex.get(range)
+            .and_then(|value| u8::from_str_radix(value, 16).ok())
+            .unwrap_or(0)
+    };
+    TerminalRgb {
+        red: channel(0..2),
+        green: channel(2..4),
+        blue: channel(4..6),
+    }
+}
+
 impl TerminalRuntime {
     #[cfg(test)]
     pub(super) fn spawn(request: &SpawnRequest, size: PtySize) -> Result<Self, TerminalError> {
@@ -34,12 +61,14 @@ impl TerminalRuntime {
         size: PtySize,
         scrollback_lines: usize,
     ) -> Result<Self, TerminalError> {
-        let core = GhosttyCore::new(GhosttyCoreOptions {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: size.cols,
             rows: size.rows,
             scrollback_lines,
         })
         .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        core.apply_theme_colors(&configured_theme_colors())
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
         let pty = PtySession::spawn(request, size)
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
         Ok(Self {

@@ -227,6 +227,16 @@ impl From<RgbColor> for TerminalRgb {
     }
 }
 
+/// Default colors to seed into the terminal so a fresh surface paints with the
+/// configured theme instead of libghostty's built-in defaults. Programs can
+/// still override these dynamically via OSC 10/11/4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GhosttyThemeColors {
+    pub foreground: TerminalRgb,
+    pub background: TerminalRgb,
+    pub palette: [TerminalRgb; 16],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalFrame {
     pub cols: u16,
@@ -403,6 +413,11 @@ impl GhosttyCore {
         self.format_plain_text(false)
     }
 
+    pub fn apply_theme_colors(&mut self, colors: &GhosttyThemeColors) -> Result<()> {
+        self.terminal.vt_write(&theme_color_sequence(colors));
+        Ok(())
+    }
+
     pub fn render_frame(&mut self) -> Result<TerminalFrame> {
         let snapshot = self.render_state.update(&self.terminal)?;
         let colors = snapshot.colors()?;
@@ -563,6 +578,26 @@ impl GhosttyCore {
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
+}
+
+fn theme_color_sequence(colors: &GhosttyThemeColors) -> Vec<u8> {
+    let mut seq = Vec::new();
+    push_osc_color(&mut seq, "10", colors.foreground);
+    push_osc_color(&mut seq, "11", colors.background);
+    for (index, color) in colors.palette.iter().enumerate() {
+        push_osc_color(&mut seq, &format!("4;{index}"), *color);
+    }
+    seq
+}
+
+fn push_osc_color(seq: &mut Vec<u8>, code: &str, color: TerminalRgb) {
+    seq.extend_from_slice(
+        format!(
+            "\x1b]{code};#{:02x}{:02x}{:02x}\x07",
+            color.red, color.green, color.blue
+        )
+        .as_bytes(),
+    );
 }
 
 fn scan_terminal_private_mode_sequences(
@@ -874,6 +909,53 @@ mod tests {
                 red: 0x44,
                 green: 0x55,
                 blue: 0x66,
+            }
+        );
+    }
+
+    #[test]
+    fn core_apply_theme_colors_seeds_default_foreground_and_background() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.apply_theme_colors(&GhosttyThemeColors {
+            foreground: TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            background: TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            palette: [TerminalRgb {
+                red: 0,
+                green: 0,
+                blue: 0,
+            }; 16],
+        })
+        .unwrap();
+
+        let frame = core.render_frame().unwrap();
+        assert_eq!(
+            frame.background,
+            TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            }
+        );
+        assert_eq!(
+            frame.foreground,
+            TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
             }
         );
     }
