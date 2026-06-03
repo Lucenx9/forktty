@@ -104,6 +104,7 @@ struct RendererCellStyle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RendererTextRun {
     start_col: usize,
+    cell_span: usize,
     text: String,
     foreground: RendererColor,
     background: RendererColor,
@@ -248,13 +249,23 @@ impl TerminalRenderer {
                 underline: cell.underline,
                 strikethrough: cell.strikethrough,
             };
+            let cell_span = cell_grid_span(cell);
             match &mut current {
-                Some(run) if run.style() == style => run.text.push_str(&cell.text),
+                Some(run) if run.style() == style => {
+                    run.text.push_str(&cell.text);
+                    run.cell_span += cell_span;
+                }
                 Some(_) => {
                     runs.push(current.take().expect("current run is present"));
-                    current = Some(RendererTextRun::from_cell(col, &cell.text, style));
+                    current = Some(RendererTextRun::from_cell(
+                        col, &cell.text, style, cell_span,
+                    ));
                 }
-                None => current = Some(RendererTextRun::from_cell(col, &cell.text, style)),
+                None => {
+                    current = Some(RendererTextRun::from_cell(
+                        col, &cell.text, style, cell_span,
+                    ))
+                }
             }
         }
         if let Some(run) = current {
@@ -379,7 +390,7 @@ impl TerminalRenderer {
         y: f64,
     ) {
         let x = run.start_col as f64 * metrics.width;
-        let width = run.text.chars().count() as f64 * metrics.width;
+        let width = run.cell_span as f64 * metrics.width;
         if run.underline {
             cr.move_to(x, y + metrics.height - 2.0);
             cr.line_to(x + width, y + metrics.height - 2.0);
@@ -425,9 +436,10 @@ impl TerminalRenderer {
 }
 
 impl RendererTextRun {
-    fn from_cell(start_col: usize, text: &str, style: RendererCellStyle) -> Self {
+    fn from_cell(start_col: usize, text: &str, style: RendererCellStyle, cell_span: usize) -> Self {
         Self {
             start_col,
+            cell_span,
             text: text.to_string(),
             foreground: style.foreground,
             background: style.background,
@@ -457,6 +469,15 @@ fn cell_renders_text(cell: &TerminalCell) -> bool {
             cell.width,
             TerminalCellWidth::SpacerTail | TerminalCellWidth::SpacerHead
         )
+}
+
+fn cell_grid_span(cell: &TerminalCell) -> usize {
+    match cell.width {
+        TerminalCellWidth::Wide => 2,
+        TerminalCellWidth::Narrow
+        | TerminalCellWidth::SpacerHead
+        | TerminalCellWidth::SpacerTail => 1,
+    }
 }
 
 #[cfg(test)]
@@ -642,6 +663,31 @@ mod tests {
         };
 
         assert!(renderer.text_runs_for_row(&row).is_empty());
+    }
+
+    #[test]
+    fn terminal_renderer_tracks_grid_span_for_wide_and_combining_cells() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut wide = test_cell("橋", None, None);
+        wide.width = TerminalCellWidth::Wide;
+        let mut spacer = test_cell("", None, None);
+        spacer.width = TerminalCellWidth::SpacerTail;
+        let combining = test_cell("e\u{301}", None, None);
+        let row = TerminalRow {
+            cells: vec![wide, spacer, combining],
+        };
+
+        let runs = renderer.text_runs_for_row(&row);
+
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].text, "橋");
+        assert_eq!(runs[0].cell_span, 2);
+        assert_eq!(runs[1].text, "e\u{301}");
+        assert_eq!(runs[1].cell_span, 1);
     }
 
     #[test]
