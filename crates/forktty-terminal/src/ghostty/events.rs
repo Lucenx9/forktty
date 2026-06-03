@@ -4,6 +4,7 @@ pub enum GhosttyEvent {
     TitleChanged(String),
     PtyWrite(Vec<u8>),
     VisibleContentChanged,
+    Metadata(TerminalMetadataEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
