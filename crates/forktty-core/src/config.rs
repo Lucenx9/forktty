@@ -580,6 +580,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn load_config_from_path_with_recovery_recovers_bad_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "invalid_toml = { [ ] }").unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        // Should return default config
+        assert_eq!(config.appearance.font_size, 14);
+
+        // Should return a ConfigRecovery object
+        let recovery = recovery.expect("Expected ConfigRecovery when loading bad config");
+        assert!(recovery.reason.contains("TOML parse error"));
+
+        let quarantined_path = recovery
+            .quarantined_path
+            .expect("Expected quarantined path");
+        assert!(quarantined_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains(".bad-"));
+
+        // Original config should be moved
+        assert!(!path.exists());
+        assert!(quarantined_path.exists());
+        assert_eq!(
+            fs::read_to_string(&quarantined_path).unwrap(),
+            "invalid_toml = { [ ] }"
+        );
+    }
+
+    #[test]
+    fn load_config_from_path_with_recovery_loads_good_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [appearance]
+            font_size = 20
+            "#,
+        )
+        .unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        assert_eq!(config.appearance.font_size, 20);
+        assert!(recovery.is_none());
+        assert!(path.exists());
+    }
+
+    #[test]
     fn missing_config_loads_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
