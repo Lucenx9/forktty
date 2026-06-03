@@ -38,6 +38,8 @@ This design chooses option 1 because ForkTTY is already a native Linux app and t
 
 The upstream `libghostty-vt` API is still in development. The migration must isolate it behind ForkTTY-owned types so later upstream breaking changes are contained in one crate/module.
 
+`libghostty-vt-sys 0.1.1` defaults to its `vendored` feature. Its build script fetches a pinned Ghostty commit with `git` and runs `zig build -Demit-lib-vt`, producing and linking `libghostty-vt.so.0.1.0` on Linux. Release and packaging work must therefore treat `git` and Zig as build-time requirements unless ForkTTY switches to a system-provided `libghostty-vt` with `LIBGHOSTTY_VT_SYS_NO_VENDOR`/`GHOSTTY_SOURCE_DIR` or an equivalent packaged-source strategy. AppImage and Debian packaging must also include the resulting runtime shared library.
+
 ## Proposed Architecture
 
 Add a new terminal surface stack under `forktty-terminal` and keep GTK-specific wiring in `forktty-ui-gtk`.
@@ -66,6 +68,8 @@ Create:
 - `gtk_app/terminal_runtime.rs`: GTK-thread runtime that owns the PTY session handle, the `libghostty-vt` core, channels, and repaint scheduling.
 
 Keep existing pane chrome, layout, workspace operations, command palette, settings dialog, and socket API semantics. Rename user-facing/internal VTE names only when the touched code requires it; avoid unrelated UI restyling.
+
+The `libghostty-vt` handle types are not `Send`/`Sync`, so terminal core and render-state mutation must stay on the GTK main thread or another single owned terminal thread with explicit message passing. This design keeps the terminal core on the GTK thread; background work may read PTY bytes, but it must forward byte buffers rather than libghostty handles.
 
 ## Runtime Data Flow
 
@@ -106,6 +110,7 @@ Output Effects:
 - PTY responses: write device-status and other response bytes back to the PTY through the runtime writer.
 - Contents changed: use render-state dirtiness to schedule redraw and visible-tail prompt checks.
 - Child exit: use the PTY child watcher, not VTE signals, to mark the surface not ready and emit exit notifications.
+- Raw terminal metadata: because ForkTTY owns the PTY stream again, the runtime should parse ForkTTY-relevant OSC 9/99 metadata before or alongside `libghostty-vt` processing instead of preserving the current VTE-era limitation.
 
 ## Prompt and Status Detection
 
@@ -142,6 +147,8 @@ Keep existing config keys:
 
 `terminal_renderer` remains a compatibility key but should no longer say that native GTK uses VTE. Docs should describe the native renderer as `libghostty-vt` backed.
 
+`crates/forktty-core/src/config.rs` must keep existing saved configs valid while updating validation and tests that currently list `vte` as the GTK renderer. The migration should accept legacy `vte` as an alias during config load, normalize it to `auto` or `ghostty`, and document the compatibility behavior.
+
 ## Cargo Features and Dependencies
 
 Replace:
@@ -161,6 +168,8 @@ With:
 
 The final default feature should be `gtk-ghostty`. During migration only, both feature names may exist to keep incremental builds possible. The final cleanup removes `gtk-vte`, `forktty-terminal/vte`, and all `vte4` imports.
 
+The `browser` feature currently depends on `gtk-vte`; it must be retargeted to `gtk-ghostty` before the VTE feature is removed. `main.rs`, `socket_cli.rs`, and the doctor report must also stop using `gtk-vte` as the gate for app launch, hook reminders, runtime-library checks, and diagnostic output.
+
 ## Packaging and Documentation
 
 Update:
@@ -173,11 +182,14 @@ Update:
 - `SUPPORT.md`
 - `ROADMAP.md`
 - `RELEASING.md`
+- `docs/native-gtk-vte.md` or its replacement
+- `docs/release-qa.md`
+- `docs/QA.md`
 - `scripts/build-deb.sh`
 - `scripts/build-appimage.sh`
 - Linux metainfo/desktop text if it mentions VTE
 
-Remove VTE build/runtime package requirements. Add any new build requirements introduced by PTY/rendering dependencies. If `libghostty-vt-sys` builds Zig source or links native artifacts, packaging must document the required Zig/toolchain or vendor strategy. If the crates.io package builds without external Zig in release CI, document that instead.
+Remove VTE build/runtime package requirements. Add `zig` and `git` build requirements for the vendored `libghostty-vt-sys` path, or document and test the non-vendored source/library strategy. Package the generated `libghostty-vt` shared library in AppImage and Debian artifacts unless the build intentionally links to a system library with a declared runtime dependency.
 
 ## Testing Strategy
 
@@ -187,6 +199,7 @@ Unit tests:
 - Add PTY spawn tests around argv/env construction without launching arbitrary user shells.
 - Add resize tests that assert PTY size and terminal state receive the same dimensions.
 - Add terminal core tests that feed VT bytes and assert title, bell, text formatting, and PTY response effects.
+- Add OSC 9/99 parser tests if metadata parsing is implemented outside `libghostty-vt` effects.
 - Add input encoder tests for representative key combinations used by ForkTTY shortcuts and terminal input.
 - Add prompt fallback tests using formatted visible text.
 
@@ -220,7 +233,7 @@ Success: current VTE implementation still builds and tests pass, but VTE types a
 
 ### M2: Ghostty Core and PTY Prototype
 
-Add `libghostty-vt`, raise MSRV, implement PTY spawn/read/write/resize/exit handling, and feed PTY output into a `libghostty-vt` terminal core in tests. Do not render GTK yet.
+Add `libghostty-vt`, raise MSRV, document Zig/git build requirements, implement PTY spawn/read/write/resize/exit handling, and feed PTY output into a `libghostty-vt` terminal core in tests. Do not render GTK yet.
 
 Success: tests can spawn a controlled command through a PTY, feed output into the Ghostty core, and format visible text.
 
@@ -238,7 +251,7 @@ Success: typing, common shortcuts, socket sends, split-pane focus, and pane resi
 
 ### M5: Effects, Notifications, and Session Lifecycle
 
-Implement title, bell, child-exit, prompt fallback, readiness, restart pane, close pane, and orphan cleanup.
+Implement title, bell, child-exit, prompt fallback, OSC 9/99 metadata parsing where ForkTTY needs it, readiness, restart pane, close pane, and orphan cleanup.
 
 Success: existing notification/session/socket lifecycle tests pass against the Ghostty build.
 
@@ -252,7 +265,7 @@ Success: user-facing terminal actions work without VTE.
 
 Delete `crates/forktty-terminal/src/vte.rs`, remove `vte4` dependencies/features/imports, update packaging and docs, and rename release QA commands to `gtk-ghostty`.
 
-Success: `cargo tree --workspace` contains no `vte4` or `vte4-sys`; release builds work without VTE development packages.
+Success: `cargo tree --workspace` contains no `vte4` or `vte4-sys`; release builds work without VTE development packages; `forktty doctor` reports the Ghostty-backed runtime and checks the correct bundled libraries.
 
 ### M8: Hardening and QA
 
@@ -264,6 +277,7 @@ Success: the libghostty build becomes the only supported native terminal runtime
 
 - `libghostty-vt` API instability: isolate all direct use in `forktty-terminal::ghostty` and `gtk_app/terminal_runtime`.
 - MSRV increase: document the Rust 1.93+ requirement before implementation and update CI/release docs in the same milestone that adds the dependency.
+- Vendored native build cost: `libghostty-vt-sys` invokes `git` and `zig`; pin these build requirements in docs/CI and cache the vendored Ghostty build in packaging workflows where possible.
 - Rendering complexity: start with Pango/Cairo to remove VTE first; defer GPU rendering until correctness is proven.
 - PTY security regressions: keep shell path validation, reserved env protection, AppImage environment sanitization, payload limits, and socket targeting checks.
 - Shortcut conflicts: GTK app shortcuts must still be handled by app actions, while terminal input must receive normal terminal keys.
