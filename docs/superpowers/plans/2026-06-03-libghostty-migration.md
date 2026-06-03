@@ -551,7 +551,7 @@ git commit -m "feat: wire ghostty resize and socket input"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/controller.rs`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 ```rust
 #[test]
@@ -566,23 +566,23 @@ fn ghostty_events_update_model_title_and_bell_notification() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `cargo test -p forktty-ui-gtk terminal_signals --no-default-features --features gtk-ghostty`
 
 Expected: FAIL because Ghostty events are not wired.
 
-- [ ] **Step 3: Implement event handling**
+- [x] **Step 3: Implement event handling**
 
 Drain `GhosttyEvent`s after each feed: write `PtyWrite` bytes to PTY, set title, dispatch bell according to loaded config, run visible-tail prompt checks with copy `A terminal appears to be waiting for input`, and map OSC 9/99 payloads to existing ForkTTY hook/status handlers where current socket metadata semantics require it.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-ui-gtk terminal_signals --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/terminal_signals.rs crates/forktty-ui-gtk/src/gtk_app/terminal_runtime.rs crates/forktty-ui-gtk/src/gtk_app/controller.rs

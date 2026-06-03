@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "gtk-ghostty")]
+use forktty_terminal::ghostty::events::GhosttyEvent;
 
 #[cfg(feature = "gtk-ghostty")]
 #[derive(Debug, Clone)]
@@ -114,6 +116,14 @@ impl GhosttyTerminalWidget {
             eprintln!("Terminal runtime operation failed: {err}");
         }
         self.drawing_area.queue_draw();
+    }
+
+    pub(super) fn pump_pty_events(&self) -> Result<Vec<GhosttyEvent>, TerminalError> {
+        let events = self.runtime.borrow_mut().pump_pty()?;
+        if !events.is_empty() {
+            self.drawing_area.queue_draw();
+        }
+        Ok(events)
     }
 }
 

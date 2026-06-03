@@ -1,6 +1,7 @@
 use super::*;
 use forktty_terminal::ghostty::{
     core::{GhosttyCore, GhosttyCoreOptions},
+    events::GhosttyEvent,
     pty::{PtySession, PtySize},
 };
 
@@ -80,6 +81,33 @@ impl TerminalRuntime {
             .reset()
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
         self.write_text("\x0c")
+    }
+
+    pub(super) fn pump_pty(&mut self) -> Result<Vec<GhosttyEvent>, TerminalError> {
+        let bytes = self
+            .pty
+            .read_available()
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.feed_pty_bytes(&bytes)
+    }
+
+    pub(super) fn feed_pty_bytes(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<Vec<GhosttyEvent>, TerminalError> {
+        let events = self
+            .core
+            .feed(bytes)
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        for event in &events {
+            if let GhosttyEvent::PtyWrite(bytes) = event {
+                self.write_bytes(bytes)?;
+            }
+        }
+        Ok(events)
     }
 
     pub(super) fn visible_text(&self) -> String {

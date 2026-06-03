@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "gtk-ghostty")]
+use forktty_terminal::ghostty::events::GhosttyEvent;
 
 pub(super) fn terminal_focus_click_should_claim(
     terminal_has_focus: bool,
@@ -283,10 +285,113 @@ pub(super) fn attach_vte_signal_handlers(
         }
     });
     gtk_widget.add_controller(focus_click);
+
+    let pump_widget = widget.clone();
+    let pump_widget_weak = widget.downgrade();
+    let pump_model = model.clone();
+    let pump_workspace_id = request.workspace_id.clone();
+    let pump_surface_id = request.surface_id.clone();
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        if pump_widget_weak.upgrade().is_none() {
+            return glib::ControlFlow::Break;
+        }
+        match pump_widget.pump_pty_events() {
+            Ok(events) if events.is_empty() => {}
+            Ok(events) => {
+                apply_ghostty_events_to_model(
+                    &pump_model,
+                    &pump_workspace_id,
+                    &pump_surface_id,
+                    &events,
+                );
+            }
+            Err(err) => {
+                eprintln!("Failed to pump terminal PTY for {pump_surface_id}: {err}");
+            }
+        }
+        glib::ControlFlow::Continue
+    });
 }
 
 pub(super) fn surface_status_key(surface_id: &str) -> String {
     format!("surface:{surface_id}:status")
+}
+
+#[cfg(all(feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+pub(super) fn apply_ghostty_events_to_model(
+    model: &Arc<Mutex<WorkspaceModel>>,
+    workspace_id: &str,
+    surface_id: &str,
+    events: &[GhosttyEvent],
+) {
+    for event in events {
+        match event {
+            GhosttyEvent::TitleChanged(title) => {
+                if let Ok(mut model) = model.lock() {
+                    let _ = model.set_surface_title(surface_id, title.clone());
+                }
+            }
+            GhosttyEvent::Bell => {
+                if let Ok(mut model) = model.lock() {
+                    if model.surface(surface_id).is_none() {
+                        continue;
+                    }
+                    let notification = model.create_notification(
+                        "Terminal bell",
+                        "A terminal requested attention",
+                        NotificationKind::Info,
+                        Some(workspace_id.to_string()),
+                        Some(surface_id.to_string()),
+                    );
+                    dispatch_notification_with_loaded_config(&notification);
+                }
+            }
+            GhosttyEvent::Metadata(metadata) => {
+                if let Ok(mut model) = model.lock() {
+                    let _ = model.set_status(
+                        workspace_id,
+                        surface_status_key(surface_id),
+                        "Terminal metadata",
+                        format!("{metadata:?}"),
+                        Some("blue".to_string()),
+                    );
+                }
+            }
+            GhosttyEvent::PtyWrite(_) | GhosttyEvent::VisibleContentChanged => {}
+        }
+    }
+}
+
+#[cfg(all(test, feature = "gtk-ghostty", not(feature = "gtk-vte")))]
+mod ghostty_tests {
+    use super::*;
+
+    #[test]
+    fn ghostty_events_update_model_title_and_bell_notification() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[
+                GhosttyEvent::TitleChanged("build".to_string()),
+                GhosttyEvent::Bell,
+            ],
+        );
+
+        let model = model.lock().unwrap();
+        assert_eq!(model.surface(&surface_id).unwrap().title, "build");
+        assert!(model
+            .list_notifications()
+            .iter()
+            .any(|notification| notification.title == "Terminal bell"));
+    }
 }
 
 #[cfg(feature = "gtk-vte")]
