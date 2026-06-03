@@ -3948,13 +3948,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatches_minimum_socket_methods_directly() {
-        let (state, backend) = test_state();
+    async fn dispatches_system_ping() {
+        let (state, _) = test_state();
         assert_eq!(
             dispatch(&state, "system.ping", json!({})).await.unwrap(),
             json!("pong")
         );
+    }
 
+    #[tokio::test]
+    async fn dispatches_surface_send_text() {
+        let (state, backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
 
@@ -3966,6 +3970,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(backend.sent_text(surface_id).unwrap(), vec!["echo ok\n"]);
+    }
+
+    #[tokio::test]
+    async fn dispatches_notification_methods() {
+        let (state, _) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
 
         let notification = dispatch(
             &state,
@@ -3985,6 +3996,12 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatches_metadata_status_methods() {
+        let (state, _) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
 
         let status = dispatch(
             &state,
@@ -4025,6 +4042,12 @@ mod tests {
         .await
         .unwrap();
         assert!(statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatches_metadata_progress_methods() {
+        let (state, _) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
 
         let progress = dispatch(
             &state,
@@ -4049,6 +4072,28 @@ mod tests {
         .unwrap();
         assert_eq!(progress_entries.as_array().unwrap().len(), 1);
 
+        dispatch(
+            &state,
+            "metadata.clear_progress",
+            json!({"workspace_id": workspaces[0]["id"], "key": "build"}),
+        )
+        .await
+        .unwrap();
+        let progress_entries = dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspaces[0]["id"]}),
+        )
+        .await
+        .unwrap();
+        assert!(progress_entries.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatches_metadata_log_methods() {
+        let (state, _) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+
         let log = dispatch(
             &state,
             "metadata.log",
@@ -4069,22 +4114,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(logs.as_array().unwrap().len(), 1);
-
-        dispatch(
-            &state,
-            "metadata.clear_progress",
-            json!({"workspace_id": workspaces[0]["id"], "key": "build"}),
-        )
-        .await
-        .unwrap();
-        let progress_entries = dispatch(
-            &state,
-            "metadata.list_progress",
-            json!({"workspace_id": workspaces[0]["id"]}),
-        )
-        .await
-        .unwrap();
-        assert!(progress_entries.as_array().unwrap().is_empty());
 
         dispatch(
             &state,
