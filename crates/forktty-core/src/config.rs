@@ -611,11 +611,17 @@ mod tests {
         let mut config = AppConfig::default();
         config.general.shell = "not_an_absolute_path".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("general.shell must be an absolute path"));
+        assert!(err
+            .to_string()
+            .contains("general.shell must be an absolute path"));
     }
 
     fn dummy_executable_path() -> String {
-        std::env::current_exe().unwrap().to_str().unwrap().to_string()
+        std::env::current_exe()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
     }
 
     #[test]
@@ -624,7 +630,9 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.general.theme_source = "light".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("general.theme_source must be 'dark'"));
+        assert!(err
+            .to_string()
+            .contains("general.theme_source must be 'dark'"));
     }
 
     #[test]
@@ -633,7 +641,9 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.general.worktree_layout = "invalid_layout".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("general.worktree_layout must be one of: nested, sibling, outer-nested"));
+        assert!(err
+            .to_string()
+            .contains("general.worktree_layout must be one of: nested, sibling, outer-nested"));
     }
 
     #[test]
@@ -642,7 +652,9 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.appearance.sidebar_position = "top".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("appearance.sidebar_position must be 'left' or 'right'"));
+        assert!(err
+            .to_string()
+            .contains("appearance.sidebar_position must be 'left' or 'right'"));
     }
 
     #[test]
@@ -651,11 +663,15 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.appearance.font_size = 7;
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("appearance.font_size must be between 8 and 64"));
+        assert!(err
+            .to_string()
+            .contains("appearance.font_size must be between 8 and 64"));
 
         config.appearance.font_size = 65;
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("appearance.font_size must be between 8 and 64"));
+        assert!(err
+            .to_string()
+            .contains("appearance.font_size must be between 8 and 64"));
     }
 
     #[test]
@@ -664,7 +680,9 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.appearance.terminal_renderer = "magic".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, vte"));
+        assert!(err.to_string().contains(
+            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, vte"
+        ));
     }
 
     #[test]
@@ -673,7 +691,9 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.appearance.terminal_theme = "nonexistent_theme".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("appearance.terminal_theme must be one of:"));
+        assert!(err
+            .to_string()
+            .contains("appearance.terminal_theme must be one of:"));
     }
 
     #[test]
@@ -682,7 +702,9 @@ mod tests {
         config.general.shell = dummy_executable_path();
         config.appearance.window_mode = "fullscreen".to_string();
         let err = validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("appearance.window_mode must be one of: normal, quake"));
+        assert!(err
+            .to_string()
+            .contains("appearance.window_mode must be one of: normal, quake"));
     }
 
     #[test]
