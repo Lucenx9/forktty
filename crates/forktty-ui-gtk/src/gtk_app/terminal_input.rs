@@ -88,6 +88,27 @@ pub(super) fn translate_gtk_key(
                 terminal_modifiers,
             ));
         }
+        gtk::gdk::Key::Home | gtk::gdk::Key::KP_Home => {
+            return Some(terminal_key_input(TerminalKey::Home, terminal_modifiers));
+        }
+        gtk::gdk::Key::End | gtk::gdk::Key::KP_End => {
+            return Some(terminal_key_input(TerminalKey::End, terminal_modifiers));
+        }
+        gtk::gdk::Key::Page_Up | gtk::gdk::Key::KP_Page_Up => {
+            return Some(terminal_key_input(TerminalKey::PageUp, terminal_modifiers));
+        }
+        gtk::gdk::Key::Page_Down | gtk::gdk::Key::KP_Page_Down => {
+            return Some(terminal_key_input(
+                TerminalKey::PageDown,
+                terminal_modifiers,
+            ));
+        }
+        gtk::gdk::Key::Insert | gtk::gdk::Key::KP_Insert => {
+            return Some(terminal_key_input(TerminalKey::Insert, terminal_modifiers));
+        }
+        gtk::gdk::Key::Delete | gtk::gdk::Key::KP_Delete => {
+            return Some(terminal_key_input(TerminalKey::Delete, terminal_modifiers));
+        }
         _ => {
             if let Some(ch) = key.to_unicode() {
                 GhosttyKeySpec {
@@ -174,6 +195,16 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
         );
     let ctrl_app_action =
         ctrl && !shift && !alt && matches!(key, gtk::gdk::Key::B | gtk::gdk::Key::b);
+    let tab_navigation_action = ctrl
+        && !shift
+        && !alt
+        && matches!(
+            key,
+            gtk::gdk::Key::Page_Up
+                | gtk::gdk::Key::Page_Down
+                | gtk::gdk::Key::Home
+                | gtk::gdk::Key::End
+        );
     let pane_focus_action = ctrl
         && alt
         && matches!(
@@ -183,7 +214,7 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
                 | gtk::gdk::Key::Right
                 | gtk::gdk::Key::KP_Right
         );
-    ctrl_shift_app_action || ctrl_app_action || pane_focus_action
+    ctrl_shift_app_action || ctrl_app_action || tab_navigation_action || pane_focus_action
 }
 
 #[cfg(test)]
@@ -226,6 +257,34 @@ mod tests {
     }
 
     #[test]
+    fn key_translation_routes_navigation_keys_through_terminal_core() {
+        use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
+
+        let none = gtk::gdk::ModifierType::empty();
+
+        for (gtk_key, terminal_key) in [
+            (gtk::gdk::Key::Home, TerminalKey::Home),
+            (gtk::gdk::Key::KP_Home, TerminalKey::Home),
+            (gtk::gdk::Key::End, TerminalKey::End),
+            (gtk::gdk::Key::KP_End, TerminalKey::End),
+            (gtk::gdk::Key::Page_Up, TerminalKey::PageUp),
+            (gtk::gdk::Key::KP_Page_Up, TerminalKey::PageUp),
+            (gtk::gdk::Key::Page_Down, TerminalKey::PageDown),
+            (gtk::gdk::Key::KP_Page_Down, TerminalKey::PageDown),
+            (gtk::gdk::Key::Insert, TerminalKey::Insert),
+            (gtk::gdk::Key::KP_Insert, TerminalKey::Insert),
+            (gtk::gdk::Key::Delete, TerminalKey::Delete),
+            (gtk::gdk::Key::KP_Delete, TerminalKey::Delete),
+        ] {
+            assert_eq!(
+                translate_gtk_key(gtk_key, none, None).unwrap(),
+                TerminalInput::Key(TerminalKeyInput::new(terminal_key)),
+                "translated {gtk_key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn key_translation_preserves_terminal_key_modifiers() {
         use forktty_terminal::ghostty::core::{
             TerminalKey, TerminalKeyInput, TerminalKeyModifiers,
@@ -263,5 +322,15 @@ mod tests {
         assert!(translate_gtk_key(gtk::gdk::Key::A, ctrl_shift, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::Return, ctrl_shift, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::b, ctrl, None).is_none());
+    }
+
+    #[test]
+    fn key_translation_leaves_tab_navigation_shortcuts_for_actions() {
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+
+        assert!(translate_gtk_key(gtk::gdk::Key::Page_Up, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::Page_Down, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::Home, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::End, ctrl, None).is_none());
     }
 }

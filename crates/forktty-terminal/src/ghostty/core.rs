@@ -56,6 +56,12 @@ pub enum TerminalKey {
     ArrowLeft,
     ArrowRight,
     ArrowUp,
+    Delete,
+    End,
+    Home,
+    Insert,
+    PageDown,
+    PageUp,
 }
 
 impl TerminalKey {
@@ -65,6 +71,12 @@ impl TerminalKey {
             Self::ArrowLeft => GhosttyKey::ArrowLeft,
             Self::ArrowRight => GhosttyKey::ArrowRight,
             Self::ArrowUp => GhosttyKey::ArrowUp,
+            Self::Delete => GhosttyKey::Delete,
+            Self::End => GhosttyKey::End,
+            Self::Home => GhosttyKey::Home,
+            Self::Insert => GhosttyKey::Insert,
+            Self::PageDown => GhosttyKey::PageDown,
+            Self::PageUp => GhosttyKey::PageUp,
         }
     }
 }
@@ -434,6 +446,29 @@ mod tests {
             .unwrap();
 
         assert_eq!(bytes, b"\x1bOA");
+    }
+
+    #[test]
+    fn core_key_encoder_handles_navigation_and_editing_keys() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        for (key, expected) in [
+            (TerminalKey::Home, b"\x1b[H".as_slice()),
+            (TerminalKey::End, b"\x1b[F".as_slice()),
+            (TerminalKey::PageUp, b"\x1b[5~".as_slice()),
+            (TerminalKey::PageDown, b"\x1b[6~".as_slice()),
+            (TerminalKey::Insert, b"\x1b[2~".as_slice()),
+            (TerminalKey::Delete, b"\x1b[3~".as_slice()),
+        ] {
+            let bytes = core.encode_key(TerminalKeyInput::new(key)).unwrap();
+
+            assert_eq!(bytes, expected, "encoded {key:?}");
+        }
     }
 
     #[test]
