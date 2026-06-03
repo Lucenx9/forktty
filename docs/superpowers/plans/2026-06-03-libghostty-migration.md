@@ -415,7 +415,7 @@ git commit -m "feat: add ghostty gtk terminal runtime"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/terminal_appearance.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/style.css`
 
-- [ ] **Step 1: Write failing renderer tests**
+- [x] **Step 1: Write failing renderer tests**
 
 ```rust
 #[test]
@@ -427,17 +427,17 @@ fn renderer_maps_theme_colors_to_ansi_palette() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-ui-gtk terminal_renderer --no-default-features --features gtk-ghostty`
 
 Expected: FAIL because renderer is missing.
 
-- [ ] **Step 3: Implement renderer**
+- [x] **Step 3: Implement renderer**
 
 Use Pango layout measurement for cell width/height, draw background, per-cell background, graphemes, bold/italic/underline/inverse colors, hyperlinks as underline, and cursor from `RenderFrame`. Add CSS class `ghostty-terminal`.
 
-- [ ] **Step 4: Run renderer tests and build**
+- [x] **Step 4: Run renderer tests and build**
 
 Run: `cargo test -p forktty-ui-gtk terminal_renderer --no-default-features --features gtk-ghostty`
 
@@ -445,7 +445,7 @@ Run: `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/terminal_renderer.rs crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs crates/forktty-ui-gtk/src/gtk_app/terminal_appearance.rs crates/forktty-ui-gtk/src/gtk_app/style.css

@@ -62,16 +62,12 @@ impl GhosttyTerminalWidget {
         drawing_area.set_focusable(true);
         drawing_area.add_css_class("ghostty-terminal");
         let runtime = Rc::new(RefCell::new(runtime));
+        let renderer = TerminalRenderer::from_config(&config::load_config().unwrap_or_default());
         {
             let runtime = runtime.clone();
+            let renderer = renderer.clone();
             drawing_area.set_draw_func(move |_area, cr, width, height| {
-                cr.set_source_rgb(0.094, 0.094, 0.094);
-                let _ = cr.paint();
-                cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-                let _ = cr.fill();
-                cr.set_source_rgb(0.84, 0.84, 0.84);
-                cr.move_to(8.0, 18.0);
-                let _ = cr.show_text(&runtime.borrow().visible_text());
+                renderer.draw_plain_text(cr, width, height, &runtime.borrow().visible_text());
             });
         }
         Self {

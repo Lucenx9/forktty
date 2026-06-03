@@ -249,6 +249,15 @@ fn ghostty_runtime_marks_surface_ready_after_spawn() {
 }
 
 #[test]
+fn renderer_maps_theme_colors_to_ansi_palette() {
+    let config = config::AppConfig::default();
+    let palette = RendererPalette::from_terminal_colors(terminal_colors_for_config(&config));
+
+    assert_eq!(palette.ansi.len(), 16);
+    assert_eq!(palette.background.to_string(), "#181818");
+}
+
+#[test]
 fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
     let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
     let backend = to_set(&["surface-1", "surface-2", "surface-3"]);
