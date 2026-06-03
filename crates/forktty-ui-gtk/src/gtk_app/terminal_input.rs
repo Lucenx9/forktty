@@ -39,6 +39,14 @@ pub(super) enum TerminalInput {
     Key(TerminalKeyInput),
 }
 
+pub(super) fn terminal_text_input(text: &str) -> Option<TerminalInput> {
+    if text.is_empty() {
+        None
+    } else {
+        Some(TerminalInput::Bytes(text.as_bytes().to_vec()))
+    }
+}
+
 pub(super) fn translate_gtk_key(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
@@ -100,13 +108,16 @@ pub(super) fn translate_gtk_key(
             return Some(terminal_key_input(TerminalKey::Delete, terminal_modifiers));
         }
         _ => {
+            if !ctrl {
+                if let Some(text) = text.filter(|text| !text.is_empty()) {
+                    return Some(TerminalInput::Bytes(text.as_bytes().to_vec()));
+                }
+            }
             if let Some(ch) = key.to_unicode() {
                 GhosttyKeySpec {
                     key: GhosttyKey::Char(ch),
                     ctrl,
                 }
-            } else if !ctrl {
-                return text.map(|text| TerminalInput::Bytes(text.as_bytes().to_vec()));
             } else {
                 return None;
             }
@@ -278,6 +289,35 @@ mod tests {
     fn key_translation_encodes_enter_and_ctrl_c() {
         assert_eq!(encode_test_key(GhosttyKeySpec::enter()).unwrap(), b"\r");
         assert_eq!(encode_test_key(GhosttyKeySpec::ctrl('c')).unwrap(), b"\x03");
+    }
+
+    #[test]
+    fn key_translation_prefers_event_text_for_printable_input() {
+        let none = gtk::gdk::ModifierType::empty();
+
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::a, none, Some("à")).unwrap(),
+            TerminalInput::Bytes("à".as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_text_input_encodes_non_empty_utf8_commits() {
+        assert_eq!(
+            terminal_text_input("à").unwrap(),
+            TerminalInput::Bytes("à".as_bytes().to_vec())
+        );
+        assert!(terminal_text_input("").is_none());
+    }
+
+    #[test]
+    fn key_translation_keeps_control_codes_ahead_of_event_text() {
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::c, ctrl, Some("c")).unwrap(),
+            TerminalInput::Bytes(b"\x03".to_vec())
+        );
     }
 
     #[test]

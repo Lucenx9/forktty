@@ -51,6 +51,8 @@ impl GhosttyTerminalWidget {
         let config = config::load_config().unwrap_or_default();
         let font = terminal_font_description(&drawing_area, &config);
         let renderer = TerminalRenderer::from_config_with_font(&config, font);
+        let im_context = gtk::IMMulticontext::new();
+        im_context.set_client_widget(Some(&drawing_area));
         {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
@@ -66,7 +68,18 @@ impl GhosttyTerminalWidget {
             let runtime = runtime.clone();
             let drawing_area_for_key = drawing_area.clone();
             let key_controller = gtk::EventControllerKey::new();
+            key_controller.set_im_context(Some(&im_context));
             key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+            im_context.connect_commit({
+                let runtime = runtime.clone();
+                let drawing_area = drawing_area.clone();
+                move |_context, text| {
+                    let Some(input) = terminal_text_input(text) else {
+                        return;
+                    };
+                    write_terminal_input(&runtime, &drawing_area, input);
+                }
+            });
             key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
                 let Some(input) = translate_gtk_key(key, modifiers, None) else {
                     return glib::Propagation::Proceed;
@@ -81,14 +94,18 @@ impl GhosttyTerminalWidget {
             let runtime_for_leave = runtime.clone();
             let drawing_area_for_enter = drawing_area.clone();
             let drawing_area_for_leave = drawing_area.clone();
+            let im_context_for_enter = im_context.clone();
+            let im_context_for_leave = im_context.clone();
             let focus_controller = gtk::EventControllerFocus::new();
             focus_controller.connect_enter(move |_| {
+                im_context_for_enter.focus_in();
                 if let Err(err) = runtime_for_enter.borrow_mut().write_focus(true) {
                     eprintln!("Failed to write terminal focus input: {err}");
                 }
                 drawing_area_for_enter.queue_draw();
             });
             focus_controller.connect_leave(move |_| {
+                im_context_for_leave.focus_out();
                 if let Err(err) = runtime_for_leave.borrow_mut().write_focus(false) {
                     eprintln!("Failed to write terminal focus input: {err}");
                 }
