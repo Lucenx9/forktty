@@ -1,6 +1,6 @@
 use super::*;
 use forktty_terminal::ghostty::{
-    core::{GhosttyCore, GhosttyCoreOptions, TerminalFrame},
+    core::{GhosttyCore, GhosttyCoreOptions, TerminalFrame, TerminalKeyInput},
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
 };
@@ -53,6 +53,17 @@ impl TerminalRuntime {
         self.pty
             .write_all(bytes)
             .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
+    pub(super) fn write_key(&mut self, input: TerminalKeyInput) -> Result<(), TerminalError> {
+        let bytes = self
+            .core
+            .encode_key(input)
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        self.write_bytes(&bytes)
     }
 
     pub(super) fn resize_pixels(
@@ -317,6 +328,30 @@ mod tests {
         harness.resize_pixels("surface-1", 800, 480, 10, 20);
 
         assert_eq!(harness.runtime_size("surface-1"), Some((80, 24)));
+    }
+
+    #[test]
+    fn key_input_uses_core_cursor_application_mode() {
+        use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
+
+        let mut request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        runtime.feed_pty_bytes(b"\x1b[?1h").unwrap();
+        runtime
+            .write_key(TerminalKeyInput::new(TerminalKey::ArrowUp))
+            .unwrap();
+
+        assert_eq!(runtime.pty_writes().last().unwrap(), b"\x1bOA");
     }
 
     #[test]

@@ -1,6 +1,10 @@
 use super::{events::GhosttyEvent, metadata::MetadataParser};
 use libghostty_vt::{
     fmt::{Format, Formatter, FormatterOptions},
+    key::{
+        Action as GhosttyKeyAction, Encoder as GhosttyKeyEncoder, Event as GhosttyKeyEvent,
+        Key as GhosttyKey, Mods as GhosttyKeyMods,
+    },
     render::{CellIterator, CursorViewport, RowIterator},
     screen::CellWide,
     style::RgbColor,
@@ -24,6 +28,76 @@ pub struct GhosttyCore {
     metadata: MetadataParser,
     events: Rc<RefCell<Vec<GhosttyEvent>>>,
     bracketed_paste: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalKeyInput {
+    pub key: TerminalKey,
+    pub modifiers: TerminalKeyModifiers,
+}
+
+impl TerminalKeyInput {
+    pub const fn new(key: TerminalKey) -> Self {
+        Self {
+            key,
+            modifiers: TerminalKeyModifiers::empty(),
+        }
+    }
+
+    pub const fn with_modifiers(mut self, modifiers: TerminalKeyModifiers) -> Self {
+        self.modifiers = modifiers;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalKey {
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+}
+
+impl TerminalKey {
+    fn to_ghostty(self) -> GhosttyKey {
+        match self {
+            Self::ArrowDown => GhosttyKey::ArrowDown,
+            Self::ArrowLeft => GhosttyKey::ArrowLeft,
+            Self::ArrowRight => GhosttyKey::ArrowRight,
+            Self::ArrowUp => GhosttyKey::ArrowUp,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TerminalKeyModifiers {
+    pub shift: bool,
+    pub alt: bool,
+    pub ctrl: bool,
+}
+
+impl TerminalKeyModifiers {
+    pub const fn empty() -> Self {
+        Self {
+            shift: false,
+            alt: false,
+            ctrl: false,
+        }
+    }
+
+    fn to_ghostty(self) -> GhosttyKeyMods {
+        let mut mods = GhosttyKeyMods::empty();
+        if self.shift {
+            mods |= GhosttyKeyMods::SHIFT;
+        }
+        if self.alt {
+            mods |= GhosttyKeyMods::ALT;
+        }
+        if self.ctrl {
+            mods |= GhosttyKeyMods::CTRL;
+        }
+        mods
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,6 +327,21 @@ impl GhosttyCore {
         Ok(bytes)
     }
 
+    pub fn encode_key(&self, input: TerminalKeyInput) -> Result<Vec<u8>> {
+        let mut encoder = GhosttyKeyEncoder::new()?;
+        encoder.set_options_from_terminal(self.terminal.as_ref());
+
+        let mut event = GhosttyKeyEvent::new()?;
+        event
+            .set_action(GhosttyKeyAction::Press)
+            .set_key(input.key.to_ghostty())
+            .set_mods(input.modifiers.to_ghostty());
+
+        let mut bytes = Vec::new();
+        encoder.encode_to_vec(&event, &mut bytes)?;
+        Ok(bytes)
+    }
+
     #[cfg(test)]
     pub fn set_bracketed_paste_for_test(&mut self, enabled: bool) -> Result<()> {
         self.bracketed_paste = enabled;
@@ -311,6 +400,40 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| matches!(event, GhosttyEvent::PtyWrite(bytes) if !bytes.is_empty())));
+    }
+
+    #[test]
+    fn core_key_encoder_uses_normal_cursor_mode() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        let bytes = core
+            .encode_key(TerminalKeyInput::new(TerminalKey::ArrowUp))
+            .unwrap();
+
+        assert_eq!(bytes, b"\x1b[A");
+    }
+
+    #[test]
+    fn core_key_encoder_uses_application_cursor_mode() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[?1h").unwrap();
+
+        let bytes = core
+            .encode_key(TerminalKeyInput::new(TerminalKey::ArrowUp))
+            .unwrap();
+
+        assert_eq!(bytes, b"\x1bOA");
     }
 
     #[test]
