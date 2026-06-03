@@ -1,4 +1,8 @@
 use super::*;
+use forktty_terminal::ghostty::core::{
+    TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
+    TerminalMouseSize,
+};
 use forktty_terminal::ghostty::events::GhosttyEvent;
 
 #[derive(Debug, Clone)]
@@ -100,6 +104,126 @@ impl GhosttyTerminalWidget {
             drawing_area.add_controller(focus_controller);
         }
         {
+            let any_button_pressed = Rc::new(Cell::new(false));
+            let click = gtk::GestureClick::new();
+            click.set_button(0);
+            click.set_propagation_phase(gtk::PropagationPhase::Capture);
+            {
+                let runtime = runtime.clone();
+                let renderer = renderer.clone();
+                let drawing_area = drawing_area.clone();
+                let any_button_pressed = any_button_pressed.clone();
+                click.connect_pressed(move |gesture, _n_press, x, y| {
+                    let Some(button) = terminal_mouse_button(gesture.current_button()) else {
+                        return;
+                    };
+                    any_button_pressed.set(true);
+                    let input = terminal_mouse_input_for_area(
+                        &drawing_area,
+                        &renderer,
+                        TerminalMouseEventInput {
+                            action: TerminalMouseAction::Press,
+                            button: Some(button),
+                            modifiers: gesture.current_event_state(),
+                            x,
+                            y,
+                            any_button_pressed: true,
+                        },
+                    );
+                    write_terminal_mouse(&runtime, &drawing_area, input);
+                });
+            }
+            {
+                let runtime = runtime.clone();
+                let renderer = renderer.clone();
+                let drawing_area = drawing_area.clone();
+                let any_button_pressed = any_button_pressed.clone();
+                click.connect_released(move |gesture, _n_press, x, y| {
+                    let Some(button) = terminal_mouse_button(gesture.current_button()) else {
+                        return;
+                    };
+                    any_button_pressed.set(false);
+                    let input = terminal_mouse_input_for_area(
+                        &drawing_area,
+                        &renderer,
+                        TerminalMouseEventInput {
+                            action: TerminalMouseAction::Release,
+                            button: Some(button),
+                            modifiers: gesture.current_event_state(),
+                            x,
+                            y,
+                            any_button_pressed: false,
+                        },
+                    );
+                    write_terminal_mouse(&runtime, &drawing_area, input);
+                });
+            }
+            drawing_area.add_controller(click);
+
+            let motion = gtk::EventControllerMotion::new();
+            motion.set_propagation_phase(gtk::PropagationPhase::Capture);
+            {
+                let runtime = runtime.clone();
+                let renderer = renderer.clone();
+                let drawing_area = drawing_area.clone();
+                let any_button_pressed = any_button_pressed.clone();
+                motion.connect_motion(move |controller, x, y| {
+                    let input = terminal_mouse_input_for_area(
+                        &drawing_area,
+                        &renderer,
+                        TerminalMouseEventInput {
+                            action: TerminalMouseAction::Motion,
+                            button: None,
+                            modifiers: controller.current_event_state(),
+                            x,
+                            y,
+                            any_button_pressed: any_button_pressed.get(),
+                        },
+                    );
+                    write_terminal_mouse(&runtime, &drawing_area, input);
+                });
+            }
+            drawing_area.add_controller(motion);
+
+            let scroll = gtk::EventControllerScroll::new(
+                gtk::EventControllerScrollFlags::VERTICAL
+                    | gtk::EventControllerScrollFlags::DISCRETE,
+            );
+            scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
+            {
+                let runtime = runtime.clone();
+                let renderer = renderer.clone();
+                let drawing_area = drawing_area.clone();
+                scroll.connect_scroll(move |controller, _dx, dy| {
+                    let Some(button) = terminal_scroll_button(dy) else {
+                        return glib::Propagation::Proceed;
+                    };
+                    let (x, y) = controller
+                        .current_event()
+                        .and_then(|event| event.position())
+                        .unwrap_or((0.0, 0.0));
+                    let input = terminal_mouse_input_for_area(
+                        &drawing_area,
+                        &renderer,
+                        TerminalMouseEventInput {
+                            action: TerminalMouseAction::Press,
+                            button: Some(button),
+                            modifiers: controller.current_event_state(),
+                            x,
+                            y,
+                            any_button_pressed: false,
+                        },
+                    );
+                    if write_terminal_mouse(&runtime, &drawing_area, input) {
+                        glib::Propagation::Stop
+                    } else {
+                        glib::Propagation::Proceed
+                    }
+                });
+            }
+            drawing_area.add_controller(scroll);
+        }
+        {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             drawing_area.connect_resize(move |area, width, height| {
@@ -138,6 +262,86 @@ impl GhosttyTerminalWidget {
             self.drawing_area.queue_draw();
         }
         Ok(events)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerminalMouseEventInput {
+    action: TerminalMouseAction,
+    button: Option<TerminalMouseButton>,
+    modifiers: gtk::gdk::ModifierType,
+    x: f64,
+    y: f64,
+    any_button_pressed: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerminalMouseWidgetMetrics {
+    screen_width: i32,
+    screen_height: i32,
+    cell_width: i32,
+    cell_height: i32,
+}
+
+fn terminal_mouse_input_for_area(
+    area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
+    event: TerminalMouseEventInput,
+) -> TerminalMouseInput {
+    let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+    terminal_mouse_input(
+        event,
+        TerminalMouseWidgetMetrics {
+            screen_width: area.allocated_width(),
+            screen_height: area.allocated_height(),
+            cell_width,
+            cell_height,
+        },
+    )
+}
+
+fn terminal_mouse_input(
+    event: TerminalMouseEventInput,
+    metrics: TerminalMouseWidgetMetrics,
+) -> TerminalMouseInput {
+    TerminalMouseInput {
+        action: event.action,
+        button: event.button,
+        modifiers: terminal_key_modifiers(event.modifiers),
+        position: TerminalMousePosition {
+            x: event.x.max(0.0) as f32,
+            y: event.y.max(0.0) as f32,
+        },
+        size: TerminalMouseSize {
+            screen_width: positive_u32(metrics.screen_width),
+            screen_height: positive_u32(metrics.screen_height),
+            cell_width: positive_u32(metrics.cell_width),
+            cell_height: positive_u32(metrics.cell_height),
+        },
+        any_button_pressed: event.any_button_pressed,
+    }
+}
+
+fn positive_u32(value: i32) -> u32 {
+    value.max(1) as u32
+}
+
+fn write_terminal_mouse(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    drawing_area: &gtk::DrawingArea,
+    input: TerminalMouseInput,
+) -> bool {
+    match runtime.borrow_mut().write_mouse(input) {
+        Ok(wrote) => {
+            if wrote {
+                drawing_area.queue_draw();
+            }
+            wrote
+        }
+        Err(err) => {
+            eprintln!("Failed to write terminal mouse input: {err}");
+            false
+        }
     }
 }
 
@@ -260,4 +464,57 @@ impl TerminalWidgetOps for TestTerminalWidget {
     }
 
     fn resize_cells(&self, _cols: u16, _rows: u16) {}
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use super::*;
+    use forktty_terminal::ghostty::core::{
+        TerminalKeyModifiers, TerminalMouseAction, TerminalMouseButton, TerminalMousePosition,
+        TerminalMouseSize,
+    };
+
+    #[test]
+    fn terminal_mouse_input_builds_core_input_from_widget_metrics() {
+        let modifiers = gtk::gdk::ModifierType::SHIFT_MASK | gtk::gdk::ModifierType::ALT_MASK;
+
+        let input = terminal_mouse_input(
+            TerminalMouseEventInput {
+                action: TerminalMouseAction::Press,
+                button: Some(TerminalMouseButton::Left),
+                modifiers,
+                x: 12.5,
+                y: 24.0,
+                any_button_pressed: true,
+            },
+            TerminalMouseWidgetMetrics {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+        );
+
+        assert_eq!(input.action, TerminalMouseAction::Press);
+        assert_eq!(input.button, Some(TerminalMouseButton::Left));
+        assert_eq!(
+            input.modifiers,
+            TerminalKeyModifiers {
+                shift: true,
+                alt: true,
+                ctrl: false,
+            }
+        );
+        assert_eq!(input.position, TerminalMousePosition { x: 12.5, y: 24.0 });
+        assert_eq!(
+            input.size,
+            TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            }
+        );
+        assert!(input.any_button_pressed);
+    }
 }

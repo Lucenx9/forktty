@@ -1,5 +1,7 @@
 use super::*;
-use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput, TerminalKeyModifiers};
+use forktty_terminal::ghostty::core::{
+    TerminalKey, TerminalKeyInput, TerminalKeyModifiers, TerminalMouseButton,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct GhosttyKeySpec {
@@ -128,11 +130,30 @@ fn terminal_key_input(key: TerminalKey, modifiers: TerminalKeyModifiers) -> Term
     TerminalInput::Key(TerminalKeyInput::new(key).with_modifiers(modifiers))
 }
 
-fn terminal_key_modifiers(modifiers: gtk::gdk::ModifierType) -> TerminalKeyModifiers {
+pub(super) fn terminal_key_modifiers(modifiers: gtk::gdk::ModifierType) -> TerminalKeyModifiers {
     TerminalKeyModifiers {
         shift: modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK),
         alt: modifiers.contains(gtk::gdk::ModifierType::ALT_MASK),
         ctrl: modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK),
+    }
+}
+
+pub(super) fn terminal_mouse_button(button: u32) -> Option<TerminalMouseButton> {
+    match button {
+        gtk::gdk::BUTTON_PRIMARY => Some(TerminalMouseButton::Left),
+        gtk::gdk::BUTTON_SECONDARY => Some(TerminalMouseButton::Right),
+        gtk::gdk::BUTTON_MIDDLE => Some(TerminalMouseButton::Middle),
+        _ => None,
+    }
+}
+
+pub(super) fn terminal_scroll_button(delta_y: f64) -> Option<TerminalMouseButton> {
+    if delta_y < 0.0 {
+        Some(TerminalMouseButton::WheelUp)
+    } else if delta_y > 0.0 {
+        Some(TerminalMouseButton::WheelDown)
+    } else {
+        None
     }
 }
 
@@ -315,6 +336,40 @@ mod tests {
                 )
             )
         );
+    }
+
+    #[test]
+    fn mouse_button_translation_maps_gtk_buttons_to_terminal_buttons() {
+        use forktty_terminal::ghostty::core::TerminalMouseButton;
+
+        assert_eq!(
+            terminal_mouse_button(gtk::gdk::BUTTON_PRIMARY),
+            Some(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            terminal_mouse_button(gtk::gdk::BUTTON_MIDDLE),
+            Some(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            terminal_mouse_button(gtk::gdk::BUTTON_SECONDARY),
+            Some(TerminalMouseButton::Right)
+        );
+        assert_eq!(terminal_mouse_button(8), None);
+    }
+
+    #[test]
+    fn mouse_scroll_translation_maps_vertical_delta_to_wheel_buttons() {
+        use forktty_terminal::ghostty::core::TerminalMouseButton;
+
+        assert_eq!(
+            terminal_scroll_button(-1.0),
+            Some(TerminalMouseButton::WheelUp)
+        );
+        assert_eq!(
+            terminal_scroll_button(1.0),
+            Some(TerminalMouseButton::WheelDown)
+        );
+        assert_eq!(terminal_scroll_button(0.0), None);
     }
 
     #[test]

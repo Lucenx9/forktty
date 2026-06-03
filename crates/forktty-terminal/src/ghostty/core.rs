@@ -6,6 +6,11 @@ use libghostty_vt::{
         Action as GhosttyKeyAction, Encoder as GhosttyKeyEncoder, Event as GhosttyKeyEvent,
         Key as GhosttyKey, Mods as GhosttyKeyMods,
     },
+    mouse::{
+        Action as GhosttyMouseAction, Button as GhosttyMouseButton, Encoder as GhosttyMouseEncoder,
+        EncoderSize as GhosttyMouseEncoderSize, Event as GhosttyMouseEvent,
+        Position as GhosttyMousePosition,
+    },
     render::{CellIterator, CursorViewport, RowIterator},
     screen::CellWide,
     style::RgbColor,
@@ -114,6 +119,92 @@ impl TerminalKeyModifiers {
             mods |= GhosttyKeyMods::CTRL;
         }
         mods
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalMouseInput {
+    pub action: TerminalMouseAction,
+    pub button: Option<TerminalMouseButton>,
+    pub modifiers: TerminalKeyModifiers,
+    pub position: TerminalMousePosition,
+    pub size: TerminalMouseSize,
+    pub any_button_pressed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalMouseAction {
+    Press,
+    Release,
+    Motion,
+}
+
+impl TerminalMouseAction {
+    fn to_ghostty(self) -> GhosttyMouseAction {
+        match self {
+            Self::Press => GhosttyMouseAction::Press,
+            Self::Release => GhosttyMouseAction::Release,
+            Self::Motion => GhosttyMouseAction::Motion,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalMouseButton {
+    Left,
+    Right,
+    Middle,
+    WheelUp,
+    WheelDown,
+}
+
+impl TerminalMouseButton {
+    fn to_ghostty(self) -> GhosttyMouseButton {
+        match self {
+            Self::Left => GhosttyMouseButton::Left,
+            Self::Right => GhosttyMouseButton::Right,
+            Self::Middle => GhosttyMouseButton::Middle,
+            Self::WheelUp => GhosttyMouseButton::Four,
+            Self::WheelDown => GhosttyMouseButton::Five,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalMousePosition {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl TerminalMousePosition {
+    fn to_ghostty(self) -> GhosttyMousePosition {
+        GhosttyMousePosition {
+            x: self.x.max(0.0),
+            y: self.y.max(0.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalMouseSize {
+    pub screen_width: u32,
+    pub screen_height: u32,
+    pub cell_width: u32,
+    pub cell_height: u32,
+}
+
+impl TerminalMouseSize {
+    fn to_ghostty(self) -> GhosttyMouseEncoderSize {
+        GhosttyMouseEncoderSize {
+            screen_width: self.screen_width.max(1),
+            screen_height: self.screen_height.max(1),
+            cell_width: self.cell_width.max(1),
+            cell_height: self.cell_height.max(1),
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_right: 0,
+            padding_left: 0,
+        }
     }
 }
 
@@ -377,6 +468,26 @@ impl GhosttyCore {
         Ok(bytes[..written].to_vec())
     }
 
+    pub fn encode_mouse(&self, input: TerminalMouseInput) -> Result<Vec<u8>> {
+        let mut encoder = GhosttyMouseEncoder::new()?;
+        encoder
+            .set_options_from_terminal(self.terminal.as_ref())
+            .set_size(input.size.to_ghostty())
+            .set_any_button_pressed(input.any_button_pressed)
+            .set_track_last_cell(false);
+
+        let mut event = GhosttyMouseEvent::new()?;
+        event
+            .set_action(input.action.to_ghostty())
+            .set_button(input.button.map(TerminalMouseButton::to_ghostty))
+            .set_mods(input.modifiers.to_ghostty())
+            .set_position(input.position.to_ghostty());
+
+        let mut bytes = Vec::new();
+        encoder.encode_to_vec(&event, &mut bytes)?;
+        Ok(bytes)
+    }
+
     #[cfg(test)]
     pub fn set_bracketed_paste_for_test(&mut self, enabled: bool) -> Result<()> {
         self.bracketed_paste = enabled;
@@ -548,6 +659,36 @@ mod tests {
 
             assert_eq!(bytes, expected, "encoded {key:?}");
         }
+    }
+
+    #[test]
+    fn core_mouse_encoder_is_silent_until_tracking_enabled() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        let bytes = core.encode_mouse(test_mouse_press()).unwrap();
+
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn core_mouse_encoder_uses_sgr_tracking_from_terminal_state() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[?1000h\x1b[?1006h").unwrap();
+
+        let bytes = core.encode_mouse(test_mouse_press()).unwrap();
+
+        assert_eq!(bytes, b"\x1b[<0;2;2M");
     }
 
     #[test]
@@ -787,5 +928,21 @@ mod tests {
 
         assert!(text.contains("one"));
         assert!(text.contains("three"));
+    }
+
+    fn test_mouse_press() -> TerminalMouseInput {
+        TerminalMouseInput {
+            action: TerminalMouseAction::Press,
+            button: Some(TerminalMouseButton::Left),
+            modifiers: TerminalKeyModifiers::empty(),
+            position: TerminalMousePosition { x: 10.0, y: 20.0 },
+            size: TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+            any_button_pressed: false,
+        }
     }
 }

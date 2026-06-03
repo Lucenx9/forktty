@@ -1,6 +1,6 @@
 use super::*;
 use forktty_terminal::ghostty::{
-    core::{GhosttyCore, GhosttyCoreOptions, TerminalFrame, TerminalKeyInput},
+    core::{GhosttyCore, GhosttyCoreOptions, TerminalFrame, TerminalKeyInput, TerminalMouseInput},
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
 };
@@ -75,6 +75,18 @@ impl TerminalRuntime {
             return Ok(());
         }
         self.write_bytes(&bytes)
+    }
+
+    pub(super) fn write_mouse(&mut self, input: TerminalMouseInput) -> Result<bool, TerminalError> {
+        let bytes = self
+            .core
+            .encode_mouse(input)
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        if bytes.is_empty() {
+            return Ok(false);
+        }
+        self.write_bytes(&bytes)?;
+        Ok(true)
     }
 
     pub(super) fn resize_pixels(
@@ -390,6 +402,47 @@ mod tests {
             runtime.pty_writes(),
             vec![b"\x1b[I".to_vec(), b"\x1b[O".to_vec()]
         );
+    }
+
+    #[test]
+    fn mouse_input_writes_only_when_tracking_is_enabled() {
+        use forktty_terminal::ghostty::core::{
+            TerminalKeyModifiers, TerminalMouseAction, TerminalMouseButton, TerminalMouseInput,
+            TerminalMousePosition, TerminalMouseSize,
+        };
+
+        let mut request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        let input = TerminalMouseInput {
+            action: TerminalMouseAction::Press,
+            button: Some(TerminalMouseButton::Left),
+            modifiers: TerminalKeyModifiers::empty(),
+            position: TerminalMousePosition { x: 10.0, y: 20.0 },
+            size: TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+            any_button_pressed: false,
+        };
+
+        assert!(!runtime.write_mouse(input).unwrap());
+        assert!(runtime.pty_writes().is_empty());
+
+        runtime.feed_pty_bytes(b"\x1b[?1000h\x1b[?1006h").unwrap();
+        assert!(runtime.write_mouse(input).unwrap());
+
+        assert_eq!(runtime.pty_writes(), vec![b"\x1b[<0;2;2M".to_vec()]);
     }
 
     #[test]
