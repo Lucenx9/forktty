@@ -50,6 +50,7 @@ pub fn read_firefox_bookmarks(places: &Path) -> rusqlite::Result<Vec<ImportedBoo
          FROM moz_bookmarks b
          JOIN moz_places p ON b.fk = p.id
          WHERE b.type = 1 AND (p.url LIKE 'http://%' OR p.url LIKE 'https://%')
+         ORDER BY b.id ASC
          LIMIT {}",
         MAX_FIREFOX_BOOKMARKS
     );
@@ -191,6 +192,41 @@ mod tests {
         assert_eq!(bms.len(), 1);
         assert_eq!(bms[0].url, "https://b.test/");
         assert_eq!(bms[0].title, "B mark");
+    }
+
+    #[test]
+    fn firefox_bookmarks_are_ordered_by_bookmark_id_before_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("places.sqlite");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, title TEXT);
+             CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, fk INTEGER, title TEXT, type INTEGER);
+             CREATE INDEX moz_bookmarks_type_id_desc ON moz_bookmarks(type, id DESC);
+             INSERT INTO moz_places (id,url,title) VALUES (1,'https://one.test/','One');
+             INSERT INTO moz_places (id,url,title) VALUES (2,'https://two.test/','Two');
+             INSERT INTO moz_places (id,url,title) VALUES (3,'https://three.test/','Three');
+             INSERT INTO moz_bookmarks (id,fk,title,type) VALUES (10,1,'one',1);
+             INSERT INTO moz_bookmarks (id,fk,title,type) VALUES (20,2,'two',1);
+             INSERT INTO moz_bookmarks (id,fk,title,type) VALUES (30,3,'three',1);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let urls = read_firefox_bookmarks(&db)
+            .unwrap()
+            .into_iter()
+            .map(|bookmark| bookmark.url)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            urls,
+            [
+                "https://one.test/",
+                "https://two.test/",
+                "https://three.test/"
+            ]
+        );
     }
 
     #[test]
