@@ -47,6 +47,10 @@ pub(super) fn encode_gtk_key(
         gtk::gdk::Key::BackSpace => return Some(vec![0x7f]),
         gtk::gdk::Key::Tab => return Some(b"\t".to_vec()),
         gtk::gdk::Key::Escape => return Some(b"\x1b".to_vec()),
+        gtk::gdk::Key::Up | gtk::gdk::Key::KP_Up => return Some(b"\x1b[A".to_vec()),
+        gtk::gdk::Key::Down | gtk::gdk::Key::KP_Down => return Some(b"\x1b[B".to_vec()),
+        gtk::gdk::Key::Right | gtk::gdk::Key::KP_Right => return Some(b"\x1b[C".to_vec()),
+        gtk::gdk::Key::Left | gtk::gdk::Key::KP_Left => return Some(b"\x1b[D".to_vec()),
         _ => {
             if let Some(ch) = key.to_unicode() {
                 GhosttyKeySpec {
@@ -85,8 +89,10 @@ fn control_code(ch: char) -> Option<u8> {
 
 fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> bool {
     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+    let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
     let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
-    ctrl && shift
+    (ctrl
+        && shift
         && matches!(
             key,
             gtk::gdk::Key::H
@@ -99,7 +105,16 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
                 | gtk::gdk::Key::w
                 | gtk::gdk::Key::R
                 | gtk::gdk::Key::r
-        )
+        ))
+        || (ctrl
+            && alt
+            && matches!(
+                key,
+                gtk::gdk::Key::Left
+                    | gtk::gdk::Key::KP_Left
+                    | gtk::gdk::Key::Right
+                    | gtk::gdk::Key::KP_Right
+            ))
 }
 
 #[cfg(test)]
@@ -115,5 +130,35 @@ mod tests {
     fn key_translation_encodes_enter_and_ctrl_c() {
         assert_eq!(encode_test_key(GhosttyKeySpec::enter()).unwrap(), b"\r");
         assert_eq!(encode_test_key(GhosttyKeySpec::ctrl('c')).unwrap(), b"\x03");
+    }
+
+    #[test]
+    fn key_translation_encodes_arrow_keys_for_terminal() {
+        let none = gtk::gdk::ModifierType::empty();
+
+        assert_eq!(
+            encode_gtk_key(gtk::gdk::Key::Up, none, None).unwrap(),
+            b"\x1b[A"
+        );
+        assert_eq!(
+            encode_gtk_key(gtk::gdk::Key::Down, none, None).unwrap(),
+            b"\x1b[B"
+        );
+        assert_eq!(
+            encode_gtk_key(gtk::gdk::Key::Right, none, None).unwrap(),
+            b"\x1b[C"
+        );
+        assert_eq!(
+            encode_gtk_key(gtk::gdk::Key::Left, none, None).unwrap(),
+            b"\x1b[D"
+        );
+    }
+
+    #[test]
+    fn key_translation_leaves_ctrl_alt_arrows_for_pane_shortcuts() {
+        let pane_shortcut = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK;
+
+        assert!(encode_gtk_key(gtk::gdk::Key::Left, pane_shortcut, None).is_none());
+        assert!(encode_gtk_key(gtk::gdk::Key::Right, pane_shortcut, None).is_none());
     }
 }
