@@ -926,6 +926,18 @@ Verify: shell launch, typing, split panes, resize, copy/paste, socket `send-text
 
 Status: browser feature tests passed in this development session. The interactive desktop smoke checklist still requires a local GTK session and was not marked complete here.
 
+Smoke progress on 2026-06-03:
+- PASS: launched `target/debug/forktty` on the local Wayland session with isolated `FORKTTY_SOCKET_PATH`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `HOME`.
+- PASS: `forktty ping` returned `pong`.
+- PASS: shell surface launched as `surface-1` and `surface.list` reported a terminal surface in the isolated home directory.
+- PASS: socket `send-text` with a real newline executed a shell command; OSC title changed the surface title to `SMOKE_TITLE`.
+- PASS: bell (`BEL`) created `Terminal bell` notifications.
+- PASS: `split-surface --axis vertical` created `surface-2`; `close-surface surface-2` removed it and left `surface-1`.
+- PASS: child exit marked `surface-1` not ready; subsequent `send-text` returned `not_ready`.
+- PASS: D-Bus activation of GTK action `restart-pane` respawned `surface-1`; subsequent `send-text` was accepted.
+- PASS: session file was written under `XDG_STATE_HOME/forktty/session-v2.json`; after restarting the app with the same isolated state, `surface-1` restored and accepted `send-text`.
+- NOT VERIFIED HERE: physical keyboard typing and copy/paste via focused GTK terminal widget. `wtype` failed with `Compositor does not support the virtual keyboard protocol`; `ydotoold` timed out without a usable virtual input device. Clipboard/widget behavior remains covered by Rust tests, but this checklist item still needs a human local GTK smoke pass.
+
 - [x] **Step 7: Commit final hardening**
 
 ```bash
