@@ -88,10 +88,6 @@ impl GhosttyTerminalWidget {
         self.drawing_area.downgrade()
     }
 
-    pub(super) fn grab_focus(&self) -> bool {
-        self.drawing_area.grab_focus()
-    }
-
     fn with_runtime(&self, f: impl FnOnce(&mut TerminalRuntime) -> Result<(), TerminalError>) {
         if let Err(err) = f(&mut self.runtime.borrow_mut()) {
             eprintln!("Terminal runtime operation failed: {err}");

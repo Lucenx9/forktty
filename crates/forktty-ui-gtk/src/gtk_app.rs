@@ -56,7 +56,6 @@ const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "Iosevka Nerd Font Mono",
     "Symbols Nerd Font Mono",
 ];
-const PROMPT_NOTIFICATION_THROTTLE: Duration = Duration::from_secs(8);
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
 const PANED_RATIO_MAX_FRAMES: u8 = 30;

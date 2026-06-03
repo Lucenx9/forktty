@@ -225,29 +225,7 @@ mod ghostty_tests {
     }
 }
 
-pub(super) fn emit_prompt_notification(
-    model: &Arc<Mutex<WorkspaceModel>>,
-    last_prompt_notification: &Rc<RefCell<Option<Instant>>>,
-    workspace_id: &str,
-    surface_id: &str,
-    body: &str,
-) {
-    let now = Instant::now();
-    {
-        let mut last_prompt = last_prompt_notification.borrow_mut();
-        if last_prompt.is_some_and(|last| now.duration_since(last) < PROMPT_NOTIFICATION_THROTTLE) {
-            return;
-        }
-        *last_prompt = Some(now);
-    }
-
-    if let Some(notification) =
-        create_prompt_notification_if_surface_exists(model, workspace_id, surface_id, body)
-    {
-        dispatch_notification_with_loaded_config(&notification);
-    }
-}
-
+#[cfg(test)]
 pub(super) fn create_prompt_notification_if_surface_exists(
     model: &Arc<Mutex<WorkspaceModel>>,
     workspace_id: &str,
@@ -268,6 +246,7 @@ pub(super) fn create_prompt_notification_if_surface_exists(
     ))
 }
 
+#[cfg(test)]
 pub(super) fn looks_like_prompt(text: &str) -> bool {
     text.lines().rev().take(4).any(|line| {
         let trimmed = line.trim();
@@ -278,12 +257,6 @@ pub(super) fn looks_like_prompt(text: &str) -> bool {
             || trimmed.contains("Do you want to proceed")
             || (trimmed.starts_with("? ") && trimmed.ends_with(':'))
     })
-}
-
-pub(super) fn visible_text_tail(text: &str) -> String {
-    let mut chars = text.chars().rev().take(4096).collect::<Vec<_>>();
-    chars.reverse();
-    chars.into_iter().collect()
 }
 
 

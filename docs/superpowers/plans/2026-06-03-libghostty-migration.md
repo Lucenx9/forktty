@@ -49,7 +49,7 @@
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/app.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app.rs`
 
-- [ ] **Step 1: Write failing rename tests**
+- [x] **Step 1: Write failing rename tests**
 
 Add or update a GTK test that imports `GtkTerminalBackend` and verifies spawn/send/resize readiness through the existing channel:
 
@@ -70,23 +70,23 @@ fn gtk_terminal_backend_blocks_send_until_ready() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-ui-gtk gtk_terminal_backend_blocks_send_until_ready --no-default-features --features gtk-vte`
 
 Expected: FAIL because `GtkTerminalBackend` does not exist yet.
 
-- [ ] **Step 3: Rename the type**
+- [x] **Step 3: Rename the type**
 
 Rename `GtkVteBackend` to `GtkTerminalBackend` and update call sites. Do not change command enum behavior.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test -p forktty-ui-gtk gtk_terminal_backend_blocks_send_until_ready --no-default-features --features gtk-vte`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/backend.rs crates/forktty-ui-gtk/src/gtk_app/app.rs crates/forktty-ui-gtk/src/gtk_app.rs crates/forktty-ui-gtk/src/gtk_app/tests.rs
@@ -100,7 +100,7 @@ git commit -m "refactor: neutralize gtk terminal backend name"
 - Modify: `crates/forktty-ui-gtk/src/gtk_app.rs`
 - Modify: `crates/forktty-ui-gtk/src/gtk_app/controller.rs`
 
-- [ ] **Step 1: Write failing interface test**
+- [x] **Step 1: Write failing interface test**
 
 Add a small unit test for a fake `TerminalWidgetOps` implementor so controller code can depend on methods instead of VTE extension traits:
 
@@ -113,13 +113,13 @@ fn terminal_widget_ops_reset_sends_form_feed() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-ui-gtk terminal_widget_ops_reset_sends_form_feed --no-default-features --features gtk-vte`
 
 Expected: FAIL because `TerminalWidgetOps` and `TestTerminalWidget` do not exist.
 
-- [ ] **Step 3: Implement VTE-backed adapter only**
+- [x] **Step 3: Implement VTE-backed adapter only**
 
 Create `TerminalWidgetOps` with:
 
@@ -139,7 +139,7 @@ pub(super) trait TerminalWidgetOps {
 
 Wrap the current VTE calls in a temporary `VteTerminalWidgetAdapter` so M1 has no runtime behavior change.
 
-- [ ] **Step 4: Run focused and workspace tests**
+- [x] **Step 4: Run focused and workspace tests**
 
 Run: `cargo test -p forktty-ui-gtk terminal_widget --no-default-features --features gtk-vte`
 
@@ -147,7 +147,7 @@ Run: `cargo test --workspace --all-targets --no-default-features --features gtk-
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-ui-gtk/src/gtk_app/terminal_widget.rs crates/forktty-ui-gtk/src/gtk_app.rs crates/forktty-ui-gtk/src/gtk_app/controller.rs crates/forktty-ui-gtk/src/gtk_app/tests.rs
@@ -165,7 +165,7 @@ git commit -m "refactor: introduce terminal widget interface"
 - Create: `crates/forktty-terminal/src/spawn.rs`
 - Create: `crates/forktty-terminal/src/ghostty.rs`
 
-- [ ] **Step 1: Write failing spawn helper tests**
+- [x] **Step 1: Write failing spawn helper tests**
 
 Move existing VTE environment tests into `spawn.rs` and add:
 
@@ -179,23 +179,23 @@ fn child_environment_is_available_without_vte_feature() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-terminal child_environment_is_available_without_vte_feature --no-default-features`
 
 Expected: FAIL because helpers are still hidden in `vte.rs`.
 
-- [ ] **Step 3: Implement shared spawn helpers and feature metadata**
+- [x] **Step 3: Implement shared spawn helpers and feature metadata**
 
 Add `ghostty-vt = ["dep:libghostty-vt", "dep:nix", "dep:libc"]`, raise `rust-version = "1.93"` in workspace, and move `child_environment`, `child_argv`, `child_cwd`, and AppImage sanitization to `spawn.rs`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-terminal --no-default-features`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Cargo.toml crates/forktty-terminal/Cargo.toml crates/forktty-terminal/src/lib.rs crates/forktty-terminal/src/spawn.rs crates/forktty-terminal/src/ghostty.rs
@@ -209,7 +209,7 @@ git commit -m "feat: add ghostty terminal feature boundary"
 - Create: `crates/forktty-terminal/src/ghostty/metadata.rs`
 - Modify: `crates/forktty-terminal/src/ghostty.rs`
 
-- [ ] **Step 1: Write failing parser tests**
+- [x] **Step 1: Write failing parser tests**
 
 ```rust
 #[test]
@@ -232,23 +232,23 @@ fn parses_osc_9_metadata_with_st_terminator() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-terminal metadata --no-default-features --features ghostty-vt`
 
 Expected: FAIL because parser module is missing.
 
-- [ ] **Step 3: Implement streaming parser**
+- [x] **Step 3: Implement streaming parser**
 
 Implement a byte-state parser for `ESC ] <code> ; <payload> BEL` and `ESC ] <code> ; <payload> ESC \`, emitting only code `9` and `99`, capping payloads at 16 KiB, and resetting on malformed/incomplete overflow.
 
-- [ ] **Step 4: Run parser tests**
+- [x] **Step 4: Run parser tests**
 
 Run: `cargo test -p forktty-terminal metadata --no-default-features --features ghostty-vt`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-terminal/src/ghostty.rs crates/forktty-terminal/src/ghostty/events.rs crates/forktty-terminal/src/ghostty/metadata.rs
@@ -262,7 +262,7 @@ git commit -m "feat: parse terminal metadata osc sequences"
 - Modify: `crates/forktty-terminal/src/ghostty/events.rs`
 - Modify: `crates/forktty-terminal/src/ghostty.rs`
 
-- [ ] **Step 1: Write failing core tests**
+- [x] **Step 1: Write failing core tests**
 
 ```rust
 #[test]
@@ -286,23 +286,23 @@ fn core_collects_pty_responses() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-terminal ghostty::core --no-default-features --features ghostty-vt`
 
 Expected: FAIL because `GhosttyCore` is missing.
 
-- [ ] **Step 3: Implement core**
+- [x] **Step 3: Implement core**
 
 Create `GhosttyCore` with `libghostty_vt::Terminal`, `RenderState`, `key::Encoder`, `mouse::Encoder`, and metadata parser. Register `on_pty_write`, `on_bell`, and `on_title_changed` callbacks using `Rc<RefCell<Vec<GhosttyEvent>>>`. Implement `feed`, `resize`, `reset`, `visible_text`, `select_all_text`, `bracketed_paste_bytes`, and `render_frame`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cargo test -p forktty-terminal ghostty::core --no-default-features --features ghostty-vt`
 
 Expected: PASS, unless Zig is missing; if Zig is missing, install/provide Zig and rerun before coding beyond this point.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-terminal/src/ghostty.rs crates/forktty-terminal/src/ghostty/core.rs crates/forktty-terminal/src/ghostty/events.rs
@@ -316,7 +316,7 @@ git commit -m "feat: add ghostty terminal core"
 - Modify: `crates/forktty-terminal/src/ghostty/events.rs`
 - Modify: `crates/forktty-terminal/src/ghostty.rs`
 
-- [ ] **Step 1: Write failing PTY tests**
+- [x] **Step 1: Write failing PTY tests**
 
 ```rust
 #[test]
@@ -338,23 +338,23 @@ fn pty_resize_tracks_requested_size() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p forktty-terminal ghostty::pty --no-default-features --features ghostty-vt`
 
 Expected: FAIL because `PtySession` is missing.
 
-- [ ] **Step 3: Implement PTY**
+- [x] **Step 3: Implement PTY**
 
 Use `nix::pty::openpty`, `nix::unistd::setsid`, `dup2`, `CommandExt::pre_exec`, nonblocking master reads, direct writer, `ioctl(TIOCSWINSZ)`, and `try_wait`/`wait_timeout` child monitoring. Keep `PtySession` `Send`-safe only for file descriptors/process handles; no Ghostty objects cross threads.
 
-- [ ] **Step 4: Run PTY tests**
+- [x] **Step 4: Run PTY tests**
 
 Run: `cargo test -p forktty-terminal ghostty::pty --no-default-features --features ghostty-vt`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/forktty-terminal/src/ghostty.rs crates/forktty-terminal/src/ghostty/pty.rs crates/forktty-terminal/src/ghostty/events.rs
@@ -886,31 +886,31 @@ git commit -m "docs: document ghostty terminal runtime"
 **Files:**
 - Modify only files required by failing checks.
 
-- [ ] **Step 1: Ensure native prerequisites**
+- [x] **Step 1: Ensure native prerequisites**
 
 Run: `zig version`
 
 Expected: version output. If missing, install Zig before final acceptance builds because `libghostty-vt-sys` vendored build invokes `zig build`.
 
-- [ ] **Step 2: Run acceptance tests**
+- [x] **Step 2: Run acceptance tests**
 
 Run: `cargo test --workspace --all-targets --no-default-features --features gtk-ghostty`
 
 Expected: PASS.
 
-- [ ] **Step 3: Run clippy**
+- [x] **Step 3: Run clippy**
 
 Run: `cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings`
 
 Expected: PASS.
 
-- [ ] **Step 4: Run release build**
+- [x] **Step 4: Run release build**
 
 Run: `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run dependency absence checks**
+- [x] **Step 5: Run dependency absence checks**
 
 Run: `rg -n "use vte4|vte4::|gtk-vte|feature = \"vte\"|feature = \"gtk-vte\"" crates Cargo.toml Cargo.lock`
 
@@ -924,7 +924,9 @@ Launch: `cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostt
 
 Verify: shell launch, typing, split panes, resize, copy/paste, socket `send-text`, title/bell/exit notifications, restart pane, close pane, session restore, and browser feature build with `cargo test -p forktty-ui-gtk --all-targets --features browser`.
 
-- [ ] **Step 7: Commit final hardening**
+Status: browser feature tests passed in this development session. The interactive desktop smoke checklist still requires a local GTK session and was not marked complete here.
+
+- [x] **Step 7: Commit final hardening**
 
 ```bash
 git add .

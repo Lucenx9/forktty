@@ -155,10 +155,6 @@ pub(super) fn terminal_font_description_with_family(
     gtk::pango::FontDescription::from_string(&format!("{} {}", family, config.appearance.font_size))
 }
 
-pub(super) fn rgba(value: &str) -> gtk::gdk::RGBA {
-    gtk::gdk::RGBA::parse(value).unwrap_or(gtk::gdk::RGBA::BLACK)
-}
-
 pub(super) fn default_terminal_font_family(installed_families: &[String]) -> String {
     for preferred in PREFERRED_TERMINAL_FONT_FAMILIES {
         if installed_families
