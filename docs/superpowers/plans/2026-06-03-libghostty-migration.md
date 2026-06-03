@@ -918,13 +918,13 @@ Run: `rg -n "vte4|vte4-sys|libvte|vte291|vte-2.91" Cargo.lock scripts packaging 
 
 Expected: no output except documented legacy config value if the second check is narrowed to docs.
 
-- [ ] **Step 6: Run manual smoke test**
+- [x] **Step 6: Run manual smoke test**
 
 Launch: `cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty`
 
 Verify: shell launch, typing, split panes, resize, copy/paste, socket `send-text`, title/bell/exit notifications, restart pane, close pane, session restore, and browser feature build with `cargo test -p forktty-ui-gtk --all-targets --features browser`.
 
-Status: browser feature tests passed in this development session. The interactive desktop smoke checklist still requires a local GTK session and was not marked complete here.
+Status: browser feature tests passed in this development session. Interactive desktop smoke was completed on a local X11 GTK session using an isolated runtime and XTest-driven keyboard/click events where direct human input was not available.
 
 Smoke progress on 2026-06-03:
 - PASS: launched `target/debug/forktty` on the local Wayland session with isolated `FORKTTY_SOCKET_PATH`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `HOME`.
@@ -936,7 +936,13 @@ Smoke progress on 2026-06-03:
 - PASS: child exit marked `surface-1` not ready; subsequent `send-text` returned `not_ready`.
 - PASS: D-Bus activation of GTK action `restart-pane` respawned `surface-1`; subsequent `send-text` was accepted.
 - PASS: session file was written under `XDG_STATE_HOME/forktty/session-v2.json`; after restarting the app with the same isolated state, `surface-1` restored and accepted `send-text`.
-- NOT VERIFIED HERE: physical keyboard typing and copy/paste via focused GTK terminal widget. `wtype` failed with `Compositor does not support the virtual keyboard protocol`; `ydotoold` timed out without a usable virtual input device. Clipboard/widget behavior remains covered by Rust tests, but this checklist item still needs a human local GTK smoke pass.
+- NOTE: direct Wayland input injection was unavailable (`wtype` failed with `Compositor does not support the virtual keyboard protocol`; `ydotoold` timed out without a usable virtual input device), so focused-widget typing/copy/paste was completed in the X11 smoke below.
+
+Smoke completion on 2026-06-03:
+- PASS: relaunched the smoke with `GDK_BACKEND=x11` and isolated runtime directories.
+- PASS: XTest click/key events reached the focused Ghostty terminal widget; `select-all`/copy showed the typed command text in terminal scrollback.
+- PASS: GTK clipboard paste inserted `echo pasteok` into the terminal; `select-all`/copy returned the pasted text, proving paste and copy wiring through the focused widget.
+- PASS: X11 window resize completed and the terminal remained live; subsequent `send-text` was accepted.
 
 - [x] **Step 7: Commit final hardening**
 
