@@ -56,6 +56,7 @@ pub(super) fn translate_gtk_key(
         return None;
     }
     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+    let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
     let terminal_modifiers = terminal_key_modifiers(modifiers);
     let spec = match key {
         gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => GhosttyKeySpec {
@@ -108,7 +109,7 @@ pub(super) fn translate_gtk_key(
             return Some(terminal_key_input(TerminalKey::Delete, terminal_modifiers));
         }
         _ => {
-            if !ctrl {
+            if !ctrl || alt {
                 if let Some(text) = text.filter(|text| !text.is_empty()) {
                     return Some(TerminalInput::Bytes(text.as_bytes().to_vec()));
                 }
@@ -317,6 +318,16 @@ mod tests {
         assert_eq!(
             translate_gtk_key(gtk::gdk::Key::c, ctrl, Some("c")).unwrap(),
             TerminalInput::Bytes(b"\x03".to_vec())
+        );
+    }
+
+    #[test]
+    fn key_translation_treats_ctrl_alt_event_text_as_composed_input() {
+        let altgr_like = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::ALT_MASK;
+
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::e, altgr_like, Some("€")).unwrap(),
+            TerminalInput::Bytes("€".as_bytes().to_vec())
         );
     }
 
