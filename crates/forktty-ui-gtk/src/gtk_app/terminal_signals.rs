@@ -145,26 +145,30 @@ pub(super) fn apply_ghostty_events_to_model(
             }
             GhosttyEvent::Metadata(metadata) => {
                 if let Ok(mut model) = model.lock() {
-                    if let Some(body) = terminal_metadata_notification_body(metadata) {
-                        if model.surface(surface_id).is_none() {
-                            continue;
+                    match terminal_metadata_action(metadata) {
+                        TerminalMetadataAction::Notify(body) => {
+                            if model.surface(surface_id).is_none() {
+                                continue;
+                            }
+                            let notification = model.create_notification(
+                                "Terminal notification",
+                                body,
+                                NotificationKind::Info,
+                                Some(workspace_id.to_string()),
+                                Some(surface_id.to_string()),
+                            );
+                            dispatch_notification_with_loaded_config(&notification);
                         }
-                        let notification = model.create_notification(
-                            "Terminal notification",
-                            body,
-                            NotificationKind::Info,
-                            Some(workspace_id.to_string()),
-                            Some(surface_id.to_string()),
-                        );
-                        dispatch_notification_with_loaded_config(&notification);
-                    } else {
-                        let _ = model.set_status(
-                            workspace_id,
-                            surface_status_key(surface_id),
-                            "Terminal metadata",
-                            format!("{metadata:?}"),
-                            Some("blue".to_string()),
-                        );
+                        TerminalMetadataAction::Status => {
+                            let _ = model.set_status(
+                                workspace_id,
+                                surface_status_key(surface_id),
+                                "Terminal metadata",
+                                format!("{metadata:?}"),
+                                Some("blue".to_string()),
+                            );
+                        }
+                        TerminalMetadataAction::Ignore => {}
                     }
                 }
             }
@@ -207,12 +211,19 @@ pub(super) fn apply_ghostty_events_to_model(
     }
 }
 
-pub(super) fn terminal_metadata_notification_body(
-    metadata: &TerminalMetadataEvent,
-) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TerminalMetadataAction {
+    Notify(String),
+    Status,
+    Ignore,
+}
+
+fn terminal_metadata_action(metadata: &TerminalMetadataEvent) -> TerminalMetadataAction {
     match metadata {
-        TerminalMetadataEvent::Osc9 { payload } => non_empty_terminal_metadata_payload(payload),
-        TerminalMetadataEvent::Osc99 { .. } => None,
+        TerminalMetadataEvent::Osc9 { payload } => non_empty_terminal_metadata_payload(payload)
+            .map(TerminalMetadataAction::Notify)
+            .unwrap_or(TerminalMetadataAction::Ignore),
+        TerminalMetadataEvent::Osc99 { payload } => osc99_metadata_action(payload),
     }
 }
 
@@ -223,6 +234,33 @@ fn non_empty_terminal_metadata_payload(payload: &str) -> Option<String> {
     } else {
         Some(truncate_single_line(trimmed, 240))
     }
+}
+
+fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
+    let Some((metadata, notification_payload)) = payload.split_once(';') else {
+        return TerminalMetadataAction::Status;
+    };
+    if osc99_metadata_value(metadata, "d").is_some_and(|done| done == "0") {
+        return TerminalMetadataAction::Ignore;
+    }
+    let payload_type = osc99_metadata_value(metadata, "p").unwrap_or("title");
+    match payload_type {
+        "title" | "body" if osc99_metadata_value(metadata, "e") == Some("1") => {
+            TerminalMetadataAction::Status
+        }
+        "title" | "body" => non_empty_terminal_metadata_payload(notification_payload)
+            .map(TerminalMetadataAction::Notify)
+            .unwrap_or(TerminalMetadataAction::Ignore),
+        "close" | "alive" | "?" | "icon" | "buttons" => TerminalMetadataAction::Ignore,
+        _ => TerminalMetadataAction::Status,
+    }
+}
+
+fn osc99_metadata_value<'a>(metadata: &'a str, key: &str) -> Option<&'a str> {
+    metadata
+        .split(':')
+        .filter_map(|part| part.split_once('='))
+        .find_map(|(candidate, value)| (candidate == key).then_some(value))
 }
 
 #[cfg(all(test, feature = "gtk-ghostty"))]
@@ -279,8 +317,63 @@ mod ghostty_tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].title, "Terminal notification");
         assert_eq!(notifications[0].body, "Build complete");
-        assert_eq!(notifications[0].workspace_id.as_deref(), Some(workspace_id.as_str()));
-        assert_eq!(notifications[0].surface_id.as_deref(), Some(surface_id.as_str()));
+        assert_eq!(
+            notifications[0].workspace_id.as_deref(),
+            Some(workspace_id.as_str())
+        );
+        assert_eq!(
+            notifications[0].surface_id.as_deref(),
+            Some(surface_id.as_str())
+        );
+        assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_simple_notification_creates_surface_notification() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: ";Hello world".to_string(),
+            })],
+        );
+
+        let model = model.lock().unwrap();
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title, "Terminal notification");
+        assert_eq!(notifications[0].body, "Hello world");
+        assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_incomplete_chunk_is_not_shown_as_status() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:d=0;Build".to_string(),
+            })],
+        );
+
+        let model = model.lock().unwrap();
+        assert!(model.list_notifications().is_empty());
         assert!(model.list_status(&workspace_id).is_empty());
     }
 }

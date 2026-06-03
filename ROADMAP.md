@@ -45,7 +45,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Custom `notification_command` with argv execution and title/body environment variables.
 - [x] Agent status, progress, and log metadata through socket API.
 - [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
-- [x] OSC 9 terminal notifications parsed from the Ghostty-owned PTY stream.
+- [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream.
 - [x] Ghostty bell and child-exit notifications.
 - [x] Explicit notification `kind` support.
 
@@ -75,7 +75,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 ## Backlog
 
-- [ ] Complete structured OSC 99 metadata/notification mapping beyond the current raw metadata fallback.
+- [ ] Complete advanced OSC 99 support: base64 payloads, notification updates/close, activation reports, buttons, and full chunk aggregation.
 - [ ] Runtime GTK/Ghostty smoke tests for keyboard, split, notification, and socket workflows.
 - [ ] Manual QA matrix for `.deb` across Debian/Ubuntu, Fedora-family, Arch/CachyOS.
 - [ ] Persistent scrollback, opt-in and bounded.

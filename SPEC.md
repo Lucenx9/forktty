@@ -234,7 +234,7 @@ Notification sources:
 - explicit socket/hook `notification.create`;
 - ForkTTY hook `precmd`, `preexec`, and `postexec` termprops;
 - ForkTTY progress termprops;
-- Ghostty OSC 9 terminal notifications;
+- Ghostty OSC 9 and basic OSC 99 terminal notifications;
 - Ghostty bell;
 - Ghostty child exit;
 - bounded visible-tail prompt fallback for common agent prompts.
@@ -259,7 +259,7 @@ Residual risks:
 
 - User-authored hooks and notification commands run with user privileges.
 - A same-user process can interact with user-owned runtime resources.
-- OSC 99 structured metadata compatibility remains partial; unknown OSC 99 payloads are surfaced as terminal metadata rather than interpreted.
+- Advanced OSC 99 compatibility remains partial; base64 payloads, notification update/close controls, activation reports, buttons, and full chunk aggregation are not yet implemented.
 
 ## Test Strategy
 
