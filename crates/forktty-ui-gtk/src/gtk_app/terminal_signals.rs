@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(feature = "gtk-ghostty")]
-use forktty_terminal::ghostty::events::GhosttyEvent;
+use forktty_terminal::ghostty::events::{GhosttyEvent, TerminalMetadataEvent};
 
 pub(super) fn terminal_focus_click_should_claim(
     terminal_has_focus: bool,
@@ -145,13 +145,27 @@ pub(super) fn apply_ghostty_events_to_model(
             }
             GhosttyEvent::Metadata(metadata) => {
                 if let Ok(mut model) = model.lock() {
-                    let _ = model.set_status(
-                        workspace_id,
-                        surface_status_key(surface_id),
-                        "Terminal metadata",
-                        format!("{metadata:?}"),
-                        Some("blue".to_string()),
-                    );
+                    if let Some(body) = terminal_metadata_notification_body(metadata) {
+                        if model.surface(surface_id).is_none() {
+                            continue;
+                        }
+                        let notification = model.create_notification(
+                            "Terminal notification",
+                            body,
+                            NotificationKind::Info,
+                            Some(workspace_id.to_string()),
+                            Some(surface_id.to_string()),
+                        );
+                        dispatch_notification_with_loaded_config(&notification);
+                    } else {
+                        let _ = model.set_status(
+                            workspace_id,
+                            surface_status_key(surface_id),
+                            "Terminal metadata",
+                            format!("{metadata:?}"),
+                            Some("blue".to_string()),
+                        );
+                    }
                 }
             }
             GhosttyEvent::ChildExit { status } => {
@@ -193,6 +207,24 @@ pub(super) fn apply_ghostty_events_to_model(
     }
 }
 
+pub(super) fn terminal_metadata_notification_body(
+    metadata: &TerminalMetadataEvent,
+) -> Option<String> {
+    match metadata {
+        TerminalMetadataEvent::Osc9 { payload } => non_empty_terminal_metadata_payload(payload),
+        TerminalMetadataEvent::Osc99 { .. } => None,
+    }
+}
+
+fn non_empty_terminal_metadata_payload(payload: &str) -> Option<String> {
+    let trimmed = payload.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(truncate_single_line(trimmed, 240))
+    }
+}
+
 #[cfg(all(test, feature = "gtk-ghostty"))]
 mod ghostty_tests {
     use super::*;
@@ -222,6 +254,34 @@ mod ghostty_tests {
             .list_notifications()
             .iter()
             .any(|notification| notification.title == "Terminal bell"));
+    }
+
+    #[test]
+    fn ghostty_osc9_metadata_creates_surface_notification() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc9 {
+                payload: "Build complete".to_string(),
+            })],
+        );
+
+        let model = model.lock().unwrap();
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title, "Terminal notification");
+        assert_eq!(notifications[0].body, "Build complete");
+        assert_eq!(notifications[0].workspace_id.as_deref(), Some(workspace_id.as_str()));
+        assert_eq!(notifications[0].surface_id.as_deref(), Some(surface_id.as_str()));
+        assert!(model.list_status(&workspace_id).is_empty());
     }
 }
 
