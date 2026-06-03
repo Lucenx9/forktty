@@ -216,7 +216,10 @@ mod tests {
         assert!(output
             .windows("forktty-pty".len())
             .any(|window| window == b"forktty-pty"));
-        assert_eq!(session.wait_timeout(Duration::from_secs(2)).unwrap().code(), Some(0));
+        assert_eq!(
+            session.wait_timeout(Duration::from_secs(2)).unwrap().code(),
+            Some(0)
+        );
     }
 
     #[test]
@@ -224,8 +227,19 @@ mod tests {
         let request = test_spawn_request_for_shell("/bin/sh").with_args(["-lc", "sleep 1"]);
         let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
 
-        session.resize(PtySize { cols: 120, rows: 40 }).unwrap();
+        session
+            .resize(PtySize {
+                cols: 120,
+                rows: 40,
+            })
+            .unwrap();
 
-        assert_eq!(session.size(), PtySize { cols: 120, rows: 40 });
+        assert_eq!(
+            session.size(),
+            PtySize {
+                cols: 120,
+                rows: 40
+            }
+        );
     }
 }

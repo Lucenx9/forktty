@@ -115,6 +115,28 @@ const OBSOLETE_NODE_CLI_REFS: &[&str] = &[
     "scripts/forktty.mjs",
 ];
 
+const REMOVED_VTE_REFS: &[&str] = &[
+    "gtk-vte",
+    "vte4",
+    "vte4-sys",
+    "libvte",
+    "libvte-2.91",
+    "native-gtk-vte",
+];
+
+const VTE_CHECK_PATHS: &[&str] = &[
+    ".github",
+    "Cargo.lock",
+    "Cargo.toml",
+    "README.md",
+    "crates",
+    "docs/QA.md",
+    "docs/native-gtk-ghostty.md",
+    "docs/release-qa.md",
+    "packaging",
+    "scripts",
+];
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -154,6 +176,7 @@ Usage:
 
 fn check_all() -> Result<()> {
     check_no_legacy_node_cli()?;
+    check_no_vte_references()?;
     check_hook_templates()
 }
 
@@ -192,6 +215,53 @@ fn check_no_legacy_node_cli() -> Result<()> {
     }
     println!("legacy Node CLI: absent");
     Ok(())
+}
+
+fn check_no_vte_references() -> Result<()> {
+    let root = repo_root();
+    let mut violations = Vec::new();
+    for path in VTE_CHECK_PATHS {
+        collect_vte_violations(&root, &root.join(path), &mut violations)?;
+    }
+    if !violations.is_empty() {
+        return Err(format!(
+            "VTE references should stay removed:\n{}",
+            violations.join("\n")
+        ));
+    }
+    println!("VTE references: absent");
+    Ok(())
+}
+
+fn collect_vte_violations(root: &Path, path: &Path, violations: &mut Vec<String>) -> Result<()> {
+    if path.is_dir() {
+        let entries = fs::read_dir(path)
+            .map_err(|err| format!("failed to read directory {}: {err}", path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|err| format!("failed to read {} entry: {err}", path.display()))?;
+            collect_vte_violations(root, &entry.path(), violations)?;
+        }
+        return Ok(());
+    }
+    if !path.is_file() {
+        return Ok(());
+    }
+    let raw = fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    for needle in REMOVED_VTE_REFS {
+        if contains_bytes(&raw, needle.as_bytes()) {
+            let relative = path.strip_prefix(root).unwrap_or(path);
+            violations.push(format!("{} contains `{needle}`", relative.display()));
+        }
+    }
+    Ok(())
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn check_hook_templates() -> Result<()> {

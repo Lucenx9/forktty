@@ -8,8 +8,7 @@ use std::path::{Path, PathBuf};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DOCTOR_MAX_CONFIG_SIZE_BYTES: u64 = 1_048_576;
 const DOCTOR_MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
-const APPIMAGE_GTK_RUNTIME_LIBS: &[&str] =
-    &["libgtk-4.so", "libadwaita-1.so", "libghostty-vt.so"];
+const APPIMAGE_GTK_RUNTIME_LIBS: &[&str] = &["libgtk-4.so", "libadwaita-1.so", "libghostty-vt.so"];
 
 const HELP_TEXT: &str = "\
 forktty — Linux-native multi-agent terminal

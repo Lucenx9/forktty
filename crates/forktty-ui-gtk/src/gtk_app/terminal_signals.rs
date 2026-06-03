@@ -259,7 +259,6 @@ pub(super) fn looks_like_prompt(text: &str) -> bool {
     })
 }
 
-
 pub(super) fn dispatch_notification_with_loaded_config(notification: &NotificationItem) {
     if !should_dispatch_notification(notification) {
         return;
