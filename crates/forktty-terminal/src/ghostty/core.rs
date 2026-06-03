@@ -1,9 +1,8 @@
-use super::{
-    events::GhosttyEvent,
-    metadata::MetadataParser,
-};
+use super::{events::GhosttyEvent, metadata::MetadataParser};
 use libghostty_vt::{
     fmt::{Format, Formatter, FormatterOptions},
+    render::{CellIterator, CursorViewport, RowIterator},
+    style::RgbColor,
     RenderState, Terminal, TerminalOptions,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -24,6 +23,57 @@ pub struct GhosttyCore {
     metadata: MetadataParser,
     events: Rc<RefCell<Vec<GhosttyEvent>>>,
     bracketed_paste: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalRgb {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+impl From<RgbColor> for TerminalRgb {
+    fn from(value: RgbColor) -> Self {
+        Self {
+            red: value.r,
+            green: value.g,
+            blue: value.b,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalFrame {
+    pub cols: u16,
+    pub row_count: u16,
+    pub background: TerminalRgb,
+    pub foreground: TerminalRgb,
+    pub cursor: Option<TerminalCursor>,
+    pub rows: Vec<TerminalRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalRow {
+    pub cells: Vec<TerminalCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalCell {
+    pub text: String,
+    pub foreground: TerminalRgb,
+    pub background: TerminalRgb,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub inverse: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalCursor {
+    pub x: u16,
+    pub y: u16,
+    pub visible: bool,
 }
 
 impl GhosttyCore {
@@ -110,6 +160,61 @@ impl GhosttyCore {
         self.format_plain_text(false)
     }
 
+    pub fn render_frame(&mut self) -> Result<TerminalFrame> {
+        let snapshot = self.render_state.update(&self.terminal)?;
+        let colors = snapshot.colors()?;
+        let foreground = TerminalRgb::from(colors.foreground);
+        let background = TerminalRgb::from(colors.background);
+        let cursor = if snapshot.cursor_visible()? {
+            snapshot
+                .cursor_viewport()?
+                .map(|CursorViewport { x, y, .. }| TerminalCursor {
+                    x,
+                    y,
+                    visible: true,
+                })
+        } else {
+            None
+        };
+        let mut frame = TerminalFrame {
+            cols: snapshot.cols()?,
+            row_count: snapshot.rows()?,
+            background,
+            foreground,
+            cursor,
+            rows: Vec::new(),
+        };
+        let mut row_iterator = RowIterator::new()?;
+        let mut cell_iterator = CellIterator::new()?;
+        let mut rows = row_iterator.update(&snapshot)?;
+
+        while let Some(row) = rows.next() {
+            let mut cells = cell_iterator.update(row)?;
+            let mut row_cells = Vec::new();
+            while let Some(cell) = cells.next() {
+                let style = cell.style()?;
+                let mut cell_foreground = cell.fg_color()?.map_or(foreground, TerminalRgb::from);
+                let mut cell_background = cell.bg_color()?.map_or(background, TerminalRgb::from);
+                if style.inverse {
+                    std::mem::swap(&mut cell_foreground, &mut cell_background);
+                }
+                row_cells.push(TerminalCell {
+                    text: cell.graphemes()?.into_iter().collect(),
+                    foreground: cell_foreground,
+                    background: cell_background,
+                    bold: style.bold,
+                    italic: style.italic,
+                    underline: !matches!(style.underline, libghostty_vt::style::Underline::None),
+                    strikethrough: style.strikethrough,
+                    inverse: style.inverse,
+                });
+            }
+            frame.rows.push(TerminalRow { cells: row_cells });
+        }
+
+        Ok(frame)
+    }
+
     pub fn select_all_text(&self) -> Result<String> {
         self.format_plain_text(false)
     }
@@ -161,10 +266,12 @@ mod tests {
 
         let events = core.feed(b"hello\r\n\x1b]2;ForkTTY\x1b\\\x07").unwrap();
 
-        assert!(events.iter().any(
-            |event| matches!(event, GhosttyEvent::TitleChanged(title) if title == "ForkTTY")
-        ));
-        assert!(events.iter().any(|event| matches!(event, GhosttyEvent::Bell)));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, GhosttyEvent::TitleChanged(title) if title == "ForkTTY")));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, GhosttyEvent::Bell)));
         assert!(core.visible_text().unwrap().contains("hello"));
     }
 
@@ -182,6 +289,28 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| matches!(event, GhosttyEvent::PtyWrite(bytes) if !bytes.is_empty())));
+    }
+
+    #[test]
+    fn core_render_frame_preserves_ansi_color_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[31mred\x1b[0m ok").unwrap();
+
+        let frame = core.render_frame().unwrap();
+        let row = &frame.rows[0];
+
+        assert_eq!(row.cells[0].text, "r");
+        assert_eq!(row.cells[1].text, "e");
+        assert_eq!(row.cells[2].text, "d");
+        assert_eq!(row.cells[4].text, "o");
+        assert_ne!(row.cells[0].foreground, frame.foreground);
+        assert_eq!(row.cells[4].foreground, frame.foreground);
     }
 
     #[test]

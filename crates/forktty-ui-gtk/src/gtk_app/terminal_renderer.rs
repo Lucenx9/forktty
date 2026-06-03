@@ -1,4 +1,5 @@
 use super::*;
+use forktty_terminal::ghostty::core::{TerminalFrame, TerminalRgb, TerminalRow};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,14 @@ impl RendererColor {
             f64::from(self.green) / 255.0,
             f64::from(self.blue) / 255.0,
         );
+    }
+
+    fn from_terminal_rgb(value: TerminalRgb) -> Self {
+        Self {
+            red: value.red,
+            green: value.green,
+            blue: value.blue,
+        }
     }
 
     const BLACK: Self = Self {
@@ -80,6 +89,34 @@ pub(super) struct TerminalRenderer {
     font: gtk::pango::FontDescription,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RendererCellStyle {
+    foreground: RendererColor,
+    background: RendererColor,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    strikethrough: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RendererTextRun {
+    start_col: usize,
+    text: String,
+    foreground: RendererColor,
+    background: RendererColor,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    strikethrough: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RendererCellMetrics {
+    width: f64,
+    height: f64,
+}
+
 impl TerminalRenderer {
     pub(super) fn from_config_with_font(
         config: &config::AppConfig,
@@ -96,30 +133,169 @@ impl TerminalRenderer {
         self.font.clone()
     }
 
-    pub(super) fn draw_plain_text(
+    pub(super) fn cell_pixel_size_for_widget(&self, widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
+        let context = widget.as_ref().pango_context();
+        let metrics = context.metrics(Some(&self.font), None::<&gtk::pango::Language>);
+        let width = (metrics.approximate_char_width() / gtk::pango::SCALE).max(1);
+        let height = ((metrics.ascent() + metrics.descent()) / gtk::pango::SCALE).max(1);
+        (width, height)
+    }
+
+    pub(super) fn draw_frame(
         &self,
         cr: &gtk::cairo::Context,
         width: i32,
         height: i32,
-        text: &str,
+        frame: &TerminalFrame,
     ) {
-        self.palette.background.set_cairo_source(cr);
+        let default_background = RendererColor::from_terminal_rgb(frame.background);
+        default_background.set_cairo_source(cr);
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
-        self.palette.foreground.set_cairo_source(cr);
+        let metrics = self.cell_metrics(cr);
+
+        for (row_idx, row) in frame.rows.iter().enumerate() {
+            let y = row_idx as f64 * metrics.height;
+            for (col_idx, cell) in row.cells.iter().enumerate() {
+                let background = RendererColor::from_terminal_rgb(cell.background);
+                if background != default_background {
+                    background.set_cairo_source(cr);
+                    cr.rectangle(
+                        col_idx as f64 * metrics.width,
+                        y,
+                        metrics.width,
+                        metrics.height,
+                    );
+                    let _ = cr.fill();
+                }
+            }
+
+            for run in self.text_runs_for_row(row) {
+                run.foreground.set_cairo_source(cr);
+                let layout = pangocairo::functions::create_layout(cr);
+                let mut font = self.font.clone();
+                if run.bold {
+                    font.set_weight(gtk::pango::Weight::Bold);
+                }
+                if run.italic {
+                    font.set_style(gtk::pango::Style::Italic);
+                }
+                layout.set_font_description(Some(&font));
+                layout.set_text(&run.text);
+                cr.move_to(run.start_col as f64 * metrics.width, y);
+                pangocairo::functions::show_layout(cr, &layout);
+                self.draw_text_decorations(cr, &run, metrics, y);
+            }
+        }
+
+        if let Some(cursor) = frame.cursor.filter(|cursor| cursor.visible) {
+            self.palette.cursor.set_cairo_source(cr);
+            cr.rectangle(
+                f64::from(cursor.x) * metrics.width,
+                f64::from(cursor.y) * metrics.height,
+                metrics.width,
+                metrics.height,
+            );
+            let _ = cr.stroke();
+        }
+    }
+
+    fn text_runs_for_row(&self, row: &TerminalRow) -> Vec<RendererTextRun> {
+        let mut runs = Vec::new();
+        let mut current: Option<RendererTextRun> = None;
+        for (col, cell) in row.cells.iter().enumerate() {
+            if cell.text.is_empty() {
+                if let Some(run) = current.take() {
+                    runs.push(run);
+                }
+                continue;
+            }
+            let style = RendererCellStyle {
+                foreground: RendererColor::from_terminal_rgb(cell.foreground),
+                background: RendererColor::from_terminal_rgb(cell.background),
+                bold: cell.bold,
+                italic: cell.italic,
+                underline: cell.underline,
+                strikethrough: cell.strikethrough,
+            };
+            match &mut current {
+                Some(run) if run.style() == style => run.text.push_str(&cell.text),
+                Some(_) => {
+                    runs.push(current.take().expect("current run is present"));
+                    current = Some(RendererTextRun::from_cell(col, &cell.text, style));
+                }
+                None => current = Some(RendererTextRun::from_cell(col, &cell.text, style)),
+            }
+        }
+        if let Some(run) = current {
+            runs.push(run);
+        }
+        runs
+    }
+
+    fn cell_metrics(&self, cr: &gtk::cairo::Context) -> RendererCellMetrics {
         let layout = pangocairo::functions::create_layout(cr);
         layout.set_font_description(Some(&self.font));
-        layout.set_text(text);
-        layout.set_width((width.saturating_sub(16).max(1)) * gtk::pango::SCALE);
-        layout.set_wrap(gtk::pango::WrapMode::Char);
-        cr.move_to(8.0, 8.0);
-        pangocairo::functions::show_layout(cr, &layout);
+        layout.set_text("W");
+        let (_ink, logical) = layout.pixel_extents();
+        RendererCellMetrics {
+            width: f64::from(logical.width().max(1)),
+            height: f64::from(logical.height().max(1)),
+        }
+    }
+
+    fn draw_text_decorations(
+        &self,
+        cr: &gtk::cairo::Context,
+        run: &RendererTextRun,
+        metrics: RendererCellMetrics,
+        y: f64,
+    ) {
+        let x = run.start_col as f64 * metrics.width;
+        let width = run.text.chars().count() as f64 * metrics.width;
+        if run.underline {
+            cr.move_to(x, y + metrics.height - 2.0);
+            cr.line_to(x + width, y + metrics.height - 2.0);
+            let _ = cr.stroke();
+        }
+        if run.strikethrough {
+            cr.move_to(x, y + metrics.height * 0.58);
+            cr.line_to(x + width, y + metrics.height * 0.58);
+            let _ = cr.stroke();
+        }
+    }
+}
+
+impl RendererTextRun {
+    fn from_cell(start_col: usize, text: &str, style: RendererCellStyle) -> Self {
+        Self {
+            start_col,
+            text: text.to_string(),
+            foreground: style.foreground,
+            background: style.background,
+            bold: style.bold,
+            italic: style.italic,
+            underline: style.underline,
+            strikethrough: style.strikethrough,
+        }
+    }
+
+    fn style(&self) -> RendererCellStyle {
+        RendererCellStyle {
+            foreground: self.foreground,
+            background: self.background,
+            bold: self.bold,
+            italic: self.italic,
+            underline: self.underline,
+            strikethrough: self.strikethrough,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forktty_terminal::ghostty::core::{TerminalCell, TerminalRow, TerminalRgb};
 
     #[test]
     fn terminal_renderer_maps_theme_colors_to_ansi_palette() {
@@ -137,5 +313,61 @@ mod tests {
         let renderer = TerminalRenderer::from_config_with_font(&config, font.clone());
 
         assert_eq!(renderer.font_description(), font);
+    }
+
+    #[test]
+    fn terminal_renderer_groups_cells_by_visual_style() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let red = TerminalRgb {
+            red: 255,
+            green: 0,
+            blue: 0,
+        };
+        let default_fg = TerminalRgb {
+            red: 215,
+            green: 215,
+            blue: 215,
+        };
+        let default_bg = TerminalRgb {
+            red: 24,
+            green: 24,
+            blue: 24,
+        };
+        let row = TerminalRow {
+            cells: vec![
+                test_cell("r", red, default_bg),
+                test_cell("e", red, default_bg),
+                test_cell("d", red, default_bg),
+                test_cell(" ", default_fg, default_bg),
+                test_cell("o", default_fg, default_bg),
+                test_cell("k", default_fg, default_bg),
+            ],
+        };
+
+        let runs = renderer.text_runs_for_row(&row);
+
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].start_col, 0);
+        assert_eq!(runs[0].text, "red");
+        assert_eq!(runs[0].foreground, RendererColor::from_terminal_rgb(red));
+        assert_eq!(runs[1].start_col, 3);
+        assert_eq!(runs[1].text, " ok");
+    }
+
+    fn test_cell(text: &str, foreground: TerminalRgb, background: TerminalRgb) -> TerminalCell {
+        TerminalCell {
+            text: text.to_string(),
+            foreground,
+            background,
+            bold: false,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+            inverse: false,
+        }
     }
 }

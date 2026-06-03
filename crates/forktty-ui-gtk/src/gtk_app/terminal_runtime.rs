@@ -1,6 +1,6 @@
 use super::*;
 use forktty_terminal::ghostty::{
-    core::{GhosttyCore, GhosttyCoreOptions},
+    core::{GhosttyCore, GhosttyCoreOptions, TerminalFrame},
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
 };
@@ -138,6 +138,12 @@ impl TerminalRuntime {
         self.core.visible_text().unwrap_or_default()
     }
 
+    pub(super) fn render_frame(&mut self) -> Result<TerminalFrame, TerminalError> {
+        self.core
+            .render_frame()
+            .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
     #[cfg(test)]
     pub(super) fn size(&self) -> PtySize {
         self.size
@@ -184,7 +190,9 @@ impl TestTerminalRuntimeHarness {
     pub(super) fn spawn(&self, request: SpawnRequest) {
         self.backend.spawn(request.clone()).unwrap();
         let runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
-        self.backend.mark_surface_ready(&request.surface_id).unwrap();
+        self.backend
+            .mark_surface_ready(&request.surface_id)
+            .unwrap();
         self.runtimes
             .borrow_mut()
             .insert(request.surface_id.clone(), runtime);
@@ -299,10 +307,7 @@ mod tests {
 
         harness.controller_send_text("surface-1", "echo ok\n");
 
-        assert_eq!(
-            harness.pty_writes("surface-1"),
-            vec![b"echo ok\n".to_vec()]
-        );
+        assert_eq!(harness.pty_writes("surface-1"), vec![b"echo ok\n".to_vec()]);
     }
 
     #[test]

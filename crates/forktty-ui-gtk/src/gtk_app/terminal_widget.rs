@@ -51,7 +51,11 @@ impl GhosttyTerminalWidget {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             drawing_area.set_draw_func(move |_area, cr, width, height| {
-                renderer.draw_plain_text(cr, width, height, &runtime.borrow().visible_text());
+                let frame = runtime.borrow_mut().render_frame();
+                match frame {
+                    Ok(frame) => renderer.draw_frame(cr, width, height, &frame),
+                    Err(err) => eprintln!("Failed to render terminal frame: {err}"),
+                }
             });
         }
         {
@@ -72,8 +76,14 @@ impl GhosttyTerminalWidget {
         }
         {
             let runtime = runtime.clone();
+            let renderer = renderer.clone();
             drawing_area.connect_resize(move |area, width, height| {
-                if let Err(err) = runtime.borrow_mut().resize_pixels(width, height, 10, 20) {
+                let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+                if let Err(err) =
+                    runtime
+                        .borrow_mut()
+                        .resize_pixels(width, height, cell_width, cell_height)
+                {
                     eprintln!("Failed to resize terminal runtime: {err}");
                 }
                 area.queue_draw();
