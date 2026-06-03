@@ -273,6 +273,14 @@ impl GhosttyTerminalWidget {
         self.drawing_area.downgrade()
     }
 
+    pub(super) fn downgrade_widget(&self) -> WeakGhosttyTerminalWidget {
+        WeakGhosttyTerminalWidget {
+            drawing_area: self.drawing_area.downgrade(),
+            runtime: Rc::downgrade(&self.runtime),
+            selection: Rc::downgrade(&self.selection),
+        }
+    }
+
     pub(super) fn attach_navigation_key_fallback<W>(&self, target: &W)
     where
         W: IsA<gtk::Widget>,
@@ -303,6 +311,26 @@ impl GhosttyTerminalWidget {
             self.drawing_area.queue_draw();
         }
         Ok(events)
+    }
+}
+
+// A weak handle over every field of the widget so background work (e.g. the PTY
+// pump timer) can keep running without keeping the terminal runtime and PTY alive
+// after the pane is closed. `upgrade()` returns `None` once the widget is dropped.
+#[derive(Clone)]
+pub(super) struct WeakGhosttyTerminalWidget {
+    drawing_area: glib::WeakRef<gtk::DrawingArea>,
+    runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
+    selection: std::rc::Weak<RefCell<TerminalSelection>>,
+}
+
+impl WeakGhosttyTerminalWidget {
+    pub(super) fn upgrade(&self) -> Option<GhosttyTerminalWidget> {
+        Some(GhosttyTerminalWidget {
+            drawing_area: self.drawing_area.upgrade()?,
+            runtime: self.runtime.upgrade()?,
+            selection: self.selection.upgrade()?,
+        })
     }
 }
 

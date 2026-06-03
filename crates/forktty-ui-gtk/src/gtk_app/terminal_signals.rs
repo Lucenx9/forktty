@@ -65,17 +65,16 @@ pub(super) fn attach_terminal_signal_handlers(
     });
     gtk_widget.add_controller(focus_click);
 
-    let pump_widget = widget.clone();
-    let pump_widget_weak = widget.downgrade();
+    let pump_widget_weak = widget.downgrade_widget();
     let pump_model = model.clone();
     let pump_workspace_id = request.workspace_id.clone();
     let pump_surface_id = request.surface_id.clone();
     let pump_state = state.clone();
     let pump_surface_pids = surface_pids.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
-        if pump_widget_weak.upgrade().is_none() {
+        let Some(pump_widget) = pump_widget_weak.upgrade() else {
             return glib::ControlFlow::Break;
-        }
+        };
         match pump_widget.pump_pty_events() {
             Ok(events) if events.is_empty() => {}
             Ok(events) => {
