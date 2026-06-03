@@ -11,7 +11,7 @@ use libghostty_vt::{
         EncoderSize as GhosttyMouseEncoderSize, Event as GhosttyMouseEvent,
         Position as GhosttyMousePosition,
     },
-    render::{CellIterator, CursorViewport, RowIterator},
+    render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::CellWide,
     style::RgbColor,
     terminal::ScrollViewport,
@@ -262,6 +262,27 @@ pub struct TerminalCursor {
     pub y: u16,
     pub visible: bool,
     pub at_wide_tail: bool,
+    pub style: TerminalCursorStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalCursorStyle {
+    Bar,
+    Block,
+    Underline,
+    BlockHollow,
+}
+
+impl From<CursorVisualStyle> for TerminalCursorStyle {
+    fn from(value: CursorVisualStyle) -> Self {
+        match value {
+            CursorVisualStyle::Bar => Self::Bar,
+            CursorVisualStyle::Block => Self::Block,
+            CursorVisualStyle::Underline => Self::Underline,
+            CursorVisualStyle::BlockHollow => Self::BlockHollow,
+            _ => Self::Block,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,6 +408,7 @@ impl GhosttyCore {
         let foreground = TerminalRgb::from(colors.foreground);
         let background = TerminalRgb::from(colors.background);
         let cursor = if snapshot.cursor_visible()? {
+            let style = TerminalCursorStyle::from(snapshot.cursor_visual_style()?);
             snapshot
                 .cursor_viewport()?
                 .map(|CursorViewport { x, y, at_wide_tail }| TerminalCursor {
@@ -394,6 +416,7 @@ impl GhosttyCore {
                     y,
                     visible: true,
                     at_wide_tail,
+                    style,
                 })
         } else {
             None
@@ -946,6 +969,22 @@ mod tests {
 
         assert_eq!(cursor.x, 1);
         assert!(cursor.at_wide_tail);
+    }
+
+    #[test]
+    fn core_render_frame_preserves_cursor_visual_style() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[4 q").unwrap();
+
+        let cursor = core.render_frame().unwrap().cursor.unwrap();
+
+        assert_eq!(cursor.style, TerminalCursorStyle::Underline);
     }
 
     #[test]

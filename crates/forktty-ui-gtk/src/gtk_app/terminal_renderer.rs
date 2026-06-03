@@ -1,6 +1,6 @@
 use super::*;
 use forktty_terminal::ghostty::core::{
-    TerminalCell, TerminalCellWidth, TerminalFrame, TerminalRgb, TerminalRow,
+    TerminalCell, TerminalCellWidth, TerminalCursorStyle, TerminalFrame, TerminalRgb, TerminalRow,
 };
 use std::fmt;
 
@@ -126,11 +126,31 @@ struct RendererCursorOverlay {
     col: usize,
     row: usize,
     cell_span: usize,
+    style: RendererCursorStyle,
     text: String,
     foreground: RendererColor,
     background: RendererColor,
     bold: bool,
     italic: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RendererCursorStyle {
+    Bar,
+    Block,
+    Underline,
+    BlockHollow,
+}
+
+impl From<TerminalCursorStyle> for RendererCursorStyle {
+    fn from(value: TerminalCursorStyle) -> Self {
+        match value {
+            TerminalCursorStyle::Bar => Self::Bar,
+            TerminalCursorStyle::Block => Self::Block,
+            TerminalCursorStyle::Underline => Self::Underline,
+            TerminalCursorStyle::BlockHollow => Self::BlockHollow,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +345,7 @@ impl TerminalRenderer {
             col,
             row: usize::from(cursor.y),
             cell_span: cell_grid_span(cell),
+            style: RendererCursorStyle::from(cursor.style),
             text,
             foreground: self.palette.cursor_foreground,
             background: self.palette.cursor,
@@ -451,13 +472,34 @@ impl TerminalRenderer {
         let x = cursor.col as f64 * metrics.width;
         let y = cursor.row as f64 * metrics.height;
         cursor.background.set_cairo_source(cr);
-        cr.rectangle(
-            x,
-            y,
-            cursor.cell_span as f64 * metrics.width,
-            metrics.height,
-        );
-        let _ = cr.fill();
+        let width = cursor.cell_span as f64 * metrics.width;
+        match cursor.style {
+            RendererCursorStyle::Bar => {
+                cr.rectangle(x, y, 2.0_f64.min(width), metrics.height);
+                let _ = cr.fill();
+                return;
+            }
+            RendererCursorStyle::Underline => {
+                let underline_height = 2.0_f64.max(metrics.height * 0.12);
+                cr.rectangle(
+                    x,
+                    y + metrics.height - underline_height,
+                    width,
+                    underline_height,
+                );
+                let _ = cr.fill();
+                return;
+            }
+            RendererCursorStyle::BlockHollow => {
+                cr.rectangle(x + 0.5, y + 0.5, width - 1.0, metrics.height - 1.0);
+                let _ = cr.stroke();
+                return;
+            }
+            RendererCursorStyle::Block => {
+                cr.rectangle(x, y, width, metrics.height);
+                let _ = cr.fill();
+            }
+        }
 
         if cursor.text.is_empty() {
             return;
@@ -831,6 +873,40 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_preserves_non_block_cursor_shape() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let frame = test_frame(
+            TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            TerminalRow {
+                cells: vec![test_cell("a", None, None)],
+            },
+        )
+        .with_cursor_style(
+            0,
+            0,
+            forktty_terminal::ghostty::core::TerminalCursorStyle::Bar,
+        );
+
+        let overlay = renderer.cursor_overlay_for_frame(&frame).unwrap();
+
+        assert_eq!(overlay.style, RendererCursorStyle::Bar);
+        assert_eq!(overlay.cell_span, 1);
+    }
+
+    #[test]
     fn terminal_renderer_places_wide_tail_cursor_over_wide_cell() {
         let config = config::AppConfig::default();
         let renderer = TerminalRenderer::from_config_with_font(
@@ -902,6 +978,12 @@ mod tests {
 
     trait TestFrameCursor {
         fn with_cursor(self, x: u16, y: u16) -> Self;
+        fn with_cursor_style(
+            self,
+            x: u16,
+            y: u16,
+            style: forktty_terminal::ghostty::core::TerminalCursorStyle,
+        ) -> Self;
         fn with_wide_tail_cursor(self, x: u16, y: u16) -> Self;
     }
 
@@ -912,6 +994,23 @@ mod tests {
                 y,
                 visible: true,
                 at_wide_tail: false,
+                style: forktty_terminal::ghostty::core::TerminalCursorStyle::Block,
+            });
+            self
+        }
+
+        fn with_cursor_style(
+            mut self,
+            x: u16,
+            y: u16,
+            style: forktty_terminal::ghostty::core::TerminalCursorStyle,
+        ) -> Self {
+            self.cursor = Some(forktty_terminal::ghostty::core::TerminalCursor {
+                x,
+                y,
+                visible: true,
+                at_wide_tail: false,
+                style,
             });
             self
         }
@@ -922,6 +1021,7 @@ mod tests {
                 y,
                 visible: true,
                 at_wide_tail: true,
+                style: forktty_terminal::ghostty::core::TerminalCursorStyle::Block,
             });
             self
         }
