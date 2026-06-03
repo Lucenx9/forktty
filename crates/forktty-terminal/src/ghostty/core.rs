@@ -14,6 +14,7 @@ use libghostty_vt::{
     render::{CellIterator, CursorViewport, RowIterator},
     screen::CellWide,
     style::RgbColor,
+    terminal::ScrollViewport,
     RenderState, Terminal, TerminalOptions,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -363,6 +364,17 @@ impl GhosttyCore {
         Ok(std::mem::take(&mut *events))
     }
 
+    pub fn scroll_viewport_lines(&mut self, delta: isize) -> Result<Vec<GhosttyEvent>> {
+        if delta == 0 {
+            return Ok(Vec::new());
+        }
+        self.terminal.scroll_viewport(ScrollViewport::Delta(delta));
+        let _snapshot = self.render_state.update(&self.terminal)?;
+        let mut events = self.events.borrow_mut();
+        events.push(GhosttyEvent::VisibleContentChanged);
+        Ok(std::mem::take(&mut *events))
+    }
+
     pub fn visible_text(&self) -> Result<String> {
         self.format_plain_text(false)
     }
@@ -568,6 +580,22 @@ fn csi_private_params_contain(params: &[u8], expected: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    fn frame_text(frame: &TerminalFrame) -> String {
+        frame
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| cell.text.as_str())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn core_formats_visible_text_and_emits_title_and_bell() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
@@ -689,6 +717,33 @@ mod tests {
         let bytes = core.encode_mouse(test_mouse_press()).unwrap();
 
         assert_eq!(bytes, b"\x1b[<0;2;2M");
+    }
+
+    #[test]
+    fn core_scroll_viewport_moves_visible_frame_through_scrollback() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour").unwrap();
+        let bottom = frame_text(&core.render_frame().unwrap());
+
+        assert!(bottom.contains("three"));
+        assert!(bottom.contains("four"));
+
+        core.scroll_viewport_lines(-10).unwrap();
+        let scrolled = frame_text(&core.render_frame().unwrap());
+
+        assert!(scrolled.contains("one"));
+        assert_ne!(scrolled, bottom);
+
+        core.scroll_viewport_lines(10).unwrap();
+        let restored = frame_text(&core.render_frame().unwrap());
+
+        assert_eq!(restored, bottom);
     }
 
     #[test]

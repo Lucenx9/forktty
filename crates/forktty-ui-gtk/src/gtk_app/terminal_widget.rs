@@ -207,10 +207,23 @@ impl GhosttyTerminalWidget {
                             any_button_pressed: false,
                         },
                     );
-                    if write_terminal_mouse(&runtime, &drawing_area, input) {
-                        glib::Propagation::Stop
-                    } else {
-                        glib::Propagation::Proceed
+                    match runtime.borrow_mut().write_mouse(input) {
+                        Ok(true) => {
+                            drawing_area.queue_draw();
+                            glib::Propagation::Stop
+                        }
+                        Ok(false) => {
+                            if let Some(delta) = terminal_scroll_viewport_delta(dy) {
+                                scroll_terminal_viewport(&runtime, &drawing_area, delta);
+                                glib::Propagation::Stop
+                            } else {
+                                glib::Propagation::Proceed
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("Failed to write terminal mouse input: {err}");
+                            glib::Propagation::Proceed
+                        }
                     }
                 });
             }
@@ -352,6 +365,25 @@ fn write_terminal_mouse(
         }
         Err(err) => {
             eprintln!("Failed to write terminal mouse input: {err}");
+            false
+        }
+    }
+}
+
+fn scroll_terminal_viewport(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    drawing_area: &gtk::DrawingArea,
+    delta: isize,
+) -> bool {
+    match runtime.borrow_mut().scroll_viewport_lines(delta) {
+        Ok(scrolled) => {
+            if scrolled {
+                drawing_area.queue_draw();
+            }
+            scrolled
+        }
+        Err(err) => {
+            eprintln!("Failed to scroll terminal viewport: {err}");
             false
         }
     }

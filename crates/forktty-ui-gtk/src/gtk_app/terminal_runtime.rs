@@ -89,6 +89,14 @@ impl TerminalRuntime {
         Ok(true)
     }
 
+    pub(super) fn scroll_viewport_lines(&mut self, delta: isize) -> Result<bool, TerminalError> {
+        let events = self
+            .core
+            .scroll_viewport_lines(delta)
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        Ok(!events.is_empty())
+    }
+
     pub(super) fn resize_pixels(
         &mut self,
         width_px: i32,
@@ -335,6 +343,36 @@ impl TestTerminalRuntimeHarness {
 mod tests {
     use super::*;
 
+    fn test_request() -> SpawnRequest {
+        let mut request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
+        request
+    }
+
+    fn frame_text(frame: &TerminalFrame) -> String {
+        frame
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| cell.text.as_str())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn socket_send_text_writes_to_runtime_pty() {
         let harness = TestTerminalRuntimeHarness::new_ready("surface-1");
@@ -375,6 +413,27 @@ mod tests {
             .unwrap();
 
         assert_eq!(runtime.pty_writes().last().unwrap(), b"\x1bOA");
+    }
+
+    #[test]
+    fn scroll_viewport_updates_frame_without_pty_write() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 12, rows: 2 }).unwrap();
+
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour")
+            .unwrap();
+        let bottom = frame_text(&runtime.render_frame().unwrap());
+
+        assert!(bottom.contains("three"));
+        assert!(bottom.contains("four"));
+
+        assert!(runtime.scroll_viewport_lines(-10).unwrap());
+        let scrolled = frame_text(&runtime.render_frame().unwrap());
+
+        assert!(scrolled.contains("one"));
+        assert_ne!(scrolled, bottom);
+        assert!(runtime.pty_writes().is_empty());
     }
 
     #[test]
