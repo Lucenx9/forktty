@@ -71,14 +71,7 @@ impl GhosttyTerminalWidget {
                 let Some(input) = translate_gtk_key(key, modifiers, None) else {
                     return glib::Propagation::Proceed;
                 };
-                let result = match input {
-                    TerminalInput::Bytes(bytes) => runtime.borrow_mut().write_bytes(&bytes),
-                    TerminalInput::Key(key) => runtime.borrow_mut().write_key(key),
-                };
-                if let Err(err) = result {
-                    eprintln!("Failed to write terminal key input: {err}");
-                }
-                drawing_area_for_key.queue_draw();
+                write_terminal_input(&runtime, &drawing_area_for_key, input);
                 glib::Propagation::Stop
             });
             drawing_area.add_controller(key_controller);
@@ -249,6 +242,25 @@ impl GhosttyTerminalWidget {
         self.drawing_area.downgrade()
     }
 
+    pub(super) fn attach_navigation_key_fallback<W>(&self, target: &W)
+    where
+        W: IsA<gtk::Widget>,
+    {
+        let runtime = self.runtime.clone();
+        let drawing_area = self.drawing_area.clone();
+        let key_controller = gtk::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+            let Some(input) = translate_gtk_navigation_key(key, modifiers) else {
+                return glib::Propagation::Proceed;
+            };
+            write_terminal_input(&runtime, &drawing_area, input);
+            drawing_area.grab_focus();
+            glib::Propagation::Stop
+        });
+        target.add_controller(key_controller);
+    }
+
     fn with_runtime(&self, f: impl FnOnce(&mut TerminalRuntime) -> Result<(), TerminalError>) {
         if let Err(err) = f(&mut self.runtime.borrow_mut()) {
             eprintln!("Terminal runtime operation failed: {err}");
@@ -343,6 +355,21 @@ fn write_terminal_mouse(
             false
         }
     }
+}
+
+fn write_terminal_input(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    drawing_area: &gtk::DrawingArea,
+    input: TerminalInput,
+) {
+    let result = match input {
+        TerminalInput::Bytes(bytes) => runtime.borrow_mut().write_bytes(&bytes),
+        TerminalInput::Key(key) => runtime.borrow_mut().write_key(key),
+    };
+    if let Err(err) = result {
+        eprintln!("Failed to write terminal key input: {err}");
+    }
+    drawing_area.queue_draw();
 }
 
 pub(super) trait TerminalWidgetOps {

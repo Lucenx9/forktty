@@ -11,6 +11,7 @@ pub(super) fn build_pane_chrome(
     pane.set_vexpand(true);
     pane.set_overflow(gtk::Overflow::Hidden);
     pane.add_css_class("terminal-pane");
+    widget.attach_navigation_key_fallback(&pane);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("terminal-pane-header");

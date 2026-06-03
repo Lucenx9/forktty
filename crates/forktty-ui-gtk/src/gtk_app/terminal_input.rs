@@ -115,6 +115,42 @@ pub(super) fn translate_gtk_key(
     encode_key(spec).map(TerminalInput::Bytes)
 }
 
+pub(super) fn translate_gtk_navigation_key(
+    key: gtk::gdk::Key,
+    modifiers: gtk::gdk::ModifierType,
+) -> Option<TerminalInput> {
+    if !is_terminal_navigation_key(key) {
+        return None;
+    }
+    translate_gtk_key(key, modifiers, None)
+}
+
+fn is_terminal_navigation_key(key: gtk::gdk::Key) -> bool {
+    matches!(
+        key,
+        gtk::gdk::Key::Up
+            | gtk::gdk::Key::KP_Up
+            | gtk::gdk::Key::Down
+            | gtk::gdk::Key::KP_Down
+            | gtk::gdk::Key::Right
+            | gtk::gdk::Key::KP_Right
+            | gtk::gdk::Key::Left
+            | gtk::gdk::Key::KP_Left
+            | gtk::gdk::Key::Home
+            | gtk::gdk::Key::KP_Home
+            | gtk::gdk::Key::End
+            | gtk::gdk::Key::KP_End
+            | gtk::gdk::Key::Page_Up
+            | gtk::gdk::Key::KP_Page_Up
+            | gtk::gdk::Key::Page_Down
+            | gtk::gdk::Key::KP_Page_Down
+            | gtk::gdk::Key::Insert
+            | gtk::gdk::Key::KP_Insert
+            | gtk::gdk::Key::Delete
+            | gtk::gdk::Key::KP_Delete
+    )
+}
+
 fn encode_key(spec: GhosttyKeySpec) -> Option<Vec<u8>> {
     match spec.key {
         GhosttyKey::Enter => Some(b"\r".to_vec()),
@@ -336,6 +372,25 @@ mod tests {
                 )
             )
         );
+    }
+
+    #[test]
+    fn pane_navigation_fallback_routes_only_terminal_navigation_keys() {
+        use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
+
+        let none = gtk::gdk::ModifierType::empty();
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+
+        assert_eq!(
+            translate_gtk_navigation_key(gtk::gdk::Key::Up, none).unwrap(),
+            TerminalInput::Key(TerminalKeyInput::new(TerminalKey::ArrowUp))
+        );
+        assert_eq!(
+            translate_gtk_navigation_key(gtk::gdk::Key::KP_Left, none).unwrap(),
+            TerminalInput::Key(TerminalKeyInput::new(TerminalKey::ArrowLeft))
+        );
+        assert!(translate_gtk_navigation_key(gtk::gdk::Key::a, none).is_none());
+        assert!(translate_gtk_navigation_key(gtk::gdk::Key::Page_Up, ctrl).is_none());
     }
 
     #[test]
