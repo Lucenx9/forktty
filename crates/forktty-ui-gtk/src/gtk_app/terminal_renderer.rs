@@ -114,6 +114,13 @@ struct RendererTextRun {
     strikethrough: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RendererBackgroundRun {
+    start_col: usize,
+    cell_span: usize,
+    background: RendererColor,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RendererCursorOverlay {
     col: usize,
@@ -178,18 +185,15 @@ impl TerminalRenderer {
 
         for (row_idx, row) in frame.rows.iter().enumerate() {
             let y = row_idx as f64 * metrics.height;
-            for (col_idx, cell) in row.cells.iter().enumerate() {
-                let background = self.cell_background_for_frame(frame, cell);
-                if background != default_background {
-                    background.set_cairo_source(cr);
-                    cr.rectangle(
-                        col_idx as f64 * metrics.width,
-                        y,
-                        metrics.width,
-                        metrics.height,
-                    );
-                    let _ = cr.fill();
-                }
+            for background in self.background_runs_for_frame_row(frame, row) {
+                background.background.set_cairo_source(cr);
+                cr.rectangle(
+                    background.start_col as f64 * metrics.width,
+                    y,
+                    background.cell_span as f64 * metrics.width,
+                    metrics.height,
+                );
+                let _ = cr.fill();
             }
 
             for run in self.text_runs_for_frame_row(frame, row) {
@@ -218,6 +222,35 @@ impl TerminalRenderer {
     #[cfg(test)]
     fn text_runs_for_row(&self, row: &TerminalRow) -> Vec<RendererTextRun> {
         self.text_runs_for_row_with_defaults(row, self.palette_defaults())
+    }
+
+    fn background_runs_for_frame_row(
+        &self,
+        frame: &TerminalFrame,
+        row: &TerminalRow,
+    ) -> Vec<RendererBackgroundRun> {
+        let default_background = self.frame_defaults(frame).background;
+        row.cells
+            .iter()
+            .enumerate()
+            .filter_map(|(col, cell)| {
+                if matches!(
+                    cell.width,
+                    TerminalCellWidth::SpacerTail | TerminalCellWidth::SpacerHead
+                ) {
+                    return None;
+                }
+                let background = self.cell_background_for_frame(frame, cell);
+                if background == default_background {
+                    return None;
+                }
+                Some(RendererBackgroundRun {
+                    start_col: col,
+                    cell_span: cell_grid_span(cell),
+                    background,
+                })
+            })
+            .collect()
     }
 
     fn text_runs_for_frame_row(
@@ -662,6 +695,49 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert!(runs[0].underline);
         assert!(!runs[1].underline);
+    }
+
+    #[test]
+    fn terminal_renderer_paints_wide_cell_background_across_cell_span() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let red = TerminalRgb {
+            red: 255,
+            green: 0,
+            blue: 0,
+        };
+        let mut wide = test_cell("橋", None, Some(red));
+        wide.width = TerminalCellWidth::Wide;
+        let mut spacer = test_cell("", None, None);
+        spacer.width = TerminalCellWidth::SpacerTail;
+        let frame = test_frame(
+            TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            TerminalRow {
+                cells: vec![wide, spacer],
+            },
+        );
+
+        let backgrounds = renderer.background_runs_for_frame_row(&frame, &frame.rows[0]);
+
+        assert_eq!(backgrounds.len(), 1);
+        assert_eq!(backgrounds[0].start_col, 0);
+        assert_eq!(backgrounds[0].cell_span, 2);
+        assert_eq!(
+            backgrounds[0].background,
+            RendererColor::from_terminal_rgb(red)
+        );
     }
 
     #[test]
