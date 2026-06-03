@@ -247,7 +247,7 @@ impl TerminalRenderer {
                 background: self.cell_background_with_defaults(cell, defaults),
                 bold: cell.bold,
                 italic: cell.italic,
-                underline: cell.underline,
+                underline: cell.underline || cell.hyperlink,
                 strikethrough: cell.strikethrough,
             };
             let cell_span = cell_grid_span(cell);
@@ -645,6 +645,26 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_underlines_hyperlink_cells() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut link_cell = test_cell("x", None, None);
+        link_cell.hyperlink = true;
+        let row = TerminalRow {
+            cells: vec![link_cell, test_cell("y", None, None)],
+        };
+
+        let runs = renderer.text_runs_for_row(&row);
+
+        assert_eq!(runs.len(), 2);
+        assert!(runs[0].underline);
+        assert!(!runs[1].underline);
+    }
+
+    #[test]
     fn terminal_renderer_does_not_emit_text_runs_for_invisible_cells() {
         let config = config::AppConfig::default();
         let renderer = TerminalRenderer::from_config_with_font(
@@ -785,6 +805,7 @@ mod tests {
             strikethrough: false,
             inverse: false,
             invisible: false,
+            hyperlink: false,
         }
     }
 

@@ -253,6 +253,7 @@ pub struct TerminalCell {
     pub strikethrough: bool,
     pub inverse: bool,
     pub invisible: bool,
+    pub hyperlink: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,7 +415,8 @@ impl GhosttyCore {
             let mut row_cells = Vec::new();
             while let Some(cell) = cells.next() {
                 let style = cell.style()?;
-                let width = TerminalCellWidth::from(cell.raw_cell()?.wide()?);
+                let raw_cell = cell.raw_cell()?;
+                let width = TerminalCellWidth::from(raw_cell.wide()?);
                 let cell_foreground = cell.fg_color()?.map(TerminalRgb::from);
                 let cell_background = cell.bg_color()?.map(TerminalRgb::from);
                 row_cells.push(TerminalCell {
@@ -428,6 +430,7 @@ impl GhosttyCore {
                     strikethrough: style.strikethrough,
                     inverse: style.inverse,
                     invisible: style.invisible,
+                    hyperlink: raw_cell.has_hyperlink()?,
                 });
             }
             frame.rows.push(TerminalRow { cells: row_cells });
@@ -867,6 +870,27 @@ mod tests {
         assert!(cell.inverse);
         assert!(cell.foreground.is_some());
         assert_eq!(cell.background, None);
+    }
+
+    #[test]
+    fn core_render_frame_marks_osc8_hyperlink_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b]8;;https://example.test\x07link\x1b]8;;\x07 plain")
+            .unwrap();
+
+        let frame = core.render_frame().unwrap();
+        let row = &frame.rows[0];
+
+        assert_eq!(row.cells[0].text, "l");
+        assert!(row.cells[0].hyperlink);
+        assert!(row.cells[3].hyperlink);
+        assert!(!row.cells[5].hyperlink);
     }
 
     #[test]
