@@ -388,6 +388,14 @@ impl TerminalController {
         true
     }
 
+    pub(super) fn send_model_focused_navigation_input(&self, input: TerminalInput) -> bool {
+        let Some(widget) = self.model_focused_widget() else {
+            return false;
+        };
+        widget.write_input(input);
+        true
+    }
+
     fn queue_focus_for_surface(&self, surface_id: &str) {
         if let Some(widget) = self.widgets.get(surface_id) {
             queue_widget_focus(widget.widget());

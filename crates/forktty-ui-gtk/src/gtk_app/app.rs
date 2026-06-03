@@ -316,6 +316,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         model.clone(),
     )));
     controller.borrow_mut().attach_state(state.clone());
+    install_terminal_navigation_fallback(&content, &window, &controller);
 
     #[cfg(feature = "browser")]
     {
@@ -515,6 +516,38 @@ pub(super) fn build_ui(app: &adw::Application) {
         }
         start_socket_server(state_for_bootstrap.clone());
     });
+}
+
+fn install_terminal_navigation_fallback<W>(
+    target: &W,
+    window: &adw::ApplicationWindow,
+    controller: &Rc<RefCell<TerminalController>>,
+) where
+    W: IsA<gtk::Widget>,
+{
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let window = window.clone();
+    let controller = controller.clone();
+    key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+        let Some(input) = translate_gtk_navigation_key(key, modifiers) else {
+            return glib::Propagation::Proceed;
+        };
+        let focus =
+            terminal_navigation_fallback_focus(gtk::prelude::GtkWindowExt::focus(&window).as_ref());
+        if !terminal_navigation_fallback_allowed(focus) {
+            return glib::Propagation::Proceed;
+        }
+        if controller
+            .borrow()
+            .send_model_focused_navigation_input(input)
+        {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    target.add_controller(key_controller);
 }
 
 pub(super) fn default_startup_workspace_dir() -> PathBuf {

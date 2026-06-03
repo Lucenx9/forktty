@@ -305,6 +305,10 @@ impl GhosttyTerminalWidget {
         }
         Ok(events)
     }
+
+    pub(super) fn write_input(&self, input: TerminalInput) {
+        write_terminal_input(&self.runtime, &self.drawing_area, input);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

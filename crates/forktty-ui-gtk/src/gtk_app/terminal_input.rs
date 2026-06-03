@@ -39,6 +39,14 @@ pub(super) enum TerminalInput {
     Key(TerminalKeyInput),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TerminalNavigationFallbackFocus {
+    TerminalSurface,
+    AppChrome,
+    TextInput,
+    Popover,
+}
+
 pub(super) fn terminal_text_input(text: &str) -> Option<TerminalInput> {
     if text.is_empty() {
         None
@@ -135,6 +143,39 @@ pub(super) fn translate_gtk_navigation_key(
         return None;
     }
     translate_gtk_key(key, modifiers, None)
+}
+
+pub(super) fn terminal_navigation_fallback_focus(
+    focus: Option<&gtk::Widget>,
+) -> TerminalNavigationFallbackFocus {
+    let Some(focus) = focus else {
+        return TerminalNavigationFallbackFocus::AppChrome;
+    };
+    if focus.ancestor(gtk::Popover::static_type()).is_some() {
+        return TerminalNavigationFallbackFocus::Popover;
+    }
+    if focused_widget_is_text_input(focus) {
+        return TerminalNavigationFallbackFocus::TextInput;
+    }
+    if focus.has_css_class("ghostty-terminal") {
+        return TerminalNavigationFallbackFocus::TerminalSurface;
+    }
+    TerminalNavigationFallbackFocus::AppChrome
+}
+
+pub(super) fn terminal_navigation_fallback_allowed(focus: TerminalNavigationFallbackFocus) -> bool {
+    matches!(
+        focus,
+        TerminalNavigationFallbackFocus::AppChrome
+            | TerminalNavigationFallbackFocus::TerminalSurface
+    )
+}
+
+fn focused_widget_is_text_input(widget: &gtk::Widget) -> bool {
+    widget.is::<gtk::Entry>()
+        || widget.is::<gtk::SearchEntry>()
+        || widget.is::<gtk::SpinButton>()
+        || widget.is::<gtk::TextView>()
 }
 
 fn is_terminal_navigation_key(key: gtk::gdk::Key) -> bool {
@@ -517,5 +558,21 @@ mod tests {
         assert!(translate_gtk_key(gtk::gdk::Key::Page_Down, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::Home, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::End, ctrl, None).is_none());
+    }
+
+    #[test]
+    fn navigation_fallback_policy_routes_from_app_chrome_but_not_text_or_popovers() {
+        assert!(terminal_navigation_fallback_allowed(
+            TerminalNavigationFallbackFocus::AppChrome
+        ));
+        assert!(terminal_navigation_fallback_allowed(
+            TerminalNavigationFallbackFocus::TerminalSurface
+        ));
+        assert!(!terminal_navigation_fallback_allowed(
+            TerminalNavigationFallbackFocus::TextInput
+        ));
+        assert!(!terminal_navigation_fallback_allowed(
+            TerminalNavigationFallbackFocus::Popover
+        ));
     }
 }
