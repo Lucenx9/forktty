@@ -74,17 +74,22 @@ fn build_child_map(proc_root: &Path) -> BTreeMap<i32, Vec<i32>> {
     map
 }
 
-/// Extract the parent PID (4th field) from a `/proc/<pid>/stat` line.
+/// Return the `index`-th whitespace-separated field of a `/proc/<pid>/stat`
+/// line, counting from the field right after `(comm)` (so index 0 is `state`,
+/// index 1 is `ppid`, index 4 is `tty_nr`).
 ///
 /// The 2nd field is `(comm)` and may itself contain spaces or parentheses, so
 /// the scan resumes after the final `)` to keep field offsets correct.
-fn parse_ppid(stat: &str) -> Option<i32> {
+pub fn stat_field_after_comm(stat: &str, index: usize) -> Option<&str> {
     let close = stat.rfind(')')?;
     let rest = stat.get(close + 1..)?;
-    // After comm: state (field 3) then ppid (field 4).
-    let mut fields = rest.split_whitespace();
-    let _state = fields.next()?;
-    fields.next()?.parse::<i32>().ok()
+    rest.split_whitespace().nth(index)
+}
+
+/// Extract the parent PID (4th field) from a `/proc/<pid>/stat` line.
+fn parse_ppid(stat: &str) -> Option<i32> {
+    // After comm: state (index 0) then ppid (index 1).
+    stat_field_after_comm(stat, 1)?.parse::<i32>().ok()
 }
 
 /// Map socket inode -> local port for `LISTEN` sockets in tcp and tcp6 tables.

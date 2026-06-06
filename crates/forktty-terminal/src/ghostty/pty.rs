@@ -241,10 +241,8 @@ mod tests {
         let pid = session.child.id();
 
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
-        let after_comm = stat.rsplit_once(')').expect("stat has comm field").1;
-        let tty_nr: i64 = after_comm
-            .split_whitespace()
-            .nth(4)
+        // tty_nr is the 5th field after (comm): state, ppid, pgrp, session, tty_nr.
+        let tty_nr: i64 = forktty_core::ports::stat_field_after_comm(&stat, 4)
             .expect("stat has tty_nr field")
             .parse()
             .expect("tty_nr is an integer");
