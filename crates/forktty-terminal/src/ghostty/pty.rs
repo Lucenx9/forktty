@@ -61,9 +61,7 @@ impl PtySession {
                 // Acquire the slave pty as the controlling terminal so programs
                 // that open /dev/tty (fzf, less, ssh/sudo password prompts, ...)
                 // work regardless of whether the child shell sets one up itself.
-                if libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
+                tiocsctty(slave_fd, 0).map_err(io_error)?;
                 Ok(())
             });
         }
@@ -170,6 +168,7 @@ impl Drop for PtySession {
 }
 
 nix::ioctl_write_ptr_bad!(tiocswinsz, libc::TIOCSWINSZ, libc::winsize);
+nix::ioctl_write_int_bad!(tiocsctty, libc::TIOCSCTTY);
 
 fn set_nonblocking(fd: &OwnedFd) -> io::Result<()> {
     let flags = OFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFL).map_err(io_error)?);
