@@ -58,12 +58,12 @@ impl GhosttyTerminalWidget {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             let selection = selection.clone();
-            drawing_area.set_draw_func(move |_area, cr, width, height| {
+            drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
                     Ok(frame) => {
                         let range = selection.borrow().normalized_range();
-                        renderer.draw_frame(cr, width, height, &frame, range);
+                        renderer.draw_frame(cr, width, height, &frame, range, area.has_focus());
                     }
                     Err(err) => eprintln!("Failed to render terminal frame: {err}"),
                 }

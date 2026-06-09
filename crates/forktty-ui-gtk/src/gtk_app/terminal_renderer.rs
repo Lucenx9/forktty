@@ -214,6 +214,7 @@ impl TerminalRenderer {
         height: i32,
         frame: &TerminalFrame,
         selection: Option<(SelectionPoint, SelectionPoint)>,
+        focused: bool,
     ) {
         let defaults = self.frame_defaults(frame);
         let default_background = defaults.background;
@@ -270,7 +271,12 @@ impl TerminalRenderer {
             }
         }
 
-        if let Some(cursor) = self.cursor_overlay_for_frame(frame) {
+        if let Some(mut cursor) = self.cursor_overlay_for_frame(frame) {
+            if !focused {
+                // Unfocused panes show a hollow cursor so the pane that will
+                // receive keystrokes is unambiguous.
+                cursor.style = RendererCursorStyle::BlockHollow;
+            }
             self.draw_cursor_overlay(cr, &cursor, metrics);
         }
     }

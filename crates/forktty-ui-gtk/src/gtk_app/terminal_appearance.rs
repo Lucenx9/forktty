@@ -14,9 +14,14 @@ pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     gtk_widget.add_css_class("ghostty-terminal");
     gtk_widget.add_css_class("monospace");
     let colors = terminal_colors_for_config(&config);
+    // GTK CSS has no parser for pango font strings: `font: {pango}` fails with
+    // "Expected a number" and drops the whole declaration. Set the parts.
     let css = format!(
-        ".ghostty-terminal {{ font: {}; background: {}; color: {}; }}",
-        font, colors.background, colors.foreground
+        ".ghostty-terminal {{ font-family: \"{}\"; font-size: {}pt; background: {}; color: {}; }}",
+        font.family().unwrap_or_else(|| "monospace".into()),
+        font.size() / gtk::pango::SCALE,
+        colors.background,
+        colors.foreground
     );
     TERMINAL_CSS_PROVIDER.with(|cell| {
         let mut slot = cell.borrow_mut();
