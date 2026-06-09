@@ -1162,6 +1162,11 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
     };
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|err| format_socket_connect_error(err, socket_path))?;
+    // Bound the subscribe round-trip so a wedged server cannot hang the CLI
+    // forever; the timeout is lifted once the stream is established because
+    // events may legitimately be arbitrarily far apart.
+    stream.set_read_timeout(Some(SOCKET_TIMEOUT)).ok();
+    stream.set_write_timeout(Some(SOCKET_TIMEOUT)).ok();
     let request_json = serde_json::to_string(&request)?;
     stream.write_all(request_json.as_bytes())?;
     stream.write_all(b"\n")?;
@@ -1195,6 +1200,7 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
             ));
         }
     }
+    reader.get_ref().set_read_timeout(None).ok();
 
     let stdout = io::stdout();
     let mut handle = stdout.lock();
@@ -3498,6 +3504,12 @@ fn merge_hook_config(
 ) -> CliResult<(bool, Value)> {
     let mut config = existing.as_object().cloned().unwrap_or_default();
     let hooks_was_object = config.get("hooks").is_some_and(Value::is_object);
+    if !hooks_was_object && config.contains_key("hooks") {
+        eprintln!(
+            "Warning: existing \"hooks\" value is not a map and will be replaced \
+             with a forktty-managed hooks map; the previous file is kept in the backup."
+        );
+    }
     let mut hooks = config
         .get("hooks")
         .and_then(Value::as_object)
@@ -3756,15 +3768,17 @@ function cloneJson(value) {{
   }}
 }}
 
-function findString(value, names) {{
-  if (!value || typeof value !== "object") return undefined;
+function findString(value, names, depth = 0) {{
+  // Tool payloads can nest arbitrarily deep; bail out before the recursion
+  // can overflow the call stack and crash the host opencode session.
+  if (depth > 32 || !value || typeof value !== "object") return undefined;
   for (const name of names) {{
     const candidate = value[name];
     if (typeof candidate === "string" && candidate.trim() !== "") return candidate.trim();
     if (typeof candidate === "number" || typeof candidate === "boolean") return String(candidate);
   }}
   for (const child of Object.values(value)) {{
-    const candidate = findString(child, names);
+    const candidate = findString(child, names, depth + 1);
     if (candidate) return candidate;
   }}
   return undefined;
