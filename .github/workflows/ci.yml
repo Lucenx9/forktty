@@ -32,7 +32,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
-            libgtk-4-dev libadwaita-1-dev git zig appstream
+            libgtk-4-dev libadwaita-1-dev git appstream
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.15.2
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -79,7 +84,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev \
-            libgtk-4-dev libadwaita-1-dev git zig libwebkitgtk-6.0-dev
+            libgtk-4-dev libadwaita-1-dev git libwebkitgtk-6.0-dev
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.15.2
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -126,7 +136,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
-            libgtk-4-dev libadwaita-1-dev git zig appstream curl
+            libgtk-4-dev libadwaita-1-dev git appstream curl
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.15.2
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
