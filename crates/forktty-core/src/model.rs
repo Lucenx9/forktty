@@ -1005,19 +1005,26 @@ impl WorkspaceModel {
             }
         };
         let workspace = self.workspaces.get_mut(&workspace_id)?;
+        let closing_focused_surface = workspace.focused_surface_id == surface_id;
+        let neighbor_focus = neighbor_leaf_surface_id(&workspace.pane_tree, surface_id);
         let removed_root = remove_leaf(&mut workspace.pane_tree, surface_id)?;
         let removed = self.surfaces.remove(surface_id)?;
-        let next_focus = if removed_root {
-            None
-        } else {
-            first_leaf_surface_id(&workspace.pane_tree)
-        };
-        if let Some(next_focus) = next_focus {
-            workspace.focused_surface_id = next_focus;
-        } else {
+        if removed_root {
             workspace.pane_tree = PaneNode::single_leaf(replacement.id.clone());
             workspace.focused_surface_id = replacement.id.clone();
             self.surfaces.insert(replacement.id.clone(), replacement);
+        } else if closing_focused_surface {
+            // Move focus to the surviving sibling next to the closed pane
+            // rather than teleporting to the first pane of the workspace.
+            if let Some(next_focus) =
+                neighbor_focus.or_else(|| first_leaf_surface_id(&workspace.pane_tree))
+            {
+                workspace.focused_surface_id = next_focus;
+            }
+        } else if !has_leaf_surface_id(&workspace.pane_tree, &workspace.focused_surface_id) {
+            if let Some(first) = first_leaf_surface_id(&workspace.pane_tree) {
+                workspace.focused_surface_id = first;
+            }
         }
         self.recompute_workspace_attention(&workspace_id);
         Some(removed)
@@ -1960,6 +1967,23 @@ fn rename_leaf(node: &mut PaneNode, old_id: &str, new_id: &str) -> bool {
     }
 }
 
+/// The pane that should inherit focus when `surface_id`'s leaf is removed:
+/// the sibling immediately before it in its parent split (or after it, for
+/// the first child). `None` when the leaf is the root.
+fn neighbor_leaf_surface_id(node: &PaneNode, surface_id: &str) -> Option<SurfaceId> {
+    let path = leaf_path_for_surface(node, surface_id)?;
+    let (&child_index, parent_path) = path.split_last()?;
+    let PaneNode::Split { children, .. } = pane_node_at_path(node, parent_path)? else {
+        return None;
+    };
+    let sibling = if child_index > 0 {
+        children.get(child_index - 1)
+    } else {
+        children.get(child_index + 1)
+    }?;
+    first_leaf_surface_id(sibling)
+}
+
 fn first_leaf_surface_id(node: &PaneNode) -> Option<SurfaceId> {
     match node {
         PaneNode::Leaf { tabs, active } => {
@@ -2482,6 +2506,51 @@ mod tests {
         };
         assert_eq!(children.len(), 2);
         assert_eq!(sizes, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn closing_focused_middle_pane_focuses_adjacent_sibling() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        let second = model
+            .split_surface(&first, SplitAxis::Horizontal)
+            .unwrap();
+        let third = model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .unwrap();
+        assert!(model.focus_surface(&second.id));
+
+        model.close_surface(&second.id).unwrap();
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(
+            workspace.focused_surface_id, first,
+            "focus should move to the adjacent sibling, not stay on a removed pane"
+        );
+        assert!(model.surface(&third.id).is_some());
+    }
+
+    #[test]
+    fn closing_unfocused_pane_keeps_focus() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        let second = model
+            .split_surface(&first, SplitAxis::Horizontal)
+            .unwrap();
+        let third = model
+            .split_surface(&second.id, SplitAxis::Horizontal)
+            .unwrap();
+        assert!(model.focus_surface(&third.id));
+
+        model.close_surface(&second.id).unwrap();
+
+        let workspace = model.list_workspaces().remove(0);
+        assert_eq!(
+            workspace.focused_surface_id, third.id,
+            "closing a background pane must not steal focus"
+        );
     }
 
     #[test]

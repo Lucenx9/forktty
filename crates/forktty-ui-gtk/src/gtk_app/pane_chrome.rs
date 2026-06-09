@@ -341,7 +341,16 @@ pub(super) fn show_close_pane_confirmation(
     let surface_id = surface_id.to_string();
     let body = close_pane_confirmation_body(&state, &surface_id);
     show_destructive_confirmation(parent, "Close Pane?", &body, "Close Pane", move || {
-        focus_surface_and(&state, &surface_id, close_active_surface);
+        // The pane may have been closed by other means (shortcut, socket
+        // client) while the dialog was open; refocusing would then fail and
+        // close_active_surface would close whichever pane is focused now.
+        let still_exists = state
+            .model
+            .lock()
+            .is_ok_and(|model| model.surface(&surface_id).is_some());
+        if still_exists {
+            focus_surface_and(&state, &surface_id, close_active_surface);
+        }
     });
 }
 
