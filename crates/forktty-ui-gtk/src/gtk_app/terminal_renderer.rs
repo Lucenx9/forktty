@@ -17,11 +17,16 @@ impl RendererColor {
         if value.len() != 6 {
             return Self::BLACK;
         }
-        let parse_pair = |idx| u8::from_str_radix(&value[idx..idx + 2], 16).unwrap_or(0);
+        let parse_pair = |range: std::ops::Range<usize>| {
+            value
+                .get(range)
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                .unwrap_or(0)
+        };
         Self {
-            red: parse_pair(0),
-            green: parse_pair(2),
-            blue: parse_pair(4),
+            red: parse_pair(0..2),
+            green: parse_pair(2..4),
+            blue: parse_pair(4..6),
         }
     }
 
