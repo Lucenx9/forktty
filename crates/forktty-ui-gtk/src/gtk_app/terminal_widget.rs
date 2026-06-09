@@ -219,12 +219,14 @@ impl GhosttyTerminalWidget {
                 let selection = selection.clone();
                 motion.connect_motion(move |controller, x, y| {
                     if selection.borrow().is_selecting() {
-                        selection.borrow_mut().extend_drag(selection_cell_for_position(
-                            &drawing_area,
-                            &renderer,
-                            x,
-                            y,
-                        ));
+                        selection
+                            .borrow_mut()
+                            .extend_drag(selection_cell_for_position(
+                                &drawing_area,
+                                &renderer,
+                                x,
+                                y,
+                            ));
                         drawing_area.queue_draw();
                         return;
                     }

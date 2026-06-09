@@ -2513,9 +2513,7 @@ mod tests {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
         let first = workspace.focused_surface_id.clone();
-        let second = model
-            .split_surface(&first, SplitAxis::Horizontal)
-            .unwrap();
+        let second = model.split_surface(&first, SplitAxis::Horizontal).unwrap();
         let third = model
             .split_surface(&second.id, SplitAxis::Horizontal)
             .unwrap();
@@ -2536,9 +2534,7 @@ mod tests {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
         let first = workspace.focused_surface_id.clone();
-        let second = model
-            .split_surface(&first, SplitAxis::Horizontal)
-            .unwrap();
+        let second = model.split_surface(&first, SplitAxis::Horizontal).unwrap();
         let third = model
             .split_surface(&second.id, SplitAxis::Horizontal)
             .unwrap();
