@@ -1,6 +1,6 @@
 use crate::SpawnRequest;
 use nix::{
-    fcntl::{fcntl, FcntlArg, OFlag},
+    fcntl::{fcntl, FcntlArg, FdFlag, OFlag},
     pty::{openpty, Winsize},
     unistd::setsid,
 };
@@ -37,6 +37,10 @@ impl PtySession {
         };
         let pty = openpty(Some(&winsize), None).map_err(io_error)?;
         set_nonblocking(&pty.master)?;
+        // openpty does not set CLOEXEC: without it every spawned child (and any
+        // other subprocess forked while this pty is open) inherits the master fd,
+        // keeping the pty alive after we drop it and leaking one fd per process.
+        set_cloexec(&pty.master)?;
         let slave_fd = pty.slave.as_raw_fd();
         let slave_stdin = duplicate_fd(&pty.slave)?;
         let slave_stdout = duplicate_fd(&pty.slave)?;
@@ -98,6 +102,10 @@ impl PtySession {
     }
 
     pub fn read_until(&mut self, needle: &[u8], timeout: Duration) -> io::Result<Vec<u8>> {
+        if needle.is_empty() {
+            // windows(0) panics; an empty needle is trivially found.
+            return self.read_available();
+        }
         let deadline = Instant::now() + timeout;
         let mut out = Vec::new();
         while Instant::now() < deadline {
@@ -176,6 +184,11 @@ fn set_nonblocking(fd: &OwnedFd) -> io::Result<()> {
     Ok(())
 }
 
+fn set_cloexec(fd: &OwnedFd) -> io::Result<()> {
+    fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).map_err(io_error)?;
+    Ok(())
+}
+
 fn duplicate_fd(fd: &OwnedFd) -> io::Result<OwnedFd> {
     let raw = nix::unistd::dup(fd).map_err(io_error)?;
     Ok(raw)
@@ -251,6 +264,33 @@ mod tests {
             tty_nr, 0,
             "child has no controlling terminal (tty_nr=0); /dev/tty would fail with ENXIO"
         );
+    }
+
+    #[test]
+    fn pty_master_fd_is_not_inherited_by_child() {
+        // Without CLOEXEC on the master, every child (and its descendants)
+        // keeps the pty master open. /proc/<pid>/fd links of a pty master
+        // point at /dev/ptmx.
+        let request = test_spawn_request_for_shell("/bin/sleep").with_args(["2"]);
+        let session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        let pid = session.child.id();
+
+        // Wait for exec to complete (CLOEXEC only takes effect at exec time).
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .map(|comm| comm.trim() != "sleep")
+            .unwrap_or(true)
+        {
+            assert!(Instant::now() < deadline, "child never exec'd /bin/sleep");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let leaked: Vec<_> = std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .unwrap()
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| target.to_string_lossy().contains("ptmx"))
+            .collect();
+        assert!(leaked.is_empty(), "child inherited pty master: {leaked:?}");
     }
 
     #[test]

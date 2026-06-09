@@ -194,6 +194,15 @@ impl TerminalRuntime {
                 .map_err(|err| TerminalError::Backend(err.to_string()))?
             {
                 self.exit_reported = true;
+                // Drain anything the child wrote between the read above and its
+                // exit: this is the last pump before the pane stops polling.
+                let bytes = self
+                    .pty
+                    .read_available()
+                    .map_err(|err| TerminalError::Backend(err.to_string()))?;
+                if !bytes.is_empty() {
+                    events.extend(self.feed_pty_bytes(&bytes)?);
+                }
                 events.push(GhosttyEvent::ChildExit {
                     status: exit_status_code(status),
                 });

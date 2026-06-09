@@ -78,8 +78,10 @@ pub(super) fn attach_terminal_signal_handlers(
         match pump_widget.pump_pty_events() {
             Ok(events) if events.is_empty() => {}
             Ok(events) => {
+                let mut child_exited = false;
                 for event in &events {
                     if matches!(event, GhosttyEvent::ChildExit { .. }) {
+                        child_exited = true;
                         if let Some(state) = &pump_state {
                             match state.terminal.mark_surface_not_ready(&pump_surface_id) {
                                 Ok(()) | Err(TerminalError::NotFound(_)) => {}
@@ -101,6 +103,12 @@ pub(super) fn attach_terminal_signal_handlers(
                     &pump_surface_id,
                     &events,
                 );
+                if child_exited {
+                    // The child is gone and pump_pty drained its final output;
+                    // stop polling the dead pty. Restart Pane spawns a fresh
+                    // widget with its own pump timer.
+                    return glib::ControlFlow::Break;
+                }
             }
             Err(err) => {
                 eprintln!("Failed to pump terminal PTY for {pump_surface_id}: {err}");
