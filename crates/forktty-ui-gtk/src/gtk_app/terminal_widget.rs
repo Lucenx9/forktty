@@ -16,6 +16,9 @@ pub(super) struct GhosttyTerminalWidget {
     selection: Rc<RefCell<TerminalSelection>>,
     // Blink phase for the focused cursor; `true` means the cursor is drawn.
     cursor_blink_visible: Rc<Cell<bool>>,
+    // Index of the active scrollback search match; matches themselves are
+    // recomputed on every step so new output never leaves stale positions.
+    search_index: Rc<Cell<Option<usize>>>,
 }
 
 pub(super) fn spawn_terminal_with_callback<F>(
@@ -350,6 +353,7 @@ impl GhosttyTerminalWidget {
             runtime,
             selection,
             cursor_blink_visible,
+            search_index: Rc::new(Cell::new(None)),
         };
         widget.attach_cursor_blink_timer();
         widget
@@ -387,6 +391,7 @@ impl GhosttyTerminalWidget {
             runtime: Rc::downgrade(&self.runtime),
             selection: Rc::downgrade(&self.selection),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
+            search_index: Rc::downgrade(&self.search_index),
         }
     }
 
@@ -412,6 +417,70 @@ impl GhosttyTerminalWidget {
             eprintln!("Terminal runtime operation failed: {err}");
         }
         self.drawing_area.queue_draw();
+    }
+
+    /// Steps the scrollback search to the next (or previous) match of
+    /// `query`, scrolls it into view, and highlights it via the selection so
+    /// the renderer paints it and Ctrl+Shift+C copies it. The match list is
+    /// recomputed from the current scrollback text on every step, so output
+    /// that arrived since the last step never leaves stale positions.
+    pub(super) fn search_step(&self, query: &str, forward: bool) -> SearchStatus {
+        let matches = find_matches(&self.runtime.borrow().full_text(), query);
+        let Some(index) = step_match_index(self.search_index.get(), matches.len(), forward) else {
+            self.search_reset();
+            return SearchStatus::none();
+        };
+        self.search_index.set(Some(index));
+        if let Err(err) = self.show_search_match(query, matches[index]) {
+            eprintln!("Failed to show terminal search match: {err}");
+        }
+        SearchStatus {
+            current: index + 1,
+            total: matches.len(),
+        }
+    }
+
+    /// Forgets the active match and drops its highlight.
+    pub(super) fn search_reset(&self) {
+        self.search_index.set(None);
+        self.selection.borrow_mut().clear();
+        self.drawing_area.queue_draw();
+    }
+
+    fn show_search_match(
+        &self,
+        query: &str,
+        search_match: SearchMatch,
+    ) -> Result<(), TerminalError> {
+        let mut runtime = self.runtime.borrow_mut();
+        let viewport = runtime.viewport_position()?;
+        let top = viewport_top_for_match(search_match.line, viewport);
+        if top != viewport.top {
+            runtime.scroll_viewport_lines(top as isize - viewport.top as isize)?;
+        }
+        // Re-read the position in case the core clamped the scroll.
+        let top = runtime.viewport_position()?.top;
+        let frame = runtime.render_frame()?;
+        drop(runtime);
+        let row = search_match.line.saturating_sub(top);
+        if let Some(frame_row) = frame.rows.get(row) {
+            let cell_texts: Vec<&str> = frame_row
+                .cells
+                .iter()
+                .map(|cell| cell.text.as_str())
+                .collect();
+            if let Some((from, to)) =
+                match_cells_in_row(&cell_texts, query, search_match.occurrence)
+            {
+                let mut selection = self.selection.borrow_mut();
+                selection.begin_drag(SelectionPoint { row, col: from });
+                selection.extend_drag(SelectionPoint { row, col: to });
+                selection.end_drag();
+                selection.select_text(cell_texts[from..=to].concat());
+            }
+        }
+        self.drawing_area.queue_draw();
+        Ok(())
     }
 
     pub(super) fn pump_pty_events(&self) -> Result<Vec<GhosttyEvent>, TerminalError> {
@@ -443,6 +512,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
+    search_index: std::rc::Weak<Cell<Option<usize>>>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -452,6 +522,7 @@ impl WeakGhosttyTerminalWidget {
             runtime: self.runtime.upgrade()?,
             selection: self.selection.upgrade()?,
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
+            search_index: self.search_index.upgrade()?,
         })
     }
 }

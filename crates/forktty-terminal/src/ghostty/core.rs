@@ -210,6 +210,18 @@ impl TerminalMouseSize {
     }
 }
 
+/// Where the viewport sits inside the scrollable area, in grid rows counted
+/// from the top of the scrollback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalViewportPosition {
+    /// Grid row shown at the top of the viewport.
+    pub top: usize,
+    /// Number of rows the viewport shows.
+    pub rows: usize,
+    /// Total rows in the scrollable area (scrollback + active screen).
+    pub total: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalRgb {
     pub red: u8,
@@ -411,6 +423,23 @@ impl GhosttyCore {
 
     pub fn visible_text(&self) -> Result<String> {
         self.format_plain_text(false)
+    }
+
+    /// Plain-text dump of the entire scrollable area (scrollback history plus
+    /// the active screen). Soft-wrapped rows stay split (`unwrap: false`), so
+    /// line `i` of the dump corresponds to grid row `i` counted from the top
+    /// of the scrollback; only trailing blank rows may be omitted.
+    pub fn full_text(&self) -> Result<String> {
+        self.format_plain_text(false)
+    }
+
+    pub fn viewport_position(&self) -> Result<TerminalViewportPosition> {
+        let scrollbar = self.terminal.scrollbar()?;
+        Ok(TerminalViewportPosition {
+            top: scrollbar.offset as usize,
+            rows: scrollbar.len as usize,
+            total: scrollbar.total as usize,
+        })
     }
 
     pub fn apply_theme_colors(&mut self, colors: &GhosttyThemeColors) -> Result<()> {
@@ -1173,6 +1202,36 @@ mod tests {
 
         assert!(text.contains("one"));
         assert!(text.contains("three"));
+    }
+
+    #[test]
+    fn viewport_position_tracks_scrolling_and_full_text_lines_map_to_rows() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour").unwrap();
+
+        let bottom = core.viewport_position().unwrap();
+        assert_eq!(bottom.rows, 2);
+        assert_eq!(bottom.total, 4);
+        assert_eq!(bottom.top, 2);
+
+        // Dump line `i` is grid row `i`: scrolling the viewport so its top
+        // sits at row 1 must show dump lines 1 and 2.
+        let text = core.full_text().unwrap();
+        assert_eq!(
+            text.lines().collect::<Vec<_>>(),
+            ["one", "two", "three", "four"]
+        );
+
+        core.scroll_viewport_lines(-1).unwrap();
+        let scrolled = core.viewport_position().unwrap();
+        assert_eq!(scrolled.top, 1);
+        assert!(core.visible_text().is_ok());
     }
 
     fn test_mouse_press() -> TerminalMouseInput {

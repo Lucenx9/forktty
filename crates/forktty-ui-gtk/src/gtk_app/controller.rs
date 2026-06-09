@@ -8,6 +8,7 @@ pub(super) struct PaneChrome {
     pub(super) title: gtk::Label,
     pub(super) cwd: gtk::Label,
     pub(super) attention_dot: gtk::Box,
+    pub(super) search_bar: PaneSearchBar,
 }
 
 pub(super) type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
@@ -351,6 +352,27 @@ impl TerminalController {
             return false;
         };
         widget.reset_and_clear();
+        true
+    }
+
+    /// Reveals the floating search bar of the focused terminal pane. The pane
+    /// holding GTK focus wins; the model focus is the fallback so the command
+    /// palette (which owns GTK focus itself) can open search too.
+    pub(super) fn open_search_in_focused_pane(&self) -> bool {
+        let surface_id = self
+            .widgets
+            .iter()
+            .find(|(_, widget)| widget.has_terminal_focus())
+            .map(|(surface_id, _)| surface_id.clone())
+            .or_else(|| {
+                let model = self.model.lock().ok()?;
+                Some(model.active_workspace()?.focused_surface_id)
+            });
+        let Some(chrome) = surface_id.and_then(|id| self.chromes.get(&id)) else {
+            return false;
+        };
+        chrome.search_bar.container.set_visible(true);
+        chrome.search_bar.entry.grab_focus();
         true
     }
 

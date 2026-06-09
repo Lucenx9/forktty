@@ -118,6 +118,12 @@ pub(super) fn install_actions(
             controller.borrow().paste_focused_terminal();
         }
     });
+    add_action(app, "find", {
+        let controller = controller.clone();
+        move || {
+            controller.borrow().open_search_in_focused_pane();
+        }
+    });
     add_action(app, "select-all", {
         let controller = controller.clone();
         move || {
@@ -191,6 +197,7 @@ pub(super) fn install_actions(
     app.set_accels_for_action("app.restart-pane", &[RESTART_PANE_ACCEL]);
     app.set_accels_for_action("app.copy", &["<Control><Shift>C"]);
     app.set_accels_for_action("app.paste", &["<Control><Shift>V"]);
+    app.set_accels_for_action("app.find", &["<Control><Shift>F"]);
     app.set_accels_for_action("app.select-all", &["<Control><Shift>A"]);
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
     app.set_accels_for_action("app.toggle-maximize-pane", &["<Control><Shift>Return"]);

@@ -2,7 +2,7 @@ use super::*;
 use forktty_terminal::ghostty::{
     core::{
         GhosttyCore, GhosttyCoreOptions, GhosttyThemeColors, TerminalFrame, TerminalKeyInput,
-        TerminalMouseInput, TerminalRgb,
+        TerminalMouseInput, TerminalRgb, TerminalViewportPosition,
     },
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
@@ -229,6 +229,18 @@ impl TerminalRuntime {
 
     pub(super) fn visible_text(&self) -> String {
         self.core.visible_text().unwrap_or_default()
+    }
+
+    /// Plain-text dump of scrollback plus the active screen; line `i` maps to
+    /// grid row `i` counted from the top of the scrollback.
+    pub(super) fn full_text(&self) -> String {
+        self.core.full_text().unwrap_or_default()
+    }
+
+    pub(super) fn viewport_position(&self) -> Result<TerminalViewportPosition, TerminalError> {
+        self.core
+            .viewport_position()
+            .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
     pub(super) fn render_frame(&mut self) -> Result<TerminalFrame, TerminalError> {

@@ -103,6 +103,9 @@ pub(super) fn build_pane_chrome(
     single_pane_actions.append(&single_open_browser);
     terminal_overlay.add_overlay(&single_pane_actions);
 
+    let search_bar = build_pane_search_bar(widget);
+    terminal_overlay.add_overlay(&search_bar.container);
+
     if let Some(state) = state {
         install_pane_reorder_dnd(&header, surface_id, state);
         install_terminal_context_menu(widget, surface_id, state, parent);
@@ -231,6 +234,7 @@ pub(super) fn build_pane_chrome(
         title,
         cwd,
         attention_dot,
+        search_bar,
     }
 }
 

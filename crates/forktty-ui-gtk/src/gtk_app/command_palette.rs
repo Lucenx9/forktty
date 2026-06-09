@@ -80,6 +80,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Copy", "Ctrl+Shift+C"),
             ("Paste", "Ctrl+Shift+V"),
             ("Select All", "Ctrl+Shift+A"),
+            ("Find", "Ctrl+Shift+F"),
             ("Reset and Clear", "Command Palette / Context Menu"),
             ("Context Menu", "Right Click"),
         ],
@@ -443,6 +444,16 @@ pub(super) fn show_command_palette_with_query(
                 controller.borrow().select_all_active_terminal();
             }
             dialog.close();
+        }
+    });
+    command!("Find in Terminal", Some("Ctrl+Shift+F"), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            dialog.close();
+            if let Some(controller) = &controller {
+                controller.borrow().open_search_in_focused_pane();
+            }
         }
     });
     command!("Reset and Clear Terminal", None, {
