@@ -5,13 +5,21 @@ pub(super) struct WorktreeDialogChoice {
     label: String,
 }
 
-pub(super) fn worktree_dialog_choices(state: &SocketAppState) -> Vec<WorktreeDialogChoice> {
-    let Ok(cwd) = active_workspace_cwd_string(state) else {
-        return Vec::new();
-    };
-    let Ok(mut worktrees) = worktree::list(&cwd) else {
-        return Vec::new();
-    };
+/// Run a blocking git/filesystem worktree task off the GTK main thread so
+/// slow repositories cannot freeze the UI.
+async fn run_worktree_blocking<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    gio::spawn_blocking(task)
+        .await
+        .map_err(|_| "Worktree operation thread failed".to_string())
+}
+
+pub(super) fn worktree_dialog_choices_from_list(
+    mut worktrees: Vec<worktree::WorktreeInfo>,
+) -> Vec<WorktreeDialogChoice> {
     worktrees.sort_by(|left, right| {
         left.worktree_name
             .cmp(&right.worktree_name)
@@ -109,17 +117,13 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     entry.set_tooltip_text(Some(
         "Branch name for Create/Attach, or existing worktree name for Remove/Merge",
     ));
-    let existing_worktrees = worktree_dialog_choices(state);
+    // Populated asynchronously below: `git worktree list` can be slow on
+    // large repositories and must not block the dialog from opening.
+    let has_existing_worktrees = Rc::new(Cell::new(false));
     let existing = gtk::ComboBoxText::new();
     existing.add_css_class("worktree-existing");
     existing.set_tooltip_text(Some("Existing worktree to merge or remove"));
     existing.update_property(&[gtk::accessible::Property::Label("Existing worktree")]);
-    for choice in &existing_worktrees {
-        existing.append(Some(&choice.selector), &choice.label);
-    }
-    if !existing_worktrees.is_empty() {
-        existing.set_active(Some(0));
-    }
     existing.set_visible(false);
     let hint = gtk::Label::builder()
         .label(WorktreeDialogMode::Create.hint())
@@ -175,7 +179,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         subtitle: subtitle.clone(),
         entry: entry.clone(),
         existing: existing.clone(),
-        has_existing_worktrees: !existing_worktrees.is_empty(),
+        has_existing_worktrees: has_existing_worktrees.clone(),
         hint: hint.clone(),
         status: status.clone(),
         primary: primary.clone(),
@@ -190,6 +194,31 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         }
     });
     refresh(false);
+
+    {
+        let state = state.clone();
+        let existing = existing.clone();
+        let has_existing_worktrees = has_existing_worktrees.clone();
+        let refresh = refresh.clone();
+        glib::spawn_future_local(async move {
+            let Ok(cwd) = active_workspace_cwd_string(&state) else {
+                return;
+            };
+            let Ok(Ok(worktrees)) = run_worktree_blocking(move || worktree::list(&cwd)).await
+            else {
+                return;
+            };
+            let choices = worktree_dialog_choices_from_list(worktrees);
+            for choice in &choices {
+                existing.append(Some(&choice.selector), &choice.label);
+            }
+            if !choices.is_empty() {
+                existing.set_active(Some(0));
+                has_existing_worktrees.set(true);
+            }
+            refresh(false);
+        });
+    }
 
     entry.connect_changed({
         let refresh = refresh.clone();
@@ -230,34 +259,56 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     let entry_for_action = entry.clone();
     let dialog_for_action = dialog.clone();
     let mode_for_action = mode.clone();
-    primary.connect_clicked(move |_| {
+    primary.connect_clicked(move |button| {
         let name = entry_for_action.text().trim().to_string();
         if let Err(err) = validate_worktree_name_for_gtk(&name) {
             set_status_message(&status_for_action, &err, StatusKind::Error);
             return;
         }
 
-        match mode_for_action.get() {
-            WorktreeDialogMode::Create => {
-                match open_worktree_from_gtk(&state_for_action, &name, WorktreeAction::Create) {
-                    Ok(()) => dialog_for_action.close(),
-                    Err(err) => set_status_message(&status_for_action, &err, StatusKind::Error),
-                }
+        let mode = mode_for_action.get();
+        let action = match mode {
+            WorktreeDialogMode::Create => Some(WorktreeAction::Create),
+            WorktreeDialogMode::Attach => Some(WorktreeAction::Attach),
+            WorktreeDialogMode::Merge | WorktreeDialogMode::Remove => None,
+        };
+        match mode {
+            WorktreeDialogMode::Create | WorktreeDialogMode::Attach => {
+                let state = state_for_action.clone();
+                let status = status_for_action.clone();
+                let dialog = dialog_for_action.clone();
+                let button = button.clone();
+                glib::spawn_future_local(async move {
+                    button.set_sensitive(false);
+                    let result =
+                        open_worktree_from_gtk_async(&state, &name, action.expect("set above"))
+                            .await;
+                    button.set_sensitive(true);
+                    match result {
+                        Ok(()) => dialog.close(),
+                        Err(err) => set_status_message(&status, &err, StatusKind::Error),
+                    }
+                });
             }
-            WorktreeDialogMode::Attach => {
-                match open_worktree_from_gtk(&state_for_action, &name, WorktreeAction::Attach) {
-                    Ok(()) => dialog_for_action.close(),
-                    Err(err) => set_status_message(&status_for_action, &err, StatusKind::Error),
-                }
+            WorktreeDialogMode::Merge => {
+                let state = state_for_action.clone();
+                let status = status_for_action.clone();
+                let button = button.clone();
+                glib::spawn_future_local(async move {
+                    button.set_sensitive(false);
+                    let result = merge_worktree_from_gtk_async(&state, &name).await;
+                    button.set_sensitive(true);
+                    match result {
+                        Ok(message) => set_status_message(&status, &message, StatusKind::Success),
+                        Err(err) => set_status_message(&status, &err, StatusKind::Error),
+                    }
+                });
             }
-            WorktreeDialogMode::Merge => match merge_worktree_from_gtk(&state_for_action, &name) {
-                Ok(message) => set_status_message(&status_for_action, &message, StatusKind::Success),
-                Err(err) => set_status_message(&status_for_action, &err, StatusKind::Error),
-            },
             WorktreeDialogMode::Remove => {
                 let state_confirm = state_for_action.clone();
                 let status_confirm = status_for_action.clone();
                 let dialog_confirm = dialog_for_action.clone();
+                let button_confirm = button.clone();
                 show_destructive_confirmation(
                     &dialog_for_action,
                     "Remove Worktree?",
@@ -265,9 +316,21 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                         "Remove worktree '{name}' and close its ForkTTY workspace. The git branch is left intact."
                     ),
                     "Remove Worktree",
-                    move || match remove_worktree_from_gtk(&state_confirm, &name) {
-                        Ok(()) => dialog_confirm.close(),
-                        Err(err) => set_status_message(&status_confirm, &err, StatusKind::Error),
+                    move || {
+                        let state = state_confirm.clone();
+                        let status = status_confirm.clone();
+                        let dialog = dialog_confirm.clone();
+                        let button = button_confirm.clone();
+                        let name = name.clone();
+                        glib::spawn_future_local(async move {
+                            button.set_sensitive(false);
+                            let result = remove_worktree_from_gtk_async(&state, &name).await;
+                            button.set_sensitive(true);
+                            match result {
+                                Ok(()) => dialog.close(),
+                                Err(err) => set_status_message(&status, &err, StatusKind::Error),
+                            }
+                        });
                     },
                 );
             }
@@ -285,7 +348,7 @@ pub(super) struct WorktreeDialogControls {
     subtitle: gtk::Label,
     entry: gtk::Entry,
     existing: gtk::ComboBoxText,
-    has_existing_worktrees: bool,
+    has_existing_worktrees: Rc<Cell<bool>>,
     hint: gtk::Label,
     status: gtk::Label,
     primary: gtk::Button,
@@ -404,7 +467,8 @@ pub(super) fn refresh_worktree_dialog(
         .entry
         .set_placeholder_text(Some(mode.placeholder()));
     controls.entry.set_tooltip_text(Some(mode.tooltip()));
-    let use_existing_chooser = mode.uses_existing_chooser() && controls.has_existing_worktrees;
+    let use_existing_chooser =
+        mode.uses_existing_chooser() && controls.has_existing_worktrees.get();
     controls.entry.set_visible(!use_existing_chooser);
     controls.existing.set_visible(use_existing_chooser);
     if use_existing_chooser {
@@ -415,7 +479,7 @@ pub(super) fn refresh_worktree_dialog(
         }
     }
     controls.hint.set_label(
-        if mode.uses_existing_chooser() && !controls.has_existing_worktrees {
+        if mode.uses_existing_chooser() && !controls.has_existing_worktrees.get() {
             "No linked worktrees were found for this repository. Type a worktree or branch name manually."
         } else {
             mode.hint()
@@ -468,24 +532,41 @@ pub(super) enum WorktreeAction {
     Attach,
 }
 
+#[cfg(test)]
 pub(super) fn open_worktree_from_gtk(
     state: &SocketAppState,
     name: &str,
     action: WorktreeAction,
 ) -> Result<(), String> {
-    let name = validate_worktree_name_for_gtk(name)?;
+    glib::MainContext::new().block_on(open_worktree_from_gtk_async(state, name, action))
+}
+
+pub(super) async fn open_worktree_from_gtk_async(
+    state: &SocketAppState,
+    name: &str,
+    action: WorktreeAction,
+) -> Result<(), String> {
+    let name = validate_worktree_name_for_gtk(name)?.to_string();
     let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
     let cwd = cwd.to_string_lossy().to_string();
-    let layout = config::load_config()
-        .ok()
-        .map(|config| config.general.worktree_layout)
-        .filter(|layout| !layout.trim().is_empty())
-        .unwrap_or_else(|| "nested".to_string());
-    let info = match action {
-        WorktreeAction::Create => worktree::create(&cwd, name, &layout),
-        WorktreeAction::Attach => worktree::attach(&cwd, name, &layout),
-    }
-    .map_err(|err| err.to_string())?;
+    let info = {
+        let cwd = cwd.clone();
+        let name = name.clone();
+        run_worktree_blocking(move || {
+            // Config read stays off the main thread alongside the git work.
+            let layout = config::load_config()
+                .ok()
+                .map(|config| config.general.worktree_layout)
+                .filter(|layout| !layout.trim().is_empty())
+                .unwrap_or_else(|| "nested".to_string());
+            match action {
+                WorktreeAction::Create => worktree::create(&cwd, &name, &layout),
+                WorktreeAction::Attach => worktree::attach(&cwd, &name, &layout),
+            }
+        })
+        .await?
+        .map_err(|err| err.to_string())?
+    };
 
     let (workspace, previous_active_id) = {
         let mut model = state
@@ -551,18 +632,31 @@ pub(super) fn rollback_created_worktree_after_spawn_failure(
     }
 }
 
+#[cfg(test)]
 pub(super) fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Result<(), String> {
-    let name = validate_worktree_name_for_gtk(name)?;
+    glib::MainContext::new().block_on(remove_worktree_from_gtk_async(state, name))
+}
+
+pub(super) async fn remove_worktree_from_gtk_async(
+    state: &SocketAppState,
+    name: &str,
+) -> Result<(), String> {
+    let name = validate_worktree_name_for_gtk(name)?.to_string();
     let cwd = active_workspace_cwd_string(state)?;
-    let fallback_path = worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
-    let removal = worktree::prepare_remove(&cwd, name).map_err(|err| err.to_string())?;
+    let (fallback_path, removal) = run_worktree_blocking(move || {
+        let fallback_path = worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
+        worktree::prepare_remove(&cwd, &name).map(|removal| (fallback_path, removal))
+    })
+    .await?
+    .map_err(|err| err.to_string())?;
     let workspace_worktree_name = removal.worktree_name().to_string();
     finish_prepared_worktree_removal_from_gtk(
         state,
         &workspace_worktree_name,
         fallback_path,
         removal,
-    )?;
+    )
+    .await?;
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
@@ -570,13 +664,23 @@ pub(super) fn remove_worktree_from_gtk(state: &SocketAppState, name: &str) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn merge_worktree_from_gtk(
     state: &SocketAppState,
     name: &str,
 ) -> Result<String, String> {
-    let name = validate_worktree_name_for_gtk(name)?;
+    glib::MainContext::new().block_on(merge_worktree_from_gtk_async(state, name))
+}
+
+pub(super) async fn merge_worktree_from_gtk_async(
+    state: &SocketAppState,
+    name: &str,
+) -> Result<String, String> {
+    let name = validate_worktree_name_for_gtk(name)?.to_string();
     let cwd = active_workspace_cwd_string(state)?;
-    let result = worktree::merge(&cwd, name).map_err(|err| err.to_string())?;
+    let result = run_worktree_blocking(move || worktree::merge(&cwd, &name))
+        .await?
+        .map_err(|err| err.to_string())?;
     Ok(if result.trim().is_empty() {
         "Merged".to_string()
     } else {
@@ -633,7 +737,15 @@ pub(super) fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
     })
 }
 
-pub(super) fn finish_prepared_worktree_removal_from_gtk(
+/// Run `removal.finish` off the main thread; `git worktree remove` deletes
+/// the whole working tree, which can take a while on large checkouts.
+async fn finish_removal_blocking(removal: worktree::PreparedWorktreeRemoval) -> Result<(), String> {
+    run_worktree_blocking(move || removal.finish(false))
+        .await?
+        .map_err(|err| err.to_string())
+}
+
+pub(super) async fn finish_prepared_worktree_removal_from_gtk(
     state: &SocketAppState,
     worktree_name: &str,
     fallback_path: PathBuf,
@@ -660,7 +772,7 @@ pub(super) fn finish_prepared_worktree_removal_from_gtk(
         .map(|surface| surface.id.clone())
         .collect::<Vec<_>>();
     if workspace.is_none() {
-        removal.finish(false).map_err(|err| err.to_string())?;
+        finish_removal_blocking(removal).await?;
         return Ok(());
     }
     if is_last_workspace {
@@ -701,8 +813,8 @@ pub(super) fn finish_prepared_worktree_removal_from_gtk(
             }
             return Err(err);
         }
-        if let Err(err) = removal.finish(false) {
-            let mut err = err.to_string();
+        if let Err(err) = finish_removal_blocking(removal).await {
+            let mut err = err;
             if let Err(cleanup_err) =
                 forget_terminal_surface_gtk(state, &replacement.focused_surface_id)
             {
@@ -728,8 +840,8 @@ pub(super) fn finish_prepared_worktree_removal_from_gtk(
         return Ok(());
     }
     close_terminal_surfaces(state, &surface_ids).map_err(|err| err.to_string())?;
-    if let Err(err) = removal.finish(false) {
-        let mut err = err.to_string();
+    if let Err(err) = finish_removal_blocking(removal).await {
+        let mut err = err;
         if let Err(respawn_err) = spawn_terminal_surfaces_gtk(state, &surfaces) {
             err = format!("{err}; terminal restore failed: {respawn_err}");
         }

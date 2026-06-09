@@ -199,10 +199,14 @@ pub(super) fn build_workspace_context_menu(
                 if !focus_workspace(&state_, &ws_id) {
                     return;
                 }
-                match merge_worktree_from_gtk(&state_, &name_) {
-                    Ok(msg) => create_local_notification(&state_, "Worktree Merged", &msg),
-                    Err(err) => create_local_notification(&state_, "Merge Failed", &err),
-                }
+                let state = state_.clone();
+                let name = name_.clone();
+                glib::spawn_future_local(async move {
+                    match merge_worktree_from_gtk_async(&state, &name).await {
+                        Ok(msg) => create_local_notification(&state, "Worktree Merged", &msg),
+                        Err(err) => create_local_notification(&state, "Merge Failed", &err),
+                    }
+                });
             },
         );
 
@@ -231,9 +235,13 @@ pub(super) fn build_workspace_context_menu(
                         if !focus_workspace(&state_confirm, &ws_id_confirm) {
                             return;
                         }
-                        if let Err(err) = remove_worktree_from_gtk(&state_confirm, &name_confirm) {
-                            create_local_notification(&state_confirm, "Remove Failed", &err);
-                        }
+                        let state = state_confirm.clone();
+                        let name = name_confirm.clone();
+                        glib::spawn_future_local(async move {
+                            if let Err(err) = remove_worktree_from_gtk_async(&state, &name).await {
+                                create_local_notification(&state, "Remove Failed", &err);
+                            }
+                        });
                     },
                 );
             },
