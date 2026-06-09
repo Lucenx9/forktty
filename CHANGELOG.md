@@ -4,6 +4,28 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.7] - 2026-06-09
+
+### Added
+- Added mouse text selection in terminal panes: left-drag selects when application mouse tracking is off, Shift+drag overrides tracking-aware apps (vim, htop), the selection is highlighted with the theme highlight color, and the extracted text feeds Ctrl+Shift+C and the primary clipboard (middle-click paste).
+- Surfaced OSC 9 and OSC 99 terminal escape notifications as ForkTTY notifications.
+
+### Changed
+- Replaced the VTE terminal backend with libghostty-vt and a custom GTK renderer: ghostty-driven key encoding, cursor styles, wide-cell rendering, OSC 8 hyperlinks, text decorations, bracketed paste tracking, focus reporting, mouse routing, configurable scrollback, and theme-color seeding.
+- Worktree operations (list/create/attach/merge/remove) now run their git work off the GTK main thread, so slow repositories no longer freeze the UI; the worktree dialog opens immediately and populates its worktree chooser asynchronously.
+
+### Fixed
+- Terminal children now acquire the pty as their controlling terminal (`TIOCSCTTY`), fixing `/dev/tty` consumers such as fzf, less, and ssh/sudo prompts under zsh.
+- The pty master fd is now CLOEXEC, so spawned children (and any other subprocess) no longer inherit one extra descriptor per open terminal.
+- The PTY pump timer stops after the child exits instead of polling a dead pty at 60Hz per closed pane, and closed panes now release their terminal runtime.
+- Closing a pane now focuses the adjacent sibling instead of teleporting to the first pane, and closing a background pane no longer steals focus; a stale Close Pane confirmation can no longer close the wrong pane.
+- The IPC socket server survives transient `accept()` errors instead of shutting down for the rest of the session, and `forktty events` bounds its subscribe handshake so a wedged server cannot hang the CLI.
+- Fixed terminal theme seeding (fresh surfaces rendered ghostty's built-in colors), CSS provider accumulation, Shift+Tab/Alt+Backspace encoding, and a panic on non-ASCII hex color strings in configs.
+- Hardened agent hooks: the OpenCode plugin caps payload recursion (deeply nested MCP tool responses could crash the host session) and `hooks setup` warns before replacing a non-map `hooks` config value.
+
+### CI
+- Restored CI after the runner image dropped the `zig` apt package: Zig is now installed via the pinned `setup-zig` action.
+
 ## [0.2.0-alpha.6] - 2026-05-30
 
 ### Added

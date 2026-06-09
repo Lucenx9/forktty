@@ -6182,18 +6182,23 @@ mod tests {
             output: 0,
         };
 
-        let block = format_token_usage_block(usage);
+        // The ceiling env var must be held steady: concurrent tests set it via
+        // with_env, and an unguarded read races with them.
+        let (block, progress) = with_env(&[("FORKTTY_HOOK_TOKEN_CEILING", None)], || {
+            (
+                format_token_usage_block(usage),
+                build_token_progress_action(
+                    agent_spec("claude").unwrap(),
+                    &HookEnrichments {
+                        token_usage: Some(usage),
+                    },
+                    "prompt-submit",
+                    "88",
+                )
+                .unwrap(),
+            )
+        });
         assert!(block.contains("18,446,744,073,709,551,615 / 200,000 input tokens"));
-
-        let progress = build_token_progress_action(
-            agent_spec("claude").unwrap(),
-            &HookEnrichments {
-                token_usage: Some(usage),
-            },
-            "prompt-submit",
-            "88",
-        )
-        .unwrap();
         assert_eq!(progress["value"], json!(u64::MAX));
     }
 
