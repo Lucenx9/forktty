@@ -1950,6 +1950,20 @@ window.ft-dialog,
   font-weight: 600;
 }
 
+.worktree-mode-button:hover {
+  background: #232323;
+}
+
+/* Selected mode uses the app accent, matching active states elsewhere. */
+.worktree-mode-button:checked {
+  background: #30251d;
+  color: #f09a58;
+}
+
+.worktree-mode-button:checked:hover {
+  background: alpha(#e88745, 0.24);
+}
+
 combobox.worktree-existing button {
   min-height: 34px;
   padding: 4px 10px;
