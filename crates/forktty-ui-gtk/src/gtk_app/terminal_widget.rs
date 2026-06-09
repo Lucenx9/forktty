@@ -57,10 +57,14 @@ impl GhosttyTerminalWidget {
         {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
+            let selection = selection.clone();
             drawing_area.set_draw_func(move |_area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
-                    Ok(frame) => renderer.draw_frame(cr, width, height, &frame),
+                    Ok(frame) => {
+                        let range = selection.borrow().normalized_range();
+                        renderer.draw_frame(cr, width, height, &frame, range);
+                    }
                     Err(err) => eprintln!("Failed to render terminal frame: {err}"),
                 }
             });
@@ -124,24 +128,49 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
+                let selection = selection.clone();
                 click.connect_pressed(move |gesture, _n_press, x, y| {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
                     any_button_pressed.set(true);
-                    let input = terminal_mouse_input_for_area(
-                        &drawing_area,
-                        &renderer,
-                        TerminalMouseEventInput {
-                            action: TerminalMouseAction::Press,
-                            button: Some(button),
-                            modifiers: gesture.current_event_state(),
-                            x,
-                            y,
-                            any_button_pressed: true,
-                        },
-                    );
-                    write_terminal_mouse(&runtime, &drawing_area, input);
+                    let modifiers = gesture.current_event_state();
+                    let is_left = matches!(button, TerminalMouseButton::Left);
+                    // Shift bypasses application mouse tracking so text can be
+                    // selected even inside mouse-aware apps (vim, htop, ...).
+                    let shift_select =
+                        is_left && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                    let forwarded = if shift_select {
+                        false
+                    } else {
+                        let input = terminal_mouse_input_for_area(
+                            &drawing_area,
+                            &renderer,
+                            TerminalMouseEventInput {
+                                action: TerminalMouseAction::Press,
+                                button: Some(button),
+                                modifiers,
+                                x,
+                                y,
+                                any_button_pressed: true,
+                            },
+                        );
+                        write_terminal_mouse(&runtime, &drawing_area, input)
+                    };
+                    if is_left {
+                        let mut selection = selection.borrow_mut();
+                        if forwarded {
+                            selection.clear();
+                        } else {
+                            selection.begin_drag(selection_cell_for_position(
+                                &drawing_area,
+                                &renderer,
+                                x,
+                                y,
+                            ));
+                        }
+                        drawing_area.queue_draw();
+                    }
                 });
             }
             {
@@ -149,11 +178,20 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
+                let selection = selection.clone();
                 click.connect_released(move |gesture, _n_press, x, y| {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
                     any_button_pressed.set(false);
+                    if matches!(button, TerminalMouseButton::Left)
+                        && selection.borrow().is_selecting()
+                    {
+                        // The press was not forwarded to the application, so
+                        // the release must not be either.
+                        finish_selection_drag(&runtime, &selection, &drawing_area, &renderer, x, y);
+                        return;
+                    }
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
                         &renderer,
@@ -178,7 +216,18 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
+                let selection = selection.clone();
                 motion.connect_motion(move |controller, x, y| {
+                    if selection.borrow().is_selecting() {
+                        selection.borrow_mut().extend_drag(selection_cell_for_position(
+                            &drawing_area,
+                            &renderer,
+                            x,
+                            y,
+                        ));
+                        drawing_area.queue_draw();
+                        return;
+                    }
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
                         &renderer,
@@ -205,6 +254,7 @@ impl GhosttyTerminalWidget {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
+                let selection = selection.clone();
                 scroll.connect_scroll(move |controller, _dx, dy| {
                     let Some(button) = terminal_scroll_button(dy) else {
                         return glib::Propagation::Proceed;
@@ -232,7 +282,12 @@ impl GhosttyTerminalWidget {
                         }
                         Ok(false) => {
                             if let Some(delta) = terminal_scroll_viewport_delta(dy) {
-                                scroll_terminal_viewport(&runtime, &drawing_area, delta);
+                                if scroll_terminal_viewport(&runtime, &drawing_area, delta) {
+                                    // Selection coordinates are viewport-relative;
+                                    // scrolling would leave the highlight on the
+                                    // wrong text.
+                                    selection.borrow_mut().clear();
+                                }
                                 glib::Propagation::Stop
                             } else {
                                 glib::Propagation::Proceed
@@ -308,6 +363,17 @@ impl GhosttyTerminalWidget {
     pub(super) fn pump_pty_events(&self) -> Result<Vec<GhosttyEvent>, TerminalError> {
         let events = self.runtime.borrow_mut().pump_pty()?;
         if !events.is_empty() {
+            // New output shifts the viewport content under a finished
+            // selection; drop it rather than highlight the wrong text.
+            let mut selection = self.selection.borrow_mut();
+            if !selection.is_selecting()
+                && selection.normalized_range().is_some()
+                && events
+                    .iter()
+                    .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged))
+            {
+                selection.clear();
+            }
             self.drawing_area.queue_draw();
         }
         Ok(events)
@@ -412,6 +478,73 @@ fn write_terminal_mouse(
             false
         }
     }
+}
+
+fn selection_cell_for_position(
+    area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
+    x: f64,
+    y: f64,
+) -> SelectionPoint {
+    let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+    SelectionPoint {
+        row: (y.max(0.0) / f64::from(cell_height.max(1))) as usize,
+        col: (x.max(0.0) / f64::from(cell_width.max(1))) as usize,
+    }
+}
+
+fn finish_selection_drag(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    drawing_area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
+    x: f64,
+    y: f64,
+) {
+    let mut selection = selection.borrow_mut();
+    selection.extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+    selection.end_drag();
+    match selection.normalized_range() {
+        Some((start, end)) if start != end => match runtime.borrow_mut().render_frame() {
+            Ok(frame) => {
+                let text = selection_text_from_frame(&frame, start, end);
+                if text.trim().is_empty() {
+                    selection.clear();
+                } else {
+                    selection.select_text(text.clone());
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.primary_clipboard().set_text(&text);
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Failed to extract terminal selection: {err}");
+                selection.clear();
+            }
+        },
+        // A plain click (no drag) leaves no selection behind.
+        _ => selection.clear(),
+    }
+    drawing_area.queue_draw();
+}
+
+fn selection_text_from_frame(
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) -> String {
+    let mut lines = Vec::new();
+    for (row_idx, row) in frame.rows.iter().enumerate() {
+        let Some((from, to)) = selection_cols_for_row(start, end, row_idx, row.cells.len()) else {
+            continue;
+        };
+        let line: String = row.cells[from..to]
+            .iter()
+            .map(|cell| cell.text.as_str())
+            .collect();
+        lines.push(line.trim_end().to_string());
+    }
+    lines.join("\n")
 }
 
 fn scroll_terminal_viewport(
@@ -524,9 +657,11 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
     }
 
     fn select_all_text(&self) {
-        self.selection
-            .borrow_mut()
-            .select_text(self.runtime.borrow().visible_text());
+        {
+            let mut selection = self.selection.borrow_mut();
+            selection.clear();
+            selection.select_text(self.runtime.borrow().visible_text());
+        }
         self.copy_text();
     }
 
@@ -603,6 +738,54 @@ impl TerminalWidgetOps for TestTerminalWidget {
     }
 
     fn resize_cells(&self, _cols: u16, _rows: u16) {}
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use forktty_terminal::ghostty::pty::PtySize;
+    use std::path::PathBuf;
+
+    fn frame_for_lines(lines: &[u8]) -> forktty_terminal::ghostty::core::TerminalFrame {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime.feed_pty_bytes(lines).unwrap();
+        runtime.render_frame().unwrap()
+    }
+
+    #[test]
+    fn selection_text_extracts_partial_first_and_last_rows() {
+        let frame = frame_for_lines(b"alpha beta\r\ngamma delta\r\nepsilon");
+
+        let text = selection_text_from_frame(
+            &frame,
+            SelectionPoint { row: 0, col: 6 },
+            SelectionPoint { row: 2, col: 3 },
+        );
+
+        assert_eq!(text, "beta\ngamma delta\nepsi");
+    }
+
+    #[test]
+    fn selection_text_single_row_is_inclusive_of_end_cell() {
+        let frame = frame_for_lines(b"alpha beta");
+
+        let text = selection_text_from_frame(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 4 },
+        );
+
+        assert_eq!(text, "alpha");
+    }
 }
 
 #[cfg(test)]

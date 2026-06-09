@@ -38,6 +38,15 @@ impl RendererColor {
         );
     }
 
+    fn set_cairo_source_alpha(self, cr: &gtk::cairo::Context, alpha: f64) {
+        cr.set_source_rgba(
+            f64::from(self.red) / 255.0,
+            f64::from(self.green) / 255.0,
+            f64::from(self.blue) / 255.0,
+            alpha,
+        );
+    }
+
     fn from_terminal_rgb(value: TerminalRgb) -> Self {
         Self {
             red: value.red,
@@ -164,6 +173,10 @@ struct RendererFrameDefaults {
     background: RendererColor,
 }
 
+/// Selected cells are tinted with the theme highlight color at this opacity,
+/// keeping the underlying text readable without recomputing cell styles.
+const SELECTION_HIGHLIGHT_ALPHA: f64 = 0.35;
+
 #[derive(Debug, Clone, Copy)]
 struct RendererCellMetrics {
     width: f64,
@@ -200,6 +213,7 @@ impl TerminalRenderer {
         width: i32,
         height: i32,
         frame: &TerminalFrame,
+        selection: Option<(SelectionPoint, SelectionPoint)>,
     ) {
         let defaults = self.frame_defaults(frame);
         let default_background = defaults.background;
@@ -236,6 +250,23 @@ impl TerminalRenderer {
                 cr.move_to(run.start_col as f64 * metrics.width, y);
                 pangocairo::functions::show_layout(cr, &layout);
                 self.draw_text_decorations(cr, &run, metrics, y);
+            }
+
+            if let Some((start, end)) = selection {
+                if let Some((from, to)) =
+                    selection_cols_for_row(start, end, row_idx, row.cells.len())
+                {
+                    self.palette
+                        .highlight
+                        .set_cairo_source_alpha(cr, SELECTION_HIGHLIGHT_ALPHA);
+                    cr.rectangle(
+                        from as f64 * metrics.width,
+                        y,
+                        (to - from) as f64 * metrics.width,
+                        metrics.height,
+                    );
+                    let _ = cr.fill();
+                }
             }
         }
 
