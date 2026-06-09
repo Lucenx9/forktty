@@ -58,6 +58,16 @@ Signed tags (`-s`) are preferred; if you don't have a signing key,
 
 ## 4. Publish the GitHub release
 
+The streamlined path creates the tag and the release in one step from
+the pushed `main` commit (skip section 3's manual tagging):
+
+```
+gh release create v0.2.0-alpha.N --prerelease \
+  --title "ForkTTY 0.2.0-alpha.N" --notes-file <notes.md> --target main
+```
+
+Or via the GitHub UI:
+
 1. Open the tag in the GitHub UI and click "Draft a new release".
 2. Title: `ForkTTY 0.2.0-alpha.N`.
 3. Body: copy the section you just moved in `CHANGELOG.md`, plus:
@@ -90,13 +100,16 @@ Publishing the release triggers the `release-package` job in
 
 ## 6. If anything is wrong
 
-- **CI failed after tag push**: delete the tag both locally and on the
-  remote (`git tag -d`, `git push --delete origin <tag>`), fix forward
-  on `main`, then re-tag with the same version. Do not edit the tag
-  in place.
+- **Packaging failed or the tagged commit is bad**: fix forward on
+  `main`, wait for CI green, then recut the release on the new commit:
+  `gh release delete v0.2.0-alpha.N --yes --cleanup-tag` followed by
+  the `gh release create` command above. Do not edit a tag in place.
 - **Bad artifact uploaded to release**: re-run the workflow from the
   Actions tab; `--clobber` will replace it. If the release itself is
   broken, mark it as a draft and recut.
+- Always verify the recut artifacts end to end (checksums, contents,
+  binaries launch) — a green packaging job alone has missed broken
+  artifacts before.
 - **Security regression**: follow the response steps in
   [`SECURITY.md`](SECURITY.md), including private disclosure if the
   report came in through GitHub's advisory channel.

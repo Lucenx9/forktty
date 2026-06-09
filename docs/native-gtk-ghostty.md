@@ -32,12 +32,16 @@ cargo run -p forktty-ui-gtk --features browser
 ```
 
 The AppImage target is the primary portable Linux package for alpha
-releases. `scripts/build-appimage.sh` resolves the
-`forktty` binary's `ldd` graph and bundles GTK4, libadwaita, Ghostty, and
-their direct dependencies into `AppDir/usr/lib`. It intentionally does
-not bundle glibc, GSettings schemas, GIO modules, fontconfig data, the
-OpenGL/Vulkan/Mesa driver stack, or desktop session services, so the
-AppImage still relies on those parts of the host system.
+releases. `scripts/build-appimage.sh` always installs the vendored
+libghostty-vt into `AppDir/usr/lib`, and resolves the `forktty` binary's
+`ldd` graph into `AppDir/usr/lib/bundled` as a GUI-stack fallback:
+AppRun adds that directory to the library path only when the host has
+no GTK4, so modern hosts run against their own GTK4/libadwaita (native
+cursor themes, fontconfig, portals). Per the canonical AppImage
+excludelist it never bundles glibc, fontconfig/freetype/harfbuzz,
+Wayland/X11 client libraries, the OpenGL/Vulkan/Mesa driver stack,
+GSettings schemas, GIO modules, or desktop session services, so the
+AppImage relies on those parts of the host system.
 
 Before tagging an alpha, run the runtime and package checklist in
 [release-qa.md](release-qa.md).

@@ -4,6 +4,14 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- Added scrollback search: Ctrl+Shift+F (also in the command palette) opens a floating per-pane search bar with case-insensitive matching over the full scrollback, wrapping next/previous navigation, a match counter, and highlight-on-jump that feeds the copy shortcut.
+
+### Changed
+- The focused pane's cursor now blinks at the conventional cadence and snaps visible on keystrokes; unfocused panes keep a steady hollow cursor.
+- Pane headers now slide in and out over 180ms when a workspace transitions between single-pane and split layouts.
+- Split dividers tint with the accent color while being dragged, and the worktree dialog's mode selector uses the accent for the selected mode.
+
 ## [0.2.0-alpha.7] - 2026-06-09
 
 ### Added
