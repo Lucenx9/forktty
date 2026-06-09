@@ -5,11 +5,17 @@ use forktty_terminal::ghostty::core::{
 };
 use forktty_terminal::ghostty::events::GhosttyEvent;
 
+/// Blink half-period for the focused cursor: visible for one interval, hidden
+/// for the next. Matches the conventional terminal cadence.
+const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+
 #[derive(Debug, Clone)]
 pub(super) struct GhosttyTerminalWidget {
     drawing_area: gtk::DrawingArea,
     runtime: Rc<RefCell<TerminalRuntime>>,
     selection: Rc<RefCell<TerminalSelection>>,
+    // Blink phase for the focused cursor; `true` means the cursor is drawn.
+    cursor_blink_visible: Rc<Cell<bool>>,
 }
 
 pub(super) fn spawn_terminal_with_callback<F>(
@@ -50,6 +56,7 @@ impl GhosttyTerminalWidget {
         drawing_area.add_css_class("ghostty-terminal");
         let runtime = Rc::new(RefCell::new(runtime));
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
+        let cursor_blink_visible = Rc::new(Cell::new(true));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
         let im_context = gtk::IMMulticontext::new();
@@ -58,12 +65,23 @@ impl GhosttyTerminalWidget {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             let selection = selection.clone();
+            let cursor_blink_visible = cursor_blink_visible.clone();
             drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
                     Ok(frame) => {
                         let range = selection.borrow().normalized_range();
-                        renderer.draw_frame(cr, width, height, &frame, range, area.has_focus());
+                        renderer.draw_frame(
+                            cr,
+                            width,
+                            height,
+                            &frame,
+                            range,
+                            RendererCursorState {
+                                focused: area.has_focus(),
+                                blink_visible: cursor_blink_visible.get(),
+                            },
+                        );
                     }
                     Err(err) => eprintln!("Failed to render terminal frame: {err}"),
                 }
@@ -78,17 +96,23 @@ impl GhosttyTerminalWidget {
             im_context.connect_commit({
                 let runtime = runtime.clone();
                 let drawing_area = drawing_area.clone();
+                let cursor_blink_visible = cursor_blink_visible.clone();
                 move |_context, text| {
                     let Some(input) = terminal_text_input(text) else {
                         return;
                     };
+                    // Typing snaps the blink phase to visible so the cursor
+                    // never disappears mid-keystroke.
+                    cursor_blink_visible.set(true);
                     write_terminal_input(&runtime, &drawing_area, input);
                 }
             });
+            let cursor_blink_visible_for_key = cursor_blink_visible.clone();
             key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
                 let Some(input) = translate_gtk_key(key, modifiers, None) else {
                     return glib::Propagation::Proceed;
                 };
+                cursor_blink_visible_for_key.set(true);
                 write_terminal_input(&runtime, &drawing_area_for_key, input);
                 glib::Propagation::Stop
             });
@@ -101,9 +125,11 @@ impl GhosttyTerminalWidget {
             let drawing_area_for_leave = drawing_area.clone();
             let im_context_for_enter = im_context.clone();
             let im_context_for_leave = im_context.clone();
+            let cursor_blink_visible_for_enter = cursor_blink_visible.clone();
             let focus_controller = gtk::EventControllerFocus::new();
             focus_controller.connect_enter(move |_| {
                 im_context_for_enter.focus_in();
+                cursor_blink_visible_for_enter.set(true);
                 if let Err(err) = runtime_for_enter.borrow_mut().write_focus(true) {
                     eprintln!("Failed to write terminal focus input: {err}");
                 }
@@ -319,11 +345,36 @@ impl GhosttyTerminalWidget {
                 area.queue_draw();
             });
         }
-        Self {
+        let widget = Self {
             drawing_area,
             runtime,
             selection,
-        }
+            cursor_blink_visible,
+        };
+        widget.attach_cursor_blink_timer();
+        widget
+    }
+
+    // Flips the blink phase while the pane is focused; an unfocused pane keeps
+    // its (hollow) cursor steadily visible. The weak handle lets the timer die
+    // with the widget instead of keeping a closed pane alive.
+    fn attach_cursor_blink_timer(&self) {
+        let blink_widget_weak = self.downgrade_widget();
+        glib::timeout_add_local(CURSOR_BLINK_INTERVAL, move || {
+            let Some(blink_widget) = blink_widget_weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if blink_widget.drawing_area.has_focus() {
+                blink_widget
+                    .cursor_blink_visible
+                    .set(!blink_widget.cursor_blink_visible.get());
+                blink_widget.drawing_area.queue_draw();
+            } else if !blink_widget.cursor_blink_visible.get() {
+                blink_widget.cursor_blink_visible.set(true);
+                blink_widget.drawing_area.queue_draw();
+            }
+            glib::ControlFlow::Continue
+        });
     }
 
     pub(super) fn downgrade(&self) -> glib::WeakRef<gtk::DrawingArea> {
@@ -335,6 +386,7 @@ impl GhosttyTerminalWidget {
             drawing_area: self.drawing_area.downgrade(),
             runtime: Rc::downgrade(&self.runtime),
             selection: Rc::downgrade(&self.selection),
+            cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
         }
     }
 
@@ -390,6 +442,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     drawing_area: glib::WeakRef<gtk::DrawingArea>,
     runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
+    cursor_blink_visible: std::rc::Weak<Cell<bool>>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -398,6 +451,7 @@ impl WeakGhosttyTerminalWidget {
             drawing_area: self.drawing_area.upgrade()?,
             runtime: self.runtime.upgrade()?,
             selection: self.selection.upgrade()?,
+            cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
         })
     }
 }

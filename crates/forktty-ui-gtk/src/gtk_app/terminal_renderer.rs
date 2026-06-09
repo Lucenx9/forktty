@@ -173,6 +173,14 @@ struct RendererFrameDefaults {
     background: RendererColor,
 }
 
+/// How the cursor overlay should be drawn for the current frame: unfocused
+/// panes get a steady hollow cursor, focused panes blink with `blink_visible`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RendererCursorState {
+    pub(super) focused: bool,
+    pub(super) blink_visible: bool,
+}
+
 /// Selected cells are tinted with the theme highlight color at this opacity,
 /// keeping the underlying text readable without recomputing cell styles.
 const SELECTION_HIGHLIGHT_ALPHA: f64 = 0.35;
@@ -214,7 +222,7 @@ impl TerminalRenderer {
         height: i32,
         frame: &TerminalFrame,
         selection: Option<(SelectionPoint, SelectionPoint)>,
-        focused: bool,
+        cursor_state: RendererCursorState,
     ) {
         let defaults = self.frame_defaults(frame);
         let default_background = defaults.background;
@@ -272,10 +280,13 @@ impl TerminalRenderer {
         }
 
         if let Some(mut cursor) = self.cursor_overlay_for_frame(frame) {
-            if !focused {
+            if !cursor_state.focused {
                 // Unfocused panes show a hollow cursor so the pane that will
-                // receive keystrokes is unambiguous.
+                // receive keystrokes is unambiguous; it never blinks.
                 cursor.style = RendererCursorStyle::BlockHollow;
+            } else if !cursor_state.blink_visible {
+                // Hidden half of the focused cursor's blink cycle.
+                return;
             }
             self.draw_cursor_overlay(cr, &cursor, metrics);
         }

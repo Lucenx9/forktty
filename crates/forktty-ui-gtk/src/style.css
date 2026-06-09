@@ -364,6 +364,11 @@ popover.ft-context-menu contents {
   background: alpha(#e88745, 0.42);
 }
 
+/* GTK marks the separator `:active` while the divider is being dragged. */
+.workspace-paned > separator:active {
+  background: alpha(#e88745, 0.80);
+}
+
 .sidebar-shell {
   background: #1b1b1b;
   color: #b7b7b7;
@@ -795,6 +800,11 @@ popover.ft-context-menu contents {
 .terminal-stage paned > separator:hover,
 .terminal-stage paned > separator:focus-visible {
   background: alpha(#e88745, 0.46);
+}
+
+/* GTK marks the separator `:active` while the divider is being dragged. */
+.terminal-stage paned > separator:active {
+  background: alpha(#e88745, 0.80);
 }
 
 .terminal-pane {
