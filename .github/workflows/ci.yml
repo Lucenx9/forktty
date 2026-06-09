@@ -230,10 +230,18 @@ jobs:
           dpkg-deb --contents "$deb_artifact" >/dev/null
           deb_root="$smoke_home/deb-root"
           dpkg-deb -x "$deb_artifact" "$deb_root"
-          "$deb_root/usr/bin/forktty" --version
-          "$deb_root/usr/bin/forktty" --help
-          "$deb_root/usr/bin/forktty" doctor
-          "$deb_root/usr/bin/forktty" hooks setup --dry-run codex
+          # The extracted tree is not an installed system: the bundled
+          # libghostty sits in deb_root/usr/lib, which the loader only
+          # reaches through LD_LIBRARY_PATH (a real install lands it in
+          # /usr/lib where no override is needed).
+          deb_run() {
+            LD_LIBRARY_PATH="$deb_root/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+              "$deb_root/usr/bin/forktty" "$@"
+          }
+          deb_run --version
+          deb_run --help
+          deb_run doctor
+          deb_run hooks setup --dry-run codex
 
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" --version
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" --help
