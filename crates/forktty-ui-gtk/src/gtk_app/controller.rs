@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct PaneChrome {
     pub(super) pane: gtk::Box,
-    pub(super) header: gtk::Box,
+    pub(super) header_revealer: gtk::Revealer,
     pub(super) single_pane_actions: gtk::Box,
     pub(super) focus_marker: gtk::Box,
     pub(super) title: gtk::Label,
@@ -289,7 +289,7 @@ impl TerminalController {
         let widget = self.widget_for_pane(&visible_tree, &workspace_id);
         let single_pane = collect_panes(&visible_tree).len() == 1;
         for chrome in self.chromes.values() {
-            chrome.header.set_visible(!single_pane);
+            chrome.header_revealer.set_reveal_child(!single_pane);
             chrome.single_pane_actions.set_visible(single_pane);
             chrome.single_pane_actions.set_sensitive(single_pane);
         }

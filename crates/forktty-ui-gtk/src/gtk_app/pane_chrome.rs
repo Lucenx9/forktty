@@ -15,6 +15,13 @@ pub(super) fn build_pane_chrome(
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("terminal-pane-header");
+    // Animate the header in and out as the workspace transitions between a
+    // single pane and a split layout instead of toggling visibility abruptly.
+    let header_revealer = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideDown)
+        .transition_duration(180)
+        .child(&header)
+        .build();
 
     let attention_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     attention_dot.add_css_class("pane-attention-dot");
@@ -213,12 +220,12 @@ pub(super) fn build_pane_chrome(
     header.append(&title);
     header.append(&cwd);
     header.append(&actions);
-    pane.append(&header);
+    pane.append(&header_revealer);
     pane.append(&terminal_overlay);
 
     PaneChrome {
         pane,
-        header,
+        header_revealer,
         single_pane_actions,
         focus_marker,
         title,
