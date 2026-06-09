@@ -10,10 +10,12 @@ APPIMAGE_DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.desktop"
 ICON_FILE="$ROOT_DIR/packaging/linux/icons/forktty.png"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.metainfo.xml"
+# GUI-stack fallback libraries, used only when the host has no GTK4 (AppRun
+# appends usr/lib/bundled to the search path in that case). libghostty is the
+# only library the binary always takes from the AppImage (usr/lib).
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
-  "libghostty-vt.so"
 )
 
 if [[ -z "$VERSION" ]]; then
@@ -65,6 +67,15 @@ should_skip_appimage_lib() {
       # source of broken GTK4 rendering in AppImages.
       return 0
       ;;
+    libfontconfig.so.* | libfreetype.so.* | libharfbuzz*.so.* | \
+      libwayland-*.so.* | libX11.so.* | libX11-xcb.so.* | libxcb*.so.* | \
+      libXcursor.so.* | libXrandr.so.* | libXi.so.* | libXext.so.* | \
+      libXrender.so.* | libXfixes.so.* | libXdamage.so.* | libXinerama.so.*)
+      # Host-integration layer from the canonical AppImage excludelist:
+      # bundled copies fight the host's font config and display server
+      # libraries (stalled font loads, wrong cursor themes).
+      return 0
+      ;;
     *)
       return 1
       ;;
@@ -73,7 +84,10 @@ should_skip_appimage_lib() {
 
 copy_appimage_runtime_libs() {
   local binary="$1"
-  local lib_dir="$APPDIR/usr/lib"
+  # Fallback directory: AppRun adds it to the search path only when the host
+  # has no GTK4, so a modern host keeps its own GUI stack (correct cursor
+  # themes via the compositor, host fontconfig, portals).
+  local lib_dir="$APPDIR/usr/lib/bundled"
   local copied=0
   local lib_path
   local lib_name
@@ -292,7 +306,13 @@ set -eu
 HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
 export PATH="$HERE/usr/bin:$PATH"
 export FORKTTY_APPIMAGE_DIR="$HERE"
+# usr/lib holds only libghostty (always needed); the GUI stack in
+# usr/lib/bundled is a fallback used solely when the host has no GTK4 —
+# a host GTK gives native cursor themes, fontconfig, and portals.
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if ! { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libgtk-4\.so'; then
+  export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$HERE/usr/lib/bundled"
+fi
 if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"
 else
