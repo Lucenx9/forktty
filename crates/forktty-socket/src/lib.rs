@@ -437,7 +437,23 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
     spawn_event_tick(state.clone());
     let connection_limit = Arc::new(Semaphore::new(MAX_SOCKET_CONNECTIONS));
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            // A client aborting mid-handshake (or a transient kernel hiccup)
+            // must not take the whole IPC server down for the rest of the
+            // process lifetime; only give up on genuinely fatal errors.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
+            }
+            Err(err) => return Err(err.into()),
+        };
         let state = state.clone();
         let Ok(permit) = connection_limit.clone().try_acquire_owned() else {
             tokio::spawn(async move {
