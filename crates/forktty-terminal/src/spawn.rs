@@ -56,9 +56,13 @@ pub fn appimage_runtime_env_keys() -> Vec<String> {
 }
 
 pub fn is_appimage_runtime_env(key: &str) -> bool {
+    // FORKTTY_APPIMAGE and FORKTTY_APPIMAGE_DIR are deliberately NOT stripped:
+    // AppRun exports them so that `forktty hooks setup` run from a shell inside
+    // the AppImage can resolve the stable .AppImage launcher path (the
+    // appimage runtime's own vars below never reach child shells).
     matches!(
         key,
-        "APPIMAGE" | "APPDIR" | "ARGV0" | "DESKTOPINTEGRATION" | "FORKTTY_APPIMAGE_DIR" | "OWD"
+        "APPIMAGE" | "APPDIR" | "ARGV0" | "DESKTOPINTEGRATION" | "OWD"
     ) || key.starts_with("APPIMAGE_")
 }
 
@@ -165,5 +169,33 @@ fn is_executable_file(path: &Path) -> bool {
     #[cfg(not(unix))]
     {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The appimage runtime's vars must not leak into terminal children, but
+    // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
+    // a shell inside the AppImage uses them to embed the stable .AppImage path
+    // instead of the volatile /tmp/.mount_* binary path.
+    #[test]
+    fn appimage_runtime_vars_are_stripped_but_forktty_launcher_vars_survive() {
+        for stripped in [
+            "APPIMAGE",
+            "APPDIR",
+            "ARGV0",
+            "OWD",
+            "APPIMAGE_EXTRACT_AND_RUN",
+        ] {
+            assert!(
+                is_appimage_runtime_env(stripped),
+                "{stripped} must be stripped"
+            );
+        }
+        for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH"] {
+            assert!(!is_appimage_runtime_env(kept), "{kept} must survive");
+        }
     }
 }

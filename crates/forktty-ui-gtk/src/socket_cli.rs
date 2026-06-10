@@ -3409,21 +3409,39 @@ fn stable_hook_launcher_path() -> Option<PathBuf> {
     let current_exe = std::env::current_exe().ok();
     stable_hook_launcher_path_from_env(
         current_exe.as_deref(),
-        std::env::var_os("APPIMAGE"),
-        std::env::var_os("APPDIR"),
+        [
+            // Launched directly through the appimage runtime.
+            (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR")),
+            // Shells spawned inside the AppImage app: the runtime's own vars
+            // are stripped from child environments, but AppRun exports these
+            // and puts the mounted usr/bin first in PATH — so a plain
+            // `forktty` resolves to the mounted binary whose /tmp/.mount_*
+            // path dies with the next remount. Hooks must reference the
+            // stable .AppImage path instead.
+            (
+                std::env::var_os("FORKTTY_APPIMAGE"),
+                std::env::var_os("FORKTTY_APPIMAGE_DIR"),
+            ),
+        ],
     )
 }
 
+/// The launcher path hooks should invoke: the .AppImage file when (and only
+/// when) the running binary is the one mounted from it, otherwise the binary
+/// itself.
 fn stable_hook_launcher_path_from_env(
     current_exe: Option<&Path>,
-    appimage: Option<OsString>,
-    appdir: Option<OsString>,
+    appimage_candidates: [(Option<OsString>, Option<OsString>); 2],
 ) -> Option<PathBuf> {
-    if let (Some(appimage), Some(appdir), Some(current_exe)) = (appimage, appdir, current_exe) {
-        let appimage = PathBuf::from(appimage);
-        let appdir = PathBuf::from(appdir);
-        if appimage.is_absolute() && appdir.is_absolute() && current_exe.starts_with(appdir) {
-            return Some(appimage);
+    for (appimage, appdir) in appimage_candidates {
+        if let (Some(appimage), Some(appdir), Some(current_exe)) =
+            (appimage, appdir, current_exe.as_ref())
+        {
+            let appimage = PathBuf::from(appimage);
+            let appdir = PathBuf::from(appdir);
+            if appimage.is_absolute() && appdir.is_absolute() && current_exe.starts_with(appdir) {
+                return Some(appimage);
+            }
         }
     }
     current_exe.map(Path::to_path_buf)
@@ -6986,23 +7004,59 @@ mod tests {
         assert_eq!(backup_count(dir.path(), ".atomic.json.tmp-"), 0);
     }
 
+    fn runtime_vars(appimage: &str, appdir: &str) -> [(Option<OsString>, Option<OsString>); 2] {
+        [
+            (Some(OsString::from(appimage)), Some(OsString::from(appdir))),
+            (None, None),
+        ]
+    }
+
+    fn forktty_vars(appimage: &str, appdir: &str) -> [(Option<OsString>, Option<OsString>); 2] {
+        [
+            (None, None),
+            (Some(OsString::from(appimage)), Some(OsString::from(appdir))),
+        ]
+    }
+
     #[test]
     fn stable_hook_launcher_uses_appimage_only_for_appdir_binary() {
         assert_eq!(
             stable_hook_launcher_path_from_env(
                 Some(Path::new("/tmp/.mount_forktty/usr/bin/forktty")),
-                Some(OsString::from("/home/me/forktty.AppImage")),
-                Some(OsString::from("/tmp/.mount_forktty")),
+                runtime_vars("/home/me/forktty.AppImage", "/tmp/.mount_forktty"),
             ),
             Some(PathBuf::from("/home/me/forktty.AppImage"))
         );
         assert_eq!(
             stable_hook_launcher_path_from_env(
                 Some(Path::new("/usr/bin/forktty")),
-                Some(OsString::from("/home/me/forktty.AppImage")),
-                Some(OsString::from("/tmp/.mount_forktty")),
+                runtime_vars("/home/me/forktty.AppImage", "/tmp/.mount_forktty"),
             ),
             Some(PathBuf::from("/usr/bin/forktty"))
+        );
+    }
+
+    // Shells inside the AppImage app see FORKTTY_APPIMAGE/FORKTTY_APPIMAGE_DIR
+    // (exported by AppRun) instead of the runtime's APPIMAGE/APPDIR, which are
+    // stripped from child environments. Hooks set up from such a shell used to
+    // embed the volatile /tmp/.mount_* binary path, which broke on remount.
+    #[test]
+    fn stable_hook_launcher_uses_forktty_appimage_vars_from_child_shells() {
+        assert_eq!(
+            stable_hook_launcher_path_from_env(
+                Some(Path::new("/tmp/.mount_forktty/usr/bin/forktty")),
+                forktty_vars("/home/me/forktty.AppImage", "/tmp/.mount_forktty"),
+            ),
+            Some(PathBuf::from("/home/me/forktty.AppImage"))
+        );
+        // A dev binary invoked explicitly from inside an AppImage shell must
+        // keep its own path: it is not the mounted binary.
+        assert_eq!(
+            stable_hook_launcher_path_from_env(
+                Some(Path::new("/home/me/forktty/target/release/forktty")),
+                forktty_vars("/home/me/forktty.AppImage", "/tmp/.mount_forktty"),
+            ),
+            Some(PathBuf::from("/home/me/forktty/target/release/forktty"))
         );
     }
 

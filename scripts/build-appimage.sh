@@ -306,6 +306,11 @@ set -eu
 HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
 export PATH="$HERE/usr/bin:$PATH"
 export FORKTTY_APPIMAGE_DIR="$HERE"
+# Stable path to the .AppImage file itself. The appimage runtime's own vars
+# (APPIMAGE/APPDIR) are stripped from terminal child environments, but agent
+# hooks written by `forktty hooks setup` must reference a path that survives
+# remounts — the random /tmp/.mount_* binary path does not.
+export FORKTTY_APPIMAGE="${APPIMAGE:-}"
 # usr/lib holds only libghostty (always needed); the GUI stack in
 # usr/lib/bundled is a fallback used solely when the host has no GTK4 —
 # a host GTK gives native cursor themes, fontconfig, and portals.
