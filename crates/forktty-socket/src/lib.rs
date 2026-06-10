@@ -6146,6 +6146,110 @@ mod tests {
         assert!(err.to_string().contains("nonsense.bogus"));
     }
 
+    fn xorshift(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn random_param_value(rng: &mut u64, depth: u32) -> Value {
+        // Keys real handlers look for, plus garbage; values span every JSON
+        // type so each parameter extraction path sees the wrong type too.
+        const KEYS: &[&str] = &[
+            "surface_id",
+            "surfaceId",
+            "workspace",
+            "workspace_id",
+            "name",
+            "cwd",
+            "text",
+            "host",
+            "message",
+            "title",
+            "kind",
+            "level",
+            "label",
+            "value",
+            "id",
+            "axis",
+            "branch",
+            "path",
+            "url",
+            "garbage \u{0} key",
+        ];
+        const STRINGS: &[&str] = &[
+            "",
+            " ",
+            "x",
+            "workspace-1",
+            "surface-1",
+            "../../../etc/passwd",
+            "-1",
+            "0",
+            "999999999999999999999",
+            "*",
+            "/",
+            "\\",
+            "🦀\u{7f}",
+            "{\"nested\":true}",
+        ];
+        let variants = if depth == 0 { 7 } else { 9 };
+        match xorshift(rng) % variants {
+            0 => Value::Null,
+            1 => json!(true),
+            2 => json!(-1),
+            3 => json!(u64::MAX),
+            4 => json!(f64::MAX),
+            5 => json!(STRINGS[(xorshift(rng) % STRINGS.len() as u64) as usize]),
+            6 => json!("a".repeat((xorshift(rng) % 8192) as usize)),
+            7 => Value::Array(
+                (0..xorshift(rng) % 3)
+                    .map(|_| random_param_value(rng, depth - 1))
+                    .collect(),
+            ),
+            _ => {
+                let mut object = serde_json::Map::new();
+                for _ in 0..xorshift(rng) % 4 {
+                    object.insert(
+                        KEYS[(xorshift(rng) % KEYS.len() as u64) as usize].to_string(),
+                        random_param_value(rng, depth - 1),
+                    );
+                }
+                Value::Object(object)
+            }
+        }
+    }
+
+    /// Deterministic randomized sweep over every dispatchable method with
+    /// adversarial params: the socket accepts NDJSON from any local client,
+    /// so no params shape may panic the server (errors are fine).
+    #[tokio::test]
+    async fn dispatch_never_panics_on_adversarial_params() {
+        let fixed = [
+            Value::Null,
+            json!({}),
+            json!([]),
+            json!(""),
+            json!(0),
+            json!(true),
+            json!({"surface_id": null, "workspace": [], "text": {}}),
+        ];
+        let mut rng = 0x5eed_2026_0610_f00du64;
+        for method in METHODS {
+            // Fresh state per method so earlier mutations (closed workspaces,
+            // split surfaces) cannot mask a later parameter path.
+            let (state, _backend) = test_state();
+            for params in &fixed {
+                let _ = dispatch(&state, method, params.clone()).await;
+            }
+            for _ in 0..60 {
+                let params = random_param_value(&mut rng, 2);
+                let _ = dispatch(&state, method, params).await;
+            }
+        }
+    }
+
     #[tokio::test]
     async fn dispatch_returns_missing_param_for_workspace_command_without_selector() {
         let (state, _backend) = test_state();
