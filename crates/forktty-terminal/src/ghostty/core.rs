@@ -613,11 +613,10 @@ impl GhosttyCore {
     fn format_plain_text(&self, trim: bool) -> Result<String> {
         let mut formatter = Formatter::new(
             &self.terminal,
-            FormatterOptions {
-                format: Format::Plain,
-                trim,
-                unwrap: false,
-            },
+            FormatterOptions::new()
+                .with_format(Format::Plain)
+                .with_trim(trim)
+                .with_unwrap(false),
         )?;
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())

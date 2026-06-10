@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Dropped the vendored `libghostty-vt-sys` copy: upstream libghostty-rs now makes the zig optimize mode follow the Cargo profile (uzaaft/libghostty-rs#55), so both libghostty crates are pinned to upstream master via `[patch.crates-io]`, with `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe` pinned in `.cargo/config.toml` so debug and test builds keep the optimized VT parser. The lines-to-bytes scrollback conversion stays on our side (upstream C API issue, uzaaft/libghostty-rs#56).
+
 ### Added
 - Panics now also append message, location, and backtrace to `$XDG_STATE_HOME/forktty/panic.log` before the process dies, so field crashes (which abort inside GTK signal trampolines) no longer require coredump symbolization to diagnose.
 - The session state is now guarded by a lock file: a second running instance (e.g. a deb-installed and an AppImage forktty that DBus could not deduplicate) refuses to start instead of silently fighting the first one's session autosave.

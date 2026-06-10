@@ -1,0 +1,5 @@
+[env]
+# Keep the zig-built libghostty optimized in every Cargo profile: upstream
+# maps debug builds to zig Debug, whose VT parser is ~870x slower (measured
+# ~65 KB/s), which would drag tests and dev runs. See uzaaft/libghostty-rs#55.
+LIBGHOSTTY_VT_SYS_OPTIMIZE = "ReleaseSafe"
