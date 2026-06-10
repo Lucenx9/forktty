@@ -1204,17 +1204,44 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
 
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    if writeln!(handle, "{}", first.trim_end()).is_err() {
+    // Flush after every event: piped stdout (`forktty events | jq`) is
+    // block-buffered, and at terminal event rates a script would otherwise
+    // see nothing until 8KB accumulate or the stream ends.
+    if writeln!(handle, "{}", first.trim_end()).is_err() || handle.flush().is_err() {
         return Ok(());
     }
     while let Some(line) =
         read_limited_response_line(&mut reader, MAX_SOCKET_RESPONSE_BYTES, "events stream line")?
     {
-        if writeln!(handle, "{line}").is_err() {
+        warn_if_lagged(&line);
+        if writeln!(handle, "{line}").is_err() || handle.flush().is_err() {
             break;
         }
     }
     Ok(())
+}
+
+/// Surface the server's lag notice on stderr too: the NDJSON line alone is
+/// easy to miss for a consumer filtering stdout (e.g. `| jq 'select(...)'`),
+/// and dropped events mean the stream must be re-synced by reconnecting.
+fn warn_if_lagged(line: &str) {
+    if let Some(dropped) = lagged_dropped_count(line) {
+        eprintln!(
+            "forktty: events stream lagged, {dropped} event(s) dropped; \
+             re-run `forktty events` to resync"
+        );
+    }
+}
+
+/// Dropped-event count if `line` is the server's lag notice. The prefix check
+/// is exact: event payloads embedding the same text in a string field arrive
+/// with escaped quotes, so they cannot match.
+fn lagged_dropped_count(line: &str) -> Option<u64> {
+    if !line.starts_with(r#"{"event":"lagged""#) {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    Some(value.get("dropped").and_then(Value::as_u64).unwrap_or(0))
 }
 
 fn handle_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -5426,6 +5453,22 @@ mod tests {
     use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
     use std::sync::Mutex;
     use std::thread;
+
+    #[test]
+    fn lagged_detection_matches_the_notice_but_not_embedded_payloads() {
+        assert_eq!(
+            lagged_dropped_count(r#"{"event":"lagged","dropped":15}"#),
+            Some(15)
+        );
+        // A title that embeds the notice text arrives with escaped quotes.
+        assert_eq!(
+            lagged_dropped_count(
+                r#"{"event":"surface_title_changed","title":"{\"event\":\"lagged\"}"}"#
+            ),
+            None
+        );
+        assert_eq!(lagged_dropped_count(r#"{"event":"subscribed"}"#), None);
+    }
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
