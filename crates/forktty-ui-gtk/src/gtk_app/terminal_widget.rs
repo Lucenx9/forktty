@@ -309,26 +309,24 @@ impl GhosttyTerminalWidget {
                             any_button_pressed: false,
                         },
                     );
-                    match runtime.borrow_mut().write_mouse(input) {
-                        Ok(true) => {
+                    match route_terminal_scroll(&runtime, input, dy) {
+                        Ok(ScrollRouting::Forwarded) => {
                             drawing_area.queue_draw();
                             glib::Propagation::Stop
                         }
-                        Ok(false) => {
-                            if let Some(delta) = terminal_scroll_viewport_delta(dy) {
-                                if scroll_terminal_viewport(&runtime, &drawing_area, delta) {
-                                    // Selection coordinates are viewport-relative;
-                                    // scrolling would leave the highlight on the
-                                    // wrong text.
-                                    selection.borrow_mut().clear();
-                                }
-                                glib::Propagation::Stop
-                            } else {
-                                glib::Propagation::Proceed
+                        Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
+                            if scrolled {
+                                // Selection coordinates are viewport-relative;
+                                // scrolling would leave the highlight on the
+                                // wrong text.
+                                selection.borrow_mut().clear();
+                                drawing_area.queue_draw();
                             }
+                            glib::Propagation::Stop
                         }
+                        Ok(ScrollRouting::NotHandled) => glib::Propagation::Proceed,
                         Err(err) => {
-                            eprintln!("Failed to write terminal mouse input: {err}");
+                            eprintln!("Failed to route terminal scroll input: {err}");
                             glib::Propagation::Proceed
                         }
                     }
@@ -735,23 +733,37 @@ fn selection_text_from_frame(
     lines.join("\n")
 }
 
-fn scroll_terminal_viewport(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollRouting {
+    /// The event was encoded and written to a mouse-tracking application.
+    Forwarded,
+    /// Tracking is off; the viewport scrolled (or was already at its limit).
+    ViewportScrolled(bool),
+    /// Nothing to do (no line delta for this event).
+    NotHandled,
+}
+
+/// Routes a wheel event: forwarded to a mouse-tracking application, otherwise
+/// scrolled through the local viewport. Each runtime borrow is released
+/// before the next one — matching directly on `borrow_mut().write_mouse(..)`
+/// used to keep the `RefMut` alive across the arms, so the viewport-scroll
+/// re-borrow panicked, and that panic aborted the whole app because it cannot
+/// unwind across the GTK signal trampoline (wheel scroll over any pane with
+/// mouse tracking off, e.g. a plain shell prompt).
+fn route_terminal_scroll(
     runtime: &Rc<RefCell<TerminalRuntime>>,
-    drawing_area: &gtk::DrawingArea,
-    delta: isize,
-) -> bool {
-    match runtime.borrow_mut().scroll_viewport_lines(delta) {
-        Ok(scrolled) => {
-            if scrolled {
-                drawing_area.queue_draw();
-            }
-            scrolled
-        }
-        Err(err) => {
-            eprintln!("Failed to scroll terminal viewport: {err}");
-            false
-        }
+    input: TerminalMouseInput,
+    dy: f64,
+) -> Result<ScrollRouting, TerminalError> {
+    let wrote = runtime.borrow_mut().write_mouse(input);
+    if wrote? {
+        return Ok(ScrollRouting::Forwarded);
     }
+    let Some(delta) = terminal_scroll_viewport_delta(dy) else {
+        return Ok(ScrollRouting::NotHandled);
+    };
+    let scrolled = runtime.borrow_mut().scroll_viewport_lines(delta);
+    Ok(ScrollRouting::ViewportScrolled(scrolled?))
 }
 
 fn write_terminal_input(
@@ -970,6 +982,88 @@ mod selection_tests {
         );
 
         assert_eq!(text, "beta\ngamma delta\nepsi");
+    }
+
+    // Regression for the Fedora SIGABRT: wheel scroll over a pane with mouse
+    // tracking off used to double-borrow the runtime RefCell (the match held
+    // the write_mouse RefMut across the viewport-scroll re-borrow), and the
+    // panic aborted the app because it cannot unwind across the GTK signal
+    // trampoline.
+    #[test]
+    fn wheel_scroll_with_tracking_off_scrolls_the_viewport_without_panicking() {
+        use forktty_terminal::ghostty::core::{
+            TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
+            TerminalMouseSize,
+        };
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let wheel = TerminalMouseInput {
+            action: TerminalMouseAction::Press,
+            button: Some(TerminalMouseButton::WheelUp),
+            modifiers: Default::default(),
+            position: TerminalMousePosition { x: 10.0, y: 20.0 },
+            size: TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+            any_button_pressed: false,
+        };
+
+        let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
+
+        assert_eq!(routing, ScrollRouting::ViewportScrolled(true));
+    }
+
+    #[test]
+    fn wheel_scroll_with_tracking_on_forwards_to_the_application() {
+        use forktty_terminal::ghostty::core::{
+            TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
+            TerminalMouseSize,
+        };
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        // Enable SGR mouse tracking, as tmux/vim/htop do.
+        runtime.feed_pty_bytes(b"\x1b[?1000h\x1b[?1006h").unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let wheel = TerminalMouseInput {
+            action: TerminalMouseAction::Press,
+            button: Some(TerminalMouseButton::WheelUp),
+            modifiers: Default::default(),
+            position: TerminalMousePosition { x: 10.0, y: 20.0 },
+            size: TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+            any_button_pressed: false,
+        };
+
+        let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
+
+        assert_eq!(routing, ScrollRouting::Forwarded);
     }
 
     #[test]
