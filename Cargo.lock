@@ -1413,8 +1413,6 @@ dependencies = [
 [[package]]
 name = "libghostty-vt-sys"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aee97068da1692162c4523d54843bdcb43fecf086a9ee412a3375817e433faca"
 
 [[package]]
 name = "libgit2-sys"
