@@ -11,6 +11,17 @@ All notable changes to ForkTTY are documented here.
 - The focused pane's cursor now blinks at the conventional cadence and snaps visible on keystrokes; unfocused panes keep a steady hollow cursor.
 - Pane headers now slide in and out over 180ms when a workspace transitions between single-pane and split layouts.
 - Split dividers tint with the accent color while being dragged, and the worktree dialog's mode selector uses the accent for the selected mode.
+- libghostty is now compiled optimized (ReleaseSafe): upstream's build script left zig in Debug mode, so terminal output parsing ran ~870x slower than it should have (a 64 KiB burst took ~1 second; `cat` of a large file crawled at ~65 KB/s).
+- The `events.subscribe` stream now emits `workspace_renamed` when a workspace changes name; subscribers previously kept the stale name forever.
+
+### Fixed
+- Scrollback now actually retains the configured number of lines: the limit was being passed to ghostty as a byte budget, so 10k configured lines kept only a few dozen rows of history.
+- Scrollback search no longer re-dumps the entire scrollback on every keystroke and every Enter; matches are cached until terminal content or the query changes, keeping search instant even at 100k lines.
+- Ctrl+Shift+C with nothing selected now copies the visible screen instead of silently filling the clipboard with the entire scrollback history.
+- Mouse clicks and selection highlights no longer drift from the painted text grid with fonts whose metrics round differently (input mapping and rendering now share one cell measurement).
+- Launching forktty while it is already running now presents the existing window instead of building a second window, workspace model, and socket server (which used to steal the IPC socket from the running instance).
+- The quake window re-derives its size from the current monitor on each show instead of keeping its launch-time geometry after dock/undock or resolution changes.
+- The IPC socket is now bound via a private staging directory instead of flipping the process-wide umask, which could corrupt files created concurrently by other threads.
 
 ## [0.2.0-alpha.7] - 2026-06-09
 
