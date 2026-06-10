@@ -22,6 +22,8 @@ All notable changes to ForkTTY are documented here.
 - Launching forktty while it is already running now presents the existing window instead of building a second window, workspace model, and socket server (which used to steal the IPC socket from the running instance).
 - The quake window re-derives its size from the current monitor on each show instead of keeping its launch-time geometry after dock/undock or resolution changes.
 - The IPC socket is now bound via a private staging directory instead of flipping the process-wide umask, which could corrupt files created concurrently by other threads.
+- Wheel scrolling a pane whose application does not track the mouse (a plain shell prompt) aborted the whole app: the scroll handler double-borrowed the terminal runtime and the panic could not unwind across the GTK signal trampoline. Tracking-aware apps (tmux, vim, htop) were unaffected, which made the crash look random.
+- AppImage: `forktty` CLI calls from shells inside the app (agent hooks, `forktty ping`) failed with "error while loading shared libraries: libghostty-vt.so.0"; the binary now locates the bundled library itself (RUNPATH `$ORIGIN/../lib`). Agent hooks set up from inside the AppImage now reference the stable `.AppImage` path instead of the temporary `/tmp/.mount_*` mount, which broke on the next launch.
 
 ## [0.2.0-alpha.7] - 2026-06-09
 
