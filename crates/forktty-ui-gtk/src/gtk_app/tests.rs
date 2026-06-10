@@ -1982,19 +1982,58 @@ fn terminal_theme_presets_use_expected_ansi_values() {
 }
 
 #[test]
-fn settings_number_value_uses_last_valid_value_for_invalid_text() {
-    assert_eq!(settings_number_value_from_text("abc", 8, 64, 14), 14);
+fn settings_choice_mapping_round_trips_known_values() {
+    assert_eq!(settings_choice_index(WORKTREE_LAYOUT_ITEMS, "sibling"), 1);
     assert_eq!(
-        settings_number_value_from_text("   ", 0, 500_000, 20_000),
-        20_000
+        settings_choice_value(WORKTREE_LAYOUT_ITEMS, 1),
+        Some("sibling")
+    );
+    assert_eq!(settings_choice_value(WINDOW_MODE_ITEMS, 1), Some("quake"));
+    assert_eq!(
+        settings_choice_index(TERMINAL_THEME_ITEMS, config::TERMINAL_THEME_GRUVBOX_DARK),
+        5
     );
 }
 
 #[test]
-fn settings_number_value_clamps_parsed_and_fallback_values() {
-    assert_eq!(settings_number_value_from_text("999", 8, 64, 14), 64);
-    assert_eq!(settings_number_value_from_text("1", 8, 64, 14), 8);
-    assert_eq!(settings_number_value_from_text("bad", 8, 64, 999), 64);
+fn settings_choice_mapping_falls_back_for_unknown_values() {
+    assert_eq!(settings_choice_index(SIDEBAR_POSITION_ITEMS, "top"), 0);
+    assert_eq!(settings_choice_value(SIDEBAR_POSITION_ITEMS, 99), None);
+    assert_eq!(settings_id_index(&["only".to_string()], "missing"), 0);
+}
+
+#[test]
+fn font_family_choices_selects_default_for_empty_family() {
+    let names = vec!["JetBrains Mono".to_string(), "Hack".to_string()];
+    let choices = font_family_choices(&names, &names, "Noto Sans Mono", "");
+    assert_eq!(choices.active_index, 0);
+    assert_eq!(choices.ids[0], DEFAULT_FONT_FAMILY_ID);
+    assert_eq!(choices.ids[1], SYSTEM_MONOSPACE_FONT_FAMILY_ID);
+    assert!(choices.labels[1].contains("Noto Sans Mono"));
+    assert_eq!(
+        &choices.labels[2..],
+        &["Hack".to_string(), "JetBrains Mono".to_string()]
+    );
+}
+
+#[test]
+fn font_family_choices_selects_system_monospace_alias() {
+    let names = vec!["Hack".to_string()];
+    let choices = font_family_choices(&names, &names, "Adwaita Mono", "Monospace");
+    assert_eq!(choices.active_index, 1);
+}
+
+#[test]
+fn font_family_choices_appends_saved_entry_for_missing_family() {
+    let names = vec!["Hack".to_string()];
+    let choices = font_family_choices(&names, &names, "Hack", "Vanished Font");
+    let last = choices.ids.len() - 1;
+    assert_eq!(choices.active_index as usize, last);
+    assert_eq!(choices.labels[last], "Vanished Font (saved)");
+    assert_eq!(
+        decode_font_family_row_id(&choices.ids[last]),
+        "Vanished Font"
+    );
 }
 
 #[test]

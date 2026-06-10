@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- The Settings dialog was reorganized and rebuilt with standard GNOME preference rows: the terminal palette now lives on the Terminal page next to font and scrollback, the Alerts page is named Notifications, enum options (palette, window mode, sidebar position, worktree layout, font family) use combo rows with explicit value mapping instead of free-form combo boxes, font size and scrollback use spin rows with the validated bounds, the font picker is searchable, and an invalid shell or notification command now marks the row in red in addition to the error toast.
 - Dropped the vendored `libghostty-vt-sys` copy: upstream libghostty-rs now makes the zig optimize mode follow the Cargo profile (uzaaft/libghostty-rs#55), so both libghostty crates are pinned to upstream master via `[patch.crates-io]`, with `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe` pinned in `.cargo/config.toml` so debug and test builds keep the optimized VT parser. The lines-to-bytes scrollback conversion stays on our side (upstream C API issue, uzaaft/libghostty-rs#56).
 
 ### Added

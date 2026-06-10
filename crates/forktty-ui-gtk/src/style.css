@@ -1662,23 +1662,6 @@ window.ft-dialog,
   border-bottom: none;
 }
 
-.settings-number-control {
-  min-height: 32px;
-}
-
-.settings-number-entry {
-  min-height: 30px;
-  padding: 0 8px;
-}
-
-.settings-number-button {
-  min-width: 32px;
-  min-height: 30px;
-  padding: 0;
-  font-size: 1.05em;
-  font-weight: 700;
-}
-
 .ft-settings-window {
   background: #181818;
 }
@@ -1877,22 +1860,19 @@ window.ft-dialog,
   background: #232323;
 }
 
-.settings-list actionrow label.title,
-.settings-list entryrow label.title,
-.settings-list switchrow label.title {
+.settings-list row label.title {
   color: #d7d7d7;
   font-weight: 560;
   font-size: 0.92em;
 }
 
-.settings-list actionrow label.subtitle,
-.settings-list entryrow label.subtitle,
-.settings-list switchrow label.subtitle {
+.settings-list row label.subtitle {
   color: #8a8a8a;
   font-size: 0.80em;
 }
 
-.settings-list entryrow entry {
+.settings-list row.entry entry,
+.settings-list row.entry text {
   min-height: 30px;
   padding: 2px 0;
   background: transparent;
@@ -1900,27 +1880,84 @@ window.ft-dialog,
   box-shadow: none;
 }
 
-.settings-list entryrow:focus-within,
 .settings-list row:focus-within {
   box-shadow: inset 2px 0 0 #e88745;
 }
 
-.settings-list entryrow image,
 .settings-list row image {
   color: #8a8a8a;
 }
 
-.settings-list combobox button {
-  min-height: 32px;
-  padding: 4px 10px;
-  border-radius: 7px;
-  background: #181818;
-  border-color: #303030;
+.settings-list row.entry.error {
+  box-shadow: inset 2px 0 0 #d36b6b;
 }
 
-.settings-list combobox button:hover {
+.settings-list row.entry.error label.title {
+  color: #d36b6b;
+}
+
+.settings-list row.combo image.dropdown-arrow {
+  color: #8a8a8a;
+}
+
+.settings-list row.combo popover > contents {
+  background: #1f1f1f;
+  border: 1px solid #303030;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.settings-list row.combo popover listview row {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border-bottom: 0;
+  color: #b7b7b7;
+}
+
+.settings-list row.combo popover listview row:hover {
+  background: #232323;
+  color: #d7d7d7;
+}
+
+.settings-list row.combo popover listview row:selected {
+  background: #2a2a2a;
+  color: #d7d7d7;
+}
+
+.settings-list row.spin spinbutton {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.settings-list row.spin spinbutton text {
+  min-height: 32px;
+  min-width: 56px;
+  padding: 0 10px;
+  background: #181818;
+  border: 1px solid #303030;
+  border-radius: 7px;
+}
+
+.settings-list row.spin spinbutton button {
+  min-width: 32px;
+  min-height: 32px;
+  margin-left: 6px;
+  padding: 0;
+  background: #181818;
+  border: 1px solid #303030;
+  border-radius: 7px;
+  color: #b7b7b7;
+  -gtk-icon-size: 14px;
+  box-shadow: none;
+}
+
+.settings-list row.spin spinbutton button:hover {
   background: #232323;
   border-color: #3a3a3a;
+  color: #d7d7d7;
 }
 
 .settings-list switch {
