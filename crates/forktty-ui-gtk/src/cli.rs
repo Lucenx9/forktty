@@ -610,7 +610,18 @@ fn appdir_contains_library(appdir: &Path, lib_prefix: &str) -> bool {
         .any(|dir| directory_contains_library(dir, lib_prefix))
 }
 
+/// Real AppImage lib trees are at most a few levels deep; the cap only
+/// exists so a pathological AppDir cannot overflow the doctor's stack.
+const LIBRARY_SCAN_MAX_DEPTH: usize = 16;
+
 fn directory_contains_library(dir: &Path, lib_prefix: &str) -> bool {
+    directory_contains_library_bounded(dir, lib_prefix, LIBRARY_SCAN_MAX_DEPTH)
+}
+
+fn directory_contains_library_bounded(dir: &Path, lib_prefix: &str, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
@@ -630,7 +641,7 @@ fn directory_contains_library(dir: &Path, lib_prefix: &str) -> bool {
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_dir() && directory_contains_library(&path, lib_prefix) {
+        if file_type.is_dir() && directory_contains_library_bounded(&path, lib_prefix, depth - 1) {
             return true;
         }
     }
@@ -1163,6 +1174,27 @@ mod tests {
             ),
             2
         );
+    }
+
+    #[test]
+    fn library_scan_finds_nested_libs_but_stops_at_the_depth_cap() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let shallow = dir.path().join("a/b/c");
+        fs::create_dir_all(&shallow).unwrap();
+        fs::write(shallow.join("libgtk-4.so.1"), b"").unwrap();
+        assert!(directory_contains_library(dir.path(), "libgtk-4.so"));
+
+        // A library buried deeper than the cap must be ignored instead of
+        // recursing without bound (pathological/tampered AppDir).
+        let deep_root = tempfile::tempdir().unwrap();
+        let mut deep = deep_root.path().to_path_buf();
+        for index in 0..LIBRARY_SCAN_MAX_DEPTH {
+            deep.push(format!("level{index}"));
+        }
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("libgtk-4.so.1"), b"").unwrap();
+        assert!(!directory_contains_library(deep_root.path(), "libgtk-4.so"));
     }
 
     #[test]
