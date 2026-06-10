@@ -24,6 +24,14 @@ pub type Result<T> = std::result::Result<T, libghostty_vt::Error>;
 
 const TERMINAL_MODE_TAIL_LIMIT: usize = 64;
 
+/// ghostty's `max_scrollback` is a page-memory budget in BYTES, not rows
+/// (`Screen.zig`: "max_scrollback is the amount of scrollback to keep in
+/// bytes"; the libghostty-vt 0.1.1 doc claiming lines is wrong). Page memory
+/// per row measured ~1.1-1.6 KiB at 80-120 columns, so 2 KiB per requested
+/// line keeps at least the configured number of lines at typical widths. The
+/// budget is an upper bound on allocation, not a preallocation.
+const SCROLLBACK_BYTES_PER_LINE: usize = 2048;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhosttyCoreOptions {
     pub cols: u16,
@@ -40,6 +48,10 @@ pub struct GhosttyCore {
     bracketed_paste: bool,
     focus_reporting: bool,
     terminal_mode_tail: Vec<u8>,
+    /// Bumped whenever terminal content may have changed (feed/resize/reset;
+    /// viewport scrolling does not count). Lets callers cache derived data
+    /// such as full-text dumps.
+    content_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,7 +345,9 @@ impl GhosttyCore {
         let mut terminal = Box::new(Terminal::new(TerminalOptions {
             cols: options.cols,
             rows: options.rows,
-            max_scrollback: options.scrollback_lines,
+            max_scrollback: options
+                .scrollback_lines
+                .saturating_mul(SCROLLBACK_BYTES_PER_LINE),
         })?);
         terminal
             .on_pty_write({
@@ -369,10 +383,16 @@ impl GhosttyCore {
             bracketed_paste: false,
             focus_reporting: false,
             terminal_mode_tail: Vec::new(),
+            content_generation: 0,
         })
     }
 
+    pub fn content_generation(&self) -> u64 {
+        self.content_generation
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<GhosttyEvent>> {
+        self.content_generation += 1;
         self.update_terminal_private_modes(bytes);
         let metadata_events = self
             .metadata
@@ -394,6 +414,8 @@ impl GhosttyCore {
         cell_width_px: u32,
         cell_height_px: u32,
     ) -> Result<Vec<GhosttyEvent>> {
+        // Reflow rewraps the scrollback, changing line<->row mapping.
+        self.content_generation += 1;
         self.terminal
             .resize(cols, rows, cell_width_px, cell_height_px)?;
         let _snapshot = self.render_state.update(&self.terminal)?;
@@ -403,6 +425,7 @@ impl GhosttyCore {
     }
 
     pub fn reset(&mut self) -> Result<Vec<GhosttyEvent>> {
+        self.content_generation += 1;
         self.terminal.reset();
         let _snapshot = self.render_state.update(&self.terminal)?;
         let mut events = self.events.borrow_mut();
@@ -419,10 +442,6 @@ impl GhosttyCore {
         let mut events = self.events.borrow_mut();
         events.push(GhosttyEvent::VisibleContentChanged);
         Ok(std::mem::take(&mut *events))
-    }
-
-    pub fn visible_text(&self) -> Result<String> {
-        self.format_plain_text(false)
     }
 
     /// Plain-text dump of the entire scrollable area (scrollback history plus
@@ -505,10 +524,6 @@ impl GhosttyCore {
         }
 
         Ok(frame)
-    }
-
-    pub fn select_all_text(&self) -> Result<String> {
-        self.format_plain_text(false)
     }
 
     pub fn paste_bytes(&self, text: &str) -> Result<Vec<u8>> {
@@ -691,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn core_formats_visible_text_and_emits_title_and_bell() {
+    fn core_formats_full_text_and_emits_title_and_bell() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 20,
             rows: 4,
@@ -707,7 +722,32 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| matches!(event, GhosttyEvent::Bell)));
-        assert!(core.visible_text().unwrap().contains("hello"));
+        assert!(core.full_text().unwrap().contains("hello"));
+    }
+
+    // Regression: scrollback_lines used to be passed straight into ghostty's
+    // max_scrollback, which is a BYTE budget — 10k configured lines kept only
+    // a few dozen rows of history.
+    #[test]
+    fn core_retains_at_least_the_configured_scrollback_lines() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 2_000,
+        })
+        .unwrap();
+
+        let mut bytes = Vec::new();
+        for i in 0..3_000u32 {
+            bytes.extend_from_slice(format!("line {i} padding padding padding\r\n").as_bytes());
+        }
+        core.feed(&bytes).unwrap();
+
+        let total = core.terminal.scrollbar().unwrap().total as usize;
+        assert!(
+            total >= 2_000,
+            "scrollback kept only {total} rows, expected at least the 2000 configured lines"
+        );
     }
 
     #[test]
@@ -1189,7 +1229,7 @@ mod tests {
     }
 
     #[test]
-    fn select_all_uses_formatter_for_scrollback() {
+    fn full_text_covers_scrollback() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 10,
             rows: 2,
@@ -1198,7 +1238,7 @@ mod tests {
         .unwrap();
 
         core.feed(b"one\r\ntwo\r\nthree").unwrap();
-        let text = core.select_all_text().unwrap();
+        let text = core.full_text().unwrap();
 
         assert!(text.contains("one"));
         assert!(text.contains("three"));
@@ -1231,7 +1271,7 @@ mod tests {
         core.scroll_viewport_lines(-1).unwrap();
         let scrolled = core.viewport_position().unwrap();
         assert_eq!(scrolled.top, 1);
-        assert!(core.visible_text().is_ok());
+        assert!(core.full_text().is_ok());
     }
 
     fn test_mouse_press() -> TerminalMouseInput {

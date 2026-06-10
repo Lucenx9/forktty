@@ -19,6 +19,9 @@ pub(super) struct GhosttyTerminalWidget {
     // Index of the active scrollback search match; matches themselves are
     // recomputed on every step so new output never leaves stale positions.
     search_index: Rc<Cell<Option<usize>>>,
+    // Scrollback dump + matches reused across steps while content and query
+    // are unchanged; see `SearchCache`.
+    search_cache: Rc<RefCell<Option<SearchCache>>>,
 }
 
 pub(super) fn spawn_terminal_with_callback<F>(
@@ -354,6 +357,7 @@ impl GhosttyTerminalWidget {
             selection,
             cursor_blink_visible,
             search_index: Rc::new(Cell::new(None)),
+            search_cache: Rc::new(RefCell::new(None)),
         };
         widget.attach_cursor_blink_timer();
         widget
@@ -392,6 +396,7 @@ impl GhosttyTerminalWidget {
             selection: Rc::downgrade(&self.selection),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
             search_index: Rc::downgrade(&self.search_index),
+            search_cache: Rc::downgrade(&self.search_cache),
         }
     }
 
@@ -421,30 +426,66 @@ impl GhosttyTerminalWidget {
 
     /// Steps the scrollback search to the next (or previous) match of
     /// `query`, scrolls it into view, and highlights it via the selection so
-    /// the renderer paints it and Ctrl+Shift+C copies it. The match list is
-    /// recomputed from the current scrollback text on every step, so output
-    /// that arrived since the last step never leaves stale positions.
+    /// the renderer paints it and Ctrl+Shift+C copies it. Matches are
+    /// recomputed whenever the terminal content or the query changed since
+    /// the last step (so new output never leaves stale positions) and reused
+    /// otherwise — a full-scrollback dump per step is too slow at 100k lines.
     pub(super) fn search_step(&self, query: &str, forward: bool) -> SearchStatus {
-        let matches = find_matches(&self.runtime.borrow().full_text(), query);
+        let generation = self.runtime.borrow().content_generation();
+        let mut cache_slot = self.search_cache.borrow_mut();
+        match cache_slot.as_mut() {
+            Some(cache) if cache.generation == generation && cache.query == query => {}
+            Some(cache) if cache.generation == generation => {
+                cache.matches = find_matches(&cache.text, query);
+                cache.query = query.to_string();
+            }
+            _ => {
+                let text = self.runtime.borrow().full_text();
+                let matches = find_matches(&text, query);
+                *cache_slot = Some(SearchCache {
+                    generation,
+                    text,
+                    query: query.to_string(),
+                    matches,
+                });
+            }
+        }
+        let matches = &cache_slot
+            .as_ref()
+            .expect("search cache was just populated")
+            .matches;
         let Some(index) = step_match_index(self.search_index.get(), matches.len(), forward) else {
+            drop(cache_slot);
             self.search_reset();
             return SearchStatus::none();
         };
+        let total = matches.len();
+        let search_match = matches[index];
+        drop(cache_slot);
         self.search_index.set(Some(index));
-        if let Err(err) = self.show_search_match(query, matches[index]) {
+        if let Err(err) = self.show_search_match(query, search_match) {
             eprintln!("Failed to show terminal search match: {err}");
         }
         SearchStatus {
             current: index + 1,
-            total: matches.len(),
+            total,
         }
     }
 
-    /// Forgets the active match and drops its highlight.
+    /// Forgets the active match and drops its highlight. The cached scrollback
+    /// dump survives: this runs on every query change, where the cache is what
+    /// keeps incremental typing cheap.
     pub(super) fn search_reset(&self) {
         self.search_index.set(None);
         self.selection.borrow_mut().clear();
         self.drawing_area.queue_draw();
+    }
+
+    /// `search_reset` plus dropping the cached scrollback dump; for when the
+    /// search bar closes and the memory should be released.
+    pub(super) fn search_close(&self) {
+        self.search_reset();
+        *self.search_cache.borrow_mut() = None;
     }
 
     fn show_search_match(
@@ -513,6 +554,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
+    search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -523,6 +565,7 @@ impl WeakGhosttyTerminalWidget {
             selection: self.selection.upgrade()?,
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
             search_index: self.search_index.upgrade()?,
+            search_cache: self.search_cache.upgrade()?,
         })
     }
 }
@@ -655,6 +698,24 @@ fn finish_selection_drag(
     drawing_area.queue_draw();
 }
 
+/// The text currently on screen, one line per viewport row, right-trimmed.
+fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFrame) -> String {
+    let text = frame
+        .rows
+        .iter()
+        .map(|row| {
+            row.cells
+                .iter()
+                .map(|cell| cell.text.as_str())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.trim_end().to_string()
+}
+
 fn selection_text_from_frame(
     frame: &forktty_terminal::ghostty::core::TerminalFrame,
     start: SelectionPoint,
@@ -759,8 +820,17 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 
     fn copy_text(&self) {
         if let Some(display) = gtk::gdk::Display::default() {
-            let runtime_text = self.runtime.borrow().visible_text();
-            let text = copy_source_text(&self.selection.borrow(), &runtime_text);
+            // With nothing selected, copy what is on screen — not the whole
+            // scrollback, which used to silently fill the clipboard with the
+            // entire session history.
+            let fallback = match self.runtime.borrow_mut().render_frame() {
+                Ok(frame) => viewport_text_from_frame(&frame),
+                Err(err) => {
+                    eprintln!("Failed to render terminal frame for copy: {err}");
+                    String::new()
+                }
+            };
+            let text = copy_source_text(&self.selection.borrow(), &fallback);
             display.clipboard().set_text(&text);
         }
     }
@@ -787,7 +857,8 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
         {
             let mut selection = self.selection.borrow_mut();
             selection.clear();
-            selection.select_text(self.runtime.borrow().visible_text());
+            // Select-all covers the whole scrollback, like other terminals.
+            selection.select_text(self.runtime.borrow().full_text());
         }
         self.copy_text();
     }
@@ -899,6 +970,15 @@ mod selection_tests {
         );
 
         assert_eq!(text, "beta\ngamma delta\nepsi");
+    }
+
+    #[test]
+    fn viewport_text_covers_only_the_visible_frame() {
+        // 4 rows, so "alpha beta\ngamma" fills rows 0-1 and leaves 2-3 blank;
+        // the copy fallback must trim those rather than dump scrollback.
+        let frame = frame_for_lines(b"alpha beta\r\ngamma");
+
+        assert_eq!(viewport_text_from_frame(&frame), "alpha beta\ngamma");
     }
 
     #[test]

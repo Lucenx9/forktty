@@ -29,8 +29,28 @@ impl SearchStatus {
     }
 }
 
+/// Scrollback dump and its matches, reused while neither the terminal content
+/// nor the query changes — stepping through matches would otherwise re-dump
+/// the whole scrollback (~100ms at 100k lines) on every Enter. Dropped when
+/// the search bar closes to release the text.
+#[derive(Debug)]
+pub(super) struct SearchCache {
+    pub(super) generation: u64,
+    pub(super) text: String,
+    pub(super) query: String,
+    pub(super) matches: Vec<SearchMatch>,
+}
+
 fn chars_eq_ignore_case(a: char, b: char) -> bool {
-    a == b || a.to_lowercase().eq(b.to_lowercase())
+    if a == b {
+        return true;
+    }
+    // The Unicode fallback builds two ToLowercase iterators; that is far too
+    // slow for the millions of first-char rejects of a full-scrollback scan.
+    if a.is_ascii() && b.is_ascii() {
+        return a.eq_ignore_ascii_case(&b);
+    }
+    a.to_lowercase().eq(b.to_lowercase())
 }
 
 /// Start indices of the non-overlapping case-insensitive occurrences of
@@ -57,11 +77,23 @@ fn char_match_starts(haystack: &[char], needle: &[char]) -> Vec<usize> {
 }
 
 /// All case-insensitive matches of `query` in `text`, in reading order.
+/// `text` is a full scrollback dump (potentially tens of MB), so the scan
+/// reuses one haystack buffer instead of allocating per line.
 pub(super) fn find_matches(text: &str, query: &str) -> Vec<SearchMatch> {
     let needle: Vec<char> = query.chars().collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
     let mut matches = Vec::new();
+    let mut haystack: Vec<char> = Vec::new();
     for (line, content) in text.lines().enumerate() {
-        let haystack: Vec<char> = content.chars().collect();
+        // chars() count never exceeds byte count; lines too short to hold the
+        // needle (most blank scrollback rows) skip the char decode entirely.
+        if content.len() < needle.len() {
+            continue;
+        }
+        haystack.clear();
+        haystack.extend(content.chars());
         for (occurrence, _) in char_match_starts(&haystack, &needle).iter().enumerate() {
             matches.push(SearchMatch { line, occurrence });
         }
@@ -222,7 +254,7 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
         let container = container.clone();
         move || {
             container.set_visible(false);
-            widget.search_reset();
+            widget.search_close();
             widget.grab_terminal_focus();
         }
     });
@@ -265,6 +297,16 @@ mod tests {
     #[test]
     fn find_matches_does_not_overlap_occurrences() {
         assert_eq!(matches("aaaa", "aa"), vec![(0, 0), (0, 1)]);
+    }
+
+    // The ASCII fast path in chars_eq_ignore_case must not change non-ASCII
+    // case folding or mixed ASCII/non-ASCII comparisons.
+    #[test]
+    fn find_matches_folds_non_ascii_case() {
+        assert_eq!(matches("ÄRGER und ärger", "ärger"), vec![(0, 0), (0, 1)]);
+        assert_eq!(matches("naïve", "ï"), vec![(0, 0)]);
+        assert_eq!(matches("橋x", "x"), vec![(0, 0)]);
+        assert_eq!(matches("abc", "ä"), vec![]);
     }
 
     #[test]
@@ -321,6 +363,83 @@ mod tests {
             total: 4,
         };
         assert_eq!(viewport_top_for_match(3, short), 0);
+    }
+
+    #[test]
+    #[ignore = "temporary profiling harness"]
+    fn bench_search_on_huge_scrollback() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let scrollback: usize = std::env::var("FORKTTY_BENCH_SCROLLBACK")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100_000);
+        let mut runtime = TerminalRuntime::spawn_with_scrollback_lines(
+            &request,
+            PtySize {
+                cols: 120,
+                rows: 40,
+            },
+            scrollback,
+        )
+        .unwrap();
+        let feed_start = std::time::Instant::now();
+        let mut chunk = Vec::new();
+        let mut chunk_index = 0u32;
+        for i in 0..100_000u32 {
+            chunk.extend_from_slice(
+                format!("line {i} lorem ipsum dolor sit amet consectetur adipiscing elit\r\n")
+                    .as_bytes(),
+            );
+            if chunk.len() > 64 * 1024 {
+                let t = std::time::Instant::now();
+                runtime.feed_pty_bytes(&chunk).unwrap();
+                if chunk_index.is_multiple_of(20) {
+                    eprintln!(
+                        "chunk {chunk_index}: feed {:?}, total rows {}",
+                        t.elapsed(),
+                        runtime.viewport_position().unwrap().total
+                    );
+                }
+                chunk_index += 1;
+                chunk.clear();
+            }
+        }
+        runtime.feed_pty_bytes(&chunk).unwrap();
+        eprintln!(
+            "feed 100k lines: {:?}, total rows {}",
+            feed_start.elapsed(),
+            runtime.viewport_position().unwrap().total
+        );
+
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            let text = runtime.full_text();
+            eprintln!("full_text: {:?} ({} bytes)", t.elapsed(), text.len());
+
+            let t = std::time::Instant::now();
+            let matches = find_matches(&text, "lorem");
+            eprintln!(
+                "find_matches(lorem): {:?} ({} hits)",
+                t.elapsed(),
+                matches.len()
+            );
+
+            let t = std::time::Instant::now();
+            let matches = find_matches(&text, "zzz_no_hit");
+            eprintln!(
+                "find_matches(no hit): {:?} ({} hits)",
+                t.elapsed(),
+                matches.len()
+            );
+        }
     }
 
     #[test]

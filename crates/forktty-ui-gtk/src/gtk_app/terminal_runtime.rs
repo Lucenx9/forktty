@@ -227,14 +227,16 @@ impl TerminalRuntime {
         Ok(events)
     }
 
-    pub(super) fn visible_text(&self) -> String {
-        self.core.visible_text().unwrap_or_default()
-    }
-
     /// Plain-text dump of scrollback plus the active screen; line `i` maps to
     /// grid row `i` counted from the top of the scrollback.
     pub(super) fn full_text(&self) -> String {
         self.core.full_text().unwrap_or_default()
+    }
+
+    /// Changes whenever [`Self::full_text`] may have changed; viewport
+    /// scrolling does not count.
+    pub(super) fn content_generation(&self) -> u64 {
+        self.core.content_generation()
     }
 
     pub(super) fn viewport_position(&self) -> Result<TerminalViewportPosition, TerminalError> {
