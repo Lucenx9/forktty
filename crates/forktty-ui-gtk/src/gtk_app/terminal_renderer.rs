@@ -38,15 +38,6 @@ impl RendererColor {
         );
     }
 
-    fn set_cairo_source_alpha(self, cr: &gtk::cairo::Context, alpha: f64) {
-        cr.set_source_rgba(
-            f64::from(self.red) / 255.0,
-            f64::from(self.green) / 255.0,
-            f64::from(self.blue) / 255.0,
-            alpha,
-        );
-    }
-
     fn from_terminal_rgb(value: TerminalRgb) -> Self {
         Self {
             red: value.red,
@@ -181,10 +172,6 @@ pub(super) struct RendererCursorState {
     pub(super) blink_visible: bool,
 }
 
-/// Selected cells are tinted with the theme highlight color at this opacity,
-/// keeping the underlying text readable without recomputing cell styles.
-const SELECTION_HIGHLIGHT_ALPHA: f64 = 0.35;
-
 #[derive(Debug, Clone, Copy)]
 struct RendererCellMetrics {
     width: f64,
@@ -237,6 +224,16 @@ impl TerminalRenderer {
 
         for (row_idx, row) in frame.rows.iter().enumerate() {
             let y = row_idx as f64 * metrics.height;
+            let selected_span = selection
+                .and_then(|(start, end)| {
+                    selection_cols_for_row(start, end, row_idx, row.cells.len())
+                })
+                .map(|(from, to)| {
+                    (
+                        from as f64 * metrics.width,
+                        (to - from) as f64 * metrics.width,
+                    )
+                });
             for background in self.background_runs_for_frame_row(frame, row) {
                 background.background.set_cairo_source(cr);
                 cr.rectangle(
@@ -248,38 +245,32 @@ impl TerminalRenderer {
                 let _ = cr.fill();
             }
 
-            for run in self.text_runs_for_frame_row(frame, row) {
-                run.foreground.set_cairo_source(cr);
-                let layout = pangocairo::functions::create_layout(cr);
-                let mut font = self.font.clone();
-                if run.bold {
-                    font.set_weight(gtk::pango::Weight::Bold);
-                }
-                if run.italic {
-                    font.set_style(gtk::pango::Style::Italic);
-                }
-                layout.set_font_description(Some(&font));
-                layout.set_text(&run.text);
-                cr.move_to(run.start_col as f64 * metrics.width, y);
-                pangocairo::functions::show_layout(cr, &layout);
-                self.draw_text_decorations(cr, &run, metrics, y);
+            // Selection/search highlight: an opaque theme-highlight background
+            // painted under the glyphs, with the selected glyphs repainted in
+            // the theme's paired highlight foreground. A translucent overlay on
+            // top of the text was barely visible on dark themes and dimmed the
+            // glyphs as soon as it was opaque enough to see.
+            if let Some((x, width)) = selected_span {
+                self.palette.highlight.set_cairo_source(cr);
+                cr.rectangle(x, y, width, metrics.height);
+                let _ = cr.fill();
             }
 
-            if let Some((start, end)) = selection {
-                if let Some((from, to)) =
-                    selection_cols_for_row(start, end, row_idx, row.cells.len())
-                {
-                    self.palette
-                        .highlight
-                        .set_cairo_source_alpha(cr, SELECTION_HIGHLIGHT_ALPHA);
-                    cr.rectangle(
-                        from as f64 * metrics.width,
-                        y,
-                        (to - from) as f64 * metrics.width,
-                        metrics.height,
-                    );
-                    let _ = cr.fill();
-                }
+            self.draw_row_text(cr, frame, row, metrics, y, None);
+
+            if let Some((x, width)) = selected_span {
+                let _ = cr.save();
+                cr.rectangle(x, y, width, metrics.height);
+                cr.clip();
+                self.draw_row_text(
+                    cr,
+                    frame,
+                    row,
+                    metrics,
+                    y,
+                    Some(self.palette.highlight_foreground),
+                );
+                let _ = cr.restore();
             }
         }
 
@@ -496,6 +487,37 @@ impl TerminalRenderer {
         RendererCellMetrics {
             width: f64::from(logical.width().max(1)),
             height: f64::from(logical.height().max(1)),
+        }
+    }
+
+    /// Draws one row's text runs (glyphs plus decorations). With a `color`
+    /// override every run paints in that color instead of its own foreground —
+    /// used clipped to the selection span to repaint selected glyphs in the
+    /// theme's highlight foreground.
+    fn draw_row_text(
+        &self,
+        cr: &gtk::cairo::Context,
+        frame: &TerminalFrame,
+        row: &TerminalRow,
+        metrics: RendererCellMetrics,
+        y: f64,
+        color: Option<RendererColor>,
+    ) {
+        for run in self.text_runs_for_frame_row(frame, row) {
+            color.unwrap_or(run.foreground).set_cairo_source(cr);
+            let layout = pangocairo::functions::create_layout(cr);
+            let mut font = self.font.clone();
+            if run.bold {
+                font.set_weight(gtk::pango::Weight::Bold);
+            }
+            if run.italic {
+                font.set_style(gtk::pango::Style::Italic);
+            }
+            layout.set_font_description(Some(&font));
+            layout.set_text(&run.text);
+            cr.move_to(run.start_col as f64 * metrics.width, y);
+            pangocairo::functions::show_layout(cr, &layout);
+            self.draw_text_decorations(cr, &run, metrics, y);
         }
     }
 
