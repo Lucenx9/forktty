@@ -1,4 +1,5 @@
 mod cli;
+mod panic_log;
 mod socket_cli;
 
 #[cfg(feature = "gtk-ghostty")]
@@ -13,6 +14,7 @@ mod browser_session;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    panic_log::install_panic_hook();
     match cli::parse(std::env::args_os()) {
         cli::CliAction::PrintVersion => {
             cli::print_version();
