@@ -139,6 +139,10 @@ impl GhosttyTerminalWidget {
             });
             let cursor_blink_visible_for_key = cursor_blink_visible.clone();
             key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+                // With an IM context installed, EventControllerKey runs
+                // IMContext::filter_keypress before ::key-pressed; consumed
+                // dead-key/compose events emit ::im-update and never reach
+                // this handler, while completed text arrives via ::commit.
                 let Some(input) = translate_gtk_key(key, modifiers, None) else {
                     return glib::Propagation::Proceed;
                 };
