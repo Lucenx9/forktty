@@ -290,9 +290,10 @@ install -Dm644 "$APPSTREAM_FILE" "$APPDIR/usr/share/metainfo/$APPIMAGE_DESKTOP_I
 copy_forktty_icon_assets
 verify_forktty_icon_assets
 write_appimage_hicolor_index_theme
-# The vendored libghostty must land first: the binary has no RPATH for it
-# (AppRun resolves it via LD_LIBRARY_PATH), so the ldd sweep below cannot
-# discover it and only its required-libs check would see it missing.
+# The vendored libghostty must land first: it is not installed system-wide,
+# so the ldd sweep below cannot discover it and only its required-libs check
+# would see it missing. (The binary reaches it at runtime via its RUNPATH
+# $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 

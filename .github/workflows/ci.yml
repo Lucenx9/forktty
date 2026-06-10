@@ -70,6 +70,13 @@ jobs:
       - name: Debian package
         run: bash scripts/build-deb.sh
 
+      # Shells and agent hooks run the installed binary without
+      # LD_LIBRARY_PATH, so it must find the bundled libghostty through
+      # RUNPATH alone (regression: v0.2.0-alpha.7 shipped with none).
+      - name: Verify binary RUNPATH
+        run: |
+          readelf -d target/release/forktty | grep -E 'RUNPATH|RPATH' | grep -F '$ORIGIN/../lib'
+
       - name: cargo audit
         run: cargo install cargo-audit --locked && cargo audit
 
@@ -230,13 +237,14 @@ jobs:
           dpkg-deb --contents "$deb_artifact" >/dev/null
           deb_root="$smoke_home/deb-root"
           dpkg-deb -x "$deb_artifact" "$deb_root"
-          # The extracted tree is not an installed system: the bundled
-          # libghostty sits in deb_root/usr/lib, which the loader only
-          # reaches through LD_LIBRARY_PATH (a real install lands it in
-          # /usr/lib where no override is needed).
+          # No LD_LIBRARY_PATH on purpose: shells and agent hooks run the
+          # installed binary bare, so it must reach the bundled libghostty
+          # in deb_root/usr/lib through its RUNPATH ($ORIGIN/../lib) alone
+          # (regression: v0.2.0-alpha.7 shipped with no RUNPATH).
+          readelf -d "$deb_root/usr/bin/forktty" \
+            | grep -E 'RUNPATH|RPATH' | grep -F '$ORIGIN/../lib'
           deb_run() {
-            LD_LIBRARY_PATH="$deb_root/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-              "$deb_root/usr/bin/forktty" "$@"
+            env -u LD_LIBRARY_PATH "$deb_root/usr/bin/forktty" "$@"
           }
           deb_run --version
           deb_run --help
@@ -247,6 +255,21 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" --help
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" doctor
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage_artifact" hooks setup --dry-run codex
+
+          # Exercise the inner AppImage binary the way a PTY child does:
+          # the app strips AppImage LD_LIBRARY_PATH entries from terminal
+          # children, so `forktty` resolved from PATH inside a shell loads
+          # libghostty via RUNPATH (regression: v0.2.0-alpha.7 loader error).
+          appimage_abs="$PWD/$appimage_artifact"
+          (cd "$smoke_home" && "$appimage_abs" --appimage-extract >/dev/null)
+          approot="$smoke_home/squashfs-root"
+          readelf -d "$approot/usr/bin/forktty" \
+            | grep -E 'RUNPATH|RPATH' | grep -F '$ORIGIN/../lib'
+          # Agent hooks need a stable AppImage path in child environments.
+          grep -q '^export FORKTTY_APPIMAGE=' "$approot/AppRun"
+          grep -q '^export FORKTTY_APPIMAGE_DIR=' "$approot/AppRun"
+          env -u LD_LIBRARY_PATH "$approot/usr/bin/forktty" --version
+          env -u LD_LIBRARY_PATH "$approot/usr/bin/forktty" doctor
 
       - name: Stage release artifacts
         run: |
