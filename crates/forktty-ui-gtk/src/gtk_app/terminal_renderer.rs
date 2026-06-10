@@ -207,12 +207,16 @@ impl TerminalRenderer {
         self.font.clone()
     }
 
+    /// Cell size used for pixel<->cell mapping (mouse, selection, resize).
+    /// Must measure exactly like [`Self::cell_metrics`] does for drawing — a
+    /// "W" layout's logical pixel extents — or clicks and highlights drift
+    /// from the painted grid by a pixel per cell (FontMetrics'
+    /// `approximate_char_width`/ascent+descent rounds differently).
     pub(super) fn cell_pixel_size_for_widget(&self, widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
-        let context = widget.as_ref().pango_context();
-        let metrics = context.metrics(Some(&self.font), None::<&gtk::pango::Language>);
-        let width = (metrics.approximate_char_width() / gtk::pango::SCALE).max(1);
-        let height = ((metrics.ascent() + metrics.descent()) / gtk::pango::SCALE).max(1);
-        (width, height)
+        let layout = widget.as_ref().create_pango_layout(Some("W"));
+        layout.set_font_description(Some(&self.font));
+        let (_ink, logical) = layout.pixel_extents();
+        (logical.width().max(1), logical.height().max(1))
     }
 
     pub(super) fn draw_frame(
