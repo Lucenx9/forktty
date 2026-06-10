@@ -56,6 +56,38 @@ impl TerminalSelection {
         self.selecting = false;
     }
 
+    /// Re-anchors the drag selection after the viewport scrolled by
+    /// `scrolled_rows` (positive = down): the selected content moved by
+    /// `-scrolled_rows` viewport rows. Points pushed past the top clamp to
+    /// the top-left cell, past the bottom to the bottom-right one, so the
+    /// visible part of the selection keeps covering the right text.
+    pub(super) fn compensate_scroll(
+        &mut self,
+        scrolled_rows: isize,
+        max_row: usize,
+        max_col: usize,
+    ) {
+        let Some((anchor, head)) = &mut self.range else {
+            return;
+        };
+        for point in [anchor, head] {
+            let row = point.row as isize - scrolled_rows;
+            *point = if row < 0 {
+                SelectionPoint { row: 0, col: 0 }
+            } else if row > max_row as isize {
+                SelectionPoint {
+                    row: max_row,
+                    col: max_col,
+                }
+            } else {
+                SelectionPoint {
+                    row: row as usize,
+                    col: point.col,
+                }
+            };
+        }
+    }
+
     fn text(&self) -> Option<&str> {
         self.text.as_deref()
     }
@@ -144,6 +176,29 @@ pub(super) fn word_cols_in_row(kinds: &[WordCellKind], col: usize) -> Option<(us
         to += 1;
     }
     Some((from, to))
+}
+
+/// Lines to scroll per drag-autoscroll tick for a pointer at widget-relative
+/// `y` over a widget `height` pixels tall: zero while the pointer is inside,
+/// negative above (scroll up), positive below, with the magnitude growing
+/// with the distance from the edge up to a cap.
+pub(super) fn autoscroll_lines_per_tick(y: f64, height: f64) -> isize {
+    /// Every this many pixels past the edge adds one line per tick.
+    const ACCEL_PX: f64 = 24.0;
+    const MAX_LINES: isize = 8;
+    let distance = if y < 0.0 {
+        -y
+    } else if y > height {
+        y - height
+    } else {
+        return 0;
+    };
+    let magnitude = (1 + (distance / ACCEL_PX) as isize).min(MAX_LINES);
+    if y < 0.0 {
+        -magnitude
+    } else {
+        magnitude
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +333,86 @@ mod tests {
         // A leading spacer has no head on this row and is unselectable.
         assert_eq!(word_cols_in_row(&[SpacerTail, Word], 0), None);
         assert_eq!(word_cols_in_row(&[SpacerTail, Word], 1), Some((1, 1)));
+    }
+
+    #[test]
+    fn compensate_scroll_shifts_rows_against_scroll_direction() {
+        let mut selection = TerminalSelection::default();
+        selection.begin_drag(SelectionPoint { row: 5, col: 2 });
+        selection.extend_drag(SelectionPoint { row: 7, col: 4 });
+
+        // Scrolling down by 2 moves the selected content up by 2 rows.
+        selection.compensate_scroll(2, 23, 79);
+        assert_eq!(
+            selection.normalized_range(),
+            Some((
+                SelectionPoint { row: 3, col: 2 },
+                SelectionPoint { row: 5, col: 4 }
+            ))
+        );
+
+        selection.compensate_scroll(-3, 23, 79);
+        assert_eq!(
+            selection.normalized_range(),
+            Some((
+                SelectionPoint { row: 6, col: 2 },
+                SelectionPoint { row: 8, col: 4 }
+            ))
+        );
+        assert!(selection.is_selecting());
+    }
+
+    #[test]
+    fn compensate_scroll_clamps_points_leaving_the_viewport() {
+        let mut selection = TerminalSelection::default();
+        selection.begin_drag(SelectionPoint { row: 1, col: 5 });
+        selection.extend_drag(SelectionPoint { row: 3, col: 7 });
+
+        // The anchor falls off the top: it snaps to the top-left cell.
+        selection.compensate_scroll(2, 23, 79);
+        assert_eq!(
+            selection.normalized_range(),
+            Some((
+                SelectionPoint { row: 0, col: 0 },
+                SelectionPoint { row: 1, col: 7 }
+            ))
+        );
+
+        // Everything falls off the bottom: both snap to the bottom-right.
+        selection.compensate_scroll(-30, 23, 79);
+        assert_eq!(
+            selection.normalized_range(),
+            Some((
+                SelectionPoint { row: 23, col: 79 },
+                SelectionPoint { row: 23, col: 79 }
+            ))
+        );
+    }
+
+    #[test]
+    fn compensate_scroll_without_a_selection_is_a_noop() {
+        let mut selection = TerminalSelection::default();
+
+        selection.compensate_scroll(5, 23, 79);
+
+        assert_eq!(selection.normalized_range(), None);
+    }
+
+    #[test]
+    fn autoscroll_lines_are_zero_while_the_pointer_is_inside() {
+        assert_eq!(autoscroll_lines_per_tick(0.0, 100.0), 0);
+        assert_eq!(autoscroll_lines_per_tick(50.0, 100.0), 0);
+        assert_eq!(autoscroll_lines_per_tick(100.0, 100.0), 0);
+    }
+
+    #[test]
+    fn autoscroll_lines_grow_with_edge_distance_and_cap() {
+        assert_eq!(autoscroll_lines_per_tick(-1.0, 100.0), -1);
+        assert_eq!(autoscroll_lines_per_tick(-30.0, 100.0), -2);
+        assert_eq!(autoscroll_lines_per_tick(-1000.0, 100.0), -8);
+        assert_eq!(autoscroll_lines_per_tick(101.0, 100.0), 1);
+        assert_eq!(autoscroll_lines_per_tick(130.0, 100.0), 2);
+        assert_eq!(autoscroll_lines_per_tick(2000.0, 100.0), 8);
     }
 
     #[test]

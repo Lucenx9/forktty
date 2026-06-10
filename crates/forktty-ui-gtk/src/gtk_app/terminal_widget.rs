@@ -184,6 +184,7 @@ impl GhosttyTerminalWidget {
             // forwarded to the application; the matching release must then
             // not be forwarded either.
             let suppress_release = Rc::new(Cell::new(false));
+            let autoscroll = Rc::new(SelectionAutoscroll::default());
             let click = gtk::GestureClick::new();
             click.set_button(0);
             click.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -193,6 +194,7 @@ impl GhosttyTerminalWidget {
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
+                let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
@@ -227,6 +229,9 @@ impl GhosttyTerminalWidget {
                         if forwarded {
                             selection.clear();
                         } else {
+                            // A fresh gesture must not inherit a previous
+                            // drag's pending autoscroll.
+                            autoscroll.lines.set(0);
                             let point =
                                 selection_cell_for_position(&drawing_area, &renderer, x, y);
                             if n_press == 1 {
@@ -323,6 +328,7 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
+                let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 motion.connect_motion(move |controller, x, y| {
                     if selection.borrow().is_selecting() {
@@ -334,6 +340,25 @@ impl GhosttyTerminalWidget {
                                 x,
                                 y,
                             ));
+                        // Steer drag-autoscroll: past the top/bottom edge a
+                        // timer scrolls and keeps extending the selection
+                        // until the pointer comes back inside.
+                        autoscroll.pointer.set((x, y));
+                        let lines = autoscroll_lines_per_tick(
+                            y,
+                            f64::from(drawing_area.allocated_height()),
+                        );
+                        autoscroll.lines.set(lines);
+                        if lines != 0 && !autoscroll.active.get() {
+                            autoscroll.active.set(true);
+                            spawn_selection_autoscroll_timer(
+                                &drawing_area,
+                                &runtime,
+                                &selection,
+                                &renderer,
+                                &autoscroll,
+                            );
+                        }
                         drawing_area.queue_draw();
                         return;
                     }
@@ -849,6 +874,95 @@ fn commit_selection_range(
     }
 }
 
+/// Drag-autoscroll cadence; the per-tick speed is `autoscroll_lines_per_tick`.
+const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(75);
+
+/// Shared between the motion handler (which steers) and the autoscroll timer
+/// (which scrolls): the pending per-tick line delta, the last pointer
+/// position, and whether a timer is currently alive.
+#[derive(Debug, Default)]
+struct SelectionAutoscroll {
+    lines: Cell<isize>,
+    pointer: Cell<(f64, f64)>,
+    active: Cell<bool>,
+}
+
+/// Scrolls the viewport while a selection drag sits past the top or bottom
+/// edge. Like the pump and blink timers, the closure only holds weak
+/// references, so it dies with the pane; it also stops on release or once the
+/// pointer comes back inside.
+fn spawn_selection_autoscroll_timer(
+    drawing_area: &gtk::DrawingArea,
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    renderer: &TerminalRenderer,
+    autoscroll: &Rc<SelectionAutoscroll>,
+) {
+    let area_weak = drawing_area.downgrade();
+    let runtime_weak = Rc::downgrade(runtime);
+    let selection_weak = Rc::downgrade(selection);
+    let autoscroll_weak = Rc::downgrade(autoscroll);
+    let renderer = renderer.clone();
+    glib::timeout_add_local(SELECTION_AUTOSCROLL_INTERVAL, move || {
+        let (Some(area), Some(runtime), Some(selection), Some(autoscroll)) = (
+            area_weak.upgrade(),
+            runtime_weak.upgrade(),
+            selection_weak.upgrade(),
+            autoscroll_weak.upgrade(),
+        ) else {
+            return glib::ControlFlow::Break;
+        };
+        let lines = autoscroll.lines.get();
+        if lines == 0 || !selection.borrow().is_selecting() {
+            autoscroll.active.set(false);
+            return glib::ControlFlow::Break;
+        }
+        if let Err(err) = autoscroll_selection_tick(&runtime, &selection, lines) {
+            eprintln!("Failed to autoscroll terminal selection: {err}");
+            autoscroll.active.set(false);
+            return glib::ControlFlow::Break;
+        }
+        // Keep the head pinned under the pointer, clamped into the viewport.
+        let (x, y) = autoscroll.pointer.get();
+        let max_y = (f64::from(area.allocated_height()) - 1.0).max(0.0);
+        let cell = selection_cell_for_position(&area, &renderer, x, y.clamp(0.0, max_y));
+        selection.borrow_mut().extend_drag(cell);
+        area.queue_draw();
+        glib::ControlFlow::Continue
+    });
+}
+
+/// One drag-autoscroll step: scrolls the viewport by `lines` and re-anchors
+/// the in-progress selection by however many rows the core actually scrolled
+/// (the core clamps at the scrollback edges), so the highlight keeps covering
+/// the same text. This is what tells autoscroll apart from a user wheel
+/// scroll, which still clears the selection.
+fn autoscroll_selection_tick(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    lines: isize,
+) -> Result<(), TerminalError> {
+    // The runtime borrow is released before the selection is touched.
+    let (scrolled_rows, max_row, max_col) = {
+        let mut runtime = runtime.borrow_mut();
+        let before = runtime.viewport_position()?;
+        runtime.scroll_viewport_lines(lines)?;
+        let after = runtime.viewport_position()?;
+        let size = runtime.size();
+        (
+            after.top as isize - before.top as isize,
+            after.rows.saturating_sub(1),
+            usize::from(size.cols.saturating_sub(1)),
+        )
+    };
+    if scrolled_rows != 0 {
+        selection
+            .borrow_mut()
+            .compensate_scroll(scrolled_rows, max_row, max_col);
+    }
+    Ok(())
+}
+
 /// The text currently on screen, one line per viewport row, right-trimmed.
 fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFrame) -> String {
     let text = frame
@@ -1299,6 +1413,59 @@ mod selection_tests {
         );
         assert_eq!(copy_source_text(&selection, "fallback"), "fallback");
         assert_eq!(selection.normalized_range(), None);
+    }
+
+    #[test]
+    fn autoscroll_tick_scrolls_and_reanchors_the_drag_selection() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        // 6 lines on a 4-row screen: 2 rows of scrollback, viewport at the
+        // bottom (top = 2).
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let selection = Rc::new(RefCell::new(TerminalSelection::default()));
+        selection
+            .borrow_mut()
+            .begin_drag(SelectionPoint { row: 1, col: 0 });
+        selection
+            .borrow_mut()
+            .extend_drag(SelectionPoint { row: 2, col: 3 });
+
+        // Scrolling up by 2 moves the selected content down by 2 viewport
+        // rows; the head falls off the bottom and clamps there.
+        autoscroll_selection_tick(&runtime, &selection, -2).unwrap();
+
+        assert_eq!(runtime.borrow().viewport_position().unwrap().top, 0);
+        assert_eq!(
+            selection.borrow().normalized_range(),
+            Some((
+                SelectionPoint { row: 3, col: 0 },
+                SelectionPoint { row: 3, col: 19 }
+            ))
+        );
+        assert!(selection.borrow().is_selecting());
+
+        // Already at the top: the core clamps the scroll to zero rows and the
+        // selection must not move.
+        autoscroll_selection_tick(&runtime, &selection, -2).unwrap();
+
+        assert_eq!(
+            selection.borrow().normalized_range(),
+            Some((
+                SelectionPoint { row: 3, col: 0 },
+                SelectionPoint { row: 3, col: 19 }
+            ))
+        );
     }
 
     #[test]

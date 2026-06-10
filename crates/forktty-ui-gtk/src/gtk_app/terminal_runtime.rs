@@ -269,7 +269,6 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
-    #[cfg(test)]
     pub(super) fn size(&self) -> PtySize {
         self.size
     }

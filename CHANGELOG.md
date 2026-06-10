@@ -9,6 +9,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Added
 - Double-click selects the word under the pointer (ghostty's default word boundaries, so paths like `/tmp/a.txt` select whole) and triple-click selects the visual row; both publish to the PRIMARY selection like a finished drag and work with Shift inside mouse-tracking apps.
+- Dragging a selection past the top or bottom edge of a pane now autoscrolls the viewport (faster the further the pointer goes) and keeps extending the selection; the selection is re-anchored under the scroll instead of being dropped.
 - Panics now also append message, location, and backtrace to `$XDG_STATE_HOME/forktty/panic.log` before the process dies, so field crashes (which abort inside GTK signal trampolines) no longer require coredump symbolization to diagnose.
 - The session state is now guarded by a lock file: a second running instance (e.g. a deb-installed and an AppImage forktty that DBus could not deduplicate) refuses to start instead of silently fighting the first one's session autosave.
 
