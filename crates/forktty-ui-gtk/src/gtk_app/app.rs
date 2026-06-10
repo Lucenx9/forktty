@@ -17,6 +17,30 @@ pub(super) fn build_ui(app: &adw::Application) {
         window.present();
         return;
     }
+    // DBus single-instancing cannot deduplicate two different installed
+    // binaries when they end up on different buses (or DBus is unavailable):
+    // a deb and an AppImage forktty running together would race their
+    // autosave loops on the same session file. The flock arbitrates that.
+    static SESSION_LOCK: OnceLock<session::SessionLock> = OnceLock::new();
+    match session::acquire_session_lock() {
+        Ok(lock) => {
+            let _ = SESSION_LOCK.set(lock);
+        }
+        Err(err @ session::SessionError::Locked { .. }) => {
+            eprintln!(
+                "forktty: {err}; refusing to start a second instance. \
+                 Close the other ForkTTY first (for example a deb-installed \
+                 and an AppImage forktty launched together)."
+            );
+            app.quit();
+            return;
+        }
+        Err(err) => {
+            // Lock-file IO problems must not prevent startup; the lock is
+            // a safety net, not a prerequisite.
+            eprintln!("forktty: could not acquire session lock: {err}");
+        }
+    }
     register_app_icon();
     let startup_dir = default_startup_workspace_dir();
     let (app_config, config_load_warning) = match config::load_config_with_recovery() {

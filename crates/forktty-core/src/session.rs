@@ -23,6 +23,11 @@ pub enum SessionError {
     UnsupportedVersion(u32),
     #[error("Invalid session data: {0}")]
     InvalidData(String),
+    #[error(
+        "session state is already owned by another ForkTTY instance{}",
+        .owner_pid.map(|pid| format!(" (pid {pid})")).unwrap_or_default()
+    )]
+    Locked { owner_pid: Option<u32> },
 }
 
 pub const SESSION_FORMAT_VERSION: u32 = 3;
@@ -128,6 +133,53 @@ struct V2SessionData {
 
 pub fn save_session(data: &SessionData) -> Result<(), SessionError> {
     save_session_to_path(&session_path()?, data)
+}
+
+/// Holds an advisory `flock` on the session lock file for as long as the
+/// value lives. The OS releases the lock when the process exits (including
+/// crashes), so stale locks cannot occur.
+#[derive(Debug)]
+pub struct SessionLock {
+    _file: fs::File,
+}
+
+/// Guards the session file against concurrent autosave loops from a second
+/// running instance (e.g. a deb-installed and an AppImage forktty launched
+/// together when DBus single-instancing cannot deduplicate them).
+///
+/// The lock lives on a separate file because session saves replace
+/// `session-v2.json` via temp-file + rename, which would discard a lock held
+/// on the session file's own inode.
+pub fn acquire_session_lock() -> Result<SessionLock, SessionError> {
+    acquire_session_lock_at(&state_dir()?.join("session.lock"))
+}
+
+fn acquire_session_lock_at(path: &Path) -> Result<SessionLock, SessionError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    match file.try_lock() {
+        Ok(()) => {
+            // Record the owner pid so a refused second instance can name it.
+            // Diagnostic only: failures here must not fail the lock.
+            let _ = file.set_len(0);
+            let _ = writeln!(file, "{}", std::process::id());
+            let _ = file.flush();
+            Ok(SessionLock { _file: file })
+        }
+        Err(fs::TryLockError::WouldBlock) => {
+            let owner_pid = fs::read_to_string(path)
+                .ok()
+                .and_then(|contents| contents.trim().parse().ok());
+            Err(SessionError::Locked { owner_pid })
+        }
+        Err(fs::TryLockError::Error(err)) => Err(err.into()),
+    }
 }
 
 pub fn load_session() -> Result<Option<SessionData>, SessionError> {
@@ -824,6 +876,21 @@ mod tests {
             (actual - expected).abs() < 1e-6,
             "expected ratio {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn session_lock_is_exclusive_and_released_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("session.lock");
+        let lock = acquire_session_lock_at(&path).expect("first lock");
+        match acquire_session_lock_at(&path) {
+            Err(SessionError::Locked { owner_pid }) => {
+                assert_eq!(owner_pid, Some(std::process::id()));
+            }
+            other => panic!("expected Locked, got {other:?}"),
+        }
+        drop(lock);
+        acquire_session_lock_at(&path).expect("relock after drop");
     }
 
     #[test]
