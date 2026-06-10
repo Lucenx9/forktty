@@ -180,6 +180,10 @@ impl GhosttyTerminalWidget {
         }
         {
             let any_button_pressed = Rc::new(Cell::new(false));
+            // Set on a word/line click selection whose press was not
+            // forwarded to the application; the matching release must then
+            // not be forwarded either.
+            let suppress_release = Rc::new(Cell::new(false));
             let click = gtk::GestureClick::new();
             click.set_button(0);
             click.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -188,8 +192,9 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
+                let suppress_release = suppress_release.clone();
                 let selection = selection.clone();
-                click.connect_pressed(move |gesture, _n_press, x, y| {
+                click.connect_pressed(move |gesture, n_press, x, y| {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
@@ -222,12 +227,41 @@ impl GhosttyTerminalWidget {
                         if forwarded {
                             selection.clear();
                         } else {
-                            selection.begin_drag(selection_cell_for_position(
-                                &drawing_area,
-                                &renderer,
-                                x,
-                                y,
-                            ));
+                            let point =
+                                selection_cell_for_position(&drawing_area, &renderer, x, y);
+                            if n_press == 1 {
+                                selection.begin_drag(point);
+                            } else {
+                                // Double click selects the word, triple click
+                                // the visual row. Both finish immediately, so
+                                // the release needs explicit suppression.
+                                suppress_release.set(true);
+                                let frame = runtime.borrow_mut().render_frame();
+                                match frame {
+                                    Ok(frame) => {
+                                        let range = if n_press == 2 {
+                                            word_selection_in_frame(&frame, point)
+                                        } else {
+                                            line_selection_in_frame(&frame, point.row)
+                                        };
+                                        match range {
+                                            Some((start, end)) => commit_selection_range(
+                                                &mut selection,
+                                                &frame,
+                                                start,
+                                                end,
+                                            ),
+                                            None => selection.clear(),
+                                        }
+                                    }
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Failed to render terminal frame for click selection: {err}"
+                                        );
+                                        selection.clear();
+                                    }
+                                }
+                            }
                         }
                         drawing_area.queue_draw();
                     }
@@ -238,19 +272,32 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.clone();
                 let any_button_pressed = any_button_pressed.clone();
+                let suppress_release = suppress_release.clone();
                 let selection = selection.clone();
                 click.connect_released(move |gesture, _n_press, x, y| {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
                     any_button_pressed.set(false);
-                    if matches!(button, TerminalMouseButton::Left)
-                        && selection.borrow().is_selecting()
-                    {
-                        // The press was not forwarded to the application, so
-                        // the release must not be either.
-                        finish_selection_drag(&runtime, &selection, &drawing_area, &renderer, x, y);
-                        return;
+                    if matches!(button, TerminalMouseButton::Left) {
+                        if selection.borrow().is_selecting() {
+                            // The press was not forwarded to the application,
+                            // so the release must not be either.
+                            finish_selection_drag(
+                                &runtime,
+                                &selection,
+                                &drawing_area,
+                                &renderer,
+                                x,
+                                y,
+                            );
+                            return;
+                        }
+                        // Same rule for a word/line click selection, which
+                        // finished during the press.
+                        if suppress_release.replace(false) {
+                            return;
+                        }
                     }
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
@@ -725,17 +772,7 @@ fn finish_selection_drag(
     selection.end_drag();
     match selection.normalized_range() {
         Some((start, end)) if start != end => match runtime.borrow_mut().render_frame() {
-            Ok(frame) => {
-                let text = selection_text_from_frame(&frame, start, end);
-                if text.trim().is_empty() {
-                    selection.clear();
-                } else {
-                    selection.select_text(text.clone());
-                    if let Some(display) = gtk::gdk::Display::default() {
-                        display.primary_clipboard().set_text(&text);
-                    }
-                }
-            }
+            Ok(frame) => commit_selection_range(&mut selection, &frame, start, end),
             Err(err) => {
                 eprintln!("Failed to extract terminal selection: {err}");
                 selection.clear();
@@ -745,6 +782,71 @@ fn finish_selection_drag(
         _ => selection.clear(),
     }
     drawing_area.queue_draw();
+}
+
+/// The viewport range a double click at `point` selects: the word (or
+/// whitespace/punctuation run) around the clicked cell, ghostty-style.
+fn word_selection_in_frame(
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    point: SelectionPoint,
+) -> Option<(SelectionPoint, SelectionPoint)> {
+    use forktty_terminal::ghostty::core::TerminalCellWidth;
+    let row = frame.rows.get(point.row)?;
+    let kinds: Vec<WordCellKind> = row
+        .cells
+        .iter()
+        .map(|cell| word_cell_kind(&cell.text, cell.width == TerminalCellWidth::SpacerTail))
+        .collect();
+    let (from, to) = word_cols_in_row(&kinds, point.col)?;
+    Some((
+        SelectionPoint {
+            row: point.row,
+            col: from,
+        },
+        SelectionPoint {
+            row: point.row,
+            col: to,
+        },
+    ))
+}
+
+/// The viewport range a triple click on `row` selects: the whole visual row.
+/// Logical (soft-wrapped) lines are out of scope.
+fn line_selection_in_frame(
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    row: usize,
+) -> Option<(SelectionPoint, SelectionPoint)> {
+    let cells = frame.rows.get(row)?.cells.len();
+    Some((
+        SelectionPoint { row, col: 0 },
+        SelectionPoint {
+            row,
+            col: cells.checked_sub(1)?,
+        },
+    ))
+}
+
+/// Installs `start..=end` as the finished selection and stores its text,
+/// publishing it to the PRIMARY clipboard like a finished drag. Blank text
+/// clears the selection instead.
+fn commit_selection_range(
+    selection: &mut TerminalSelection,
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) {
+    selection.begin_drag(start);
+    selection.extend_drag(end);
+    selection.end_drag();
+    let text = selection_text_from_frame(frame, start, end);
+    if text.trim().is_empty() {
+        selection.clear();
+        return;
+    }
+    selection.select_text(text.clone());
+    if let Some(display) = gtk::gdk::Display::default() {
+        display.primary_clipboard().set_text(&text);
+    }
 }
 
 /// The text currently on screen, one line per viewport row, right-trimmed.
@@ -1115,6 +1217,88 @@ mod selection_tests {
         let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
 
         assert_eq!(routing, ScrollRouting::Forwarded);
+    }
+
+    #[test]
+    fn word_selection_expands_a_path_under_the_click() {
+        let frame = frame_for_lines(b"cd /tmp/x.txt now");
+
+        assert_eq!(
+            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 5 }),
+            Some((
+                SelectionPoint { row: 0, col: 3 },
+                SelectionPoint { row: 0, col: 12 }
+            ))
+        );
+        // Unwritten cells (row 2 is blank on the 4-row screen) select nothing.
+        assert_eq!(
+            word_selection_in_frame(&frame, SelectionPoint { row: 2, col: 0 }),
+            None
+        );
+        // A click below the frame selects nothing.
+        assert_eq!(
+            word_selection_in_frame(&frame, SelectionPoint { row: 9, col: 0 }),
+            None
+        );
+    }
+
+    #[test]
+    fn word_selection_includes_wide_cells_and_their_spacers() {
+        // "漢" and "字" each occupy a wide cell plus a spacer tail (cols 2-5).
+        let frame = frame_for_lines("a \u{6f22}\u{5b57} b".as_bytes());
+
+        // Clicking the spacer tail behaves like clicking the wide head.
+        assert_eq!(
+            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 3 }),
+            Some((
+                SelectionPoint { row: 0, col: 2 },
+                SelectionPoint { row: 0, col: 5 }
+            ))
+        );
+    }
+
+    #[test]
+    fn line_selection_covers_the_whole_visual_row() {
+        let frame = frame_for_lines(b"alpha beta\r\ngamma");
+        let cols = frame.rows[0].cells.len();
+
+        assert_eq!(
+            line_selection_in_frame(&frame, 1),
+            Some((
+                SelectionPoint { row: 1, col: 0 },
+                SelectionPoint {
+                    row: 1,
+                    col: cols - 1
+                }
+            ))
+        );
+        assert_eq!(line_selection_in_frame(&frame, 9), None);
+    }
+
+    #[test]
+    fn commit_selection_range_stores_text_and_clears_on_blank() {
+        let frame = frame_for_lines(b"alpha beta\r\ngamma");
+        let mut selection = TerminalSelection::default();
+
+        commit_selection_range(
+            &mut selection,
+            &frame,
+            SelectionPoint { row: 0, col: 6 },
+            SelectionPoint { row: 0, col: 9 },
+        );
+        assert_eq!(copy_source_text(&selection, "fallback"), "beta");
+        assert!(!selection.is_selecting());
+        assert!(selection.normalized_range().is_some());
+
+        // A blank row leaves no selection behind.
+        commit_selection_range(
+            &mut selection,
+            &frame,
+            SelectionPoint { row: 3, col: 0 },
+            SelectionPoint { row: 3, col: 5 },
+        );
+        assert_eq!(copy_source_text(&selection, "fallback"), "fallback");
+        assert_eq!(selection.normalized_range(), None);
     }
 
     #[test]
