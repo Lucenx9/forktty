@@ -843,7 +843,17 @@ pub(super) fn workspace_status_badge(
         }
     }
 
-    if statuses.iter().any(status_entry_suggests_error) {
+    // Mode indicators (e.g. "Claude mode: bypassPermissions", deliberately
+    // colored red so the risky mode is visible on its own pill) describe a
+    // standing configuration, not an event: they must not keep the whole
+    // workspace badged as Error/Exited for as long as the mode is active.
+    let event_statuses = || {
+        statuses
+            .iter()
+            .filter(|status| !status_entry_is_mode_indicator(status))
+    };
+
+    if event_statuses().any(status_entry_suggests_error) {
         return Some(WorkspaceStatusBadge {
             label: "Error",
             tooltip: "Error reported in this workspace",
@@ -851,7 +861,7 @@ pub(super) fn workspace_status_badge(
         });
     }
 
-    if statuses.iter().any(status_entry_suggests_exited) {
+    if event_statuses().any(status_entry_suggests_exited) {
         return Some(WorkspaceStatusBadge {
             label: "Exited",
             tooltip: "Process exited",
@@ -905,6 +915,13 @@ pub(super) fn status_entry_suggests_running(status: &StatusEntry) -> bool {
         || value.contains("working")
         || value.contains("busy")
         || color == "blue"
+}
+
+/// Status entries that describe a standing mode rather than an event — today
+/// the agent permission-mode pills (`agent:<key>:permission`), whose warning
+/// colors must not be read as workspace failures.
+pub(super) fn status_entry_is_mode_indicator(status: &StatusEntry) -> bool {
+    status.key.ends_with(":permission")
 }
 
 pub(super) fn status_entry_suggests_error(status: &StatusEntry) -> bool {

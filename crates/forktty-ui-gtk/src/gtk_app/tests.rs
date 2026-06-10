@@ -1378,6 +1378,46 @@ fn detects_exited_terminal_status_for_sidebar_badge() {
     assert!(!status_entry_suggests_error(&status));
 }
 
+// Regression: a workspace running Claude in bypassPermissions stayed badged
+// "ERROR" forever — the red permission-mode pill (deliberate, it flags the
+// risky mode) was read by the badge heuristics as a workspace failure. Mode
+// indicators must not drive the Error/Exited badge.
+#[test]
+fn sidebar_badge_ignores_permission_mode_pills() {
+    let mut model = WorkspaceModel::new();
+    model.create_workspace("main", "/tmp");
+    let workspace = model.list_workspaces().remove(0);
+    let agent_running = StatusEntry {
+        key: "agent:claude".to_string(),
+        label: "Claude".to_string(),
+        value: "Running Bash".to_string(),
+        color: Some("blue".to_string()),
+    };
+    let bypass_mode = StatusEntry {
+        key: "agent:claude:permission".to_string(),
+        label: "Claude mode".to_string(),
+        value: "bypassPermissions".to_string(),
+        color: Some("red".to_string()),
+    };
+    let accept_edits_mode = StatusEntry {
+        key: "agent:codex:permission".to_string(),
+        label: "Codex mode".to_string(),
+        value: "acceptEdits".to_string(),
+        color: Some("yellow".to_string()),
+    };
+
+    let badge = workspace_status_badge(
+        &workspace,
+        &[agent_running, bypass_mode, accept_edits_mode],
+        &[],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(badge.label, "Running");
+    assert_eq!(badge.class_name, "running");
+}
+
 #[test]
 fn sidebar_badge_keeps_error_ahead_of_info_attention() {
     let mut model = WorkspaceModel::new();
