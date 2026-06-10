@@ -36,6 +36,11 @@ const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 /// How often the background task snapshots the model and emits diffs.
 const EVENTS_TICK: Duration = Duration::from_millis(250);
+/// Max time one event write to a subscriber may take. A subscriber that
+/// stops reading fills the kernel socket buffer and would otherwise block
+/// `stream_events` forever, holding one of the [`MAX_SOCKET_CONNECTIONS`]
+/// permits; enough of those would deny the socket to agent hooks.
+const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -503,7 +508,14 @@ fn spawn_event_tick(state: SocketAppState) {
         let mut prev = current_snapshot(&state.model);
         loop {
             interval.tick().await;
-            let next = current_snapshot(&state.model);
+            // try_lock: if the GUI main thread holds the model lock, skip
+            // this tick instead of parking a tokio worker on a std mutex;
+            // the next tick (250ms) picks the changes up.
+            let next = match state.model.try_lock() {
+                Ok(model) => events::snapshot(&model),
+                Err(std::sync::TryLockError::WouldBlock) => continue,
+                Err(std::sync::TryLockError::Poisoned(_)) => Snapshot::default(),
+            };
             for event in events::diff(&prev, &next) {
                 let _ = state.events.send(event);
             }
@@ -3127,7 +3139,14 @@ async fn handle_connection(
                 .get("replay")
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            return stream_events(&state, replay, &mut reader, &mut writer).await;
+            return stream_events(
+                &state,
+                replay,
+                &mut reader,
+                &mut writer,
+                EVENTS_WRITE_TIMEOUT,
+            )
+            .await;
         }
         let id = request.id.clone();
         let response = match dispatch(&state, &request.method, request.params).await {
@@ -3151,13 +3170,14 @@ async fn stream_events(
     replay: bool,
     reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
+    write_timeout: Duration,
 ) -> Result<(), SocketError> {
     let mut receiver = state.events.subscribe();
-    write_ndjson(writer, &json!({"event": "subscribed"})).await?;
+    write_ndjson_bounded(writer, &json!({"event": "subscribed"}), write_timeout).await?;
     if replay {
         let snapshot = current_snapshot(&state.model);
         for event in events::diff(&Snapshot::default(), &snapshot) {
-            write_ndjson(writer, &json!(event)).await?;
+            write_ndjson_bounded(writer, &json!(event), write_timeout).await?;
         }
     }
     loop {
@@ -3170,15 +3190,33 @@ async fn stream_events(
                 break;
             }
             received = receiver.recv() => match received {
-                Ok(event) => write_ndjson(writer, &json!(event)).await?,
+                Ok(event) => write_ndjson_bounded(writer, &json!(event), write_timeout).await?,
                 Err(broadcast::error::RecvError::Lagged(dropped)) => {
-                    write_ndjson(writer, &lagged_notice(dropped)).await?;
+                    write_ndjson_bounded(writer, &lagged_notice(dropped), write_timeout).await?;
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },
         }
     }
     Ok(())
+}
+
+/// [`write_ndjson`] bounded by `timeout`: a subscriber that stopped reading
+/// must produce an error (ending its connection and releasing the permit)
+/// instead of parking the stream task on a full socket buffer forever.
+async fn write_ndjson_bounded(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    value: &Value,
+    timeout: Duration,
+) -> Result<(), SocketError> {
+    tokio::time::timeout(timeout, write_ndjson(writer, value))
+        .await
+        .map_err(|_| {
+            SocketError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "subscriber stopped reading; dropping the event stream connection",
+            ))
+        })?
 }
 
 /// Resolve when the peer closes the connection (EOF) or the read errors.
@@ -6805,6 +6843,61 @@ mod tests {
     #[test]
     fn lagged_notice_reports_dropped_count() {
         assert_eq!(lagged_notice(7), json!({"event": "lagged", "dropped": 7}));
+    }
+
+    #[tokio::test]
+    async fn stalled_subscriber_is_dropped_by_the_write_timeout() {
+        use tokio::io::AsyncReadExt;
+
+        let (state, _backend) = test_state();
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let state_for_stream = state.clone();
+        let stream_task = tokio::spawn(async move {
+            let (read_half, mut write_half) = server.into_split();
+            let mut reader = BufReader::new(read_half);
+            stream_events(
+                &state_for_stream,
+                false,
+                &mut reader,
+                &mut write_half,
+                Duration::from_millis(200),
+            )
+            .await
+        });
+
+        // Read the handshake so the subscription is live, then stop reading.
+        // The client write half must stay open: a stalled client, not a
+        // disconnected one (EOF would end the stream cleanly via peer_closed).
+        let (mut client_read, _client_write_keepalive) = client.into_split();
+        let mut buf = [0u8; 32];
+        let read = client_read.read(&mut buf).await.unwrap();
+        assert!(read > 0, "handshake reached the client");
+
+        // Saturate the kernel socket buffer with large events until the
+        // stream's write stalls and the timeout fires.
+        let big_title = "x".repeat(64 * 1024);
+        let result = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let _ = state.events.send(ModelEvent::SurfaceTitleChanged {
+                    id: "s1".to_string(),
+                    title: big_title.clone(),
+                });
+                if stream_task.is_finished() {
+                    return stream_task.await;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("stalled subscriber must be dropped, not held forever");
+
+        let err = result
+            .unwrap()
+            .expect_err("stream must end with a timeout error");
+        assert!(
+            err.to_string().contains("stopped reading"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
