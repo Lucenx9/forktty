@@ -204,6 +204,18 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
         }
     });
 
+    // New output drops the match highlight (see `pump_pty_events`); reset
+    // the count so it doesn't keep showing a stale "current/total". Captures
+    // only the bar's own widgets — the widget itself would be an Rc cycle.
+    widget.on_search_invalidated({
+        let count = count.clone();
+        let entry = entry.clone();
+        move || {
+            count.set_label("0/0");
+            entry.remove_css_class("error");
+        }
+    });
+
     entry.connect_search_changed({
         let widget = widget.clone();
         let run_search = run_search.clone();

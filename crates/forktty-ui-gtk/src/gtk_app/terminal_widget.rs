@@ -22,6 +22,30 @@ pub(super) struct GhosttyTerminalWidget {
     // Scrollback dump + matches reused across steps while content and query
     // are unchanged; see `SearchCache`.
     search_cache: Rc<RefCell<Option<SearchCache>>>,
+    // Notifies the search bar when new output drops the match highlight, so
+    // its count label resets instead of showing a stale "current/total".
+    search_invalidated: Rc<SearchInvalidatedSlot>,
+}
+
+#[derive(Default)]
+pub(super) struct SearchInvalidatedSlot {
+    callback: RefCell<Option<Box<dyn Fn()>>>,
+}
+
+impl std::fmt::Debug for SearchInvalidatedSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SearchInvalidatedSlot")
+    }
+}
+
+impl SearchInvalidatedSlot {
+    fn invoke(&self) {
+        // The borrow is held across the call; safe because the callback only
+        // touches GTK label/entry state and never re-enters this slot.
+        if let Some(callback) = self.callback.borrow().as_ref() {
+            callback();
+        }
+    }
 }
 
 pub(super) fn spawn_terminal_with_callback<F>(
@@ -356,6 +380,7 @@ impl GhosttyTerminalWidget {
             cursor_blink_visible,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
+            search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
         };
         widget.attach_cursor_blink_timer();
         widget
@@ -395,7 +420,15 @@ impl GhosttyTerminalWidget {
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
+            search_invalidated: Rc::downgrade(&self.search_invalidated),
         }
+    }
+
+    /// Registers the search bar's reaction to a pump-side highlight drop.
+    /// The callback must not capture the widget (that would leak an Rc
+    /// cycle: widget → slot → widget).
+    pub(super) fn on_search_invalidated(&self, callback: impl Fn() + 'static) {
+        *self.search_invalidated.callback.borrow_mut() = Some(Box::new(callback));
     }
 
     pub(super) fn attach_navigation_key_fallback<W>(&self, target: &W)
@@ -527,14 +560,26 @@ impl GhosttyTerminalWidget {
         if !events.is_empty() {
             // New output shifts the viewport content under a finished
             // selection; drop it rather than highlight the wrong text.
-            let mut selection = self.selection.borrow_mut();
-            if !selection.is_selecting()
-                && selection.normalized_range().is_some()
-                && events
-                    .iter()
-                    .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged))
+            let mut selection_cleared = false;
             {
-                selection.clear();
+                let mut selection = self.selection.borrow_mut();
+                if !selection.is_selecting()
+                    && selection.normalized_range().is_some()
+                    && events
+                        .iter()
+                        .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged))
+                {
+                    selection.clear();
+                    selection_cleared = true;
+                }
+            }
+            // The dropped selection may have been the search-match highlight;
+            // reset the match state and tell the search bar so its count
+            // label follows. Outside the selection borrow: the callback runs
+            // foreign (GTK) code.
+            if selection_cleared && self.search_index.get().is_some() {
+                self.search_index.set(None);
+                self.search_invalidated.invoke();
             }
             self.drawing_area.queue_draw();
         }
@@ -553,6 +598,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
+    search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -564,6 +610,7 @@ impl WeakGhosttyTerminalWidget {
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
+            search_invalidated: self.search_invalidated.upgrade()?,
         })
     }
 }
