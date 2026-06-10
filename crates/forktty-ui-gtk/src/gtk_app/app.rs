@@ -7,6 +7,16 @@ pub(super) fn install_gtk_runtime_defaults() {
 }
 
 pub(super) fn build_ui(app: &adw::Application) {
+    // ForkTTY is single-instance: a second launch of the binary delegates to
+    // this process over DBus and fires `activate` again. Without this guard
+    // that built a whole second UI — window, workspace model, autosave loop,
+    // and a socket server that stole the socket path from the first one.
+    // `windows()` rather than `active_window()`: a hidden quake-mode window
+    // is not "active" but must still be presented, not rebuilt.
+    if let Some(window) = app.windows().into_iter().next() {
+        window.present();
+        return;
+    }
     register_app_icon();
     let startup_dir = default_startup_workspace_dir();
     let (app_config, config_load_warning) = match config::load_config_with_recovery() {
@@ -1233,6 +1243,11 @@ pub(super) fn toggle_quake_window(window: &adw::ApplicationWindow) {
     if window.is_visible() {
         window.hide();
     } else {
+        // Monitors can change while the window is hidden (dock/undock,
+        // resolution switch); re-derive the dropdown size from the current
+        // monitor instead of keeping the launch-time geometry forever.
+        let (width, height) = quake_default_size();
+        window.set_default_size(width, height);
         window.present();
     }
 }
