@@ -2,7 +2,7 @@
 
 All notable changes to ForkTTY are documented here.
 
-## [Unreleased]
+## [0.2.0-alpha.8] - 2026-06-10
 
 ### Added
 - Added scrollback search: Ctrl+Shift+F (also in the command palette) opens a floating per-pane search bar with case-insensitive matching over the full scrollback, wrapping next/previous navigation, a match counter, and highlight-on-jump that feeds the copy shortcut.
