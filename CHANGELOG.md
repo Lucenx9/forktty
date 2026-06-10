@@ -2,6 +2,20 @@
 
 All notable changes to ForkTTY are documented here.
 
+## [Unreleased]
+
+### Added
+- Panics now also append message, location, and backtrace to `$XDG_STATE_HOME/forktty/panic.log` before the process dies, so field crashes (which abort inside GTK signal trampolines) no longer require coredump symbolization to diagnose.
+- The session state is now guarded by a lock file: a second running instance (e.g. a deb-installed and an AppImage forktty that DBus could not deduplicate) refuses to start instead of silently fighting the first one's session autosave.
+
+### Fixed
+- The search bar's match counter no longer shows a stale "current/total" after new terminal output removes the match highlight; it resets to 0/0 until the next step.
+- Two processes quarantining the same corrupt profile/bookmark store at the same time can no longer overwrite each other's backup file.
+- The sidebar toggle and the periodic PR lookup no longer read the config file on the GTK main thread, and the 2s session autosave no longer builds a debug dump of the whole session to detect changes.
+
+### CI
+- CI now verifies on every push that the binary carries the RUNPATH it needs to find the bundled libghostty, and the release smoke test runs the packaged binaries exactly the way the alpha.7 field failures did: the deb tree and the extracted AppImage's inner binary without any `LD_LIBRARY_PATH`, plus the `FORKTTY_APPIMAGE` exports in AppRun.
+
 ## [0.2.0-alpha.8] - 2026-06-10
 
 ### Added
