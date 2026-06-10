@@ -127,7 +127,7 @@ fn ensure_default_profile(profiles: &mut Vec<ProfileMeta>) {
 }
 
 fn backup_corrupt_profile_store(path: &Path, bytes: &[u8]) {
-    let backup = crate::backup::unique_backup_path(path, "json.bak");
+    let backup = crate::backup::reserve_unique_backup_path(path, "json.bak");
     if std::fs::rename(path, &backup).is_err() {
         let _ = std::fs::write(&backup, bytes);
     }

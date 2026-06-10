@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::backup::unique_backup_path;
+use crate::backup::reserve_unique_backup_path;
 use crate::profile::ProfileId;
 
 const MAX_BOOKMARKS_JSON_BYTES: u64 = 16 * 1024 * 1024;
@@ -65,7 +65,7 @@ fn is_recoverable_sqlite_error(e: &rusqlite::Error) -> bool {
 }
 
 fn backup_corrupt_sqlite(path: &Path) -> Result<(), HistoryError> {
-    let backup = unique_backup_path(path, "sqlite.bak");
+    let backup = reserve_unique_backup_path(path, "sqlite.bak");
     std::fs::rename(path, &backup).map_err(|e| HistoryError::Io(e.to_string()))?;
     for suffix in ["-wal", "-shm"] {
         let sidecar = sqlite_sidecar_path(path, suffix);
@@ -283,7 +283,7 @@ impl BookmarkStore {
             Some(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
                 Ok(v) => v,
                 Err(_) => {
-                    let bak = unique_backup_path(path, "json.bak");
+                    let bak = reserve_unique_backup_path(path, "json.bak");
                     let _ = std::fs::write(&bak, &bytes);
                     Vec::new()
                 }
