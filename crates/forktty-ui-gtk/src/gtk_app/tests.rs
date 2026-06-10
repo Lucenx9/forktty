@@ -1399,6 +1399,12 @@ fn sidebar_badge_ignores_permission_mode_pills() {
         value: "bypassPermissions".to_string(),
         color: Some("red".to_string()),
     };
+    let codex_yolo_mode = StatusEntry {
+        key: "agent:codex:permission".to_string(),
+        label: "Codex mode".to_string(),
+        value: "bypassPermissions".to_string(),
+        color: Some("red".to_string()),
+    };
     let accept_edits_mode = StatusEntry {
         key: "agent:codex:permission".to_string(),
         label: "Codex mode".to_string(),
@@ -1408,7 +1414,12 @@ fn sidebar_badge_ignores_permission_mode_pills() {
 
     let badge = workspace_status_badge(
         &workspace,
-        &[agent_running, bypass_mode, accept_edits_mode],
+        &[
+            agent_running,
+            bypass_mode,
+            codex_yolo_mode,
+            accept_edits_mode,
+        ],
         &[],
         None,
     )
@@ -1416,6 +1427,24 @@ fn sidebar_badge_ignores_permission_mode_pills() {
 
     assert_eq!(badge.label, "Running");
     assert_eq!(badge.class_name, "running");
+}
+
+#[test]
+fn sidebar_badge_keeps_non_agent_permission_status_errors() {
+    let mut model = WorkspaceModel::new();
+    model.create_workspace("main", "/tmp");
+    let workspace = model.list_workspaces().remove(0);
+    let status = StatusEntry {
+        key: "deploy:permission".to_string(),
+        label: "Deploy".to_string(),
+        value: "Permission failed".to_string(),
+        color: Some("red".to_string()),
+    };
+
+    let badge = workspace_status_badge(&workspace, &[status], &[], None).unwrap();
+
+    assert_eq!(badge.label, "Error");
+    assert_eq!(badge.class_name, "error");
 }
 
 #[test]

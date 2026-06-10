@@ -921,7 +921,7 @@ pub(super) fn status_entry_suggests_running(status: &StatusEntry) -> bool {
 /// the agent permission-mode pills (`agent:<key>:permission`), whose warning
 /// colors must not be read as workspace failures.
 pub(super) fn status_entry_is_mode_indicator(status: &StatusEntry) -> bool {
-    status.key.ends_with(":permission")
+    status.key.starts_with("agent:") && status.key.ends_with(":permission")
 }
 
 pub(super) fn status_entry_suggests_error(status: &StatusEntry) -> bool {
