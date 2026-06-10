@@ -170,11 +170,15 @@ pub(super) fn install_actions(
         move || {
             let visible = !sidebar_shell.is_visible();
             sidebar_shell.set_visible(visible);
-            let mut next = config::load_config().unwrap_or_default();
-            next.appearance.sidebar_visible = visible;
-            if let Err(err) = config::save_config(&next) {
-                eprintln!("forktty: failed to persist sidebar_visible: {err}");
-            }
+            // Read-modify-write of the config file off the main thread; the
+            // toggle itself must not wait on disk.
+            std::thread::spawn(move || {
+                let mut next = config::load_config().unwrap_or_default();
+                next.appearance.sidebar_visible = visible;
+                if let Err(err) = config::save_config(&next) {
+                    eprintln!("forktty: failed to persist sidebar_visible: {err}");
+                }
+            });
         }
     });
     if quake_mode {

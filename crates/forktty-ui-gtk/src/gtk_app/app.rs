@@ -458,11 +458,10 @@ pub(super) fn build_ui(app: &adw::Application) {
         if !alive_for_pr_timer.get() {
             return glib::ControlFlow::Break;
         }
-        if pr_lookup_enabled() {
-            spawn_pr_refresh(pr_model_for_timer.clone(), pr_in_flight_for_timer.clone());
-        } else {
-            clear_pr_hints(&pr_model_for_timer);
-        }
+        // No enabled-check here: `refresh_pull_requests` re-reads the config
+        // on the worker thread (and clears stale hints when disabled), so the
+        // main thread never touches the config file.
+        spawn_pr_refresh(pr_model_for_timer.clone(), pr_in_flight_for_timer.clone());
         glib::ControlFlow::Continue
     });
     install_session_autosave(&state, ui_alive.clone());
@@ -1127,7 +1126,7 @@ pub(super) fn resolve_pr(dir: &Path) -> Option<forktty_core::pr::PrInfo> {
 
 pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell<bool>>) {
     let state = state.clone();
-    let last_saved = Rc::new(RefCell::new(None::<String>));
+    let last_saved = Rc::new(RefCell::new(None::<session::SessionData>));
     glib::timeout_add_local(Duration::from_secs(2), move || {
         if !ui_alive.get() {
             return glib::ControlFlow::Break;
@@ -1139,14 +1138,13 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
             }
             Err(_) => return glib::ControlFlow::Continue,
         };
-        let signature = format!("{data:?}");
-        if last_saved.borrow().as_deref() == Some(signature.as_str()) {
+        if last_saved.borrow().as_ref() == Some(&data) {
             return glib::ControlFlow::Continue;
         }
         if let Err(err) = session::save_session(&data) {
             eprintln!("Failed to autosave GTK session: {err}");
         } else {
-            *last_saved.borrow_mut() = Some(signature);
+            *last_saved.borrow_mut() = Some(data);
         }
         glib::ControlFlow::Continue
     });
