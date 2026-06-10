@@ -29,6 +29,12 @@ pub enum ModelEvent {
     WorkspaceRemoved {
         id: String,
     },
+    /// An existing workspace changed name. Workspaces new in the snapshot
+    /// advertise their name in [`ModelEvent::WorkspaceAdded`] instead.
+    WorkspaceRenamed {
+        id: String,
+        name: String,
+    },
     /// The active workspace changed. `id` is `None` when nothing is active.
     WorkspaceSelected {
         id: Option<String>,
@@ -205,8 +211,8 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
 /// Compute the events that take `prev` to `next`.
 ///
 /// Order is deterministic: workspace removes, workspace adds, surface removes,
-/// surface adds, then per-workspace field changes (selected, focus, title,
-/// status, progress, ports, pr), then new notifications.
+/// surface adds, then per-workspace field changes (selected, rename, focus,
+/// title, status, progress, ports, pr), then new notifications.
 pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
     let mut events = Vec::new();
 
@@ -252,6 +258,16 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
     // default so replay (and same-tick creation) still advertises their metadata.
     let default_ws = WsSnap::default();
     for (id, next_ws) in &next.workspaces {
+        // Renames only apply to workspaces seen before: a new workspace's name
+        // already rides on its `WorkspaceAdded`, including during replay.
+        if let Some(prev_ws) = prev.workspaces.get(id) {
+            if prev_ws.name != next_ws.name {
+                events.push(ModelEvent::WorkspaceRenamed {
+                    id: id.clone(),
+                    name: next_ws.name.clone(),
+                });
+            }
+        }
         let prev_ws = prev.workspaces.get(id).unwrap_or(&default_ws);
         if prev_ws.focused_surface_id != next_ws.focused_surface_id {
             events.push(ModelEvent::SurfaceFocused {
@@ -412,6 +428,33 @@ mod tests {
             .position(|e| matches!(e, ModelEvent::WorkspaceAdded { .. }))
             .unwrap();
         assert!(remove_idx < add_idx);
+    }
+
+    #[test]
+    fn workspace_renamed_emits_event() {
+        let mut prev = Snapshot::default();
+        prev.workspaces.insert("w1".into(), ws("main", "s1"));
+        let mut next = prev.clone();
+        next.workspaces.get_mut("w1").unwrap().name = "prod".into();
+        assert_eq!(
+            diff(&prev, &next),
+            vec![ModelEvent::WorkspaceRenamed {
+                id: "w1".into(),
+                name: "prod".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn new_workspace_does_not_emit_rename() {
+        // The name of a workspace not present in `prev` rides on its
+        // WorkspaceAdded; a redundant rename would be noise on replay.
+        let mut next = Snapshot::default();
+        next.workspaces.insert("w1".into(), ws("main", "s1"));
+        let events = diff(&Snapshot::default(), &next);
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::WorkspaceRenamed { .. })));
     }
 
     #[test]
