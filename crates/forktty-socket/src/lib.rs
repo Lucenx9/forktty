@@ -12,7 +12,8 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -35,7 +36,9 @@ const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 /// How often the background task snapshots the model and emits diffs.
 const EVENTS_TICK: Duration = Duration::from_millis(250);
-static SOCKET_BIND_UMASK_LOCK: Mutex<()> = Mutex::new(());
+/// Distinguishes concurrent [`bind_private_socket_path`] staging directories
+/// within one process (tests bind many listeners in parallel).
+static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Methods advertised by `system.capabilities`. Every entry except
 /// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
@@ -401,35 +404,53 @@ pub fn bind_socket_listener(
     Ok(listener)
 }
 
-struct UmaskGuard<'a> {
-    previous: libc::mode_t,
-    _lock: MutexGuard<'a, ()>,
-}
-
-impl UmaskGuard<'_> {
-    fn set(mask: libc::mode_t) -> io::Result<Self> {
-        let lock = SOCKET_BIND_UMASK_LOCK
-            .lock()
-            .map_err(|_| io::Error::other("socket bind umask lock poisoned"))?;
-        let previous = unsafe { libc::umask(mask) };
-        Ok(Self {
-            previous,
-            _lock: lock,
-        })
-    }
-}
-
-impl Drop for UmaskGuard<'_> {
-    fn drop(&mut self) {
-        unsafe {
-            libc::umask(self.previous);
-        }
-    }
-}
-
+/// Binds the socket without it ever being group/other-accessible at its public
+/// path: the listener is created inside a chmod-0700 staging directory (whose
+/// search bit shields the inode regardless of umask), chmod-0600, and only then
+/// hard-linked into place. Linking fails with `AddrInUse` if the public path
+/// appeared in the meantime, preserving the caller's stale-reclaim retry.
+///
+/// Deliberately NOT implemented with a process-wide `umask()` flip: the umask
+/// is global, so flipping it poisons the creation mode of every file or
+/// directory any other thread makes during the window (this broke concurrent
+/// tests' `tempdir()` with mode-0600 directories).
 fn bind_private_socket_path(socket_path: &Path) -> io::Result<StdUnixListener> {
-    let _guard = UmaskGuard::set(0o177)?;
-    StdUnixListener::bind(socket_path)
+    let parent = socket_path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "socket path has no parent directory",
+        )
+    })?;
+    let staging = parent.join(format!(
+        ".forktty-bind-{}-{}",
+        std::process::id(),
+        SOCKET_BIND_STAGING_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    // A leftover directory can only come from a crashed process that had this
+    // pid in a previous boot; the sequence number never repeats within one.
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir(&staging)?;
+    let result = bind_in_staging_dir(&staging, socket_path);
+    let _ = fs::remove_dir_all(&staging);
+    result
+}
+
+fn bind_in_staging_dir(staging: &Path, socket_path: &Path) -> io::Result<StdUnixListener> {
+    fs::set_permissions(staging, fs::Permissions::from_mode(0o700))?;
+    let staged = staging.join("sock");
+    let listener = StdUnixListener::bind(&staged)?;
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o600))?;
+    fs::hard_link(&staged, socket_path).map_err(|err| {
+        if err.kind() == io::ErrorKind::AlreadyExists {
+            io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!("socket path {} is already in use", socket_path.display()),
+            )
+        } else {
+            err
+        }
+    })?;
+    Ok(listener)
 }
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {
@@ -3280,10 +3301,20 @@ fn inspect_existing_socket(path: &Path) -> ExistingSocketOccupant {
 // drains.
 const PROBE_RESPONSE_MAX_BYTES: usize = 4096;
 
-fn probe_forktty_socket(mut stream: StdUnixStream) -> io::Result<bool> {
+fn probe_forktty_socket(stream: StdUnixStream) -> io::Result<bool> {
+    probe_forktty_socket_with_timeout(stream, SOCKET_PROBE_TIMEOUT)
+}
+
+// The timeout is injectable so tests of the protocol/parsing behavior can pass
+// a generous one: the responding peer is a freshly spawned thread, and under
+// scheduler starvation the production 250ms can elapse before it ever runs.
+fn probe_forktty_socket_with_timeout(
+    mut stream: StdUnixStream,
+    timeout: Duration,
+) -> io::Result<bool> {
     use std::io::{Read, Write};
-    stream.set_read_timeout(Some(SOCKET_PROBE_TIMEOUT))?;
-    stream.set_write_timeout(Some(SOCKET_PROBE_TIMEOUT))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     stream.write_all(br#"{"id":"probe","method":"system.ping","params":{}}"#)?;
     stream.write_all(b"\n")?;
     stream.flush()?;
@@ -3821,7 +3852,7 @@ mod tests {
             server.flush().unwrap();
         });
 
-        let result = probe_forktty_socket(client).unwrap();
+        let result = probe_forktty_socket_with_timeout(client, Duration::from_secs(30)).unwrap();
         server_thread.join().unwrap();
         result
     }
@@ -3904,7 +3935,7 @@ mod tests {
             let _ = server.flush();
         });
 
-        let result = probe_forktty_socket(client).unwrap();
+        let result = probe_forktty_socket_with_timeout(client, Duration::from_secs(30)).unwrap();
         let _ = server_thread.join();
         assert!(!result);
     }
@@ -3944,6 +3975,27 @@ mod tests {
                 & 0o777,
             0o600
         );
+        drop(listener);
+    }
+
+    #[test]
+    fn bind_socket_listener_cleans_up_staging_and_stays_connectable() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+
+        let listener = bind_socket_listener(&socket_path, false).unwrap();
+
+        // Only the public socket may remain: the staging directory used to
+        // bind with private permissions must be gone on success.
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != "forktty.sock")
+            .collect();
+        assert_eq!(leftovers, Vec::<std::ffi::OsString>::new());
+
+        // The hard-linked path must reach the bound listener.
+        let _client = StdUnixStream::connect(&socket_path).unwrap();
         drop(listener);
     }
 
