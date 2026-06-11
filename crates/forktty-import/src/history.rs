@@ -1,14 +1,33 @@
 //! Read history and bookmarks from source browsers.
 //! Firefox uses `places.sqlite`; Chromium family uses `History` (sqlite) + `Bookmarks` (JSON).
 
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use rusqlite::{Connection, OpenFlags};
+use serde::Deserialize;
 
 use crate::model::{ImportedBookmark, ImportedVisit};
 
 const MAX_CHROMIUM_BOOKMARKS_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHROMIUM_BOOKMARK_NODES: usize = 100_000;
+
+#[derive(Deserialize)]
+struct ChromiumBookmarkFile {
+    #[serde(default)]
+    roots: BTreeMap<String, ChromiumBookmarkNode>,
+}
+
+#[derive(Deserialize)]
+struct ChromiumBookmarkNode {
+    #[serde(default, rename = "type")]
+    node_type: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    children: Vec<ChromiumBookmarkNode>,
+}
 
 fn open_ro(path: &Path) -> rusqlite::Result<Connection> {
     Connection::open_with_flags(
@@ -97,24 +116,22 @@ pub fn read_chromium_bookmarks(path: &Path) -> std::io::Result<Vec<ImportedBookm
         return Ok(vec![]);
     }
     let text = std::fs::read_to_string(path)?;
-    let value: serde_json::Value = match serde_json::from_str(&text) {
+    let file: ChromiumBookmarkFile = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(_) => return Ok(vec![]),
     };
     let mut out = Vec::new();
-    if let Some(roots) = value.get("roots").and_then(|r| r.as_object()) {
-        // The node cap is a guard against a hostile/oversized Bookmarks file, so
-        // it must bound the total walk across every root, not reset per root.
-        let mut visited = 0usize;
-        for root_node in roots.values() {
-            collect_chromium_bookmarks(root_node, &mut out, &mut visited);
-        }
+    // The node cap is a guard against a hostile/oversized Bookmarks file, so
+    // it must bound the total walk across every root, not reset per root.
+    let mut visited = 0usize;
+    for root_node in file.roots.values() {
+        collect_chromium_bookmarks(root_node, &mut out, &mut visited);
     }
     Ok(out)
 }
 
 fn collect_chromium_bookmarks(
-    node: &serde_json::Value,
+    node: &ChromiumBookmarkNode,
     out: &mut Vec<ImportedBookmark>,
     visited: &mut usize,
 ) {
@@ -124,20 +141,18 @@ fn collect_chromium_bookmarks(
         if *visited > MAX_CHROMIUM_BOOKMARK_NODES {
             break;
         }
-        if node.get("type").and_then(|t| t.as_str()) == Some("url") {
-            let url = node.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        if node.node_type.as_deref() == Some("url") {
+            let url = node.url.as_deref().unwrap_or("");
             if url.starts_with("http://") || url.starts_with("https://") {
-                let title = node.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let title = node.name.as_deref().unwrap_or("");
                 out.push(ImportedBookmark {
                     url: url.to_string(),
                     title: title.to_string(),
                 });
             }
         }
-        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
-            for child in children.iter().rev() {
-                stack.push(child);
-            }
+        for child in node.children.iter().rev() {
+            stack.push(child);
         }
     }
 }
