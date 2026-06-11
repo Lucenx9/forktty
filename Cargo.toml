@@ -46,13 +46,15 @@ toml = "1.1"
 toml_edit = "0.25"
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# libghostty-rs master, pinned: upstreams our vendored ReleaseSafe patch
-# (uzaaft/libghostty-rs#55, commit 3378f0b makes the zig optimize mode follow
-# the Cargo profile / LIBGHOSTTY_VT_SYS_OPTIMIZE). Both crates come from the
-# same rev so the bindings and the built library cannot drift apart.
+# libghostty-rs master rev 20edad15, vendored in vendor/libghostty-rs with a
+# one-line zig -Dcpu=baseline patch for native builds: without it the built
+# library's ISA depends on the build host's CPU, and an AVX-512 CI runner
+# shipped release binaries that SIGILL on every non-AVX-512 machine (see
+# vendor/libghostty-rs/FORKTTY-VENDORED.md). Both crates come from the same
+# vendored tree so the bindings and the built library cannot drift apart.
 # .cargo/config.toml pins LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe so debug and
-# test builds keep the optimized VT parser too. Drop the patch entirely once
-# upstream publishes a release newer than 0.1.1.
+# test builds keep the optimized VT parser too. Re-pin to upstream git (and
+# drop the vendor) once upstream pins the CPU baseline for native builds.
 [patch.crates-io]
-libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "20edad15d7984c727acc4f4facdadf045609f543" }
-libghostty-vt-sys = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "20edad15d7984c727acc4f4facdadf045609f543" }
+libghostty-vt = { path = "vendor/libghostty-rs/crates/libghostty-vt" }
+libghostty-vt-sys = { path = "vendor/libghostty-rs/crates/libghostty-vt-sys" }

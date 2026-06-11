@@ -6,6 +6,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [0.2.0-alpha.10] - 2026-06-11
 
+### Fixed
+- Release binaries no longer inherit the CPU feature set of the CI build machine: libghostty's zig build now targets the generic x86-64 baseline (`-Dcpu=baseline`, via a vendored one-line patch in `vendor/libghostty-rs`). The first alpha.10 cut was built on an AVX-512 runner and its statically linked `memset` crashed every non-AVX-512 machine with SIGILL at startup; the same lottery silently applied to every release since alpha.7.
+
 ### Added
 - `forktty mcp` now runs a local stdio MCP server exposing ForkTTY workspaces, surfaces, worktrees, notifications, and status metadata as typed tools; `forktty mcp setup/remove` registers the server for Codex, Claude Code, Gemini CLI, and Antigravity while preserving foreign MCP servers (Codex `config.toml` is edited in place, keeping comments and formatting). Claude Code session-start hooks now include ForkTTY workspace/branch context and a short MCP/CLI capability cheat sheet.
 - Agent hooks for Antigravity CLI (`agy`, Google's Gemini CLI successor): `forktty hooks setup antigravity` installs a ForkTTY-owned `"forktty"` group in `~/.gemini/config/hooks.json` for the verified `PreInvocation`/`PreToolUse`/`PostToolUse` events, plus generated wrapper scripts (Antigravity executes a hook command as one bare executable path, without arguments or a shell). Sessions are correlated via `conversationId`, hook responses use the strict-`protojson`-safe `{}`, and `hooks doctor antigravity` reports the launcher state from the generated scripts. Gemini CLI hooks remain supported.

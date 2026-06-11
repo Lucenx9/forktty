@@ -1,0 +1,36 @@
+# FORKTTY PATCH: workspace-inherited fields replaced with the values from the
+# upstream workspace root, and an explicit [workspace] added, so the crate
+# resolves standalone under [patch.crates-io] (cargo resolves patch paths
+# against the patching workspace, where the inherited keys don't exist).
+[package]
+name = "libghostty-vt"
+description = "Safe Rust API for libghostty-vt, the Ghostty terminal emulation library"
+version = "0.1.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/uzaaft/libghostty-rs"
+rust-version = "1.90"
+
+[workspace]
+
+[features]
+default = ["kitty-graphics"]
+allocator_api = ["dep:allocator-api2"]
+kitty-graphics = ["libghostty-vt-sys/kitty-graphics"]
+png = ["dep:png"]
+log = ["dep:log"]
+link-dynamic = ["libghostty-vt-sys/link-dynamic"]
+
+[dependencies]
+allocator-api2 = { version = "0.4.0", optional = true }
+bitflags = "2.11.0"
+libghostty-vt-sys = { path = "../libghostty-vt-sys", version = "0.1.1" }
+int-enum = "1.2.0"
+png = { version = "0.18.1", optional = true }
+log = { version = "0.4.29", optional = true }
+
+[dev-dependencies]
+libghostty-vt-sys = { path = "../libghostty-vt-sys", version = "0.1.1" }
+
+[package.metadata.docs.rs]
+all-features = true
