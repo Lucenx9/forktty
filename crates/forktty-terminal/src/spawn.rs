@@ -176,6 +176,56 @@ fn is_executable_file(path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    use std::path::PathBuf;
+
+    #[test]
+    fn child_argv_without_unset_keys() {
+        let request = SpawnRequest {
+            surface_id: "s1".to_string(),
+            workspace_id: "w1".to_string(),
+            shell: "bash".to_string(),
+            args: vec!["-l".to_string(), "-i".to_string()],
+            cwd: PathBuf::from("/"),
+            socket_path: PathBuf::from("/tmp/sock"),
+            extra_env: vec![],
+        };
+        let argv = child_argv(&request, &[]);
+        assert_eq!(argv, vec!["bash", "-l", "-i"]);
+    }
+
+    #[test]
+    fn child_argv_with_unset_keys() {
+        let request = SpawnRequest {
+            surface_id: "s1".to_string(),
+            workspace_id: "w1".to_string(),
+            shell: "bash".to_string(),
+            args: vec!["-l".to_string(), "-i".to_string()],
+            cwd: PathBuf::from("/"),
+            socket_path: PathBuf::from("/tmp/sock"),
+            extra_env: vec![],
+        };
+        let unset_keys = vec!["FOO".to_string(), "BAR".to_string()];
+        let argv = child_argv(&request, &unset_keys);
+
+        if let Some(env_cmd) = env_command_path() {
+            assert_eq!(
+                argv,
+                vec![
+                    env_cmd,
+                    "-u".to_string(),
+                    "FOO".to_string(),
+                    "-u".to_string(),
+                    "BAR".to_string(),
+                    "bash".to_string(),
+                    "-l".to_string(),
+                    "-i".to_string(),
+                ]
+            );
+        } else {
+            assert_eq!(argv, vec!["bash", "-l", "-i"]);
+        }
+    }
+
     // The appimage runtime's vars must not leak into terminal children, but
     // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
     // a shell inside the AppImage uses them to embed the stable .AppImage path
