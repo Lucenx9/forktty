@@ -133,6 +133,7 @@ fn tools_list_result() -> Value {
                     "name": tool.name,
                     "description": tool.description,
                     "inputSchema": tool.input_schema,
+                    "annotations": tool.annotations,
                 })
             })
             .collect::<Vec<_>>()
@@ -684,17 +685,36 @@ struct ToolSpec {
     name: &'static str,
     description: &'static str,
     input_schema: Value,
+    annotations: Value,
+}
+
+// MCP tool annotations (2025-03-26 spec): UX hints for clients, not a
+// security boundary. Every ForkTTY tool acts on the local instance only,
+// so openWorldHint is always false.
+fn read_only_annotations() -> Value {
+    json!({ "readOnlyHint": true, "openWorldHint": false })
+}
+
+fn mutating_annotations(destructive: bool, idempotent: bool) -> Value {
+    json!({
+        "readOnlyHint": false,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": false,
+    })
 }
 
 fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "workspace_list",
+            annotations: read_only_annotations(),
             description: "List ForkTTY workspaces, including active workspace, branch, worktree, and focused surface information. Start here before targeting panes.",
             input_schema: object_schema(&[], json!({})),
         },
         ToolSpec {
             name: "workspace_create",
+            annotations: mutating_annotations(false, false),
             description: "Open a new ForkTTY workspace on a directory. Use this to satisfy the worktree tools' open-workspace precondition before worktree_create.",
             input_schema: object_schema(
                 &["working_dir"],
@@ -706,6 +726,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "surface_list",
+            annotations: read_only_annotations(),
             description: "List panes/surfaces in a workspace. Defaults to FORKTTY_WORKSPACE_ID when launched from a ForkTTY pane; omit targeting to inspect that pane's workspace.",
             input_schema: object_schema(
                 &[],
@@ -718,6 +739,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "surface_split",
+            annotations: mutating_annotations(false, false),
             description: "Split a ForkTTY surface to create another agent-ready pane. Defaults surface_id from FORKTTY_SURFACE_ID when present.",
             input_schema: object_schema(
                 &[],
@@ -729,6 +751,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "surface_send_text",
+            annotations: mutating_annotations(false, false),
             description: "Send literal text to a ForkTTY terminal surface. Use this to drive a pane after inspecting surface_list; surface_id defaults from FORKTTY_SURFACE_ID.",
             input_schema: object_schema(
                 &["text"],
@@ -740,6 +763,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "surface_focus",
+            annotations: mutating_annotations(false, true),
             description: "Focus a ForkTTY surface in the UI. Defaults surface_id from FORKTTY_SURFACE_ID when present.",
             input_schema: object_schema(
                 &[],
@@ -750,6 +774,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "worktree_list",
+            annotations: read_only_annotations(),
             description: "List git worktrees for a repository path so agents can see existing parallel work. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: object_schema(
                 &["cwd"],
@@ -760,6 +785,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "worktree_status",
+            annotations: read_only_annotations(),
             description: "Report whether a worktree is clean, dirty, or otherwise blocked before attach/remove/merge operations. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: object_schema(
                 &[],
@@ -771,26 +797,31 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "worktree_create",
+            annotations: mutating_annotations(false, false),
             description: "Create an isolated git worktree + ForkTTY workspace for parallel agent work. Pass a branch/worktree name and repo cwd. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "worktree_attach",
+            annotations: mutating_annotations(false, false),
             description: "Attach an existing branch/worktree to a ForkTTY workspace so another agent can work there. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "worktree_remove",
+            annotations: mutating_annotations(true, false),
             description: "Remove a ForkTTY-managed worktree after checking worktree_status; closes its workspace when present. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "worktree_merge",
+            annotations: mutating_annotations(false, false),
             description: "Merge a completed worktree branch back into the repository. Use worktree_status first to avoid merging dirty work. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "notification_create",
+            annotations: mutating_annotations(false, false),
             description: "Create a ForkTTY notification for the user. Defaults workspace_id/surface_id from the ForkTTY pane environment when no target is supplied.",
             input_schema: object_schema(
                 &[],
@@ -807,6 +838,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "status_set",
+            annotations: mutating_annotations(false, true),
             description: "Set ForkTTY sidebar status metadata for an agent or task. Defaults workspace_id/surface_id from the ForkTTY pane environment when no target is supplied.",
             input_schema: object_schema(
                 &["key", "value"],
@@ -917,6 +949,22 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|description| description.contains("parallel agent work"))
         }));
+
+        // Every tool must carry annotations, and the hints must reflect the
+        // tool's actual effect: list tools are read-only, worktree_remove is
+        // the destructive one, and nothing leaves the local instance.
+        let annotation = |name: &str| -> &Value {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .map(|tool| &tool["annotations"])
+                .unwrap()
+        };
+        assert!(tools.iter().all(|tool| tool["annotations"].is_object()));
+        assert_eq!(annotation("workspace_list")["readOnlyHint"], true);
+        assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
+        assert_eq!(annotation("status_set")["idempotentHint"], true);
+        assert_eq!(annotation("surface_send_text")["openWorldHint"], false);
     }
 
     #[test]

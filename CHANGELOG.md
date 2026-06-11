@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- MCP tools now declare spec tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so clients can surface risk before invoking: list/status tools are read-only, `worktree_remove` is flagged destructive, `status_set`/`surface_focus` are idempotent, and every tool is closed-world (local instance only).
 - New MCP tool `workspace_create` (working_dir + optional name): agents can open a workspace on a repository themselves, which is the precondition the worktree tools enforce — precondition error, `workspace_create`, retry, without leaving MCP.
 
 ### Changed
