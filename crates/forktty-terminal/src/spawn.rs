@@ -175,6 +175,183 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let counter = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join("spawn-tests")
+                .join(format!("{}-{counter}-{name}", std::process::id()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn with_env<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var_os(key)))
+            .collect::<Vec<_>>();
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let result = catch_unwind(AssertUnwindSafe(f));
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        match result {
+            Ok(value) => value,
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn spawn_request() -> SpawnRequest {
+        SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "bash".to_string(),
+            args: strings(&["-l", "-i"]),
+            cwd: PathBuf::from("/"),
+            socket_path: PathBuf::from("/run/user/1000/forktty.sock"),
+            extra_env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn child_argv_uses_shell_and_args_without_unset_keys() {
+        let argv = child_argv(&spawn_request(), &[]);
+
+        assert_eq!(argv, strings(&["bash", "-l", "-i"]));
+    }
+
+    #[test]
+    fn child_argv_prefixes_env_unset_flags_when_env_is_available() {
+        let argv = child_argv(&spawn_request(), &strings(&["APPIMAGE", "APPDIR"]));
+
+        let Some(env_command) = env_command_path() else {
+            assert_eq!(argv, strings(&["bash", "-l", "-i"]));
+            return;
+        };
+        assert_eq!(
+            argv,
+            strings(&[
+                env_command.as_str(),
+                "-u",
+                "APPIMAGE",
+                "-u",
+                "APPDIR",
+                "bash",
+                "-l",
+                "-i",
+            ])
+        );
+    }
+
+    #[test]
+    fn appimage_runtime_env_keys_returns_sorted_runtime_keys() {
+        let keys = with_env(
+            &[
+                ("APPDIR", Some("/appdir")),
+                ("OWD", Some("/home/user")),
+                ("APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("APPIMAGE_EXTRACT_AND_RUN", Some("1")),
+                ("FORKTTY_APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("NOT_APPIMAGE_KEY", Some("kept")),
+            ],
+            appimage_runtime_env_keys,
+        );
+
+        for expected in ["APPDIR", "APPIMAGE", "APPIMAGE_EXTRACT_AND_RUN", "OWD"] {
+            assert!(keys.contains(&expected.to_string()));
+        }
+        for unexpected in ["FORKTTY_APPIMAGE", "NOT_APPIMAGE_KEY"] {
+            assert!(!keys.contains(&unexpected.to_string()));
+        }
+        let mut sorted = keys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn env_command_path_returns_an_executable_env() {
+        let path = env_command_path();
+        if Path::new("/usr/bin/env").exists() || Path::new("/bin/env").exists() {
+            let path = path.expect("env command should be found");
+            assert!(matches!(path.as_str(), "/usr/bin/env" | "/bin/env"));
+            assert!(is_executable_file(Path::new(&path)));
+        } else {
+            assert!(path.is_none());
+        }
+    }
+
+    #[test]
+    fn is_executable_file_accepts_current_executable() {
+        let path = std::env::current_exe().unwrap();
+
+        assert!(is_executable_file(&path));
+    }
+
+    #[test]
+    fn is_executable_file_rejects_directories() {
+        let dir = TestDir::new("directory");
+
+        assert!(!is_executable_file(dir.path()));
+    }
+
+    #[test]
+    fn is_executable_file_rejects_missing_paths() {
+        let dir = TestDir::new("missing-path");
+
+        assert!(!is_executable_file(&dir.path().join("missing")));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn is_executable_file_rejects_non_executable_files() {
+        let dir = TestDir::new("non-executable");
+        let path = dir.path().join("plain-file");
+        fs::write(&path, "not executable").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&path, permissions).unwrap();
+
+        assert!(!is_executable_file(&path));
+    }
 
     // The appimage runtime's vars must not leak into terminal children, but
     // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
