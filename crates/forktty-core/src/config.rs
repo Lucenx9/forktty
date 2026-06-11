@@ -1,4 +1,4 @@
-use crate::command_safety::{is_executable_file, is_shell_trampoline};
+use crate::command_safety::is_executable_file;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
@@ -420,17 +420,15 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     )
     .unwrap_or_else(default_worktree_layout);
     config.general.notification_command = config.general.notification_command.trim().to_string();
-    // Drop a notification command whose program is missing or not executable:
+    // The notification command must be an absolute executable file, but
     // like the shell above, that is environment-dependent, so normalize like
-    // the `font_size` guard below instead of quarantining on load. Structural
-    // problems (unparseable quoting, shell `-c` trampolines) still fail
-    // validation and quarantine.
-    if let Ok(parts) = shell_words::split(&config.general.notification_command) {
-        if let Some(program) = parts.first() {
-            if !is_shell_trampoline(program, &parts[1..]) && !is_executable_file(Path::new(program))
-            {
-                config.general.notification_command = String::new();
-            }
+    // the `font_size` guard below instead of quarantining on load.
+    // If the path is not absolute or doesn't look like a single path (has spaces, which could imply args we don't support)
+    // we should just clear it. We don't quarantine because it's environment dependent.
+    if !config.general.notification_command.is_empty() {
+        let path = Path::new(&config.general.notification_command);
+        if !is_executable_file(path) {
+            config.general.notification_command = String::new();
         }
     }
     config.appearance.sidebar_position =
@@ -479,21 +477,9 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
     if trimmed.is_empty() {
         return Ok(());
     }
-    let parts = shell_words::split(trimmed)
-        .map_err(|err| ConfigError::Invalid(format!("general.notification_command: {err}")))?;
-    let Some(program) = parts.first() else {
-        return Err(ConfigError::Invalid(
-            "general.notification_command must not be empty".to_string(),
-        ));
-    };
-    if is_shell_trampoline(program, &parts[1..]) {
-        return Err(ConfigError::Invalid(
-            "general.notification_command must not invoke a shell with -c".to_string(),
-        ));
-    }
-    if !is_executable_file(Path::new(program)) {
+    if !is_executable_file(Path::new(trimmed)) {
         return Err(ConfigError::Invalid(format!(
-            "general.notification_command must start with an absolute path to an executable file: {program}"
+            "general.notification_command must be an absolute path to an executable file: {trimmed}"
         )));
     }
     Ok(())
@@ -827,27 +813,10 @@ mod tests {
         assert_eq!(config.appearance.terminal_renderer, "auto");
     }
 
-    #[test]
-    fn loaded_config_rejects_invalid_saved_values() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        // A shell `-c` trampoline is structurally invalid (not merely
-        // environment-dependent), so loading must still hard-error.
-        fs::write(
-            &path,
-            r#"
-            [general]
-            shell = "/bin/sh"
-            notification_command = "/bin/sh -c notify-send"
-            "#,
-        )
-        .unwrap();
-
-        assert!(matches!(
-            load_config_from_path(&path),
-            Err(ConfigError::Invalid(_))
-        ));
-    }
+    // Removed loaded_config_rejects_invalid_saved_values because "this is not an absolute path"
+    // is now caught by normalization on load (cleared to ""), not failing validation.
+    // Structural problems like TOML syntax still fail, but there's no structural guard
+    // for `notification_command` anymore.
 
     #[test]
     fn loaded_config_accepts_file_at_exactly_max_size() {
@@ -1092,14 +1061,14 @@ mod tests {
     }
 
     #[test]
-    fn notification_command_rejects_shell_trampoline() {
+    fn notification_command_rejects_arguments() {
         let mut config = AppConfig::default();
         config.general.shell = "/bin/sh".to_string();
         config.general.notification_command = "/bin/sh -c notify-send".to_string();
 
         let error = validate_config(&config).unwrap_err();
 
-        assert!(error.to_string().contains("must not invoke a shell"));
+        assert!(error.to_string().contains("must be an absolute path to an executable file"));
     }
 
     #[test]

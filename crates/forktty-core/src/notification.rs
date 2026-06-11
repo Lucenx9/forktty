@@ -1,4 +1,4 @@
-use crate::command_safety::{is_executable_file, is_shell_trampoline};
+use crate::command_safety::is_executable_file;
 use crate::{AppConfig, NotificationItem, NotificationKind};
 use std::collections::VecDeque;
 use std::path::Path;
@@ -115,22 +115,14 @@ fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<
         return Ok(());
     }
 
-    let parts = shell_words::split(command).map_err(|err| err.to_string())?;
-    let (program, args) = parts
-        .split_first()
-        .ok_or_else(|| "Empty notification command".to_string())?;
-    let program_path = Path::new(program);
-    if is_shell_trampoline(program, args) {
-        return Err("notification_command must not invoke a shell with -c".to_string());
-    }
+    let program_path = Path::new(command);
     if !is_executable_file(program_path) {
         return Err(format!(
-            "notification_command must start with an absolute executable file: {program}"
+            "notification_command must be an absolute executable file: {command}"
         ));
     }
 
-    let mut child = std::process::Command::new(program)
-        .args(args)
+    let mut child = std::process::Command::new(command)
         .env("FORKTTY_NOTIFICATION_ID", &notification.id)
         .env("FORKTTY_NOTIFICATION_TITLE", &notification.title)
         .env("FORKTTY_NOTIFICATION_BODY", &notification.body)
@@ -211,26 +203,6 @@ mod tests {
         assert!(errors[0].message.contains("absolute executable"));
     }
 
-    #[test]
-    fn rejects_shell_trampoline_custom_command() {
-        let mut config = AppConfig::default();
-        config.notifications.desktop = false;
-        config.general.notification_command = "/bin/sh -c notify-send".to_string();
-        let mut model = WorkspaceModel::new();
-        let notification = model.create_notification(
-            "trampoline-test",
-            "Body",
-            NotificationKind::Info,
-            None,
-            None,
-        );
-
-        let errors = dispatch_notification(&config, &notification);
-
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].channel, "custom_command");
-        assert!(errors[0].message.contains("must not invoke a shell"));
-    }
 
     #[test]
     fn dedupes_identical_back_to_back_notifications() {
