@@ -12,19 +12,47 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// Returns true when `program` + `first_arg` look like `sh -c <something>`.
+/// Returns true when `program` + `args` look like `sh -c <something>`.
 ///
 /// Accepted shell basenames cover the common POSIX shells plus anything ending
-/// in `sh` (so `tcsh`, `csh`, `xonsh`, etc. are caught too).
-pub fn is_shell_trampoline(program: &str, first_arg: Option<&str>) -> bool {
-    if first_arg != Some("-c") {
-        return false;
-    }
-    let shell = Path::new(program)
+/// in `sh` (so `tcsh`, `csh`, `xonsh`, etc. are caught too). `-c` is detected
+/// anywhere in the leading flag arguments, including clustered short options
+/// (`-lc`, `-xc`); scanning stops at the first non-flag argument or at `--`.
+/// A leading `env` (with its flags and `VAR=val` assignments) is unwrapped so
+/// `env bash -c <something>` is caught too.
+pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
+    let basename = Path::new(program)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    matches!(shell, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh") || shell.ends_with("sh")
+    if basename == "env" {
+        // Skip env's own flags and VAR=val assignments; the next token is the
+        // real program.
+        if let Some(position) = args.iter().position(|arg| {
+            let arg = arg.as_ref();
+            !arg.starts_with('-') && !arg.contains('=')
+        }) {
+            return is_shell_trampoline(args[position].as_ref(), &args[position + 1..]);
+        }
+        return false;
+    }
+    let is_shell = matches!(basename, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh")
+        || basename.ends_with("sh");
+    if !is_shell {
+        return false;
+    }
+    for arg in args {
+        let arg = arg.as_ref();
+        if arg == "--" || !arg.starts_with('-') {
+            // End of flags: the next token is a script path, not a command
+            // string.
+            return false;
+        }
+        if arg == "-c" || (!arg.starts_with("--") && arg.contains('c')) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Returns true when `path` is an absolute path to a regular executable file.
@@ -131,17 +159,45 @@ mod tests {
 
     #[test]
     fn shell_trampoline_detects_common_shells() {
-        assert!(is_shell_trampoline("/bin/sh", Some("-c")));
-        assert!(is_shell_trampoline("/usr/bin/bash", Some("-c")));
-        assert!(is_shell_trampoline("/usr/bin/zsh", Some("-c")));
-        assert!(is_shell_trampoline("/opt/homebrew/bin/tcsh", Some("-c")));
+        assert!(is_shell_trampoline("/bin/sh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/bash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/zsh", &["-c"]));
+        assert!(is_shell_trampoline("/opt/homebrew/bin/tcsh", &["-c"]));
+    }
+
+    #[test]
+    fn shell_trampoline_detects_clustered_and_separated_flags() {
+        assert!(is_shell_trampoline("/bin/bash", &["-lc", "echo hi"]));
+        assert!(is_shell_trampoline("/bin/bash", &["-x", "-c", "echo hi"]));
+        assert!(is_shell_trampoline("/usr/bin/zsh", &["-ic", "echo hi"]));
+    }
+
+    #[test]
+    fn shell_trampoline_unwraps_leading_env() {
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["bash", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-i", "FOO=bar", "sh", "-lc", "echo hi"]
+        ));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/env",
+            &["notify-send", "-c", "x"]
+        ));
+        assert!(!is_shell_trampoline("/usr/bin/env", &["FOO=bar"]));
     }
 
     #[test]
     fn shell_trampoline_ignores_non_shell_programs() {
-        assert!(!is_shell_trampoline("/bin/sh", None));
-        assert!(!is_shell_trampoline("/bin/sh", Some("script.sh")));
-        assert!(!is_shell_trampoline("/usr/bin/notify-send", Some("-c")));
+        let none: &[&str] = &[];
+        assert!(!is_shell_trampoline("/bin/sh", none));
+        assert!(!is_shell_trampoline("/bin/sh", &["script.sh"]));
+        assert!(!is_shell_trampoline("/bin/sh", &["script.sh", "-c"]));
+        assert!(!is_shell_trampoline("/bin/sh", &["--", "-c"]));
+        assert!(!is_shell_trampoline("/bin/bash", &["-l"]));
+        assert!(!is_shell_trampoline("/usr/bin/notify-send", &["-c"]));
     }
 
     #[test]

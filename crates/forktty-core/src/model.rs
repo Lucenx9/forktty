@@ -8,6 +8,11 @@ use crate::session::{SessionData, SESSION_FORMAT_VERSION};
 pub type WorkspaceId = String;
 pub type SurfaceId = String;
 
+/// Maximum nesting depth of `Split` nodes in a pane tree. Session validation
+/// rejects deeper trees on save/load, so split operations must refuse to
+/// create a `Split` beyond this depth or every subsequent autosave fails.
+pub const MAX_SESSION_SPLIT_DEPTH: usize = 6;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Workspace {
     pub id: WorkspaceId,
@@ -733,6 +738,11 @@ impl WorkspaceModel {
         // before allocating an id, so failure paths don't leak monotonic ids.
         let workspace_ref = self.workspaces.get(&source.workspace_id)?;
         if !has_leaf_surface_id(&workspace_ref.pane_tree, surface_id) {
+            return None;
+        }
+        // Refuse splits that would nest a `Split` deeper than session
+        // validation accepts; otherwise every subsequent autosave fails.
+        if split_would_exceed_depth(&workspace_ref.pane_tree, surface_id, axis) {
             return None;
         }
         let new_id = self.next_surface_id();
@@ -1550,6 +1560,31 @@ fn replace_leaf_with_split(
     }
 }
 
+/// Returns true when splitting `surface_id`'s leaf along `axis` would create
+/// a `Split` node deeper than [`MAX_SESSION_SPLIT_DEPTH`].
+///
+/// Mirrors `replace_leaf_with_split`: when the leaf's direct parent split has
+/// the same axis, the new pane is inserted as a sibling without deepening the
+/// tree; otherwise the leaf is replaced by a new `Split` whose depth equals
+/// the number of `Split` ancestors of the leaf (the path length).
+fn split_would_exceed_depth(node: &PaneNode, surface_id: &str, axis: SplitAxis) -> bool {
+    let Some(path) = leaf_path_for_surface(node, surface_id) else {
+        return false;
+    };
+    if let Some((_, parent_path)) = path.split_last() {
+        if let Some(PaneNode::Split {
+            axis: parent_axis, ..
+        }) = pane_node_at_path(node, parent_path)
+        {
+            if *parent_axis == axis {
+                // Sibling insertion into the existing split: no new depth.
+                return false;
+            }
+        }
+    }
+    path.len() > MAX_SESSION_SPLIT_DEPTH
+}
+
 fn rebalance_split_sizes(sizes: &mut Vec<f64>, len: usize) {
     if len == 0 {
         sizes.clear();
@@ -2165,7 +2200,11 @@ fn should_ignore_hook_status(
         return false;
     };
     if let (Some(incoming_order), Some(current_order)) = (incoming.order, current.order) {
-        if incoming_order < current_order {
+        // Orders are only comparable when both sides used the same clock; a
+        // stored order from a different clock (e.g. a wall-clock order kept
+        // from before an upgrade to boottime ordering) must not drop newer
+        // updates forever, so mismatched clocks accept the incoming update.
+        if same_order_clock(current, incoming) && incoming_order < current_order {
             return true;
         }
     }
@@ -2207,9 +2246,18 @@ fn is_terminal_hook_event(event: &str) -> bool {
     matches!(event, "stop" | "stop-failure" | "session-end")
 }
 
+fn same_order_clock(current: &StatusHookMetadata, incoming: &StatusHookMetadata) -> bool {
+    current.clock == incoming.clock
+}
+
 fn same_monotonic_clock(current: &StatusHookMetadata, incoming: &StatusHookMetadata) -> bool {
-    current.clock.as_deref() == Some("monotonic-ns")
-        && incoming.clock.as_deref() == Some("monotonic-ns")
+    const MONOTONIC_CLOCKS: &[&str] = &["monotonic-ns", "boottime-ns"];
+    match (current.clock.as_deref(), incoming.clock.as_deref()) {
+        (Some(current), Some(incoming)) => {
+            current == incoming && MONOTONIC_CLOCKS.contains(&current)
+        }
+        _ => false,
+    }
 }
 
 fn now_ms() -> u128 {
@@ -2363,6 +2411,42 @@ mod tests {
             model.next_surface, before,
             "failed split must not advance the surface id counter"
         );
+    }
+
+    #[test]
+    fn split_surface_refuses_split_deeper_than_session_limit() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let mut newest = workspace.focused_surface_id;
+        let axes = [SplitAxis::Horizontal, SplitAxis::Vertical];
+        // Alternating axes deepen the tree by one Split per split: step `k`
+        // creates a Split at depth `k`, valid up to MAX_SESSION_SPLIT_DEPTH.
+        for step in 0..=MAX_SESSION_SPLIT_DEPTH {
+            let new_surface = model.split_surface(&newest, axes[step % 2]).unwrap();
+            // Every successful split must still produce a saveable session.
+            crate::session::validate_session_data(&model.to_session_data()).unwrap();
+            newest = new_surface.id;
+        }
+
+        // The next alternating split would create a Split at depth
+        // MAX_SESSION_SPLIT_DEPTH + 1, which session validation rejects —
+        // it must fail cleanly instead of breaking every autosave.
+        let before = model.next_surface;
+        assert!(model
+            .split_surface(&newest, axes[(MAX_SESSION_SPLIT_DEPTH + 1) % 2])
+            .is_none());
+        assert_eq!(
+            model.next_surface, before,
+            "refused split must not advance the surface id counter"
+        );
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+
+        // A same-axis split of the deepest leaf inserts a sibling without
+        // deepening the tree, so it is still allowed at the limit.
+        assert!(model
+            .split_surface(&newest, axes[MAX_SESSION_SPLIT_DEPTH % 2])
+            .is_some());
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 
     #[test]
@@ -3144,6 +3228,94 @@ mod tests {
             )
             .unwrap();
         assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
+    }
+
+    #[test]
+    fn hook_status_orders_only_compare_within_the_same_clock() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let metadata = |order: u128, clock: &str| StatusHookMetadata {
+            event: "session-start".to_string(),
+            order: Some(order),
+            clock: Some(clock.to_string()),
+            turn_id: None,
+        };
+
+        // A huge wall-clock order stored before an upgrade must not drown out
+        // smaller boottime orders sent afterwards: mismatched clocks are not
+        // comparable, so the incoming update is accepted.
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Ready",
+                None,
+                Some(metadata(1_700_000_000_000_000_000, "monotonic-ns")),
+            )
+            .unwrap();
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                None,
+                Some(metadata(100, "boottime-ns")),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
+
+        // Once both sides use the boottime clock, stale orders drop again.
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Stale",
+                None,
+                Some(metadata(50, "boottime-ns")),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Running");
+    }
+
+    #[test]
+    fn hook_status_guard_applies_to_matching_boottime_clocks() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Ready",
+                Some("green".to_string()),
+                Some(StatusHookMetadata {
+                    event: "stop".to_string(),
+                    order: Some(20),
+                    clock: Some("boottime-ns".to_string()),
+                    turn_id: None,
+                }),
+            )
+            .unwrap();
+        model
+            .set_status_with_hook_metadata(
+                &workspace.id,
+                "agent:codex",
+                "Codex",
+                "Running",
+                Some("blue".to_string()),
+                Some(StatusHookMetadata {
+                    event: "prompt-submit".to_string(),
+                    order: Some(20 + HOOK_TERMINAL_PROMPT_GUARD_NS),
+                    clock: Some("boottime-ns".to_string()),
+                    turn_id: None,
+                }),
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id)[0].value, "Ready");
     }
 
     #[test]

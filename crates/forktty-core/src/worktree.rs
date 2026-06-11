@@ -331,20 +331,19 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
             .name()
             .map_err(|_| WorktreeError::HeadHasNoName)?
             .to_string();
+        // Check out the source tree before moving the reference: once HEAD
+        // points at the new commit, a safe checkout sees no difference and
+        // leaves the index and working tree at the old tree.
+        let target = repo.find_object(source_oid, None)?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout.safe();
+        repo.checkout_tree(&target, Some(&mut checkout))?;
         let mut reference = repo.find_reference(&head_ref_name)?;
         reference.set_target(
             source_oid,
             &format!("Fast-forward merge of '{branch_name}'"),
         )?;
         repo.set_head(&head_ref_name)?;
-        // Force the checkout: moving the ref by hand leaves the index pointing at
-        // the old commit, and a SAFE checkout_head then leaves the new files
-        // unwritten, desyncing the working tree from HEAD. `ensure_clean_checkout`
-        // above already guaranteed there are no local changes to clobber, so a
-        // force checkout brings the working tree and index to match the new HEAD.
-        let mut checkout = git2::build::CheckoutBuilder::new();
-        checkout.force();
-        repo.checkout_head(Some(&mut checkout))?;
         return Ok(format!("Fast-forward merged '{branch_name}'"));
     }
 
@@ -1408,6 +1407,15 @@ mod tests {
             result.contains("merged"),
             "unexpected merge result: {result}"
         );
+        let repo = Repository::open(dir.path()).unwrap();
+        let head_tree = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert!(head_tree.get_name("feature.txt").is_some());
         // The commit must have landed in the base checkout's working tree, not
         // just had its branch ref moved.
         assert!(dir.path().join("feature.txt").exists());

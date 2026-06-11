@@ -120,7 +120,7 @@ fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<
         .split_first()
         .ok_or_else(|| "Empty notification command".to_string())?;
     let program_path = Path::new(program);
-    if is_shell_trampoline(program, args.first().map(String::as_str)) {
+    if is_shell_trampoline(program, args) {
         return Err("notification_command must not invoke a shell with -c".to_string());
     }
     if !is_executable_file(program_path) {
