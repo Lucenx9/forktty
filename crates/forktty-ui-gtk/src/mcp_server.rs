@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+// Per the MCP spec, initialize echoes the client's requested version only when
+// the server actually supports it; otherwise it answers with its own latest.
+const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 const MCP_SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_MCP_MESSAGE_BYTES: usize = 1_048_576;
 
@@ -105,6 +109,7 @@ fn initialize_result(params: &Value) -> Result<Value, ProtocolError> {
     let protocol_version = object
         .get("protocolVersion")
         .and_then(Value::as_str)
+        .filter(|requested| MCP_SUPPORTED_PROTOCOL_VERSIONS.contains(requested))
         .unwrap_or(MCP_PROTOCOL_VERSION);
     Ok(json!({
         "protocolVersion": protocol_version,

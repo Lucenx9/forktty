@@ -22,6 +22,10 @@ const HOOK_TOKEN_CEILING_DEFAULT: u64 = 200_000;
 const FORKTTY_HOOK_TAG: &str = "forktty";
 const OPENCODE_PLUGIN_TAG: &str = "forktty-managed-opencode-plugin";
 const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+// MCP registration edits third-party files that grow on their own —
+// ~/.claude.json in particular carries per-project state and routinely
+// exceeds 1 MiB — so it gets a larger budget than ForkTTY-owned hook configs.
+const MAX_MCP_CONFIG_SIZE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_STDIN_TEXT_BYTES: usize = 1_048_576;
 const MAX_SOCKET_RESPONSE_BYTES: usize = 1_048_576;
 
@@ -61,8 +65,8 @@ Usage:
   forktty clear-logs [--workspace-id <id>]
   forktty notifications [--json]
   forktty clear-notifications
-  forktty hooks setup [--full] [codex] [claude] [gemini] [opencode]
-  forktty hooks remove [codex] [claude] [gemini] [opencode]
+  forktty hooks setup [--full] [codex] [claude] [gemini] [antigravity] [opencode]
+  forktty hooks remove [codex] [claude] [gemini] [antigravity] [opencode]
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
@@ -3982,62 +3986,71 @@ fn build_mcp_remove_plan(spec: &'static McpAgentSpec) -> CliResult<McpRemovePlan
     })
 }
 
+// Codex's config.toml is the user's main hand-edited config, so it is edited
+// with toml_edit to preserve comments, ordering, and formatting; a serde
+// round-trip would silently destroy them.
 fn merge_codex_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, String)> {
-    let text = read_text_config(path, "codex mcp config")?.unwrap_or_default();
-    let mut root = parse_toml_table(&text, path)?;
-    let mut changed = false;
-    let mut servers = match root.remove("mcp_servers") {
-        Some(toml::Value::Table(table)) => table,
-        Some(_) => {
-            eprintln!(
-                "Warning: existing [mcp_servers] value is not a table and will be replaced; the previous file is kept in the backup."
-            );
-            changed = true;
-            toml::value::Table::new()
-        }
-        None => {
-            changed = true;
-            toml::value::Table::new()
-        }
-    };
-    let next = codex_mcp_server_table(launcher);
-    if servers.get(MCP_SERVER_NAME) != Some(&toml::Value::Table(next.clone())) {
-        changed = true;
+    let existing = read_text_config(path, "codex mcp config")?;
+    let mut doc = parse_toml_document(existing.as_deref().unwrap_or(""), path)?;
+    if doc
+        .get("mcp_servers")
+        .is_some_and(|item| !item.is_table_like())
+    {
+        eprintln!(
+            "Warning: existing [mcp_servers] value is not a table and will be replaced; the previous file is kept in the backup."
+        );
+        doc.remove("mcp_servers");
     }
-    servers.insert(MCP_SERVER_NAME.to_string(), toml::Value::Table(next));
-    root.insert("mcp_servers".to_string(), toml::Value::Table(servers));
-    Ok((changed, format_toml_table(root)?))
+    let servers = doc.entry("mcp_servers").or_insert_with(|| {
+        let mut table = toml_edit::Table::new();
+        table.set_implicit(true);
+        toml_edit::Item::Table(table)
+    });
+    let servers = servers.as_table_like_mut().ok_or_else(|| {
+        CliError::new(format!(
+            "failed to update MCP config at {}: [mcp_servers] is not a table",
+            path.display()
+        ))
+    })?;
+    servers.insert(MCP_SERVER_NAME, codex_mcp_server_item(launcher));
+    let content = doc.to_string();
+    let changed = existing.as_deref() != Some(content.as_str());
+    Ok((changed, content))
 }
 
 fn remove_codex_mcp_config(path: &Path) -> CliResult<McpRemoveAction> {
     let Some(text) = read_text_config(path, "codex mcp config")? else {
         return Ok(McpRemoveAction::None);
     };
-    let mut root = parse_toml_table(&text, path)?;
-    let Some(toml::Value::Table(mut servers)) = root.remove("mcp_servers") else {
+    let mut doc = parse_toml_document(&text, path)?;
+    let Some(servers) = doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+    else {
         return Ok(McpRemoveAction::None);
     };
     let should_remove = servers
         .get(MCP_SERVER_NAME)
-        .and_then(toml::Value::as_table)
-        .is_some_and(is_managed_toml_mcp_server);
+        .is_some_and(is_managed_codex_mcp_server);
     if !should_remove {
-        root.insert("mcp_servers".to_string(), toml::Value::Table(servers));
         return Ok(McpRemoveAction::None);
     }
     servers.remove(MCP_SERVER_NAME);
-    if !servers.is_empty() {
-        root.insert("mcp_servers".to_string(), toml::Value::Table(servers));
+    if servers.is_empty() {
+        doc.remove("mcp_servers");
     }
-    if root.is_empty() {
+    let content = doc.to_string();
+    if content.trim().is_empty() {
         Ok(McpRemoveAction::DeleteFile)
+    } else if content == text {
+        Ok(McpRemoveAction::None)
     } else {
-        Ok(McpRemoveAction::Write(format_toml_table(root)?))
+        Ok(McpRemoveAction::Write(content))
     }
 }
 
 fn merge_json_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, String)> {
-    let existing = read_json_file(path)?;
+    let existing = read_json_file_with_limit(path, MAX_MCP_CONFIG_SIZE_BYTES, "MCP config")?;
     let mut config = existing.as_object().cloned().ok_or_else(|| {
         CliError::new(format!(
             "failed to read MCP config at {}: expected a JSON object at the top level",
@@ -4076,7 +4089,7 @@ fn merge_json_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, Strin
 }
 
 fn remove_json_mcp_config(path: &Path) -> CliResult<McpRemoveAction> {
-    let existing = read_json_file(path)?;
+    let existing = read_json_file_with_limit(path, MAX_MCP_CONFIG_SIZE_BYTES, "MCP config")?;
     let mut config = existing.as_object().cloned().ok_or_else(|| {
         CliError::new(format!(
             "failed to read MCP config at {}: expected a JSON object at the top level",
@@ -4107,36 +4120,25 @@ fn remove_json_mcp_config(path: &Path) -> CliResult<McpRemoveAction> {
     }
 }
 
-fn codex_mcp_server_table(launcher: &Path) -> toml::value::Table {
-    let mut table = toml::value::Table::new();
-    table.insert(
-        "command".to_string(),
-        toml::Value::String(launcher.display().to_string()),
-    );
-    table.insert(
-        "args".to_string(),
-        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
-    );
-    table.insert(
-        "env_vars".to_string(),
-        toml::Value::Array(
-            [
-                "FORKTTY_SOCKET_PATH",
-                "FORKTTY_WORKSPACE_ID",
-                "FORKTTY_SURFACE_ID",
-            ]
-            .into_iter()
-            .map(|value| toml::Value::String(value.to_string()))
-            .collect(),
-        ),
-    );
-    let mut env = toml::value::Table::new();
-    env.insert(
-        MCP_MANAGED_ENV.to_string(),
-        toml::Value::String(MCP_SERVER_NAME.to_string()),
-    );
-    table.insert("env".to_string(), toml::Value::Table(env));
-    table
+fn codex_mcp_server_item(launcher: &Path) -> toml_edit::Item {
+    let mut table = toml_edit::Table::new();
+    table.insert("command", toml_edit::value(launcher.display().to_string()));
+    let mut args = toml_edit::Array::new();
+    args.push("mcp");
+    table.insert("args", toml_edit::value(args));
+    let mut env_vars = toml_edit::Array::new();
+    for name in [
+        "FORKTTY_SOCKET_PATH",
+        "FORKTTY_WORKSPACE_ID",
+        "FORKTTY_SURFACE_ID",
+    ] {
+        env_vars.push(name);
+    }
+    table.insert("env_vars", toml_edit::value(env_vars));
+    let mut env = toml_edit::Table::new();
+    env.insert(MCP_MANAGED_ENV, toml_edit::value(MCP_SERVER_NAME));
+    table.insert("env", toml_edit::Item::Table(env));
+    toml_edit::Item::Table(table)
 }
 
 fn json_mcp_server_config(launcher: &Path) -> Value {
@@ -4149,12 +4151,13 @@ fn json_mcp_server_config(launcher: &Path) -> Value {
     })
 }
 
-fn is_managed_toml_mcp_server(server: &toml::value::Table) -> bool {
+fn is_managed_codex_mcp_server(server: &toml_edit::Item) -> bool {
     server
-        .get("env")
-        .and_then(toml::Value::as_table)
+        .as_table_like()
+        .and_then(|table| table.get("env"))
+        .and_then(toml_edit::Item::as_table_like)
         .and_then(|env| env.get(MCP_MANAGED_ENV))
-        .and_then(toml::Value::as_str)
+        .and_then(toml_edit::Item::as_str)
         == Some(MCP_SERVER_NAME)
 }
 
@@ -4167,23 +4170,14 @@ fn is_managed_json_mcp_server(server: &Value) -> bool {
         == Some(MCP_SERVER_NAME)
 }
 
-fn parse_toml_table(text: &str, path: &Path) -> CliResult<toml::value::Table> {
-    if text.trim().is_empty() {
-        return Ok(toml::value::Table::new());
-    }
-    text.parse::<toml::Table>().map_err(|err| {
+fn parse_toml_document(text: &str, path: &Path) -> CliResult<toml_edit::DocumentMut> {
+    text.parse::<toml_edit::DocumentMut>().map_err(|err| {
         CliError::new(format!(
             "failed to read MCP config at {}: {}",
             path.display(),
             err
         ))
     })
-}
-
-fn format_toml_table(root: toml::value::Table) -> CliResult<String> {
-    toml::to_string_pretty(&root)
-        .map(|text| format!("{text}\n"))
-        .map_err(|err| CliError::new(err.to_string()))
 }
 
 fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
@@ -4678,6 +4672,10 @@ fn read_agent_config(spec: &AgentSpec, path: &Path) -> CliResult<Value> {
 }
 
 fn read_json_file(path: &Path) -> CliResult<Value> {
+    read_json_file_with_limit(path, MAX_HOOK_CONFIG_SIZE_BYTES, "hook config")
+}
+
+fn read_json_file_with_limit(path: &Path, max_bytes: u64, label: &str) -> CliResult<Value> {
     let link_meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
@@ -4713,21 +4711,21 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
     if !stat.is_file() {
         return Err(CliError::new("path exists but is not a regular file"));
     }
-    if stat.len() > MAX_HOOK_CONFIG_SIZE_BYTES {
+    if stat.len() > max_bytes {
         return Err(CliError::new(format!(
-            "hook config is too large ({} bytes; max {} bytes)",
+            "{label} is too large ({} bytes; max {} bytes)",
             stat.len(),
-            MAX_HOOK_CONFIG_SIZE_BYTES
+            max_bytes
         )));
     }
     let mut text = String::new();
-    let mut limited = file.take(MAX_HOOK_CONFIG_SIZE_BYTES + 1);
+    let mut limited = file.take(max_bytes + 1);
     limited.read_to_string(&mut text)?;
-    if text.len() as u64 > MAX_HOOK_CONFIG_SIZE_BYTES {
+    if text.len() as u64 > max_bytes {
         return Err(CliError::new(format!(
-            "hook config is too large ({} bytes; max {} bytes)",
+            "{label} is too large ({} bytes; max {} bytes)",
             text.len(),
-            MAX_HOOK_CONFIG_SIZE_BYTES
+            max_bytes
         )));
     }
     if text.trim().is_empty() {
@@ -8581,6 +8579,37 @@ mod tests {
                 }
             },
         );
+    }
+
+    #[test]
+    fn mcp_codex_setup_and_remove_preserve_comments_and_formatting() {
+        let codex_home = tempfile::tempdir().unwrap();
+        let codex_home_s = codex_home.path().to_string_lossy().to_string();
+        with_env(&[("CODEX_HOME", Some(codex_home_s.as_str()))], || {
+            let original = "# my model choice\nmodel = \"gpt-5.2-codex\" # keep high\n\n[mcp_servers.foreign]\ncommand = \"/bin/true\"\n";
+            let path = codex_mcp_config_path();
+            ensure_parent_dir(&path).unwrap();
+            fs::write(&path, original).unwrap();
+
+            let spec = mcp_agent_spec("codex").unwrap();
+            let launcher = Path::new("/usr/bin/forktty");
+            let plan = build_mcp_setup_plan(spec, launcher).unwrap();
+            assert!(plan.changed);
+            assert!(plan.content.contains("# my model choice"));
+            assert!(plan
+                .content
+                .contains("model = \"gpt-5.2-codex\" # keep high"));
+            assert!(plan.content.contains("[mcp_servers.foreign]"));
+            assert!(plan.content.contains("[mcp_servers.forktty]"));
+            fs::write(&path, &plan.content).unwrap();
+            assert!(!build_mcp_setup_plan(spec, launcher).unwrap().changed);
+
+            let remove = build_mcp_remove_plan(spec).unwrap();
+            let McpRemoveAction::Write(content) = remove.action else {
+                panic!("codex remove should rewrite config");
+            };
+            assert_eq!(content, original);
+        });
     }
 
     #[test]
