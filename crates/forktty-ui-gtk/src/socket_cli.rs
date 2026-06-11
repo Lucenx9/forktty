@@ -891,6 +891,27 @@ fn reject_unknown_options(
     allowed: &[&str],
     command: &str,
 ) -> CliResult<()> {
+    if options.contains_key("help") {
+        // Usage is derived from the same allow-list the validation below
+        // uses, so it cannot drift from the options actually accepted.
+        let usage = if allowed.is_empty() {
+            format!("usage: forktty {command} (no options)")
+        } else {
+            format!(
+                "usage: forktty {command} [options]\noptions: {}",
+                allowed
+                    .iter()
+                    .map(|flag| format!("--{flag}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        return Err(CliError {
+            message: usage,
+            code: None,
+            exit: 0,
+        });
+    }
     for key in options.keys() {
         if !allowed.contains(&key.as_str()) {
             return Err(CliError::new(format!("{command}: unknown option --{key}")));
@@ -1588,14 +1609,23 @@ fn handle_create_workspace(context: &CliContext, args: Vec<String>) -> CliResult
     require_no_args(&parsed.positionals, "create-workspace")?;
     reject_unknown_options(
         &parsed.options,
-        &["name", "working-dir"],
+        &["name", "working-dir", "cwd"],
         "create-workspace",
     )?;
     let mut params = Map::new();
     if let Some(name) = non_blank_string_option(&parsed.options, "name", "--name")? {
         params.insert("name".to_string(), Value::String(name.trim().to_string()));
     }
-    if let Some(dir) = non_blank_string_option(&parsed.options, "working-dir", "--working-dir")? {
+    // --cwd matches the worktree commands' spelling; --working-dir stays as
+    // the descriptive alias so existing scripts keep working.
+    let working_dir = non_blank_string_option(&parsed.options, "working-dir", "--working-dir")?;
+    let cwd = non_blank_string_option(&parsed.options, "cwd", "--cwd")?;
+    if working_dir.is_some() && cwd.is_some() {
+        return Err(CliError::new(
+            "create-workspace: pass either --cwd or --working-dir, not both",
+        ));
+    }
+    if let Some(dir) = working_dir.or(cwd) {
         params.insert(
             "workingDir".to_string(),
             Value::String(dir.trim().to_string()),
@@ -9646,6 +9676,50 @@ mod tests {
                 assert!(err.message.contains("events.subscribe response exceeds"));
             },
         );
+    }
+
+    #[test]
+    fn create_workspace_accepts_cwd_alias() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id":"w9","name":"scratch"},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                let ctx = ctx_for(socket_path);
+                handle_create_workspace(
+                    &ctx,
+                    strings(&["--name", "scratch", "--cwd", "/tmp/project"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workspace.create");
+        assert_eq!(request["params"]["workingDir"], "/tmp/project");
+    }
+
+    #[test]
+    fn create_workspace_rejects_both_cwd_spellings() {
+        assert_err_contains(
+            handle_create_workspace(
+                &test_context(),
+                strings(&["--cwd", "/tmp/a", "--working-dir", "/tmp/b"]),
+            ),
+            "not both",
+        );
+    }
+
+    #[test]
+    fn subcommand_help_lists_allowed_options_and_exits_zero() {
+        let error = handle_create_workspace(&test_context(), strings(&["--help"])).unwrap_err();
+        assert_eq!(error.exit, 0);
+        assert!(error.message.contains("usage: forktty create-workspace"));
+        assert!(error.message.contains("--working-dir"));
+        assert!(error.message.contains("--cwd"));
     }
 
     #[test]
