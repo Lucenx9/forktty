@@ -13,6 +13,7 @@ All notable changes to ForkTTY are documented here.
 - A socket client that sends a request and then stops reading the response is now disconnected after a write timeout instead of holding one of the 64 connection slots forever; enough stuck clients used to deny the socket to agent hooks.
 
 ### Fixed
+- Agent hook status updates that lose `FORKTTY_WORKSPACE_ID`/`FORKTTY_SURFACE_ID` after session start (for example through tmux, ssh, or containers) can now be attributed back to the originating pane by `hook_session_id` when the socket server has seen that session with explicit targets.
 - "Merge Worktree" now works when invoked from inside a linked worktree (it used to always fail with "Cannot resolve admin directory"), and fast-forward merges update the main checkout's files instead of only moving the branch ref.
 - Large pastes (bigger than the kernel pty buffer, ~12KB) are no longer silently truncated; the terminal now waits for the child to drain its input, with a 10s safety timeout. Automatic VT query replies sent over the same path can no longer be cut off mid-sequence either.
 - Splitting panes beyond the persistable depth (6 nested splits) is refused instead of silently breaking every subsequent session autosave and losing the layout on restart.

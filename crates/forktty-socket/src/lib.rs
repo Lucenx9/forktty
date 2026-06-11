@@ -7,6 +7,7 @@ use forktty_core::{
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, DirBuilder};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
@@ -48,6 +49,7 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// the [`MAX_SOCKET_CONNECTIONS`] permits. Generous so a legitimately large
 /// response to a slow reader still gets through.
 const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -305,6 +307,7 @@ pub struct SocketAppState {
     /// engine is wired (no `browser` feature, or headless), in which case the
     /// browser scripting verbs report unavailable.
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
+    hook_session_targets: Arc<Mutex<HookSessionTargets>>,
 }
 
 impl SocketAppState {
@@ -324,6 +327,7 @@ impl SocketAppState {
             notification_dispatch: true,
             events,
             browser_cmd: None,
+            hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
         }
     }
 
@@ -335,6 +339,63 @@ impl SocketAppState {
     pub fn with_browser_cmd(mut self, sender: async_channel::Sender<BrowserCommand>) -> Self {
         self.browser_cmd = Some(sender);
         self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HookSessionTarget {
+    workspace_id: String,
+    surface_id: String,
+}
+
+#[derive(Default, Debug)]
+struct HookSessionTargets {
+    entries: HashMap<String, HookSessionTarget>,
+    order: VecDeque<String>,
+}
+
+impl HookSessionTargets {
+    fn learn(&mut self, session_id: String, target: HookSessionTarget) {
+        if self.entries.contains_key(&session_id) {
+            self.entries.insert(session_id.clone(), target);
+            self.order.retain(|existing| existing != &session_id);
+            self.order.push_back(session_id);
+            return;
+        }
+
+        while self.entries.len() >= HOOK_SESSION_TARGET_CAPACITY {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+
+        self.entries.insert(session_id.clone(), target);
+        self.order.push_back(session_id);
+    }
+
+    fn get(&self, session_id: &str) -> Option<&HookSessionTarget> {
+        self.entries.get(session_id)
+    }
+
+    fn remove_session(&mut self, session_id: &str) {
+        if self.entries.remove(session_id).is_some() {
+            self.order.retain(|existing| existing != session_id);
+        }
+    }
+
+    fn remove_surface(&mut self, surface_id: &str) {
+        let removed = self
+            .entries
+            .iter()
+            .filter(|(_, target)| target.surface_id == surface_id)
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
+        for session_id in removed {
+            self.entries.remove(&session_id);
+        }
+        self.order
+            .retain(|session_id| self.entries.contains_key(session_id));
     }
 }
 
@@ -578,6 +639,9 @@ pub async fn dispatch(
         return Err(DispatchError::MethodNotFound(method.to_string()));
     }
 
+    let mut params = params;
+    let _hook_session_end = prepare_hook_session_targets(state, method, &mut params)?;
+
     match method {
         "system.ping" => Ok(json!("pong")),
         "system.capabilities" => Ok(json!({
@@ -749,6 +813,7 @@ pub async fn dispatch(
                     }
                     return Err(DispatchError::NotFound("workspace".to_string()));
                 }
+                evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
                 return Ok(json!(workspace));
             }
             close_terminal_surfaces_if_present(state, &surface_ids)?;
@@ -761,6 +826,7 @@ pub async fn dispatch(
                     .close_workspace(WorkspaceSelector::Id(&workspace_id))
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?;
             }
+            evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(workspace))
         }
@@ -929,6 +995,7 @@ pub async fn dispatch(
                         }
                     }
                 }
+                evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
                 return Ok(json!({"removed": name}));
             }
             close_terminal_surfaces_if_present(state, &surface_ids)?;
@@ -951,6 +1018,7 @@ pub async fn dispatch(
                     model.create_workspace("main", fallback_path);
                 }
             }
+            evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!({"removed": name}))
         }
@@ -1342,6 +1410,7 @@ pub async fn dispatch(
                     forget_terminal_surface_if_present(state, &replacement.id)?;
                 }
                 let surface = surface?;
+                evict_hook_session_targets_for_surface(state, surface_id)?;
                 return Ok(json!(surface));
             }
             close_terminal_surface_if_present(state, surface_id)?;
@@ -1354,6 +1423,7 @@ pub async fn dispatch(
                     .close_surface(surface_id)
                     .ok_or(DispatchError::NotFound("surface".to_string()))?
             };
+            evict_hook_session_targets_for_surface(state, surface_id)?;
             ensure_terminal_for_active_workspace(state).await?;
             Ok(json!(surface))
         }
@@ -1777,6 +1847,32 @@ fn close_terminal_surfaces_if_present(
 ) -> Result<(), String> {
     for surface_id in surface_ids {
         close_terminal_surface_if_present(state, surface_id)?;
+    }
+    Ok(())
+}
+
+fn evict_hook_session_targets_for_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    state
+        .hook_session_targets
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .remove_surface(surface_id);
+    Ok(())
+}
+
+fn evict_hook_session_targets_for_surfaces(
+    state: &SocketAppState,
+    surface_ids: &[String],
+) -> Result<(), DispatchError> {
+    let mut targets = state
+        .hook_session_targets
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    for surface_id in surface_ids {
+        targets.remove_surface(surface_id);
     }
     Ok(())
 }
@@ -2999,6 +3095,154 @@ fn surface_id_params<'a>(params: &'a Value) -> Result<Vec<SurfaceIdParam<'a>>, D
         }
     }
     Ok(surface_ids)
+}
+
+struct HookSessionEndGuard {
+    targets: Arc<Mutex<HookSessionTargets>>,
+    session_id: Option<String>,
+}
+
+impl HookSessionEndGuard {
+    fn none(state: &SocketAppState) -> Self {
+        Self {
+            targets: state.hook_session_targets.clone(),
+            session_id: None,
+        }
+    }
+
+    fn new(state: &SocketAppState, session_id: Option<String>) -> Self {
+        Self {
+            targets: state.hook_session_targets.clone(),
+            session_id,
+        }
+    }
+}
+
+impl Drop for HookSessionEndGuard {
+    fn drop(&mut self) {
+        let Some(session_id) = self.session_id.as_deref() else {
+            return;
+        };
+        if let Ok(mut targets) = self.targets.lock() {
+            targets.remove_session(session_id);
+        }
+    }
+}
+
+fn prepare_hook_session_targets(
+    state: &SocketAppState,
+    method: &str,
+    params: &mut Value,
+) -> Result<HookSessionEndGuard, DispatchError> {
+    if !is_hook_targetable_method(method) {
+        return Ok(HookSessionEndGuard::none(state));
+    }
+    let Some(session_id) = optional_non_blank_string_param(params, "hook_session_id")? else {
+        return Ok(HookSessionEndGuard::none(state));
+    };
+    let session_id = session_id.to_string();
+    let event_name = optional_non_blank_string_param(params, "hook_event_name")?;
+    let evict_on_return = event_name == Some("session-end");
+
+    let surface_id = optional_surface_id_param(params)?.map(str::to_string);
+    let workspace_selectors = workspace_selector_params(params)?;
+    let has_explicit_workspace = !workspace_selectors.is_empty();
+    let workspace_id = workspace_selectors
+        .iter()
+        .find(|selector| {
+            matches!(selector.kind, WorkspaceSelectorKind::Id)
+                && matches!(selector.key, "workspace_id" | "workspaceId")
+        })
+        .map(|selector| selector.value.to_string());
+
+    if let (Some(workspace_id), Some(surface_id)) = (workspace_id.as_deref(), surface_id.as_deref())
+    {
+        let target = HookSessionTarget {
+            workspace_id: workspace_id.to_string(),
+            surface_id: surface_id.to_string(),
+        };
+        if hook_session_target_is_live(state, &target)? {
+            state
+                .hook_session_targets
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?
+                .learn(session_id.clone(), target);
+        }
+        return Ok(HookSessionEndGuard::new(
+            state,
+            evict_on_return.then_some(session_id),
+        ));
+    }
+
+    if surface_id.is_none() && !has_explicit_workspace {
+        let mapped = state
+            .hook_session_targets
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .get(&session_id)
+            .cloned();
+        if let Some(target) = mapped {
+            if hook_session_target_is_live(state, &target)? {
+                insert_hook_session_target(params, &target)?;
+            } else {
+                state
+                    .hook_session_targets
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?
+                    .remove_session(&session_id);
+                return Err(DispatchError::NotFound("surface".to_string()));
+            }
+        }
+    }
+
+    Ok(HookSessionEndGuard::new(
+        state,
+        evict_on_return.then_some(session_id),
+    ))
+}
+
+fn is_hook_targetable_method(method: &str) -> bool {
+    matches!(
+        method,
+        "metadata.set_status"
+            | "metadata.clear_status"
+            | "metadata.set_progress"
+            | "metadata.log"
+            | "notification.create"
+    )
+}
+
+fn hook_session_target_is_live(
+    state: &SocketAppState,
+    target: &HookSessionTarget,
+) -> Result<bool, DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    Ok(model
+        .surface(&target.surface_id)
+        .is_some_and(|surface| surface.workspace_id == target.workspace_id))
+}
+
+fn insert_hook_session_target(
+    params: &mut Value,
+    target: &HookSessionTarget,
+) -> Result<(), DispatchError> {
+    let Some(params) = params.as_object_mut() else {
+        return Err(DispatchError::InvalidParam(
+            "Invalid hook target params: expected object".to_string(),
+        ));
+    };
+    params.insert(
+        "workspace_id".to_string(),
+        Value::String(target.workspace_id.clone()),
+    );
+    params.insert(
+        "surface_id".to_string(),
+        Value::String(target.surface_id.clone()),
+    );
+    Ok(())
 }
 
 fn ensure_model_surface_exists(
@@ -4684,6 +4928,225 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code(), "not_found");
         assert_eq!(error.to_string(), "Surface not found");
+    }
+
+    #[tokio::test]
+    async fn hook_session_status_learns_and_reuses_explicit_surface_target() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+        let surface_id = workspaces[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Ready",
+                "hook_session_id": "session-a",
+                "hook_event_name": "session-start",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+        let other = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "other", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Running",
+                "hook_session_id": "session-a",
+                "hook_event_name": "prompt-submit",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let original_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let other_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": other["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(original_statuses[0]["value"], "Running");
+        assert!(other_statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn hook_session_status_explicit_target_beats_learned_target() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+        let surface_id = workspaces[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Ready",
+                "hook_session_id": "session-b",
+                "hook_event_name": "session-start",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+        let other = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "other", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        let other_workspace_id = other["id"].as_str().unwrap().to_string();
+        let other_surface_id = other["focused_surface_id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": other_workspace_id,
+                "surface_id": other_surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Running elsewhere",
+                "hook_session_id": "session-b",
+                "hook_event_name": "prompt-submit",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let original_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let other_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": other_workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(original_statuses[0]["value"], "Ready");
+        assert_eq!(other_statuses[0]["value"], "Running elsewhere");
+    }
+
+    #[tokio::test]
+    async fn hook_session_status_surface_close_invalidates_learned_target() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+        let surface_id = workspaces[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let split = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap();
+        let mapped_surface_id = split["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": mapped_surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Ready",
+                "hook_session_id": "session-c",
+                "hook_event_name": "session-start",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+        let other = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "other", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "surface.close",
+            json!({"surface_id": mapped_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Untargeted after close",
+                "hook_session_id": "session-c",
+                "hook_event_name": "prompt-submit",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let original_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        let other_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": other["id"]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(original_statuses[0]["value"], "Ready");
+        assert_eq!(other_statuses[0]["value"], "Untargeted after close");
     }
 
     #[tokio::test]

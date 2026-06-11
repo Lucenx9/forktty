@@ -175,7 +175,7 @@ Implemented categories:
 | Events | `events.subscribe` |
 | Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`, `browser.import.discover`, `browser.import.preview`, `browser.import.run` |
 
-Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Hook-originated metadata/notification requests that carry `hook_session_id` can use a bounded server-side session-to-surface cache when later hook requests lose their explicit `workspace_id`/`surface_id`; explicit targets always win, and stale cached surfaces are discarded instead of reviving closed panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 
@@ -248,6 +248,8 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
   browser panes and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
 - 1 MiB bounds for socket requests, config, and session files.
+- Hook session-to-surface correlation is local process memory only, capped at
+  256 entries, and evicted on session-end or surface close.
 - Shell and notification executables must be absolute executable files.
 - Hooks are limited to verified worktree-local paths.
 - Worktree removal rejects dirty/tampered targets.
