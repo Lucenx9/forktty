@@ -1,0 +1,3 @@
+## 2024-05-18 - Avoid unnecessary .clone() by consuming collections
+**Learning:** In Rust, iterating over a collection by reference (`for x in &collection`) yields references, which forces a `.clone()` to take ownership when inserting into new collections. If the source collection is no longer needed after the loop, you can iterate by value (`for x in collection`) which consumes the collection and yields owned values, eliminating unnecessary heap allocations on the hot path.
+**Action:** Always check if a collection is used after a loop before iterating by reference. When migrating to owned iteration, remember to adjust match blocks (e.g. `match map.get_mut(&x)`) and insert operations to consume the owned value optimally.

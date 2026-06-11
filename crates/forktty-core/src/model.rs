@@ -481,20 +481,21 @@ impl WorkspaceModel {
                 let workspace = &self.workspaces[&workspace_id];
                 (workspace.id.clone(), workspace.working_dir.clone())
             };
-            for surface_id in &canonical_leaf_ids {
-                valid_surface_ids.insert(surface_id.clone());
-                match self.surfaces.get_mut(surface_id) {
+            for surface_id in canonical_leaf_ids {
+                match self.surfaces.get_mut(&surface_id) {
                     Some(existing) => {
+                        valid_surface_ids.insert(surface_id);
                         if existing.workspace_id != workspace_id_owned {
                             existing.workspace_id = workspace_id_owned.clone();
                             changed = true;
                         }
                     }
                     None => {
+                        valid_surface_ids.insert(surface_id.clone());
                         self.surfaces.insert(
                             surface_id.clone(),
                             Surface {
-                                id: surface_id.clone(),
+                                id: surface_id,
                                 workspace_id: workspace_id_owned.clone(),
                                 cwd: working_dir.clone(),
                                 title: String::from("shell"),
