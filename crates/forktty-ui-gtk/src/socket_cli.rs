@@ -185,6 +185,10 @@ struct HookEntrySpec {
 enum HookInstallKind {
     JsonConfig,
     OpenCodePlugin,
+    // Antigravity CLI executes the hook `command` as a bare executable path —
+    // no argument splitting and no shell — so the JSON config points at
+    // generated wrapper scripts that invoke the forktty launcher.
+    AntigravityConfig,
 }
 
 #[derive(Clone, Copy)]
@@ -470,6 +474,28 @@ const GEMINI_HOOK_ENTRIES: &[HookEntrySpec] = &[
     },
 ];
 
+// Antigravity CLI v1.0.3 parses exactly these hook events from hooks.json;
+// unknown event names are dropped silently (verified against the binary's
+// "N total handlers" load log). PreInvocation fires before each model call.
+// The timeout field is unverified for Antigravity and never emitted.
+const ANTIGRAVITY_HOOK_ENTRIES: &[HookEntrySpec] = &[
+    HookEntrySpec {
+        event_name: "PreInvocation",
+        hook_event_name: "before-model",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PreToolUse",
+        hook_event_name: "pre-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostToolUse",
+        hook_event_name: "post-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+];
+
 const OPENCODE_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "session.created",
@@ -555,6 +581,16 @@ const AGENTS: &[AgentSpec] = &[
         hook_entries: GEMINI_HOOK_ENTRIES,
         matcher: None,
         install_kind: HookInstallKind::JsonConfig,
+    },
+    AgentSpec {
+        key: "antigravity",
+        label: "Antigravity",
+        disabled_env: "FORKTTY_ANTIGRAVITY_HOOKS_DISABLED",
+        config_path: antigravity_config_path,
+        // Matcher is applied to tool events only; PreInvocation takes none.
+        matcher: Some("*"),
+        hook_entries: ANTIGRAVITY_HOOK_ENTRIES,
+        install_kind: HookInstallKind::AntigravityConfig,
     },
     AgentSpec {
         key: "opencode",
@@ -3392,6 +3428,11 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
             ensure_parent_dir(&write_path)?;
             backup_path = backup_file(&write_path)?;
             atomic_write_file(&write_path, plan.content.as_bytes())?;
+            for (script_path, content) in &plan.scripts {
+                ensure_parent_dir(script_path)?;
+                atomic_write_file(script_path, content.as_bytes())?;
+                fs::set_permissions(script_path, fs::Permissions::from_mode(0o700))?;
+            }
         }
         summaries.push(json!({
             "agent": plan.spec.key,
@@ -3458,6 +3499,13 @@ fn handle_hooks_remove(context: &CliContext, args: Vec<String>) -> CliResult<()>
                 }
                 HookRemoveAction::None => {}
             }
+            if let Some(scripts_dir) = &plan.scripts_dir {
+                if let Err(err) = fs::remove_dir_all(scripts_dir) {
+                    if err.kind() != io::ErrorKind::NotFound {
+                        return Err(err.into());
+                    }
+                }
+            }
         }
         summaries.push(json!({
             "agent": plan.spec.key,
@@ -3496,6 +3544,9 @@ struct HookSetupPlan {
     config_path: PathBuf,
     changed: bool,
     content: String,
+    /// Generated wrapper scripts written alongside the config (Antigravity
+    /// only: its hook `command` is a bare executable path with no arguments).
+    scripts: Vec<(PathBuf, String)>,
 }
 
 enum HookRemoveAction {
@@ -3509,6 +3560,8 @@ struct HookRemovePlan {
     config_path: PathBuf,
     changed: bool,
     action: HookRemoveAction,
+    /// ForkTTY-owned generated scripts directory deleted on removal.
+    scripts_dir: Option<PathBuf>,
 }
 
 fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult<HookSetupPlan> {
@@ -3522,6 +3575,7 @@ fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult
                 config_path,
                 changed,
                 content: format!("{}\n", serde_json::to_string_pretty(&config)?),
+                scripts: Vec::new(),
             })
         }
         HookInstallKind::OpenCodePlugin => {
@@ -3533,6 +3587,31 @@ fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult
                 config_path,
                 changed,
                 content,
+                scripts: Vec::new(),
+            })
+        }
+        HookInstallKind::AntigravityConfig => {
+            let existing = read_agent_config(spec, &config_path)?;
+            let (config_changed, config) = merge_antigravity_hook_config(&existing, spec)?;
+            let scripts = spec
+                .hook_entries
+                .iter()
+                .map(|entry| {
+                    (
+                        antigravity_script_path(entry.hook_event_name),
+                        build_antigravity_hook_script(launcher, spec, entry.hook_event_name),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let scripts_changed = scripts.iter().any(|(path, content)| {
+                fs::read_to_string(path).ok().as_deref() != Some(content.as_str())
+            });
+            Ok(HookSetupPlan {
+                spec,
+                config_path,
+                changed: config_changed || scripts_changed,
+                content: format!("{}\n", serde_json::to_string_pretty(&config)?),
+                scripts,
             })
         }
     }
@@ -3557,6 +3636,7 @@ fn build_hook_remove_plan(
                 config_path,
                 changed,
                 action,
+                scripts_dir: None,
             })
         }
         HookInstallKind::OpenCodePlugin => {
@@ -3573,6 +3653,31 @@ fn build_hook_remove_plan(
                 } else {
                     HookRemoveAction::None
                 },
+                scripts_dir: None,
+            })
+        }
+        HookInstallKind::AntigravityConfig => {
+            let existing = read_agent_config(spec, &config_path)?;
+            let mut config = existing.as_object().cloned().unwrap_or_default();
+            let group_removed = config.remove(ANTIGRAVITY_HOOK_GROUP).is_some();
+            let scripts_dir = antigravity_scripts_dir();
+            let scripts_present = scripts_dir.is_dir();
+            let action = if !group_removed {
+                HookRemoveAction::None
+            } else if config.is_empty() {
+                HookRemoveAction::DeleteFile
+            } else {
+                HookRemoveAction::Write(format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&Value::Object(config))?
+                ))
+            };
+            Ok(HookRemovePlan {
+                spec,
+                config_path,
+                changed: group_removed || scripts_present,
+                action,
+                scripts_dir: scripts_present.then_some(scripts_dir),
             })
         }
     }
@@ -3605,6 +3710,7 @@ fn normalize_agent_name(agent: &str) -> String {
     match agent.to_lowercase().as_str() {
         "claude-code" | "claude_code" => "claude".to_string(),
         "open-code" | "open_code" => "opencode".to_string(),
+        "agy" => "antigravity".to_string(),
         other => other.to_string(),
     }
 }
@@ -3674,6 +3780,25 @@ fn claude_config_path() -> PathBuf {
 
 fn gemini_config_path() -> PathBuf {
     home_dir().join(".gemini/settings.json")
+}
+
+// Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
+// (verified against agy 1.0.3; the workspace-level .agents/hooks.json is
+// intentionally not managed so hooks work from any project).
+fn antigravity_config_dir() -> PathBuf {
+    home_dir().join(".gemini/config")
+}
+
+fn antigravity_config_path() -> PathBuf {
+    antigravity_config_dir().join("hooks.json")
+}
+
+fn antigravity_scripts_dir() -> PathBuf {
+    antigravity_config_dir().join("forktty-hooks.generated")
+}
+
+fn antigravity_script_path(hook_event_name: &str) -> PathBuf {
+    antigravity_scripts_dir().join(format!("{hook_event_name}.sh"))
 }
 
 fn opencode_plugin_path() -> PathBuf {
@@ -3830,6 +3955,57 @@ fn remove_hook_config(
 
 fn is_forktty_managed_entry(entry: &Value) -> bool {
     entry.get("forkttySource").and_then(Value::as_str) == Some(FORKTTY_HOOK_TAG)
+}
+
+/// ForkTTY owns this named hook group in Antigravity's hooks.json; other
+/// top-level groups belong to the user and are never touched.
+const ANTIGRAVITY_HOOK_GROUP: &str = "forktty";
+const ANTIGRAVITY_SCRIPT_TAG: &str = "forktty-managed-antigravity-hook";
+
+/// Antigravity executes `command` as one executable path (no argv splitting,
+/// no shell), so each event points at a generated wrapper script that runs
+/// the launcher with the usual guard line. The disabled/failed fallback echoes
+/// `{}`: Antigravity rejects unknown response fields like `continue` under
+/// strict protojson unmarshaling.
+fn build_antigravity_hook_script(launcher: &Path, spec: &AgentSpec, event: &str) -> String {
+    format!(
+        "#!/bin/sh\n# {tag}\n# Generated by `forktty hooks setup`; local edits will be replaced.\n[ \"${{{disabled}:-}}\" != \"1\" ] && {launcher} hooks {agent} {event} || echo '{{}}'\n",
+        tag = ANTIGRAVITY_SCRIPT_TAG,
+        disabled = spec.disabled_env,
+        launcher = shell_quote(&launcher.display().to_string()),
+        agent = spec.key,
+    )
+}
+
+fn merge_antigravity_hook_config(existing: &Value, spec: &AgentSpec) -> CliResult<(bool, Value)> {
+    let mut config = existing.as_object().cloned().unwrap_or_default();
+    let mut group = Map::new();
+    group.insert("enabled".to_string(), Value::Bool(true));
+    for entry_spec in spec.hook_entries {
+        let mut entry = Map::new();
+        // Antigravity v1.0.3 accepts a matcher on tool events; PreInvocation
+        // is verified to fire without one.
+        if entry_spec.event_name != "PreInvocation" {
+            if let Some(matcher) = spec.matcher {
+                entry.insert("matcher".to_string(), Value::String(matcher.to_string()));
+            }
+        }
+        entry.insert(
+            "hooks".to_string(),
+            json!([{
+                "type": "command",
+                "command": antigravity_script_path(entry_spec.hook_event_name),
+            }]),
+        );
+        group.insert(
+            entry_spec.event_name.to_string(),
+            json!([Value::Object(entry)]),
+        );
+    }
+    let next_group = Value::Object(group);
+    let changed = config.get(ANTIGRAVITY_HOOK_GROUP) != Some(&next_group);
+    config.insert(ANTIGRAVITY_HOOK_GROUP.to_string(), next_group);
+    Ok((changed, Value::Object(config)))
 }
 
 fn is_legacy_forktty_hook_command(
@@ -4181,7 +4357,7 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         .iter()
         .map(|entry| entry.event_name)
         .collect();
-    let report = json!({
+    let mut report = json!({
         "agent": spec.key,
         "socket": {
             "path": context.socket_path,
@@ -4204,6 +4380,10 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         "launcherCheck": launcher_check,
         "supportedEvents": supported_events,
     });
+    let hooks_installed = report["launcherCheck"]["status"].as_str() != Some("not_installed");
+    if spec.key == "codex" && hooks_installed {
+        report["trustCheck"] = describe_codex_hook_trust(&config_path);
+    }
     if context.json {
         return print_json(&report);
     }
@@ -4236,7 +4416,31 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
     if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
         eprintln!("{line}");
     }
+    if let Some(line) = format_codex_trust_check(&report["trustCheck"]) {
+        eprintln!("{line}");
+    }
     Ok(())
+}
+
+fn format_codex_trust_check(check: &Value) -> Option<String> {
+    let status = check.get("status").and_then(Value::as_str)?;
+    let unrecorded = check
+        .get("unrecordedEvents")
+        .and_then(Value::as_array)
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    match status {
+        "partial" | "none_recorded" => Some(format!(
+            "hook trust: no Codex trust record yet for {unrecorded}; if those hooks seem inactive, run /hooks inside Codex to review approval."
+        )),
+        _ => None,
+    }
 }
 
 fn describe_launcher_check(
@@ -4253,6 +4457,13 @@ fn describe_launcher_check(
             Ok(Some(text)) => extract_launcher_from_opencode_plugin(&text),
             Ok(None) | Err(_) => None,
         },
+        // The launcher path lives in the generated wrapper scripts, not in
+        // hooks.json (whose commands are bare script paths).
+        HookInstallKind::AntigravityConfig => spec.hook_entries.iter().find_map(|entry| {
+            let text = fs::read_to_string(antigravity_script_path(entry.hook_event_name)).ok()?;
+            text.lines()
+                .find_map(|line| parse_launcher_from_managed_command(line, spec))
+        }),
     };
     let current = current_launcher.map(|path| path.display().to_string());
     // A recorded launcher that still resolves to a working executable keeps the
@@ -4277,6 +4488,81 @@ fn describe_launcher_check(
         "installedLauncher": installed,
         "currentLauncher": current,
     })
+}
+
+/// Codex records per-hook trust approvals under `[hooks.state]` in its
+/// config.toml, keyed `"<hooks.json path>:<snake_case_event>:<group>:<hook>"`.
+/// Newly installed hooks have no record until Codex prompts for approval, so
+/// an installed-but-unapproved hook silently does nothing. This is reported
+/// as information, not as an error: the approval semantics belong to Codex.
+fn describe_codex_hook_trust(config_path: &Path) -> Value {
+    let Some(config_toml) = config_path.parent().map(|dir| dir.join("config.toml")) else {
+        return json!({ "status": "unavailable" });
+    };
+    let Ok(text) = fs::read_to_string(&config_toml) else {
+        return json!({ "status": "config_missing", "configPath": config_toml });
+    };
+    let Ok(parsed) = text.parse::<toml::Table>() else {
+        return json!({ "status": "unreadable", "configPath": config_toml });
+    };
+    let state = parsed
+        .get("hooks")
+        .and_then(|hooks| hooks.get("state"))
+        .and_then(toml::Value::as_table);
+    codex_hook_trust_report(&config_toml, config_path, CODEX_HOOK_ENTRIES, state)
+}
+
+fn codex_hook_trust_report(
+    config_toml: &Path,
+    hooks_json: &Path,
+    entries: &[HookEntrySpec],
+    state: Option<&toml::value::Table>,
+) -> Value {
+    let hooks_json = hooks_json.display().to_string();
+    let mut recorded = Vec::new();
+    let mut unrecorded = Vec::new();
+    for entry in entries {
+        let prefix = format!(
+            "{hooks_json}:{}:",
+            camel_to_snake_event_name(entry.event_name)
+        );
+        let has_record =
+            state.is_some_and(|table| table.keys().any(|key| key.starts_with(&prefix)));
+        if has_record {
+            recorded.push(entry.event_name);
+        } else {
+            unrecorded.push(entry.event_name);
+        }
+    }
+    let status = if unrecorded.is_empty() {
+        "all_recorded"
+    } else if recorded.is_empty() {
+        "none_recorded"
+    } else {
+        "partial"
+    };
+    json!({
+        "status": status,
+        "configPath": config_toml,
+        "recordedEvents": recorded,
+        "unrecordedEvents": unrecorded,
+        "hint": "Codex asks for approval before running hooks it has no trust record for; run /hooks inside Codex to review.",
+    })
+}
+
+fn camel_to_snake_event_name(event: &str) -> String {
+    let mut out = String::with_capacity(event.len() + 4);
+    for (idx, ch) in event.char_indices() {
+        if ch.is_ascii_uppercase() {
+            if idx > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[cfg(feature = "gtk-ghostty")]
@@ -4309,12 +4595,12 @@ fn hook_setup_reminder_message_for_statuses<'a>(
         .any(|status| matches!(*status, "stale" | "current_launcher_unknown"));
     if stale {
         Some(
-            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Gemini, and OpenCode can publish status, progress, and notifications."
+            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Gemini, Antigravity, and OpenCode can publish status, progress, and notifications."
                 .to_string(),
         )
     } else if !installed {
         Some(
-            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Gemini, and OpenCode to status, progress, and notifications."
+            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Gemini, Antigravity, and OpenCode to status, progress, and notifications."
                 .to_string(),
         )
     } else {
@@ -5273,6 +5559,12 @@ fn build_hook_response(
             }
         }));
     }
+    // Antigravity unmarshals hook stdout with strict protojson and rejects
+    // unknown fields ("continue" included), logging the hook as failed.
+    // An empty object is the verified no-op response.
+    if spec.key == "antigravity" {
+        return Ok(json!({}));
+    }
     serde_json::from_str(HOOK_CONTINUE_JSON.trim()).map_err(Into::into)
 }
 
@@ -5377,14 +5669,24 @@ fn extract_hook_permission_mode(payload: &Value) -> Option<String> {
 }
 
 fn extract_hook_session_id(payload: &Value) -> Option<String> {
-    extract_first_string_like(payload, &["session_id", "sessionId", "sessionID"])
-        .map(|value| {
-            sanitize_for_terminal(&value)
-                .chars()
-                .take(96)
-                .collect::<String>()
-        })
-        .filter(|value| !value.is_empty())
+    // conversationId is Antigravity's session identifier.
+    extract_first_string_like(
+        payload,
+        &[
+            "session_id",
+            "sessionId",
+            "sessionID",
+            "conversationId",
+            "conversation_id",
+        ],
+    )
+    .map(|value| {
+        sanitize_for_terminal(&value)
+            .chars()
+            .take(96)
+            .collect::<String>()
+    })
+    .filter(|value| !value.is_empty())
 }
 
 fn extract_hook_turn_id(event: &str, payload: &Value) -> Option<String> {
@@ -7641,6 +7943,182 @@ mod tests {
         let check =
             describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
         assert_eq!(check["status"], Value::String("not_installed".to_string()));
+    }
+
+    #[test]
+    fn antigravity_setup_plan_writes_named_group_and_wrapper_scripts() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().display().to_string();
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let spec = agent_spec("antigravity").unwrap();
+            let plan = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
+            assert!(plan.changed);
+            assert_eq!(plan.config_path, antigravity_config_path());
+
+            let config: Value = serde_json::from_str(&plan.content).unwrap();
+            let group = &config[ANTIGRAVITY_HOOK_GROUP];
+            assert_eq!(group["enabled"], Value::Bool(true));
+            // PreInvocation is verified to fire without a matcher; tool
+            // events carry the wildcard matcher.
+            assert!(group["PreInvocation"][0].get("matcher").is_none());
+            assert_eq!(group["PreToolUse"][0]["matcher"], json!("*"));
+            assert_eq!(group["PostToolUse"][0]["matcher"], json!("*"));
+
+            assert_eq!(plan.scripts.len(), 3);
+            for (event, provider_event) in [
+                ("before-model", "PreInvocation"),
+                ("pre-tool", "PreToolUse"),
+                ("post-tool", "PostToolUse"),
+            ] {
+                let script_path = antigravity_script_path(event);
+                let command = group[provider_event][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap();
+                assert_eq!(command, script_path.display().to_string());
+                let (_, content) = plan
+                    .scripts
+                    .iter()
+                    .find(|(path, _)| path == &script_path)
+                    .unwrap();
+                assert!(content.starts_with("#!/bin/sh\n"));
+                assert!(content.contains(ANTIGRAVITY_SCRIPT_TAG));
+                assert!(content.contains(&format!("'/usr/bin/forktty' hooks antigravity {event}")));
+                assert!(content.contains("FORKTTY_ANTIGRAVITY_HOOKS_DISABLED"));
+            }
+        });
+    }
+
+    #[test]
+    fn antigravity_setup_preserves_foreign_groups_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().display().to_string();
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let spec = agent_spec("antigravity").unwrap();
+            let config_path = antigravity_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            fs::write(
+                &config_path,
+                r#"{"safety-gate":{"enabled":true,"PreToolUse":[{"matcher":"run_command","hooks":[{"type":"command","command":"/usr/local/bin/guard.sh"}]}]}}"#,
+            )
+            .unwrap();
+
+            let plan = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
+            assert!(plan.changed);
+            let config: Value = serde_json::from_str(&plan.content).unwrap();
+            assert_eq!(
+                config["safety-gate"]["PreToolUse"][0]["hooks"][0]["command"],
+                json!("/usr/local/bin/guard.sh")
+            );
+            assert!(config[ANTIGRAVITY_HOOK_GROUP].is_object());
+
+            // Simulate a full setup run, then re-plan: nothing changes.
+            fs::write(&config_path, &plan.content).unwrap();
+            for (script_path, content) in &plan.scripts {
+                fs::create_dir_all(script_path.parent().unwrap()).unwrap();
+                fs::write(script_path, content).unwrap();
+            }
+            let replanned = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
+            assert!(!replanned.changed);
+        });
+    }
+
+    #[test]
+    fn antigravity_remove_plan_deletes_group_scripts_and_solely_owned_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().display().to_string();
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let spec = agent_spec("antigravity").unwrap();
+            let config_path = antigravity_config_path();
+            fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            let plan = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
+            fs::write(&config_path, &plan.content).unwrap();
+            for (script_path, content) in &plan.scripts {
+                fs::create_dir_all(script_path.parent().unwrap()).unwrap();
+                fs::write(script_path, content).unwrap();
+            }
+
+            let remove = build_hook_remove_plan(spec, Some(Path::new("/usr/bin/forktty"))).unwrap();
+            assert!(remove.changed);
+            assert_eq!(remove.scripts_dir, Some(antigravity_scripts_dir()));
+            assert!(matches!(remove.action, HookRemoveAction::DeleteFile));
+
+            // With a foreign group present, only the forktty group is removed.
+            let mut config: Value = serde_json::from_str(&plan.content).unwrap();
+            config["safety-gate"] = json!({"enabled": true});
+            fs::write(&config_path, serde_json::to_string(&config).unwrap()).unwrap();
+            let remove = build_hook_remove_plan(spec, Some(Path::new("/usr/bin/forktty"))).unwrap();
+            assert!(remove.changed);
+            match &remove.action {
+                HookRemoveAction::Write(content) => {
+                    let next: Value = serde_json::from_str(content).unwrap();
+                    assert!(next.get(ANTIGRAVITY_HOOK_GROUP).is_none());
+                    assert!(next["safety-gate"].is_object());
+                }
+                _ => panic!("expected a rewrite that keeps the foreign group"),
+            }
+
+            // Nothing installed: nothing to do.
+            fs::remove_file(&config_path).unwrap();
+            fs::remove_dir_all(antigravity_scripts_dir()).unwrap();
+            let remove = build_hook_remove_plan(spec, Some(Path::new("/usr/bin/forktty"))).unwrap();
+            assert!(!remove.changed);
+        });
+    }
+
+    #[test]
+    fn antigravity_launcher_check_reads_wrapper_scripts() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().display().to_string();
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let spec = agent_spec("antigravity").unwrap();
+            let config_path = antigravity_config_path();
+            let check =
+                describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
+            assert_eq!(check["status"], json!("not_installed"));
+
+            let plan = build_hook_setup_plan(spec, Path::new("/old/forktty")).unwrap();
+            for (script_path, content) in &plan.scripts {
+                fs::create_dir_all(script_path.parent().unwrap()).unwrap();
+                fs::write(script_path, content).unwrap();
+            }
+            let check =
+                describe_launcher_check(spec, &config_path, Some(Path::new("/new/forktty")));
+            assert_eq!(check["status"], json!("stale"));
+            assert_eq!(check["installedLauncher"], json!("/old/forktty"));
+        });
+    }
+
+    #[test]
+    fn antigravity_session_id_comes_from_conversation_id() {
+        assert_eq!(
+            extract_hook_session_id(&json!({"conversationId": "032316f4-2fae"})),
+            Some("032316f4-2fae".to_string())
+        );
+    }
+
+    #[test]
+    fn codex_trust_report_classifies_recorded_and_unrecorded_events() {
+        let hooks_json = Path::new("/home/me/.codex/hooks.json");
+        let config_toml = Path::new("/home/me/.codex/config.toml");
+        let state: toml::Table = r#"
+            ["/home/me/.codex/hooks.json:pre_tool_use:0:0"]
+            trusted_hash = "sha256:abc"
+            ["/other/hooks.json:stop:0:0"]
+            trusted_hash = "sha256:def"
+        "#
+        .parse()
+        .unwrap();
+        let report =
+            codex_hook_trust_report(config_toml, hooks_json, CODEX_HOOK_ENTRIES, Some(&state));
+        assert_eq!(report["status"], json!("partial"));
+        assert_eq!(report["recordedEvents"], json!(["PreToolUse"]));
+        assert!(report["unrecordedEvents"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("Stop")));
+
+        let report = codex_hook_trust_report(config_toml, hooks_json, CODEX_HOOK_ENTRIES, None);
+        assert_eq!(report["status"], json!("none_recorded"));
     }
 
     #[test]

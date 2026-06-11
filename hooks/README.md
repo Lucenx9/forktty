@@ -14,6 +14,7 @@ That writes agent-specific hook config into the user config for:
 | Codex | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json` |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` |
 | Gemini CLI | `~/.gemini/settings.json` |
+| Antigravity CLI | `~/.gemini/config/hooks.json` + `~/.gemini/config/forktty-hooks.generated/` |
 | OpenCode | `$OPENCODE_CONFIG_DIR/plugins/forktty.generated.js` or `~/.config/opencode/plugins/forktty.generated.js` |
 
 The installer writes an absolute path to the `forktty` launcher so hooks can run
@@ -32,6 +33,19 @@ backup next to the original. The OpenCode file is intentionally generated
 under its plugins directory so `opencode.json` does not need to be edited.
 `forktty hooks remove` deletes only ForkTTY-managed entries or the generated
 OpenCode plugin; custom hook commands are preserved.
+
+Antigravity CLI (Google's Gemini CLI successor, `agy`) executes a hook
+`command` as one bare executable path — no argument splitting and no shell —
+so the installer writes per-event wrapper scripts under
+`~/.gemini/config/forktty-hooks.generated/` and points the ForkTTY-owned
+`"forktty"` group in `~/.gemini/config/hooks.json` at them. Other top-level
+groups in that file are left untouched, and `hooks remove antigravity`
+deletes only the `"forktty"` group and the generated scripts directory.
+Antigravity v1.0.3 supports `PreInvocation`, `PreToolUse`, and `PostToolUse`;
+unknown event names are dropped silently, and hook stdout is unmarshaled
+strictly, so ForkTTY responds with `{}` instead of the `continue` JSON used
+by other providers. Gemini CLI hooks remain supported for installs that keep
+using it (Google retires Gemini CLI for non-enterprise tiers on 2026-06-18).
 
 When the GTK app starts and no ForkTTY-managed hooks are installed, it creates
 an in-app notification suggesting `forktty hooks setup`. If installed hooks
@@ -55,7 +69,15 @@ status means the AppImage or installed binary has moved since the last
 `hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
 event names ForkTTY installs hooks for (Codex: 10; Claude Code: 29;
-Gemini: 11; OpenCode plugin events: 11).
+Gemini: 11; Antigravity: 3; OpenCode plugin events: 11).
+
+For Codex, `hooks doctor codex` additionally reports `trustCheck`: Codex
+records per-hook trust approvals under `[hooks.state]` in its `config.toml`,
+and an installed hook with no record silently does nothing until it is
+approved via `/hooks` inside Codex. `trustCheck.status` is `all_recorded`,
+`partial`, or `none_recorded`, with the affected events listed in
+`unrecordedEvents`. This is informational — the approval semantics belong to
+Codex.
 
 ## Status entries published by hooks
 
@@ -79,6 +101,8 @@ Files in this directory are canonical examples for review or manual repair:
 - `claude-settings.json`
 - `gemini-settings.json`
 - OpenCode uses a generated plugin file instead of a JSON template.
+- Antigravity uses a generated `"forktty"` group plus wrapper scripts
+  instead of a JSON template (its hook commands cannot take arguments).
 
 Replace `{{FORKTTY_LAUNCHER}}` with the absolute path to the `forktty` launcher
 if you install these by hand; keep it shell-quoted. The installer handles this
@@ -88,7 +112,8 @@ The `timeout` field is provider-defined. Claude Code and Codex measure it in
 **seconds** (Codex default 600 s; Claude default 600 s, 30 s for
 `UserPromptSubmit`), and ForkTTY pins those entries at 30 s. Gemini templates
 use `30000`, matching Gemini's millisecond-style hook timeout field and the
-same 30 s budget. The intent is the same for every provider: a hook should not
+same 30 s budget. Antigravity has no verified timeout field, so its entries
+omit one. The intent is the same for every provider: a hook should not
 block the agent loop longer than a local socket round-trip needs.
 
 Each command is guarded by a per-agent disable variable:
@@ -96,4 +121,5 @@ Each command is guarded by a per-agent disable variable:
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
 - `FORKTTY_GEMINI_HOOKS_DISABLED=1`
+- `FORKTTY_ANTIGRAVITY_HOOKS_DISABLED=1`
 - `FORKTTY_OPENCODE_HOOKS_DISABLED=1`

@@ -723,6 +723,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "webkit6",
 ]
 

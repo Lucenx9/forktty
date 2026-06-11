@@ -262,7 +262,8 @@ default socket location.
 
 ## Agent Hooks
 
-Install hook templates for Codex, Claude Code, Gemini CLI, and OpenCode:
+Install hook templates for Codex, Claude Code, Gemini CLI, Antigravity CLI,
+and OpenCode:
 
 ```bash
 forktty hooks setup                       # install all supported agents
@@ -282,6 +283,7 @@ The installer merges commands into the agent's own config file:
 | Codex       | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`                 |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`   |
 | Gemini CLI  | `~/.gemini/settings.json`                                         |
+| Antigravity CLI | `~/.gemini/config/hooks.json` plus wrapper scripts in `~/.gemini/config/forktty-hooks.generated/` |
 | OpenCode    | `$OPENCODE_CONFIG_DIR/plugins/forktty.generated.js` or `~/.config/opencode/plugins/forktty.generated.js` |
 
 When `HOME` is overridden, the `~` defaults are resolved under that home
@@ -303,6 +305,7 @@ Each agent's hook commands honor a per-agent disable variable:
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
 - `FORKTTY_GEMINI_HOOKS_DISABLED=1`
+- `FORKTTY_ANTIGRAVITY_HOOKS_DISABLED=1`
 - `FORKTTY_OPENCODE_HOOKS_DISABLED=1`
 
 Hooks report status, progress, logs, and prompt notifications through
