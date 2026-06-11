@@ -23,7 +23,7 @@ pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
         .collect()
 }
 
-pub fn child_argv(request: &SpawnRequest, unset_env_keys: &[String]) -> Vec<String> {
+pub fn child_argv(request: &SpawnRequest, unset_env_keys: Vec<String>) -> Vec<String> {
     let command = std::iter::once(request.shell.clone())
         .chain(request.args.iter().cloned())
         .collect::<Vec<_>>();
@@ -35,7 +35,7 @@ pub fn child_argv(request: &SpawnRequest, unset_env_keys: &[String]) -> Vec<Stri
     argv.push(env_command);
     for key in unset_env_keys {
         argv.push("-u".to_string());
-        argv.push(key.clone());
+        argv.push(key);
     }
     argv.extend(command);
     argv
@@ -376,14 +376,14 @@ mod tests {
 
     #[test]
     fn child_argv_uses_shell_and_args_without_unset_keys() {
-        let argv = child_argv(&spawn_request(), &[]);
+        let argv = child_argv(&spawn_request(), Vec::new());
 
         assert_eq!(argv, strings(&["bash", "-l", "-i"]));
     }
 
     #[test]
     fn child_argv_prefixes_env_unset_flags_when_env_is_available() {
-        let argv = child_argv(&spawn_request(), &strings(&["APPIMAGE", "APPDIR"]));
+        let argv = child_argv(&spawn_request(), strings(&["APPIMAGE", "APPDIR"]));
 
         let Some(env_command) = env_command_path() else {
             assert_eq!(argv, strings(&["bash", "-l", "-i"]));

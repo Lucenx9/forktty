@@ -55,7 +55,7 @@ impl PtySession {
         let slave_stdout = duplicate_fd(&pty.slave)?;
         let slave_stderr = pty.slave;
 
-        let argv = crate::spawn::child_argv(request, &crate::spawn::appimage_runtime_env_keys());
+        let argv = crate::spawn::child_argv(request, crate::spawn::appimage_runtime_env_keys());
         let (program, args) = argv
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty terminal argv"))?;
