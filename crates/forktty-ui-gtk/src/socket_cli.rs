@@ -66,6 +66,9 @@ Usage:
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
+  forktty mcp                                      Run the ForkTTY MCP stdio server
+  forktty mcp setup [codex] [claude] [gemini] [antigravity]
+  forktty mcp remove [codex] [claude] [gemini] [antigravity]
   forktty --json doctor                            Socket/hook doctor; needs a global flag before
                                                    `doctor` (bare `forktty doctor` runs the local doctor)
   forktty ping
@@ -107,14 +110,14 @@ fn print_help() {
 }
 
 #[derive(Debug)]
-struct CliError {
-    message: String,
-    code: Option<String>,
-    exit: i32,
+pub(crate) struct CliError {
+    pub(crate) message: String,
+    pub(crate) code: Option<String>,
+    pub(crate) exit: i32,
 }
 
 impl CliError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             code: None,
@@ -122,7 +125,7 @@ impl CliError {
         }
     }
 
-    fn code(message: impl Into<String>, code: impl Into<String>) -> Self {
+    pub(crate) fn code(message: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             code: Some(code.into()),
@@ -143,7 +146,7 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
-type CliResult<T> = Result<T, CliError>;
+pub(crate) type CliResult<T> = Result<T, CliError>;
 
 #[derive(Debug, Default)]
 struct GlobalArgs {
@@ -200,6 +203,20 @@ struct AgentSpec {
     hook_entries: &'static [HookEntrySpec],
     matcher: Option<&'static str>,
     install_kind: HookInstallKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum McpConfigKind {
+    CodexToml,
+    JsonMcpServers,
+}
+
+#[derive(Clone, Copy)]
+struct McpAgentSpec {
+    key: &'static str,
+    label: &'static str,
+    config_path: fn() -> PathBuf,
+    config_kind: McpConfigKind,
 }
 
 // Codex and Claude Code both treat the `timeout` field as seconds (Codex default 600s;
@@ -603,6 +620,33 @@ const AGENTS: &[AgentSpec] = &[
     },
 ];
 
+const MCP_AGENTS: &[McpAgentSpec] = &[
+    McpAgentSpec {
+        key: "codex",
+        label: "Codex",
+        config_path: codex_mcp_config_path,
+        config_kind: McpConfigKind::CodexToml,
+    },
+    McpAgentSpec {
+        key: "claude",
+        label: "Claude",
+        config_path: claude_mcp_config_path,
+        config_kind: McpConfigKind::JsonMcpServers,
+    },
+    McpAgentSpec {
+        key: "gemini",
+        label: "Gemini",
+        config_path: gemini_mcp_config_path,
+        config_kind: McpConfigKind::JsonMcpServers,
+    },
+    McpAgentSpec {
+        key: "antigravity",
+        label: "Antigravity",
+        config_path: antigravity_mcp_config_path,
+        config_kind: McpConfigKind::JsonMcpServers,
+    },
+];
+
 pub fn run(args: Vec<OsString>) -> i32 {
     match run_inner(args) {
         Ok(()) => 0,
@@ -672,6 +716,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
             handle_clear_notifications(&context, args)
         }
         "hooks" => handle_hooks(&context, args),
+        "mcp" => handle_mcp(&context, args),
         "doctor" => handle_socket_doctor(&context, args),
         "ping" => handle_ping(&context, args),
         "capabilities" => handle_capabilities(&context, args),
@@ -1109,7 +1154,7 @@ fn set_blocking(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-fn send_socket_request_with_timeout(
+pub(crate) fn send_socket_request_with_timeout(
     socket_path: &Path,
     method: &str,
     params: Value,
@@ -3389,6 +3434,20 @@ fn handle_hooks(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
 }
 
+fn handle_mcp(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    match args.first().map(String::as_str) {
+        Some("setup") => handle_mcp_setup(context, args[1..].to_vec()),
+        Some("remove") | Some("uninstall") => handle_mcp_remove(context, args[1..].to_vec()),
+        Some("help") | Some("--help") | Some("-h") => {
+            write_stdout_line(
+                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [gemini] [antigravity] | forktty mcp remove [codex] [claude] [gemini] [antigravity]",
+            )
+        }
+        Some(other) => Err(CliError::new(format!("mcp: unknown subcommand {other}"))),
+        None => crate::mcp_server::run_stdio(context.socket_path.clone()),
+    }
+}
+
 fn supported_agent_keys() -> String {
     AGENTS
         .iter()
@@ -3539,6 +3598,136 @@ fn handle_hooks_remove(context: &CliContext, args: Vec<String>) -> CliResult<()>
     Ok(())
 }
 
+fn handle_mcp_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &["dry-run"]);
+    reject_unknown_options(&parsed.options, &["dry-run"], "mcp setup")?;
+    let Some(dry_run) = bool_option(&parsed.options, "dry-run") else {
+        return Err(CliError::new("mcp setup: --dry-run must be true or false"));
+    };
+    let agents = supported_mcp_agents(&parsed.positionals)?;
+    let launcher = stable_hook_launcher_path()
+        .ok_or_else(|| CliError::new("mcp setup: could not resolve current forktty executable"))?;
+    if !launcher.is_absolute() {
+        return Err(CliError::new(
+            "mcp setup: forktty executable path must be absolute",
+        ));
+    }
+
+    let mut plans = Vec::new();
+    for spec in agents {
+        plans.push(build_mcp_setup_plan(spec, &launcher)?);
+    }
+
+    let mut summaries = Vec::new();
+    for plan in plans {
+        let mut backup_path = None;
+        if plan.changed && !dry_run {
+            let write_path = hook_config_write_path(&plan.config_path)?;
+            ensure_parent_dir(&write_path)?;
+            backup_path = backup_file(&write_path)?;
+            atomic_write_file(&write_path, plan.content.as_bytes())?;
+        }
+        summaries.push(json!({
+            "agent": plan.spec.key,
+            "label": plan.spec.label,
+            "configPath": plan.config_path,
+            "changed": plan.changed,
+            "backupPath": backup_path,
+            "dryRun": dry_run,
+        }));
+    }
+
+    if context.json {
+        return print_json(&Value::Array(summaries));
+    }
+    for summary in summaries {
+        let agent = summary["label"]
+            .as_str()
+            .unwrap_or_else(|| summary["agent"].as_str().unwrap_or("agent"));
+        let config_path = summary["configPath"].as_str().unwrap_or("");
+        let changed = summary["changed"].as_bool().unwrap_or(false);
+        let dry_run = summary["dryRun"].as_bool().unwrap_or(false);
+        let verb = if changed && dry_run {
+            "would register"
+        } else if changed {
+            "registered"
+        } else {
+            "already registered"
+        };
+        write_stdout_line(&format!("{agent}: {verb} MCP server at {config_path}"))?;
+        if let Some(backup) = summary["backupPath"].as_str() {
+            write_stdout_line(&format!("  backup: {backup}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_mcp_remove(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &["dry-run"]);
+    reject_unknown_options(&parsed.options, &["dry-run"], "mcp remove")?;
+    let Some(dry_run) = bool_option(&parsed.options, "dry-run") else {
+        return Err(CliError::new("mcp remove: --dry-run must be true or false"));
+    };
+    let agents = supported_mcp_agents(&parsed.positionals)?;
+
+    let mut plans = Vec::new();
+    for spec in agents {
+        plans.push(build_mcp_remove_plan(spec)?);
+    }
+
+    let mut summaries = Vec::new();
+    for plan in plans {
+        let mut backup_path = None;
+        if plan.changed && !dry_run {
+            match &plan.action {
+                McpRemoveAction::Write(content) => {
+                    let write_path = hook_config_write_path(&plan.config_path)?;
+                    ensure_parent_dir(&write_path)?;
+                    backup_path = backup_file(&write_path)?;
+                    atomic_write_file(&write_path, content.as_bytes())?;
+                }
+                McpRemoveAction::DeleteFile => {
+                    backup_path = backup_file(&plan.config_path)?;
+                    fs::remove_file(&plan.config_path)?;
+                }
+                McpRemoveAction::None => {}
+            }
+        }
+        summaries.push(json!({
+            "agent": plan.spec.key,
+            "label": plan.spec.label,
+            "configPath": plan.config_path,
+            "changed": plan.changed,
+            "backupPath": backup_path,
+            "dryRun": dry_run,
+        }));
+    }
+
+    if context.json {
+        return print_json(&Value::Array(summaries));
+    }
+    for summary in summaries {
+        let agent = summary["label"]
+            .as_str()
+            .unwrap_or_else(|| summary["agent"].as_str().unwrap_or("agent"));
+        let config_path = summary["configPath"].as_str().unwrap_or("");
+        let changed = summary["changed"].as_bool().unwrap_or(false);
+        let dry_run = summary["dryRun"].as_bool().unwrap_or(false);
+        let verb = if changed && dry_run {
+            "would remove"
+        } else if changed {
+            "removed"
+        } else {
+            "not registered"
+        };
+        write_stdout_line(&format!("{agent}: {verb} MCP server at {config_path}"))?;
+        if let Some(backup) = summary["backupPath"].as_str() {
+            write_stdout_line(&format!("  backup: {backup}"))?;
+        }
+    }
+    Ok(())
+}
+
 struct HookSetupPlan {
     spec: &'static AgentSpec,
     config_path: PathBuf,
@@ -3562,6 +3751,26 @@ struct HookRemovePlan {
     action: HookRemoveAction,
     /// ForkTTY-owned generated scripts directory deleted on removal.
     scripts_dir: Option<PathBuf>,
+}
+
+struct McpSetupPlan {
+    spec: &'static McpAgentSpec,
+    config_path: PathBuf,
+    changed: bool,
+    content: String,
+}
+
+enum McpRemoveAction {
+    Write(String),
+    DeleteFile,
+    None,
+}
+
+struct McpRemovePlan {
+    spec: &'static McpAgentSpec,
+    config_path: PathBuf,
+    changed: bool,
+    action: McpRemoveAction,
 }
 
 fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult<HookSetupPlan> {
@@ -3683,6 +3892,242 @@ fn build_hook_remove_plan(
     }
 }
 
+const MCP_SERVER_NAME: &str = "forktty";
+const MCP_MANAGED_ENV: &str = "FORKTTY_MCP_MANAGED";
+
+fn build_mcp_setup_plan(spec: &'static McpAgentSpec, launcher: &Path) -> CliResult<McpSetupPlan> {
+    let config_path = (spec.config_path)();
+    let (changed, content) = match spec.config_kind {
+        McpConfigKind::CodexToml => merge_codex_mcp_config(&config_path, launcher)?,
+        McpConfigKind::JsonMcpServers => merge_json_mcp_config(&config_path, launcher)?,
+    };
+    Ok(McpSetupPlan {
+        spec,
+        config_path,
+        changed,
+        content,
+    })
+}
+
+fn build_mcp_remove_plan(spec: &'static McpAgentSpec) -> CliResult<McpRemovePlan> {
+    let config_path = (spec.config_path)();
+    let action = match spec.config_kind {
+        McpConfigKind::CodexToml => remove_codex_mcp_config(&config_path)?,
+        McpConfigKind::JsonMcpServers => remove_json_mcp_config(&config_path)?,
+    };
+    let changed = !matches!(action, McpRemoveAction::None);
+    Ok(McpRemovePlan {
+        spec,
+        config_path,
+        changed,
+        action,
+    })
+}
+
+fn merge_codex_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, String)> {
+    let text = read_text_config(path, "codex mcp config")?.unwrap_or_default();
+    let mut root = parse_toml_table(&text, path)?;
+    let mut changed = false;
+    let mut servers = match root.remove("mcp_servers") {
+        Some(toml::Value::Table(table)) => table,
+        Some(_) => {
+            eprintln!(
+                "Warning: existing [mcp_servers] value is not a table and will be replaced; the previous file is kept in the backup."
+            );
+            changed = true;
+            toml::value::Table::new()
+        }
+        None => {
+            changed = true;
+            toml::value::Table::new()
+        }
+    };
+    let next = codex_mcp_server_table(launcher);
+    if servers.get(MCP_SERVER_NAME) != Some(&toml::Value::Table(next.clone())) {
+        changed = true;
+    }
+    servers.insert(MCP_SERVER_NAME.to_string(), toml::Value::Table(next));
+    root.insert("mcp_servers".to_string(), toml::Value::Table(servers));
+    Ok((changed, format_toml_table(root)?))
+}
+
+fn remove_codex_mcp_config(path: &Path) -> CliResult<McpRemoveAction> {
+    let Some(text) = read_text_config(path, "codex mcp config")? else {
+        return Ok(McpRemoveAction::None);
+    };
+    let mut root = parse_toml_table(&text, path)?;
+    let Some(toml::Value::Table(mut servers)) = root.remove("mcp_servers") else {
+        return Ok(McpRemoveAction::None);
+    };
+    let should_remove = servers
+        .get(MCP_SERVER_NAME)
+        .and_then(toml::Value::as_table)
+        .is_some_and(is_managed_toml_mcp_server);
+    if !should_remove {
+        root.insert("mcp_servers".to_string(), toml::Value::Table(servers));
+        return Ok(McpRemoveAction::None);
+    }
+    servers.remove(MCP_SERVER_NAME);
+    if !servers.is_empty() {
+        root.insert("mcp_servers".to_string(), toml::Value::Table(servers));
+    }
+    if root.is_empty() {
+        Ok(McpRemoveAction::DeleteFile)
+    } else {
+        Ok(McpRemoveAction::Write(format_toml_table(root)?))
+    }
+}
+
+fn merge_json_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, String)> {
+    let existing = read_json_file(path)?;
+    let mut config = existing.as_object().cloned().ok_or_else(|| {
+        CliError::new(format!(
+            "failed to read MCP config at {}: expected a JSON object at the top level",
+            path.display()
+        ))
+    })?;
+    let servers_was_object = config.get("mcpServers").is_some_and(Value::is_object);
+    let mut changed = false;
+    let mut servers = match config.remove("mcpServers") {
+        Some(Value::Object(servers)) => servers,
+        Some(_) => {
+            eprintln!(
+                "Warning: existing \"mcpServers\" value is not a map and will be replaced; the previous file is kept in the backup."
+            );
+            changed = true;
+            Map::new()
+        }
+        None => Map::new(),
+    };
+    if !servers_was_object {
+        changed = true;
+    }
+    let next = json_mcp_server_config(launcher);
+    if servers.get(MCP_SERVER_NAME) != Some(&next) {
+        changed = true;
+    }
+    servers.insert(MCP_SERVER_NAME.to_string(), next);
+    config.insert("mcpServers".to_string(), Value::Object(servers));
+    Ok((
+        changed,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&Value::Object(config))?
+        ),
+    ))
+}
+
+fn remove_json_mcp_config(path: &Path) -> CliResult<McpRemoveAction> {
+    let existing = read_json_file(path)?;
+    let mut config = existing.as_object().cloned().ok_or_else(|| {
+        CliError::new(format!(
+            "failed to read MCP config at {}: expected a JSON object at the top level",
+            path.display()
+        ))
+    })?;
+    let Some(Value::Object(mut servers)) = config.remove("mcpServers") else {
+        return Ok(McpRemoveAction::None);
+    };
+    let should_remove = servers
+        .get(MCP_SERVER_NAME)
+        .is_some_and(is_managed_json_mcp_server);
+    if !should_remove {
+        config.insert("mcpServers".to_string(), Value::Object(servers));
+        return Ok(McpRemoveAction::None);
+    }
+    servers.remove(MCP_SERVER_NAME);
+    if !servers.is_empty() {
+        config.insert("mcpServers".to_string(), Value::Object(servers));
+    }
+    if config.is_empty() {
+        Ok(McpRemoveAction::DeleteFile)
+    } else {
+        Ok(McpRemoveAction::Write(format!(
+            "{}\n",
+            serde_json::to_string_pretty(&Value::Object(config))?
+        )))
+    }
+}
+
+fn codex_mcp_server_table(launcher: &Path) -> toml::value::Table {
+    let mut table = toml::value::Table::new();
+    table.insert(
+        "command".to_string(),
+        toml::Value::String(launcher.display().to_string()),
+    );
+    table.insert(
+        "args".to_string(),
+        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
+    );
+    table.insert(
+        "env_vars".to_string(),
+        toml::Value::Array(
+            [
+                "FORKTTY_SOCKET_PATH",
+                "FORKTTY_WORKSPACE_ID",
+                "FORKTTY_SURFACE_ID",
+            ]
+            .into_iter()
+            .map(|value| toml::Value::String(value.to_string()))
+            .collect(),
+        ),
+    );
+    let mut env = toml::value::Table::new();
+    env.insert(
+        MCP_MANAGED_ENV.to_string(),
+        toml::Value::String(MCP_SERVER_NAME.to_string()),
+    );
+    table.insert("env".to_string(), toml::Value::Table(env));
+    table
+}
+
+fn json_mcp_server_config(launcher: &Path) -> Value {
+    json!({
+        "command": launcher.display().to_string(),
+        "args": ["mcp"],
+        "env": {
+            MCP_MANAGED_ENV: MCP_SERVER_NAME,
+        },
+    })
+}
+
+fn is_managed_toml_mcp_server(server: &toml::value::Table) -> bool {
+    server
+        .get("env")
+        .and_then(toml::Value::as_table)
+        .and_then(|env| env.get(MCP_MANAGED_ENV))
+        .and_then(toml::Value::as_str)
+        == Some(MCP_SERVER_NAME)
+}
+
+fn is_managed_json_mcp_server(server: &Value) -> bool {
+    server
+        .get("env")
+        .and_then(Value::as_object)
+        .and_then(|env| env.get(MCP_MANAGED_ENV))
+        .and_then(Value::as_str)
+        == Some(MCP_SERVER_NAME)
+}
+
+fn parse_toml_table(text: &str, path: &Path) -> CliResult<toml::value::Table> {
+    if text.trim().is_empty() {
+        return Ok(toml::value::Table::new());
+    }
+    text.parse::<toml::Table>().map_err(|err| {
+        CliError::new(format!(
+            "failed to read MCP config at {}: {}",
+            path.display(),
+            err
+        ))
+    })
+}
+
+fn format_toml_table(root: toml::value::Table) -> CliResult<String> {
+    toml::to_string_pretty(&root)
+        .map(|text| format!("{text}\n"))
+        .map_err(|err| CliError::new(err.to_string()))
+}
+
 fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
     if names.is_empty() {
         return Ok(AGENTS.iter().collect());
@@ -3702,8 +4147,31 @@ fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
     Ok(out)
 }
 
+fn supported_mcp_agents(names: &[String]) -> CliResult<Vec<&'static McpAgentSpec>> {
+    if names.is_empty() {
+        return Ok(MCP_AGENTS.iter().collect());
+    }
+    let mut out = Vec::new();
+    for name in names {
+        let normalized = normalize_agent_name(name);
+        let spec = mcp_agent_spec(&normalized)
+            .ok_or_else(|| CliError::new(format!("Unsupported mcp agent: {name}")))?;
+        if !out
+            .iter()
+            .any(|existing: &&McpAgentSpec| existing.key == spec.key)
+        {
+            out.push(spec);
+        }
+    }
+    Ok(out)
+}
+
 fn agent_spec(agent: &str) -> Option<&'static AgentSpec> {
     AGENTS.iter().find(|spec| spec.key == agent)
+}
+
+fn mcp_agent_spec(agent: &str) -> Option<&'static McpAgentSpec> {
+    MCP_AGENTS.iter().find(|spec| spec.key == agent)
 }
 
 fn normalize_agent_name(agent: &str) -> String {
@@ -3764,11 +4232,18 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn codex_config_path() -> PathBuf {
+fn codex_home_dir() -> PathBuf {
     trimmed_env("CODEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join(".codex"))
-        .join("hooks.json")
+}
+
+fn codex_config_path() -> PathBuf {
+    codex_home_dir().join("hooks.json")
+}
+
+fn codex_mcp_config_path() -> PathBuf {
+    codex_home_dir().join("config.toml")
 }
 
 fn claude_config_path() -> PathBuf {
@@ -3778,8 +4253,16 @@ fn claude_config_path() -> PathBuf {
         .join("settings.json")
 }
 
+fn claude_mcp_config_path() -> PathBuf {
+    home_dir().join(".claude.json")
+}
+
 fn gemini_config_path() -> PathBuf {
     home_dir().join(".gemini/settings.json")
+}
+
+fn gemini_mcp_config_path() -> PathBuf {
+    gemini_config_path()
 }
 
 // Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
@@ -3791,6 +4274,10 @@ fn antigravity_config_dir() -> PathBuf {
 
 fn antigravity_config_path() -> PathBuf {
     antigravity_config_dir().join("hooks.json")
+}
+
+fn antigravity_mcp_config_path() -> PathBuf {
+    antigravity_config_dir().join("mcp_config.json")
 }
 
 fn antigravity_scripts_dir() -> PathBuf {
@@ -4108,6 +4595,59 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
     } else {
         serde_json::from_str(&text).map_err(Into::into)
     }
+}
+
+fn read_text_config(path: &Path, label: &str) -> CliResult<Option<String>> {
+    let link_meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    let followed = if link_meta.file_type().is_symlink() {
+        match fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "warning: {} is a broken symlink; replacing with a fresh file",
+                    path.display()
+                );
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        }
+    } else {
+        link_meta
+    };
+    if !followed.is_file() {
+        return Err(CliError::new(format!(
+            "{label} exists but is not a regular file"
+        )));
+    }
+    let file = File::open(path)?;
+    let stat = file.metadata()?;
+    if !stat.is_file() {
+        return Err(CliError::new(format!(
+            "{label} exists but is not a regular file"
+        )));
+    }
+    if stat.len() > MAX_HOOK_CONFIG_SIZE_BYTES {
+        return Err(CliError::new(format!(
+            "{label} is too large ({} bytes; max {} bytes)",
+            stat.len(),
+            MAX_HOOK_CONFIG_SIZE_BYTES
+        )));
+    }
+    let mut text = String::new();
+    let mut limited = file.take(MAX_HOOK_CONFIG_SIZE_BYTES + 1);
+    limited.read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_HOOK_CONFIG_SIZE_BYTES {
+        return Err(CliError::new(format!(
+            "{label} is too large ({} bytes; max {} bytes)",
+            text.len(),
+            MAX_HOOK_CONFIG_SIZE_BYTES
+        )));
+    }
+    Ok(Some(text))
 }
 
 fn read_opencode_plugin_file(spec: &AgentSpec, path: &Path) -> CliResult<Option<String>> {
@@ -5458,6 +5998,13 @@ fn build_hook_actions(
 
 struct HookEnrichments {
     token_usage: Option<TokenUsage>,
+    workspace: Option<HookWorkspaceContext>,
+}
+
+#[derive(Clone)]
+struct HookWorkspaceContext {
+    name: String,
+    git_branch: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -5477,14 +6024,20 @@ impl TokenUsage {
 }
 
 fn gather_hook_enrichments(
-    _context: &CliContext,
+    context: &CliContext,
     spec: &AgentSpec,
     event: &str,
     payload: &Value,
 ) -> HookEnrichments {
-    let mut enrichments = HookEnrichments { token_usage: None };
+    let mut enrichments = HookEnrichments {
+        token_usage: None,
+        workspace: None,
+    };
     if spec.key != "claude" {
         return enrichments;
+    }
+    if event == "session-start" {
+        enrichments.workspace = hook_workspace_context(context);
     }
     if event == "prompt-submit" {
         if let Some(path) =
@@ -5494,6 +6047,32 @@ fn gather_hook_enrichments(
         }
     }
     enrichments
+}
+
+fn hook_workspace_context(context: &CliContext) -> Option<HookWorkspaceContext> {
+    let workspace_id = trimmed_env("FORKTTY_WORKSPACE_ID")?;
+    if !should_send_hook_actions(context) {
+        return None;
+    }
+    let workspaces = send_socket_request_with_timeout(
+        &context.socket_path,
+        "workspace.list",
+        json!({}),
+        HOOK_STATUS_TIMEOUT,
+    )
+    .ok()?;
+    workspaces.as_array()?.iter().find_map(|workspace| {
+        if string_field(workspace, "id") != Some(workspace_id.as_str()) {
+            return None;
+        }
+        let name = safe_string_field(workspace, "name")?;
+        Some(HookWorkspaceContext {
+            name,
+            git_branch: safe_string_field(workspace, "gitBranch")
+                .or_else(|| safe_string_field(workspace, "git_branch"))
+                .filter(|branch| !branch.trim().is_empty()),
+        })
+    })
 }
 
 fn build_token_progress_action(
@@ -5527,19 +6106,57 @@ fn build_hook_response(
     enrichments: &HookEnrichments,
 ) -> CliResult<Value> {
     if spec.key == "claude" && event == "session-start" {
-        let additional_context = format!(
-            "Running inside the ForkTTY terminal. workspace_id={} surface_id={} socket={}. ForkTTY hooks publish configured lifecycle status, logs, and notifications to the app. Inspect state via the `forktty` CLI (notifications, status, workspaces, surfaces, worktrees).",
-            trimmed_env("FORKTTY_WORKSPACE_ID").unwrap_or_else(|| "(none)".to_string()),
-            trimmed_env("FORKTTY_SURFACE_ID").unwrap_or_else(|| "(none)".to_string()),
-            trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
+        let workspace_id =
+            trimmed_env("FORKTTY_WORKSPACE_ID").unwrap_or_else(|| "(none)".to_string());
+        let workspace_line = enrichments
+            .workspace
+            .as_ref()
+            .map(|workspace| {
+                format!(
+                    "Workspace: {}{}.",
+                    workspace.name,
+                    workspace
+                        .git_branch
+                        .as_deref()
+                        .map(|branch| format!(" on branch {branch}"))
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or_else(|| format!("Workspace: {workspace_id}; branch unknown."));
+        let additional_context = [
+            format!(
+                "Running inside ForkTTY. workspace_id={} surface_id={} socket={}.",
+                workspace_id,
+                trimmed_env("FORKTTY_SURFACE_ID").unwrap_or_else(|| "(none)".to_string()),
+                trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
+            ),
+            workspace_line,
+            "MCP tools: workspace_list and surface_list inspect panes; surface_focus and surface_send_text drive them.".to_string(),
+            "Worktrees: worktree_create creates an isolated git worktree + workspace; worktree_attach, worktree_remove, and worktree_merge manage branches.".to_string(),
+            "Status: status_set and notification_create publish progress; CLI fallback is forktty list/surfaces/send-text/worktree-*.".to_string(),
+        ]
+        .join("\n");
+        let mut hook_output = Map::new();
+        hook_output.insert(
+            "hookEventName".to_string(),
+            Value::String("SessionStart".to_string()),
         );
+        hook_output.insert(
+            "additionalContext".to_string(),
+            Value::String(additional_context),
+        );
+        if trimmed_env("FORKTTY_WORKSPACE_ID").is_some() {
+            if let Some(workspace) = &enrichments.workspace {
+                hook_output.insert(
+                    "sessionTitle".to_string(),
+                    Value::String(workspace.name.clone()),
+                );
+            }
+        }
         return Ok(json!({
             "continue": true,
             "suppressOutput": false,
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": additional_context,
-            }
+            "hookSpecificOutput": Value::Object(hook_output),
         }));
     }
     if spec.key == "claude" && event == "prompt-submit" {
@@ -6927,6 +7544,7 @@ mod tests {
                             cache_creation: 50,
                             output: 10,
                         }),
+                        workspace: None,
                     },
                     "prompt-submit",
                     "77",
@@ -6959,6 +7577,7 @@ mod tests {
                     agent_spec("claude").unwrap(),
                     &HookEnrichments {
                         token_usage: Some(usage),
+                        workspace: None,
                     },
                     "prompt-submit",
                     "88",
@@ -6982,7 +7601,13 @@ mod tests {
                 build_hook_response(
                     agent_spec("claude").unwrap(),
                     "session-start",
-                    &HookEnrichments { token_usage: None },
+                    &HookEnrichments {
+                        token_usage: None,
+                        workspace: Some(HookWorkspaceContext {
+                            name: "Feature Shell".to_string(),
+                            git_branch: Some("feature/mcp".to_string()),
+                        }),
+                    },
                 )
                 .unwrap()
             },
@@ -6999,6 +7624,13 @@ mod tests {
         assert!(context.contains("ws-4"));
         assert!(context.contains("surface-9"));
         assert!(context.contains("forktty.sock"));
+        assert!(context.contains("Feature Shell on branch feature/mcp"));
+        assert!(context.contains("workspace_list and surface_list"));
+        assert!(context.contains("worktree_create creates an isolated git worktree"));
+        assert_eq!(
+            response["hookSpecificOutput"]["sessionTitle"],
+            "Feature Shell"
+        );
         assert!(!context.contains("ForkTTY pending notifications:"));
 
         let response = build_hook_response(
@@ -7011,6 +7643,7 @@ mod tests {
                     cache_creation: 0,
                     output: 50,
                 }),
+                workspace: None,
             },
         )
         .unwrap();
@@ -7027,7 +7660,10 @@ mod tests {
         let plain = build_hook_response(
             agent_spec("claude").unwrap(),
             "prompt-submit",
-            &HookEnrichments { token_usage: None },
+            &HookEnrichments {
+                token_usage: None,
+                workspace: None,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -7037,7 +7673,10 @@ mod tests {
         let codex = build_hook_response(
             agent_spec("codex").unwrap(),
             "session-start",
-            &HookEnrichments { token_usage: None },
+            &HookEnrichments {
+                token_usage: None,
+                workspace: None,
+            },
         )
         .unwrap();
         assert_eq!(codex, plain);
@@ -7529,6 +8168,167 @@ mod tests {
                     handle_hooks_remove(&context, strings(&["--dryrun", "codex"])),
                     "hooks remove: unknown option --dryrun",
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn mcp_tools_default_targets_from_forktty_env() {
+        with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some(" ws-env ")),
+                ("FORKTTY_SURFACE_ID", Some(" surface-env ")),
+            ],
+            || {
+                let (_, params) = crate::mcp_server::build_socket_call_for_test(
+                    "surface_send_text",
+                    json!({ "text": "cargo test\n" }),
+                )
+                .unwrap();
+                assert_eq!(params["surface_id"], "surface-env");
+                assert_eq!(params["text"], "cargo test\n");
+
+                let (_, params) = crate::mcp_server::build_socket_call_for_test(
+                    "status_set",
+                    json!({ "key": "agent:codex", "value": "Running" }),
+                )
+                .unwrap();
+                assert_eq!(params["workspace_id"], "ws-env");
+                assert_eq!(params["surface_id"], "surface-env");
+                assert_eq!(params["label"], "agent:codex");
+
+                let (_, params) =
+                    crate::mcp_server::build_socket_call_for_test("surface_list", json!({}))
+                        .unwrap();
+                assert_eq!(params["workspace_id"], "ws-env");
+
+                let (_, params) = crate::mcp_server::build_socket_call_for_test(
+                    "notification_create",
+                    json!({ "workspace_id": "explicit-ws", "body": "done" }),
+                )
+                .unwrap();
+                assert_eq!(params["workspace_id"], "explicit-ws");
+                assert!(params.get("surface_id").is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn mcp_setup_plans_write_agent_configs_and_are_idempotent() {
+        let home = tempfile::tempdir().unwrap();
+        let codex_home = tempfile::tempdir().unwrap();
+        let home = home.path().to_string_lossy().to_string();
+        let codex_home = codex_home.path().to_string_lossy().to_string();
+        with_env(
+            &[
+                ("HOME", Some(home.as_str())),
+                ("CODEX_HOME", Some(codex_home.as_str())),
+            ],
+            || {
+                let launcher = Path::new("/usr/bin/forktty");
+                for agent in ["codex", "claude", "gemini", "antigravity"] {
+                    let spec = mcp_agent_spec(agent).unwrap();
+                    let plan = build_mcp_setup_plan(spec, launcher).unwrap();
+                    assert!(plan.changed, "{agent} initial plan should change");
+                    ensure_parent_dir(&plan.config_path).unwrap();
+                    fs::write(&plan.config_path, &plan.content).unwrap();
+                    let replanned = build_mcp_setup_plan(spec, launcher).unwrap();
+                    assert!(!replanned.changed, "{agent} setup should be idempotent");
+                }
+
+                let codex: toml::Table = fs::read_to_string(codex_mcp_config_path())
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let codex_server = &codex["mcp_servers"]["forktty"];
+                assert_eq!(codex_server["command"].as_str(), Some("/usr/bin/forktty"));
+                assert_eq!(
+                    codex_server["args"].as_array().unwrap()[0].as_str(),
+                    Some("mcp")
+                );
+                assert_eq!(
+                    codex_server["env"][MCP_MANAGED_ENV].as_str(),
+                    Some(MCP_SERVER_NAME)
+                );
+                assert!(codex_server["env_vars"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value.as_str() == Some("FORKTTY_SOCKET_PATH")));
+
+                for (agent, path) in [
+                    ("claude", claude_mcp_config_path()),
+                    ("gemini", gemini_mcp_config_path()),
+                    ("antigravity", antigravity_mcp_config_path()),
+                ] {
+                    let config = read_json(&path);
+                    let server = &config["mcpServers"]["forktty"];
+                    assert_eq!(server["command"], "/usr/bin/forktty", "{agent}");
+                    assert_eq!(server["args"][0], "mcp", "{agent}");
+                    assert_eq!(server["env"][MCP_MANAGED_ENV], MCP_SERVER_NAME, "{agent}");
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn mcp_remove_preserves_foreign_servers_and_is_idempotent() {
+        let home = tempfile::tempdir().unwrap();
+        let codex_home = tempfile::tempdir().unwrap();
+        let home = home.path().to_string_lossy().to_string();
+        let codex_home = codex_home.path().to_string_lossy().to_string();
+        with_env(
+            &[
+                ("HOME", Some(home.as_str())),
+                ("CODEX_HOME", Some(codex_home.as_str())),
+            ],
+            || {
+                let launcher = Path::new("/usr/bin/forktty");
+                let codex = mcp_agent_spec("codex").unwrap();
+                let codex_plan = build_mcp_setup_plan(codex, launcher).unwrap();
+                ensure_parent_dir(&codex_plan.config_path).unwrap();
+                fs::write(
+                    &codex_plan.config_path,
+                    format!(
+                        "{}\n[mcp_servers.foreign]\ncommand = \"/bin/true\"\n",
+                        codex_plan.content
+                    ),
+                )
+                .unwrap();
+                let remove = build_mcp_remove_plan(codex).unwrap();
+                let McpRemoveAction::Write(content) = remove.action else {
+                    panic!("codex remove should rewrite config");
+                };
+                assert!(!content.contains("[mcp_servers.forktty]"));
+                assert!(content.contains("[mcp_servers.foreign]"));
+                fs::write(codex_mcp_config_path(), content).unwrap();
+                assert!(!build_mcp_remove_plan(codex).unwrap().changed);
+
+                let gemini = mcp_agent_spec("gemini").unwrap();
+                let path = gemini_mcp_config_path();
+                ensure_parent_dir(&path).unwrap();
+                fs::write(
+                    &path,
+                    serde_json::to_string_pretty(&json!({
+                        "mcpServers": {
+                            "foreign": { "command": "/bin/true" },
+                            "forktty": json_mcp_server_config(launcher),
+                        },
+                        "theme": "dark",
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+                let remove = build_mcp_remove_plan(gemini).unwrap();
+                let McpRemoveAction::Write(content) = remove.action else {
+                    panic!("gemini remove should rewrite config");
+                };
+                let value: Value = serde_json::from_str(&content).unwrap();
+                assert!(value["mcpServers"].get("forktty").is_none());
+                assert_eq!(value["mcpServers"]["foreign"]["command"], "/bin/true");
+                assert_eq!(value["theme"], "dark");
+                fs::write(path, content).unwrap();
+                assert!(!build_mcp_remove_plan(gemini).unwrap().changed);
             },
         );
     }

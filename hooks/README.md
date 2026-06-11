@@ -34,6 +34,36 @@ under its plugins directory so `opencode.json` does not need to be edited.
 `forktty hooks remove` deletes only ForkTTY-managed entries or the generated
 OpenCode plugin; custom hook commands are preserved.
 
+## MCP tools
+
+Hooks publish lifecycle status automatically; MCP gives agents a typed way to
+inspect and drive ForkTTY on demand:
+
+```bash
+forktty mcp setup
+forktty mcp setup codex claude --dry-run
+forktty mcp remove gemini
+```
+
+`forktty mcp` itself is a stdio MCP server. It validates tool arguments and
+bridges them to the same owner-only local Unix socket as the CLI; it opens no
+network listener. The tool set covers workspace/surface listing, pane split /
+focus / send-text, worktree list/status/create/attach/remove/merge,
+notifications, and `status_set`.
+
+`forktty mcp setup` writes a ForkTTY-managed MCP server named `forktty` into:
+
+| Agent | Destination |
+|---|---|
+| Codex | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` (`[mcp_servers.forktty]`) |
+| Claude Code | `~/.claude.json` (`mcpServers.forktty`) |
+| Gemini CLI | `~/.gemini/settings.json` (`mcpServers.forktty`) |
+| Antigravity CLI | `~/.gemini/config/mcp_config.json` (`mcpServers.forktty`) |
+
+Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
+managed-entry preservation behavior as hook setup. OpenCode hook support remains
+available, but no verified OpenCode MCP registration path is managed yet.
+
 Antigravity CLI (Google's Gemini CLI successor, `agy`) executes a hook
 `command` as one bare executable path — no argument splitting and no shell —
 so the installer writes per-event wrapper scripts under

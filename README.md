@@ -245,6 +245,25 @@ The socket CLI and agent hook bridge are native Rust code in the
 `forktty` binary, so source checkouts and packaged builds do not
 require Node.js.
 
+### MCP server
+
+ForkTTY can also expose the same local automation surface as MCP tools for
+agents that support stdio MCP servers:
+
+```bash
+forktty mcp                              # run the MCP server on stdio
+forktty mcp setup                        # register Codex, Claude, Gemini, Antigravity
+forktty mcp setup codex claude --dry-run
+forktty mcp remove gemini
+```
+
+The MCP server is local-only: it opens no network listener and bridges validated
+tool calls to the owner-only ForkTTY Unix socket. It exposes workspace/surface
+inspection, pane split/focus/send-text, worktree create/attach/remove/merge,
+notifications, and `status_set`. `FORKTTY_SOCKET_PATH`,
+`FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
+the MCP host launches from a ForkTTY pane.
+
 Spawned shells receive:
 
 - `TERM=xterm-256color`

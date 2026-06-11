@@ -191,6 +191,26 @@ Error responses include a structured `code` field so clients can branch on outco
 | `invalid_param` | A supplied parameter has an invalid value. |
 | `error` | Catch-all for other failures (carries a `message`). |
 
+### MCP stdio bridge
+
+`forktty mcp` runs a local Model Context Protocol server over stdio. It does
+not listen on a network port; each MCP tool call is validated and then bridged
+to the same owner-only Unix socket described above. The server exposes
+`workspace_list`, `surface_list`, `surface_split`, `surface_send_text`,
+`surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
+`worktree_attach`, `worktree_remove`, `worktree_merge`,
+`notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the
+socket, and `FORKTTY_WORKSPACE_ID`/`FORKTTY_SURFACE_ID` are used as default
+targets when a tool omits an explicit target.
+
+`forktty mcp setup` registers this stdio server in verified user-scope MCP
+config locations for Codex (`$CODEX_HOME/config.toml` or
+`~/.codex/config.toml`), Claude Code (`~/.claude.json`), Gemini CLI
+(`~/.gemini/settings.json`), and Antigravity (`~/.gemini/config/mcp_config.json`).
+Registration writes a ForkTTY-managed server named `forktty`, preserves
+foreign MCP servers, writes atomically, and creates a `.bak-*` backup when
+content changes. `forktty mcp remove` removes only that managed server entry.
+
 ## Browser Pane Feature
 
 The `browser` cargo feature builds WebKitGTK6 panes alongside Ghostty panes.
@@ -247,6 +267,8 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 - No telemetry, update checks, or product-service network calls. Optional
   browser panes and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
+- `forktty mcp` is a local stdio bridge only; it opens no network listener and
+  enforces the same Unix socket ownership boundary as the CLI.
 - 1 MiB bounds for socket requests, config, and session files.
 - Hook session-to-surface correlation is local process memory only, capped at
   256 entries, and evicted on session-end or surface close.
