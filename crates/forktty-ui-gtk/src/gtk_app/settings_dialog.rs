@@ -329,13 +329,12 @@ pub(super) fn show_settings_dialog(
         let current = current.clone();
         let on_apply = on_apply.clone();
         move |row: &adw::EntryRow| {
-            let mut next = current.borrow().clone();
-            next.general.shell = normalized_settings_entry_text(row);
+            let shell = normalized_settings_entry_text(row);
             let saved = persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.general.shell = shell,
                 "Shell saved. Restart ForkTTY to use it.",
             );
             if saved {
@@ -358,13 +357,18 @@ pub(super) fn show_settings_dialog(
             let Some(family) = font_family_ids.get(row.selected() as usize) else {
                 return;
             };
-            let mut next = current.borrow().clone();
-            next.appearance.font_family = match family.as_str() {
+            let font_family = match family.as_str() {
                 DEFAULT_FONT_FAMILY_ID => String::new(),
                 SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
                 _ => decode_font_family_row_id(family),
             };
-            persist_settings_change(&dialog, &current, &on_apply, next, "Terminal font applied.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.font_family = font_family,
+                "Terminal font applied.",
+            );
         }
     });
     font_size.connect_notify_local(Some("value"), {
@@ -376,9 +380,13 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.font_size = row.value() as u16;
-            persist_settings_change(&dialog, &current, &on_apply, next, "Font size applied.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.font_size = row.value() as u16,
+                "Font size applied.",
+            );
         }
     });
     scrollback_lines.connect_notify_local(Some("value"), {
@@ -390,9 +398,13 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.scrollback_lines = row.value() as u32;
-            persist_settings_change(&dialog, &current, &on_apply, next, "Scrollback updated.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.scrollback_lines = row.value() as u32,
+                "Scrollback updated.",
+            );
         }
     });
     terminal_audible_bell.connect_notify_local(Some("active"), {
@@ -404,9 +416,13 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.terminal_audible_bell = row.is_active();
-            persist_settings_change(&dialog, &current, &on_apply, next, "Terminal bell updated.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.terminal_audible_bell = row.is_active(),
+                "Terminal bell updated.",
+            );
         }
     });
     terminal_theme.connect_selected_notify({
@@ -419,13 +435,11 @@ pub(super) fn show_settings_dialog(
                 return;
             }
             if let Some(theme) = settings_choice_value(TERMINAL_THEME_ITEMS, row.selected()) {
-                let mut next = current.borrow().clone();
-                next.appearance.terminal_theme = theme.to_string();
                 persist_settings_change(
                     &dialog,
                     &current,
                     &on_apply,
-                    next,
+                    |config| config.appearance.terminal_theme = theme.to_string(),
                     "Terminal theme applied.",
                 );
             }
@@ -441,13 +455,11 @@ pub(super) fn show_settings_dialog(
                 return;
             }
             if let Some(mode) = settings_choice_value(WINDOW_MODE_ITEMS, row.selected()) {
-                let mut next = current.borrow().clone();
-                next.appearance.window_mode = mode.to_string();
                 persist_settings_change(
                     &dialog,
                     &current,
                     &on_apply,
-                    next,
+                    |config| config.appearance.window_mode = mode.to_string(),
                     "Window mode saved. Restart ForkTTY to use it.",
                 );
             }
@@ -463,9 +475,13 @@ pub(super) fn show_settings_dialog(
                 return;
             }
             if let Some(position) = settings_choice_value(SIDEBAR_POSITION_ITEMS, row.selected()) {
-                let mut next = current.borrow().clone();
-                next.appearance.sidebar_position = position.to_string();
-                persist_settings_change(&dialog, &current, &on_apply, next, "Sidebar moved.");
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    |config| config.appearance.sidebar_position = position.to_string(),
+                    "Sidebar moved.",
+                );
             }
         }
     });
@@ -478,13 +494,11 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.sidebar_visible = row.is_active();
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.appearance.sidebar_visible = row.is_active(),
                 "Sidebar visibility updated.",
             );
         }
@@ -499,13 +513,11 @@ pub(super) fn show_settings_dialog(
                 return;
             }
             if let Some(layout) = settings_choice_value(WORKTREE_LAYOUT_ITEMS, row.selected()) {
-                let mut next = current.borrow().clone();
-                next.general.worktree_layout = layout.to_string();
                 persist_settings_change(
                     &dialog,
                     &current,
                     &on_apply,
-                    next,
+                    |config| config.general.worktree_layout = layout.to_string(),
                     "Worktree layout saved.",
                 );
             }
@@ -520,9 +532,13 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.general.enable_pr_lookup = row.is_active();
-            persist_settings_change(&dialog, &current, &on_apply, next, "PR lookup updated.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.general.enable_pr_lookup = row.is_active(),
+                "PR lookup updated.",
+            );
         }
     });
     notification_command.connect_changed(|row| {
@@ -533,13 +549,12 @@ pub(super) fn show_settings_dialog(
         let current = current.clone();
         let on_apply = on_apply.clone();
         move |row: &adw::EntryRow| {
-            let mut next = current.borrow().clone();
-            next.general.notification_command = normalized_settings_entry_text(row);
+            let notification_command = normalized_settings_entry_text(row);
             let saved = persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.general.notification_command = notification_command,
                 "Notification command saved.",
             );
             if saved {
@@ -558,13 +573,11 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.notifications.desktop = row.is_active();
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.notifications.desktop = row.is_active(),
                 "Desktop notifications updated.",
             );
         }
@@ -578,13 +591,11 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.notifications.sound = row.is_active();
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.notifications.sound = row.is_active(),
                 "Notification sound updated.",
             );
         }
@@ -662,7 +673,7 @@ pub(super) fn show_settings_dialog(
                         &dialog_for_reset,
                         &current_for_reset,
                         &on_apply_for_reset,
-                        defaults,
+                        |config| *config = defaults,
                         "Defaults restored.",
                     );
                 },
@@ -1399,14 +1410,31 @@ pub(super) fn browser_import_run_summary(value: &Value) -> String {
     )
 }
 
-pub(super) fn persist_settings_change(
+// Applies a single settings change on top of `base`, leaving every other
+// field of `base` intact.
+pub(super) fn rebased_settings_config<F: FnOnce(&mut config::AppConfig)>(
+    base: &config::AppConfig,
+    apply_change: F,
+) -> config::AppConfig {
+    let mut next = base.clone();
+    apply_change(&mut next);
+    next
+}
+
+pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
     dialog: &adw::ToastOverlay,
     current: &Rc<RefCell<config::AppConfig>>,
     on_apply: &SettingsApplyCallback,
-    next: config::AppConfig,
+    apply_change: F,
     message: &str,
 ) -> bool {
-    if *current.borrow() == next {
+    // Rebase the dialog's single change onto a fresh disk read so saving the
+    // whole struct does not revert config edits made outside the dialog while
+    // it was open (e.g. the F9 sidebar toggle saves independently).
+    let base = config::load_config().unwrap_or_else(|_| current.borrow().clone());
+    let next = rebased_settings_config(&base, apply_change);
+    if next == base {
+        *current.borrow_mut() = next;
         return true;
     }
     match config::save_config(&next) {

@@ -296,7 +296,11 @@ impl TerminalController {
         }
         self.container.append(&widget);
         self.queue_focus_for_surface(&focused_surface_id);
-        self.last_layout_signature = Some(signature);
+        self.last_layout_signature = Some(effective_layout_signature(
+            &signature,
+            self.maximized_pane,
+            &focused_surface_id,
+        ));
     }
 
     pub(super) fn toggle_maximized_pane(&mut self) {
@@ -446,12 +450,15 @@ impl TerminalController {
 
     pub(super) fn ensure_layout_current(&mut self) {
         self.spawn_active_surfaces_if_needed();
-        let Some((signature, _, _, _)) = active_layout_snapshot(&self.model) else {
+        let Some((signature, _, focused_surface_id, _)) = active_layout_snapshot(&self.model)
+        else {
             if self.last_layout_signature.as_deref() != Some(EMPTY_LAYOUT_SIGNATURE) {
                 self.rebuild_layout();
             }
             return;
         };
+        let signature =
+            effective_layout_signature(&signature, self.maximized_pane, &focused_surface_id);
         if self.last_layout_signature.as_deref() != Some(signature.as_str()) {
             self.rebuild_layout();
         } else {
@@ -1234,6 +1241,20 @@ fn set_tab_drop_indicator(
     }
 }
 
+// In maximize mode only the focused pane is rendered, so the layout signature
+// must change when focus moves between panes even though the tree is the same.
+pub(super) fn effective_layout_signature(
+    signature: &str,
+    maximized: bool,
+    focused_surface_id: &str,
+) -> String {
+    if maximized {
+        format!("{signature}#max:{focused_surface_id}")
+    } else {
+        signature.to_string()
+    }
+}
+
 fn install_tab_context_menu(
     tab: &gtk::Box,
     surface_id: &str,
@@ -1251,7 +1272,10 @@ fn install_tab_context_menu(
     let current_popover_for_menu = current_popover.clone();
     gesture.connect_pressed(move |gesture, _n_press, x, y| {
         gesture.set_state(gtk::EventSequenceState::Claimed);
-        if let Some(popover) = current_popover_for_menu.borrow_mut().take() {
+        // Drop the RefMut before popdown(): it emits `closed` synchronously and
+        // its handler re-borrows the same cell.
+        let previous_popover = current_popover_for_menu.borrow_mut().take();
+        if let Some(popover) = previous_popover {
             popover.popdown();
             if popover.parent().is_some() {
                 popover.unparent();

@@ -583,6 +583,50 @@ fn close_active_surface_keeps_old_surface_when_replacement_spawn_fails() {
 }
 
 #[test]
+fn close_surface_by_id_targets_captured_surface_after_workspace_switch() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let other_dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (first_workspace_id, captured_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", project_dir.path());
+        (workspace.id, workspace.focused_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+    // Simulates a socket `workspace.select` arriving while the Close Pane
+    // confirmation dialog is open: the active workspace changes between
+    // dialog-open and confirm.
+    let (other_workspace_id, other_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("other", other_dir.path());
+        (workspace.id, workspace.focused_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    close_surface_by_id(&state, &captured_surface_id);
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(other_workspace_id.as_str())
+    );
+    // The active workspace's pane survives; only the captured surface closed.
+    assert!(model.surface(&other_surface_id).is_some());
+    assert!(model.surface(&captured_surface_id).is_none());
+    let first_surfaces = model.list_surfaces(Some(&first_workspace_id));
+    assert_eq!(first_surfaces.len(), 1);
+    assert_ne!(first_surfaces[0].id, captured_surface_id);
+}
+
+#[test]
 fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -1979,6 +2023,39 @@ fn terminal_theme_presets_use_expected_ansi_values() {
 
     config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
     assert_eq!(terminal_colors_for_config(&config).ansi[7], "#f8f8f2");
+}
+
+#[test]
+fn settings_change_rebases_onto_externally_modified_config() {
+    // While the Settings dialog is open, an external save (e.g. the F9
+    // sidebar toggle) can change other fields; a dialog save must apply only
+    // its own field on top of the latest config instead of reverting them.
+    let mut base = config::AppConfig::default();
+    base.appearance.sidebar_visible = !base.appearance.sidebar_visible;
+    let external_sidebar = base.appearance.sidebar_visible;
+
+    let next = rebased_settings_config(&base, |config| config.appearance.font_size = 18);
+
+    assert_eq!(next.appearance.font_size, 18);
+    assert_eq!(next.appearance.sidebar_visible, external_sidebar);
+}
+
+#[test]
+fn maximized_layout_signature_tracks_focused_pane() {
+    // In maximize mode only the focused pane is rendered, so a focus-only
+    // change must produce a different signature and trigger a rebuild.
+    assert_eq!(
+        effective_layout_signature("ws-1:L(s1|s2)", false, "s1"),
+        "ws-1:L(s1|s2)"
+    );
+    assert_eq!(
+        effective_layout_signature("ws-1:L(s1|s2)", true, "s1"),
+        "ws-1:L(s1|s2)#max:s1"
+    );
+    assert_ne!(
+        effective_layout_signature("ws-1:L(s1|s2)", true, "s1"),
+        effective_layout_signature("ws-1:L(s1|s2)", true, "s2")
+    );
 }
 
 #[test]
