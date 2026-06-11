@@ -1,14 +1,123 @@
 //! Read history and bookmarks from source browsers.
 //! Firefox uses `places.sqlite`; Chromium family uses `History` (sqlite) + `Bookmarks` (JSON).
 
-use std::path::Path;
+use std::{collections::BTreeMap, fmt, path::Path};
 
 use rusqlite::{Connection, OpenFlags};
+use serde::{
+    de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer,
+};
 
 use crate::model::{ImportedBookmark, ImportedVisit};
 
 const MAX_CHROMIUM_BOOKMARKS_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHROMIUM_BOOKMARK_NODES: usize = 100_000;
+
+#[derive(Deserialize)]
+struct ChromiumBookmarkFile {
+    #[serde(default)]
+    roots: BTreeMap<String, ChromiumBookmarkNode>,
+}
+
+#[derive(Deserialize)]
+struct ChromiumBookmarkNode {
+    #[serde(default, rename = "type")]
+    node_type: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_chromium_bookmark_children")]
+    children: Vec<ChromiumBookmarkNode>,
+}
+
+fn deserialize_chromium_bookmark_children<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ChromiumBookmarkNode>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_any(ChromiumBookmarkChildrenVisitor)
+}
+
+struct ChromiumBookmarkChildrenVisitor;
+
+impl<'de> Visitor<'de> for ChromiumBookmarkChildrenVisitor {
+    type Value = Vec<ChromiumBookmarkNode>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a Chromium bookmark children array")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut children = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(child) = seq.next_element()? {
+            children.push(child);
+        }
+        Ok(children)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_string<E>(self, _value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Vec::new())
+    }
+}
 
 fn open_ro(path: &Path) -> rusqlite::Result<Connection> {
     Connection::open_with_flags(
@@ -97,24 +206,22 @@ pub fn read_chromium_bookmarks(path: &Path) -> std::io::Result<Vec<ImportedBookm
         return Ok(vec![]);
     }
     let text = std::fs::read_to_string(path)?;
-    let value: serde_json::Value = match serde_json::from_str(&text) {
+    let file: ChromiumBookmarkFile = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(_) => return Ok(vec![]),
     };
     let mut out = Vec::new();
-    if let Some(roots) = value.get("roots").and_then(|r| r.as_object()) {
-        // The node cap is a guard against a hostile/oversized Bookmarks file, so
-        // it must bound the total walk across every root, not reset per root.
-        let mut visited = 0usize;
-        for root_node in roots.values() {
-            collect_chromium_bookmarks(root_node, &mut out, &mut visited);
-        }
+    // The node cap is a guard against a hostile/oversized Bookmarks file, so
+    // it must bound the total walk across every root, not reset per root.
+    let mut visited = 0usize;
+    for root_node in file.roots.values() {
+        collect_chromium_bookmarks(root_node, &mut out, &mut visited);
     }
     Ok(out)
 }
 
 fn collect_chromium_bookmarks(
-    node: &serde_json::Value,
+    node: &ChromiumBookmarkNode,
     out: &mut Vec<ImportedBookmark>,
     visited: &mut usize,
 ) {
@@ -124,20 +231,18 @@ fn collect_chromium_bookmarks(
         if *visited > MAX_CHROMIUM_BOOKMARK_NODES {
             break;
         }
-        if node.get("type").and_then(|t| t.as_str()) == Some("url") {
-            let url = node.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        if node.node_type.as_deref() == Some("url") {
+            let url = node.url.as_deref().unwrap_or("");
             if url.starts_with("http://") || url.starts_with("https://") {
-                let title = node.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let title = node.name.as_deref().unwrap_or("");
                 out.push(ImportedBookmark {
                     url: url.to_string(),
                     title: title.to_string(),
                 });
             }
         }
-        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
-            for child in children.iter().rev() {
-                stack.push(child);
-            }
+        for child in node.children.iter().rev() {
+            stack.push(child);
         }
     }
 }
@@ -224,6 +329,42 @@ mod tests {
         assert_eq!(bms.len(), 2);
         assert_eq!(bms[0].url, "https://d.test/");
         assert_eq!(bms[1].url, "https://e.test/");
+    }
+
+    #[test]
+    fn chromium_bookmarks_treat_null_children_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        fs::write(
+            &path,
+            r#"{"roots":{"bookmark_bar":{"children":[
+                {"type":"folder","name":"bad-folder","children":null},
+                {"type":"url","name":"Valid","url":"https://valid.test/"}]}}}"#,
+        )
+        .unwrap();
+
+        let bms = read_chromium_bookmarks(&path).unwrap();
+
+        assert_eq!(bms.len(), 1);
+        assert_eq!(bms[0].url, "https://valid.test/");
+    }
+
+    #[test]
+    fn chromium_bookmarks_treat_non_array_children_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        fs::write(
+            &path,
+            r#"{"roots":{"bookmark_bar":{"children":[
+                {"type":"folder","name":"bad-folder","children":{"oops":"not-array"}},
+                {"type":"url","name":"Valid","url":"https://valid.test/"}]}}}"#,
+        )
+        .unwrap();
+
+        let bms = read_chromium_bookmarks(&path).unwrap();
+
+        assert_eq!(bms.len(), 1);
+        assert_eq!(bms[0].url, "https://valid.test/");
     }
 
     #[test]

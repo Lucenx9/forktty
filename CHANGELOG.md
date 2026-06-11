@@ -11,6 +11,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Changed
 - `forktty hooks setup claude` now installs lifecycle hooks by default and omits the blocking per-tool `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`PostToolBatch` hooks; use `forktty hooks setup --full claude` to restore the previous full profile. Existing installs keep working, and re-running setup migrates Claude hooks to the lifecycle default unless `--full` is passed.
+- Chromium bookmark import now deserializes only the bookmark fields ForkTTY uses, avoiding large extra allocations for ignored browser metadata.
 
 ### Security
 - Pasted text is now encoded with libghostty's paste encoder, which neutralizes control bytes in the payload: clipboard content containing `\x1b[201~` can no longer terminate the bracketed-paste wrapper early and inject the remainder as typed input (including command execution in a shell).
