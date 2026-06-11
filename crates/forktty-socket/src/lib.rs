@@ -1648,22 +1648,31 @@ fn notify_worktree_setup_warning(
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
-    let config = match config::load_config() {
-        Ok(config) => config,
-        Err(err) => {
-            // Surface the underlying cause so a misconfigured custom command or
-            // a corrupted config.toml is debuggable rather than silently
-            // turning into "default behavior with no custom command".
-            eprintln!("Falling back to default notification settings: {err}");
-            forktty_core::AppConfig::default()
+    let notification = notification.clone();
+    // Dispatch on a dedicated thread: notify_rust's show() blocks on its own
+    // async runtime, and doing that from a tokio worker panics ("Cannot start
+    // a runtime from within a runtime"), killing the connection task that
+    // carried the request. The thread also keeps config disk I/O off the
+    // server runtime. Dispatch is fire-and-forget either way (errors only
+    // reach stderr), so callers lose nothing by not joining.
+    std::thread::spawn(move || {
+        let config = match config::load_config() {
+            Ok(config) => config,
+            Err(err) => {
+                // Surface the underlying cause so a misconfigured custom command or
+                // a corrupted config.toml is debuggable rather than silently
+                // turning into "default behavior with no custom command".
+                eprintln!("Falling back to default notification settings: {err}");
+                forktty_core::AppConfig::default()
+            }
+        };
+        for error in dispatch_notification(&config, &notification) {
+            eprintln!(
+                "Failed to dispatch {} notification: {}",
+                error.channel, error.message
+            );
         }
-    };
-    for error in dispatch_notification(&config, notification) {
-        eprintln!(
-            "Failed to dispatch {} notification: {}",
-            error.channel, error.message
-        );
-    }
+    });
 }
 
 async fn open_worktree_workspace(

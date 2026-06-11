@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Creating a notification through the socket (`notification.create` from the CLI, MCP server, or agent hooks) no longer kills the connection without a response when desktop notifications are enabled: the desktop notifier blocks on its own async runtime, which panics inside the socket server's runtime ("Cannot start a runtime from within a runtime"); dispatch now runs on a dedicated thread.
 - MCP list tools (`workspace_list`, `surface_list`, `worktree_list`) no longer fail with strict MCP clients (including Claude Code): the socket returns bare JSON arrays for list methods and the server passed them straight through as `structuredContent`, which the MCP spec requires to be an object. Non-object results are now wrapped as `{"result": ...}`.
 
 ## [0.2.0-alpha.10] - 2026-06-11
