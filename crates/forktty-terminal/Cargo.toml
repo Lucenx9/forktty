@@ -20,3 +20,6 @@ thiserror.workspace = true
 libc = { workspace = true, optional = true }
 libghostty-vt = { workspace = true, optional = true }
 nix = { workspace = true, optional = true, features = ["fs", "ioctl", "poll", "process", "signal", "term"] }
+
+[dev-dependencies]
+tempfile.workspace = true

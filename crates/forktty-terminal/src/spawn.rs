@@ -181,6 +181,67 @@ mod tests {
     // a shell inside the AppImage uses them to embed the stable .AppImage path
     // instead of the volatile /tmp/.mount_* binary path.
     #[test]
+    fn is_executable_file_returns_true_for_executable() {
+        let exe_path = std::env::current_exe().unwrap();
+        assert!(is_executable_file(&exe_path));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn is_executable_file_returns_false_for_non_executable_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("non_executable.txt");
+        fs::write(&file_path, "test").unwrap();
+
+        let mut perms = fs::metadata(&file_path).unwrap().permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&file_path, perms).unwrap();
+        assert!(!is_executable_file(&file_path));
+    }
+
+    #[test]
+    #[cfg(not(unix))]
+    fn is_executable_file_returns_true_for_all_files_on_windows() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("some_file.txt");
+        fs::write(&file_path, "test").unwrap();
+        assert!(is_executable_file(&file_path));
+    }
+
+    #[test]
+    fn is_executable_file_returns_false_for_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        assert!(!is_executable_file(temp_dir.path()));
+    }
+
+    #[test]
+    fn is_executable_file_returns_false_for_nonexistent_path() {
+        let path = Path::new("/this/path/definitely/does/not/exist");
+        assert!(!is_executable_file(path));
+    }
+
+    #[test]
+    fn env_command_path_finds_valid_env() {
+        // Only run this test on Unix where /usr/bin/env or /bin/env might exist
+        #[cfg(unix)]
+        {
+            let path = env_command_path();
+            if Path::new("/usr/bin/env").exists() || Path::new("/bin/env").exists() {
+                assert!(path.is_some());
+                let p = path.unwrap();
+                assert!(p == "/usr/bin/env" || p == "/bin/env");
+            } else {
+                assert!(path.is_none());
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // Just verifying it compiles and runs without panicking on Windows
+            let _ = env_command_path();
+        }
+    }
+
+    #[test]
     fn appimage_runtime_vars_are_stripped_but_forktty_launcher_vars_survive() {
         for stripped in [
             "APPIMAGE",

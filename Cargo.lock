@@ -701,6 +701,7 @@ dependencies = [
  "libghostty-vt",
  "nix",
  "serde",
+ "tempfile",
  "thiserror",
 ]
 
