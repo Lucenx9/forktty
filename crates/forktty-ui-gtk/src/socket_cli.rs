@@ -6705,6 +6705,13 @@ fn format_thousands(value: u64) -> String {
     out.chars().rev().collect()
 }
 
+fn path_access(path: &Path, mode: libc::c_int) -> bool {
+    let Ok(cstr) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    unsafe { libc::access(cstr.as_ptr(), mode) == 0 }
+}
+
 fn inspect_path(path: &Path) -> Value {
     let mut result = Map::new();
     result.insert(
@@ -6755,6 +6762,20 @@ fn inspect_path(path: &Path) -> Value {
                 result.insert(
                     "writable".to_string(),
                     Value::Bool(OpenOptions::new().write(true).open(path).is_ok()),
+                );
+            } else {
+                // access(2) answers the permission question without open(2),
+                // which would block on FIFOs and fail on sockets even when
+                // the caller has full permissions (the doctor used to report
+                // a healthy owner-only socket as "not readable, not
+                // writable").
+                result.insert(
+                    "readable".to_string(),
+                    Value::Bool(path_access(path, libc::R_OK)),
+                );
+                result.insert(
+                    "writable".to_string(),
+                    Value::Bool(path_access(path, libc::W_OK)),
                 );
             }
             result.insert(
@@ -6823,6 +6844,19 @@ mod tests {
     use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
     use std::sync::Mutex;
     use std::thread;
+
+    #[test]
+    fn inspect_path_reports_owned_socket_as_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("probe.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        let info = inspect_path(&socket_path);
+
+        assert_eq!(info["kind"], "socket");
+        assert_eq!(info["readable"], true, "owner socket must probe readable");
+        assert_eq!(info["writable"], true, "owner socket must probe writable");
+    }
 
     #[test]
     fn lagged_detection_matches_the_notice_but_not_embedded_payloads() {
