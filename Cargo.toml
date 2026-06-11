@@ -29,7 +29,7 @@ git2 = { version = "0.21", features = ["vendored-libgit2"] }
 hmac = "0.13"
 libc = "0.2"
 libghostty-vt = "0.1.1"
-nix = "0.30"
+nix = "0.31"
 notify-rust = "4"
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 regex = "1"
