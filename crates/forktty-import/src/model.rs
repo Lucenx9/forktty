@@ -145,3 +145,71 @@ impl ImportResult {
         self.skipped += other.skipped;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_import_result_add() {
+        let mut result = ImportResult::default();
+
+        let other1 = ImportResult {
+            cookies: 10,
+            history: 20,
+            bookmarks: 30,
+            skipped: 5,
+        };
+
+        result.add(&other1);
+
+        assert_eq!(result.cookies, 10);
+        assert_eq!(result.history, 20);
+        assert_eq!(result.bookmarks, 30);
+        assert_eq!(result.skipped, 5);
+
+        let other2 = ImportResult {
+            cookies: 5,
+            history: 10,
+            bookmarks: 15,
+            skipped: 2,
+        };
+
+        result.add(&other2);
+
+        assert_eq!(result.cookies, 15);
+        assert_eq!(result.history, 30);
+        assert_eq!(result.bookmarks, 45);
+        assert_eq!(result.skipped, 7);
+    }
+
+    #[test]
+    fn test_browser_family_is_chromium() {
+        assert!(!BrowserFamily::Firefox.is_chromium());
+        assert!(BrowserFamily::Chrome.is_chromium());
+        assert!(BrowserFamily::Chromium.is_chromium());
+        assert!(BrowserFamily::Brave.is_chromium());
+        assert!(BrowserFamily::Edge.is_chromium());
+        assert!(BrowserFamily::Vivaldi.is_chromium());
+    }
+
+    #[test]
+    fn test_browser_family_safe_storage_label() {
+        assert_eq!(BrowserFamily::Firefox.safe_storage_label(), None);
+        assert_eq!(BrowserFamily::Chrome.safe_storage_label(), Some("Chrome Safe Storage"));
+        assert_eq!(BrowserFamily::Chromium.safe_storage_label(), Some("Chromium Safe Storage"));
+        assert_eq!(BrowserFamily::Brave.safe_storage_label(), Some("Brave Safe Storage"));
+        assert_eq!(BrowserFamily::Edge.safe_storage_label(), Some("Microsoft Edge Safe Storage"));
+        assert_eq!(BrowserFamily::Vivaldi.safe_storage_label(), Some("Vivaldi Safe Storage"));
+    }
+
+    #[test]
+    fn test_browser_family_label() {
+        assert_eq!(BrowserFamily::Firefox.label(), "Firefox");
+        assert_eq!(BrowserFamily::Chrome.label(), "Google Chrome");
+        assert_eq!(BrowserFamily::Chromium.label(), "Chromium");
+        assert_eq!(BrowserFamily::Brave.label(), "Brave");
+        assert_eq!(BrowserFamily::Edge.label(), "Microsoft Edge");
+        assert_eq!(BrowserFamily::Vivaldi.label(), "Vivaldi");
+    }
+}
