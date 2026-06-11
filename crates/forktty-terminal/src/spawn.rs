@@ -252,6 +252,28 @@ mod tests {
     }
 
     #[test]
+    fn child_cwd_returns_utf8_cwd() {
+        let mut request = spawn_request();
+        request.cwd = PathBuf::from("/workspace/forktty");
+
+        assert_eq!(child_cwd(&request), "/workspace/forktty");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn child_cwd_replaces_invalid_utf8_bytes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut request = spawn_request();
+        request.cwd = PathBuf::from(OsString::from_vec(vec![
+            b'/', b'b', b'a', b'd', b'/', 0xff, 0xfe,
+        ]));
+
+        assert_eq!(child_cwd(&request), "/bad/\u{fffd}\u{fffd}");
+    }
+
+    #[test]
     fn child_argv_uses_shell_and_args_without_unset_keys() {
         let argv = child_argv(&spawn_request(), &[]);
 
