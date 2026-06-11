@@ -499,10 +499,6 @@ impl BrowserPaneWidget {
         .load_uri(url);
     }
 
-    pub fn current_uri(&self) -> Option<String> {
-        self.web_view.uri().map(|g| g.to_string())
-    }
-
     pub fn go_back(&self) {
         self.web_view.go_back();
     }
