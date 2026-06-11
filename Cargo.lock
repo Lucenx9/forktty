@@ -717,6 +717,7 @@ dependencies = [
  "global-hotkey",
  "gtk4",
  "libadwaita",
+ "libc",
  "libloading",
  "pangocairo",
  "serde_json",
