@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- New MCP tool `workspace_create` (working_dir + optional name): agents can open a workspace on a repository themselves, which is the precondition the worktree tools enforce — precondition error, `workspace_create`, retry, without leaving MCP.
+
 ### Changed
 - The worktree open-workspace boundary rejection now names the open workspace roots and the `forktty create-workspace --working-dir <repo>` remedy instead of a bare "cwd must be inside the git repository of an open workspace"; the MCP worktree tool descriptions state the precondition up front and SPEC.md documents the boundary as deliberate.
 

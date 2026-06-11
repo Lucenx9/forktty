@@ -247,6 +247,21 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params: Map::new(),
             }
         }
+        "workspace_create" => {
+            reject_unexpected(args, &["name", "working_dir"], name)?;
+            let mut params = Map::new();
+            let working_dir = optional_non_blank(args, "working_dir")?.ok_or_else(|| {
+                ToolCallError::validation("workspace_create requires working_dir")
+            })?;
+            params.insert("working_dir".to_string(), Value::String(working_dir));
+            if let Some(workspace_name) = optional_non_blank(args, "name")? {
+                params.insert("name".to_string(), Value::String(workspace_name));
+            }
+            SocketCall {
+                method: "workspace.create",
+                params,
+            }
+        }
         "surface_list" => {
             reject_unexpected(
                 args,
@@ -679,6 +694,17 @@ fn tool_specs() -> Vec<ToolSpec> {
             input_schema: object_schema(&[], json!({})),
         },
         ToolSpec {
+            name: "workspace_create",
+            description: "Open a new ForkTTY workspace on a directory. Use this to satisfy the worktree tools' open-workspace precondition before worktree_create.",
+            input_schema: object_schema(
+                &["working_dir"],
+                json!({
+                    "working_dir": string_prop("Directory the workspace opens in (the repo root for worktree work)."),
+                    "name": string_prop("Workspace name; defaults to \"workspace\"."),
+                }),
+            ),
+        },
+        ToolSpec {
             name: "surface_list",
             description: "List panes/surfaces in a workspace. Defaults to FORKTTY_WORKSPACE_ID when launched from a ForkTTY pane; omit targeting to inspect that pane's workspace.",
             input_schema: object_schema(
@@ -930,6 +956,45 @@ mod tests {
         assert_eq!(response["id"], 9);
         assert_eq!(response["result"]["structuredContent"]["sent"], true);
         assert_eq!(requests_handle.join().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tools_call_workspace_create_forwards_working_dir() {
+        let (socket_path, requests_handle) = fake_socket(1, |request| {
+            assert_eq!(request["method"], "workspace.create");
+            assert_eq!(request["params"]["working_dir"], "/tmp/repo");
+            assert_eq!(request["params"]["name"], "scratch");
+            JsonRpcResponse::ok(
+                request["id"].clone(),
+                json!({ "id": "workspace-9", "name": "scratch" }),
+            )
+        });
+        let input = br#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"workspace_create","arguments":{"working_dir":"/tmp/repo","name":"scratch"}}}
+"#;
+        let mut output = Vec::new();
+        run_with_io(BufReader::new(&input[..]), &mut output, socket_path).unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(response["result"]["structuredContent"]["id"], "workspace-9");
+        assert_eq!(requests_handle.join().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tools_call_workspace_create_requires_working_dir() {
+        let input = br#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"workspace_create","arguments":{"name":"scratch"}}}
+"#;
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(response["result"]["isError"], true);
+        assert!(response["result"]["structuredContent"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("requires working_dir"));
     }
 
     #[test]
