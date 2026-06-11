@@ -175,6 +175,306 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let counter = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join("spawn-tests")
+                .join(format!("{}-{counter}-{name}", std::process::id()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn with_env<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var_os(key)))
+            .collect::<Vec<_>>();
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let result = catch_unwind(AssertUnwindSafe(f));
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        match result {
+            Ok(value) => value,
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn env_map(entries: Vec<String>) -> BTreeMap<String, String> {
+        entries
+            .into_iter()
+            .map(|entry| {
+                let (key, value) = entry.split_once('=').unwrap();
+                (key.to_string(), value.to_string())
+            })
+            .collect()
+    }
+
+    fn spawn_request() -> SpawnRequest {
+        SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "bash".to_string(),
+            args: strings(&["-l", "-i"]),
+            cwd: PathBuf::from("/"),
+            socket_path: PathBuf::from("/run/user/1000/forktty.sock"),
+            extra_env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn appimage_runtime_dirs_returns_sorted_runtime_dirs() {
+        let dirs = with_env(
+            &[
+                ("APPDIR", Some("/run/user/1000/.mount_forktty")),
+                ("FORKTTY_APPIMAGE_DIR", Some("/opt/forktty")),
+            ],
+            appimage_runtime_dirs,
+        );
+
+        assert_eq!(
+            dirs,
+            strings(&["/opt/forktty", "/run/user/1000/.mount_forktty"])
+        );
+    }
+
+    #[test]
+    fn sanitize_appimage_child_environment_removes_runtime_paths() {
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let mut env = BTreeMap::from([
+            (
+                "LD_LIBRARY_PATH".to_string(),
+                format!("/usr/lib:{appimage_dir}/usr/lib:/usr/local/lib"),
+            ),
+            (
+                "GDK_PIXBUF_MODULE_FILE".to_string(),
+                format!("{appimage_dir}/usr/lib/gdk-pixbuf/loaders.cache"),
+            ),
+            (
+                "NORMAL_VAR".to_string(),
+                format!("{appimage_dir}/bin/forktty"),
+            ),
+        ]);
+
+        sanitize_appimage_child_environment(&mut env, &[appimage_dir.to_string()]);
+
+        assert_eq!(
+            env.get("LD_LIBRARY_PATH").map(String::as_str),
+            Some("/usr/lib:/usr/local/lib")
+        );
+        assert!(!env.contains_key("GDK_PIXBUF_MODULE_FILE"));
+        assert_eq!(
+            env.get("NORMAL_VAR").map(String::as_str),
+            Some("/run/user/1000/.mount_forktty/bin/forktty")
+        );
+    }
+
+    #[test]
+    fn child_environment_strips_appimage_runtime_and_adds_request_env() {
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let ld_library_path = format!("{appimage_dir}/lib:/usr/lib");
+        let env = with_env(
+            &[
+                ("APPDIR", Some(appimage_dir)),
+                ("APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("APPIMAGE_VAR", Some("runtime")),
+                ("LD_LIBRARY_PATH", Some(ld_library_path.as_str())),
+                ("NORMAL_SYSTEM_VAR", Some("system-value")),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.extra_env = vec![("CUSTOM_KEY".to_string(), "custom-value".to_string())];
+                env_map(child_environment(&request))
+            },
+        );
+
+        assert!(!env.contains_key("APPDIR"));
+        assert!(!env.contains_key("APPIMAGE"));
+        assert!(!env.contains_key("APPIMAGE_VAR"));
+        assert_eq!(
+            env.get("LD_LIBRARY_PATH").map(String::as_str),
+            Some("/usr/lib")
+        );
+        assert_eq!(
+            env.get("NORMAL_SYSTEM_VAR").map(String::as_str),
+            Some("system-value")
+        );
+        assert_eq!(
+            env.get("CUSTOM_KEY").map(String::as_str),
+            Some("custom-value")
+        );
+        assert_eq!(
+            env.get("FORKTTY_WORKSPACE_ID").map(String::as_str),
+            Some("workspace-1")
+        );
+        assert_eq!(
+            env.get("FORKTTY_SOCKET_PATH").map(String::as_str),
+            Some("/run/user/1000/forktty.sock")
+        );
+    }
+
+    #[test]
+    fn child_cwd_returns_utf8_cwd() {
+        let mut request = spawn_request();
+        request.cwd = PathBuf::from("/workspace/forktty");
+
+        assert_eq!(child_cwd(&request), "/workspace/forktty");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn child_cwd_replaces_invalid_utf8_bytes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut request = spawn_request();
+        request.cwd = PathBuf::from(OsString::from_vec(vec![
+            b'/', b'b', b'a', b'd', b'/', 0xff, 0xfe,
+        ]));
+
+        assert_eq!(child_cwd(&request), "/bad/\u{fffd}\u{fffd}");
+    }
+
+    #[test]
+    fn child_argv_uses_shell_and_args_without_unset_keys() {
+        let argv = child_argv(&spawn_request(), &[]);
+
+        assert_eq!(argv, strings(&["bash", "-l", "-i"]));
+    }
+
+    #[test]
+    fn child_argv_prefixes_env_unset_flags_when_env_is_available() {
+        let argv = child_argv(&spawn_request(), &strings(&["APPIMAGE", "APPDIR"]));
+
+        let Some(env_command) = env_command_path() else {
+            assert_eq!(argv, strings(&["bash", "-l", "-i"]));
+            return;
+        };
+        assert_eq!(
+            argv,
+            strings(&[
+                env_command.as_str(),
+                "-u",
+                "APPIMAGE",
+                "-u",
+                "APPDIR",
+                "bash",
+                "-l",
+                "-i",
+            ])
+        );
+    }
+
+    #[test]
+    fn appimage_runtime_env_keys_returns_sorted_runtime_keys() {
+        let keys = with_env(
+            &[
+                ("APPDIR", Some("/appdir")),
+                ("OWD", Some("/home/user")),
+                ("APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("APPIMAGE_EXTRACT_AND_RUN", Some("1")),
+                ("FORKTTY_APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("NOT_APPIMAGE_KEY", Some("kept")),
+            ],
+            appimage_runtime_env_keys,
+        );
+
+        for expected in ["APPDIR", "APPIMAGE", "APPIMAGE_EXTRACT_AND_RUN", "OWD"] {
+            assert!(keys.contains(&expected.to_string()));
+        }
+        for unexpected in ["FORKTTY_APPIMAGE", "NOT_APPIMAGE_KEY"] {
+            assert!(!keys.contains(&unexpected.to_string()));
+        }
+        let mut sorted = keys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn env_command_path_returns_an_executable_env() {
+        let path = env_command_path();
+        if Path::new("/usr/bin/env").exists() || Path::new("/bin/env").exists() {
+            let path = path.expect("env command should be found");
+            assert!(matches!(path.as_str(), "/usr/bin/env" | "/bin/env"));
+            assert!(is_executable_file(Path::new(&path)));
+        } else {
+            assert!(path.is_none());
+        }
+    }
+
+    #[test]
+    fn is_executable_file_accepts_current_executable() {
+        let path = std::env::current_exe().unwrap();
+
+        assert!(is_executable_file(&path));
+    }
+
+    #[test]
+    fn is_executable_file_rejects_directories() {
+        let dir = TestDir::new("directory");
+
+        assert!(!is_executable_file(dir.path()));
+    }
+
+    #[test]
+    fn is_executable_file_rejects_missing_paths() {
+        let dir = TestDir::new("missing-path");
+
+        assert!(!is_executable_file(&dir.path().join("missing")));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn is_executable_file_rejects_non_executable_files() {
+        let dir = TestDir::new("non-executable");
+        let path = dir.path().join("plain-file");
+        fs::write(&path, "not executable").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&path, permissions).unwrap();
+
+        assert!(!is_executable_file(&path));
+    }
 
     // The appimage runtime's vars must not leak into terminal children, but
     // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
