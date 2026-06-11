@@ -145,3 +145,61 @@ impl ImportResult {
         self.skipped += other.skipped;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_chromium() {
+        assert!(!BrowserFamily::Firefox.is_chromium());
+        assert!(BrowserFamily::Chrome.is_chromium());
+        assert!(BrowserFamily::Chromium.is_chromium());
+        assert!(BrowserFamily::Brave.is_chromium());
+        assert!(BrowserFamily::Edge.is_chromium());
+        assert!(BrowserFamily::Vivaldi.is_chromium());
+    }
+
+    #[test]
+    fn test_safe_storage_label() {
+        assert_eq!(BrowserFamily::Firefox.safe_storage_label(), None);
+        assert_eq!(BrowserFamily::Chrome.safe_storage_label(), Some("Chrome Safe Storage"));
+        assert_eq!(BrowserFamily::Chromium.safe_storage_label(), Some("Chromium Safe Storage"));
+        assert_eq!(BrowserFamily::Brave.safe_storage_label(), Some("Brave Safe Storage"));
+        assert_eq!(BrowserFamily::Edge.safe_storage_label(), Some("Microsoft Edge Safe Storage"));
+        assert_eq!(BrowserFamily::Vivaldi.safe_storage_label(), Some("Vivaldi Safe Storage"));
+    }
+
+    #[test]
+    fn test_label() {
+        assert_eq!(BrowserFamily::Firefox.label(), "Firefox");
+        assert_eq!(BrowserFamily::Chrome.label(), "Google Chrome");
+        assert_eq!(BrowserFamily::Chromium.label(), "Chromium");
+        assert_eq!(BrowserFamily::Brave.label(), "Brave");
+        assert_eq!(BrowserFamily::Edge.label(), "Microsoft Edge");
+        assert_eq!(BrowserFamily::Vivaldi.label(), "Vivaldi");
+    }
+
+    #[test]
+    fn test_import_result_add() {
+        let mut result1 = ImportResult {
+            cookies: 1,
+            history: 2,
+            bookmarks: 3,
+            skipped: 4,
+        };
+        let result2 = ImportResult {
+            cookies: 5,
+            history: 6,
+            bookmarks: 7,
+            skipped: 8,
+        };
+
+        result1.add(&result2);
+
+        assert_eq!(result1.cookies, 6);
+        assert_eq!(result1.history, 8);
+        assert_eq!(result1.bookmarks, 10);
+        assert_eq!(result1.skipped, 12);
+    }
+}
