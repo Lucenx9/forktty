@@ -434,6 +434,14 @@ pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, Wor
     if !canonical_hook.starts_with(&canonical_wt) {
         return Err(WorktreeError::HookOutsideWorktree);
     }
+    if canonical_hook
+        .strip_prefix(&canonical_wt)
+        .unwrap_or(&canonical_hook)
+        .components()
+        .any(|c| c.as_os_str() == ".git")
+    {
+        return Err(WorktreeError::HookOutsideWorktree);
+    }
     let mut child = spawn_hook(&canonical_hook, worktree_path)?;
     let start = Instant::now();
     loop {
