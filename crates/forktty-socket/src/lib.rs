@@ -41,6 +41,13 @@ const EVENTS_TICK: Duration = Duration::from_millis(250);
 /// `stream_events` forever, holding one of the [`MAX_SOCKET_CONNECTIONS`]
 /// permits; enough of those would deny the socket to agent hooks.
 const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Max time one response write may take. Responses can far exceed the kernel
+/// socket buffer (`notification.list` or `metadata.list_logs` can reach tens
+/// of MB), so a client that sends a request and then stops reading would
+/// otherwise park `write_response` on a full buffer forever, holding one of
+/// the [`MAX_SOCKET_CONNECTIONS`] permits. Generous so a legitimately large
+/// response to a slow reader still gets through.
+const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -468,14 +475,10 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
             // A client aborting mid-handshake (or a transient kernel hiccup)
             // must not take the whole IPC server down for the rest of the
             // process lifetime; only give up on genuinely fatal errors.
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    io::ErrorKind::ConnectionAborted
-                        | io::ErrorKind::ConnectionReset
-                        | io::ErrorKind::Interrupted
-                ) =>
-            {
+            Err(err) if is_transient_accept_error(&err) => {
+                // Brief pause so accept() does not hot-spin while fds are
+                // exhausted (EMFILE/ENFILE persists until something closes).
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
             Err(err) => return Err(err.into()),
@@ -499,6 +502,21 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
     }
 }
 
+/// Whether an `accept()` failure is transient and the loop should keep
+/// serving. Besides peer-side aborts, this covers process/system fd
+/// exhaustion (EMFILE/ENFILE): those surface as `ErrorKind::Uncategorized`,
+/// so they are matched by raw errno, and they clear once a connection (or
+/// any other fd) closes — returning the error would kill the IPC server for
+/// the rest of the process lifetime.
+fn is_transient_accept_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+    ) || matches!(err.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE))
+}
+
 /// Background task: snapshot the model every [`EVENTS_TICK`], diff against the
 /// previous snapshot, and broadcast each resulting event. Send errors (no
 /// subscribers) are ignored. Ends when the server process exits.
@@ -514,7 +532,10 @@ fn spawn_event_tick(state: SocketAppState) {
             let next = match state.model.try_lock() {
                 Ok(model) => events::snapshot(&model),
                 Err(std::sync::TryLockError::WouldBlock) => continue,
-                Err(std::sync::TryLockError::Poisoned(_)) => Snapshot::default(),
+                // A poisoned lock must not be diffed as an empty snapshot:
+                // that would broadcast a false removal of every workspace
+                // and surface to all subscribers. Skip the tick instead.
+                Err(std::sync::TryLockError::Poisoned(_)) => continue,
             };
             for event in events::diff(&prev, &next) {
                 let _ = state.events.send(event);
@@ -527,7 +548,11 @@ fn spawn_event_tick(state: SocketAppState) {
 fn current_snapshot(model: &Arc<Mutex<WorkspaceModel>>) -> Snapshot {
     match model.lock() {
         Ok(model) => events::snapshot(&model),
-        Err(_) => Snapshot::default(),
+        // Snapshot the poisoned data rather than pretending the model is
+        // empty: replaying an empty world to a late subscriber is strictly
+        // worse than a possibly mid-mutation (read-only) snapshot, and the
+        // next healthy tick re-asserts the true state anyway.
+        Err(poisoned) => events::snapshot(&poisoned.into_inner()),
     }
 }
 
@@ -538,7 +563,7 @@ async fn reject_over_capacity_connection(stream: tokio::net::UnixStream) {
         "server_busy",
         format!("Too many active socket connections (limit {MAX_SOCKET_CONNECTIONS})"),
     );
-    if let Err(err) = write_response(&mut writer, &response).await {
+    if let Err(err) = write_response(&mut writer, &response, RESPONSE_WRITE_TIMEOUT).await {
         eprintln!("forktty socket busy response failed: {err}");
     }
 }
@@ -694,14 +719,35 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
-                {
+                let closed = {
                     let mut model = state
                         .model
                         .lock()
                         .map_err(|_| "Lock poisoned".to_string())?;
-                    model
-                        .close_workspace(WorkspaceSelector::Id(&workspace_id))
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?;
+                    model.close_workspace(WorkspaceSelector::Id(&workspace_id))
+                };
+                if closed.is_none() {
+                    // A concurrent close won the race: the workspace is
+                    // already gone, and if the winner spawned its own
+                    // replacement ours is a duplicate that must be rolled
+                    // back instead of leaving two "main" workspaces behind.
+                    let rolled_back = rollback_replacement_if_redundant(
+                        state,
+                        &replacement.id,
+                        previous_active_id,
+                    )?;
+                    if rolled_back {
+                        if let Err(cleanup_err) = forget_terminal_surface_if_present(
+                            state,
+                            &replacement.focused_surface_id,
+                        ) {
+                            return Err(format!(
+                                "Workspace not found; replacement cleanup failed: {cleanup_err}"
+                            )
+                            .into());
+                        }
+                    }
+                    return Err(DispatchError::NotFound("workspace".to_string()));
                 }
                 return Ok(json!(workspace));
             }
@@ -853,12 +899,35 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
-                {
+                let closed = {
                     let mut model = state
                         .model
                         .lock()
                         .map_err(|_| "Lock poisoned".to_string())?;
-                    let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+                    model.close_workspace(WorkspaceSelector::Id(&workspace.id))
+                };
+                if closed.is_none() {
+                    // A concurrent close already removed this workspace. The
+                    // worktree itself is gone (removal committed above and
+                    // cannot be undone), so the removal still succeeded; only
+                    // roll back our now-redundant replacement instead of
+                    // leaving a duplicate "main" workspace behind.
+                    let rolled_back = rollback_replacement_if_redundant(
+                        state,
+                        &replacement.id,
+                        previous_active_id,
+                    )?;
+                    if rolled_back {
+                        if let Err(cleanup_err) = forget_terminal_surface_if_present(
+                            state,
+                            &replacement.focused_surface_id,
+                        ) {
+                            return Err(format!(
+                                "Worktree removed but replacement cleanup failed: {cleanup_err}"
+                            )
+                            .into());
+                        }
+                    }
                 }
                 return Ok(json!({"removed": name}));
             }
@@ -1738,6 +1807,34 @@ fn rollback_workspace_creation(
     Ok(())
 }
 
+/// Roll back a replacement workspace spawned for a last-workspace close whose
+/// commit lost a race (the target workspace was already closed by a
+/// concurrent request, which spawned its own replacement). The replacement is
+/// only removed while at least one other workspace exists: if the concurrent
+/// close went through the non-last-workspace path instead, our replacement
+/// may be the sole survivor and must be kept. The count check and the close
+/// share one lock so the model can never end up empty. Returns whether the
+/// replacement was removed (the caller must then forget its terminal
+/// surface).
+fn rollback_replacement_if_redundant(
+    state: &SocketAppState,
+    replacement_id: &str,
+    previous_active_id: Option<String>,
+) -> Result<bool, String> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if model.list_workspaces().len() <= 1 {
+        return Ok(false);
+    }
+    let _ = model.close_workspace(WorkspaceSelector::Id(replacement_id));
+    if let Some(previous_active_id) = previous_active_id {
+        let _ = model.select_workspace(WorkspaceSelector::Id(&previous_active_id));
+    }
+    Ok(true)
+}
+
 fn rollback_surface_creation(state: &SocketAppState, surface_id: &str) -> Result<(), String> {
     let mut model = state
         .model
@@ -1859,14 +1956,23 @@ fn validate_socket_cwd_against_open_workspaces(
     cwd: &Path,
 ) -> Result<(), String> {
     let candidate = canonical_repo_common_dir(cwd)?;
-    let model = state
-        .model
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?;
-    let allowed = model
-        .list_workspaces()
+    // Copy the working dirs out first: canonical_repo_common_dir does git2
+    // repository discovery and filesystem I/O, which must not run while
+    // holding the model lock shared with the GTK main thread.
+    let working_dirs = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .list_workspaces()
+            .into_iter()
+            .map(|workspace| workspace.working_dir)
+            .collect::<Vec<_>>()
+    };
+    let allowed = working_dirs
         .into_iter()
-        .filter_map(|workspace| canonical_repo_common_dir(&workspace.working_dir).ok())
+        .filter_map(|working_dir| canonical_repo_common_dir(&working_dir).ok())
         .any(|open_repo| open_repo == candidate);
     if allowed {
         Ok(())
@@ -3090,6 +3196,17 @@ async fn handle_connection(
     stream: tokio::net::UnixStream,
     state: SocketAppState,
 ) -> Result<(), SocketError> {
+    handle_connection_with_write_timeout(stream, state, RESPONSE_WRITE_TIMEOUT).await
+}
+
+// The write timeout is injectable so tests of the stalled-client behavior can
+// pass a short one instead of waiting out the production
+// [`RESPONSE_WRITE_TIMEOUT`].
+async fn handle_connection_with_write_timeout(
+    stream: tokio::net::UnixStream,
+    state: SocketAppState,
+    write_timeout: Duration,
+) -> Result<(), SocketError> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     loop {
@@ -3109,7 +3226,7 @@ async fn handle_connection(
                     "request_too_large",
                     "Request exceeds 1 MiB",
                 );
-                write_response(&mut writer, &response).await?;
+                write_response(&mut writer, &response, write_timeout).await?;
                 break;
             }
             Ok(Some(Err(ReadLineError::InvalidUtf8))) => {
@@ -3118,7 +3235,7 @@ async fn handle_connection(
                     "parse_error",
                     "Request must be valid UTF-8 JSON",
                 );
-                write_response(&mut writer, &response).await?;
+                write_response(&mut writer, &response, write_timeout).await?;
                 break;
             }
             Ok(Some(Err(ReadLineError::Io(err)))) => return Err(err.into()),
@@ -3128,7 +3245,7 @@ async fn handle_connection(
             Ok(request) => request,
             Err(err) => {
                 let response = JsonRpcResponse::error(Value::Null, "parse_error", err.to_string());
-                write_response(&mut writer, &response).await?;
+                write_response(&mut writer, &response, write_timeout).await?;
                 continue;
             }
         };
@@ -3153,7 +3270,7 @@ async fn handle_connection(
             Ok(result) => JsonRpcResponse::ok(id, result),
             Err(err) => JsonRpcResponse::error(id, err.code(), err.to_string()),
         };
-        write_response(&mut writer, &response).await?;
+        write_response(&mut writer, &response, write_timeout).await?;
     }
     Ok(())
 }
@@ -3253,14 +3370,28 @@ async fn write_ndjson(
     Ok(())
 }
 
+/// Write one response line, bounded by `timeout`: a client that sent a request
+/// and then stopped reading must produce an error (ending its connection and
+/// releasing the permit) instead of parking the connection task on a full
+/// socket buffer forever.
 async fn write_response(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     response: &JsonRpcResponse,
+    timeout: Duration,
 ) -> Result<(), io::Error> {
     let mut bytes = serde_json::to_vec(response)?;
     bytes.push(b'\n');
-    writer.write_all(&bytes).await?;
-    writer.flush().await
+    tokio::time::timeout(timeout, async {
+        writer.write_all(&bytes).await?;
+        writer.flush().await
+    })
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "client stopped reading; dropping the connection",
+        )
+    })?
 }
 
 #[derive(Debug)]
@@ -3358,7 +3489,17 @@ fn probe_forktty_socket_with_timeout(
     stream.flush()?;
     let mut response = Vec::with_capacity(256);
     let mut buf = [0u8; 256];
+    // Overall deadline on top of the per-read timeouts: a peer that trickles
+    // one byte per read window never trips the read timeout and would stretch
+    // the probe (which runs on the GTK main thread at startup) almost
+    // indefinitely. A real ForkTTY answers a ping in one write, so anything
+    // still dribbling after a few timeout periods is a foreign peer.
+    let started = std::time::Instant::now();
+    let overall_deadline = timeout * 4;
     loop {
+        if started.elapsed() > overall_deadline {
+            return Ok(false);
+        }
         let n = stream.read(&mut buf)?;
         if n == 0 {
             break;
@@ -3976,6 +4117,65 @@ mod tests {
         let result = probe_forktty_socket_with_timeout(client, Duration::from_secs(30)).unwrap();
         let _ = server_thread.join();
         assert!(!result);
+    }
+
+    #[test]
+    fn probe_gives_up_on_peer_that_trickles_bytes() {
+        use std::io::{BufRead as _, Write as _};
+
+        let (client, server) = StdUnixStream::pair().unwrap();
+        let server_thread = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(server);
+            let mut request = String::new();
+            let _ = reader.read_line(&mut request);
+            let mut server = reader.into_inner();
+            // Dribble one byte per interval, faster than the per-read timeout
+            // so no individual read ever times out, and never send a newline.
+            // Writes fail once the probe gives up and drops its end.
+            for _ in 0..300 {
+                if server.write_all(b"x").is_err() {
+                    return;
+                }
+                let _ = server.flush();
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let result = probe_forktty_socket_with_timeout(client, Duration::from_millis(50)).unwrap();
+        let elapsed = started.elapsed();
+        let _ = server_thread.join();
+
+        assert!(!result, "trickling peer must be treated as foreign");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "probe must hit its overall deadline, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn transient_accept_errors_cover_fd_exhaustion() {
+        assert!(is_transient_accept_error(&io::Error::from_raw_os_error(
+            libc::EMFILE
+        )));
+        assert!(is_transient_accept_error(&io::Error::from_raw_os_error(
+            libc::ENFILE
+        )));
+        assert!(is_transient_accept_error(&io::Error::from(
+            io::ErrorKind::ConnectionAborted
+        )));
+        assert!(is_transient_accept_error(&io::Error::from(
+            io::ErrorKind::ConnectionReset
+        )));
+        assert!(is_transient_accept_error(&io::Error::from(
+            io::ErrorKind::Interrupted
+        )));
+        assert!(!is_transient_accept_error(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
+        assert!(!is_transient_accept_error(&io::Error::from(
+            io::ErrorKind::InvalidInput
+        )));
     }
 
     #[test]
@@ -5373,6 +5573,45 @@ mod tests {
                 .cwd,
             project_cwd
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn racing_last_workspace_closes_leave_exactly_one_replacement() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+
+        // Two concurrent closes of the same last workspace: both may pass the
+        // is_last_workspace check and spawn a replacement, but only one
+        // commit can succeed; the loser must roll its replacement back.
+        let state_a = state.clone();
+        let state_b = state.clone();
+        let id_a = workspace_id.clone();
+        let id_b = workspace_id;
+        let (a, b) = tokio::join!(
+            tokio::spawn(async move {
+                dispatch(&state_a, "workspace.close", json!({"id": id_a})).await
+            }),
+            tokio::spawn(async move {
+                dispatch(&state_b, "workspace.close", json!({"id": id_b})).await
+            }),
+        );
+        let (a, b) = (a.unwrap(), b.unwrap());
+
+        assert!(
+            a.is_ok() != b.is_ok(),
+            "exactly one close must win the race: {a:?} / {b:?}"
+        );
+        let workspaces = {
+            let model = state.model.lock().unwrap();
+            model.list_workspaces()
+        };
+        assert_eq!(
+            workspaces.len(),
+            1,
+            "the race must leave exactly one workspace, got {workspaces:?}"
+        );
+        assert_eq!(workspaces[0].name, "main");
     }
 
     #[tokio::test]
@@ -6846,6 +7085,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn poisoned_model_lock_does_not_broadcast_false_removals() {
+        let (state, _backend) = test_state();
+        let mut receiver = state.events.subscribe();
+        spawn_event_tick(state.clone());
+        // Let at least one healthy tick run so the tick task's previous
+        // snapshot contains the bootstrapped workspace.
+        tokio::time::sleep(EVENTS_TICK * 2).await;
+
+        // Poison the model lock from a thread that panics while holding it.
+        let model = state.model.clone();
+        std::thread::spawn(move || {
+            let _guard = model.lock().unwrap();
+            panic!("poison the model lock");
+        })
+        .join()
+        .unwrap_err();
+        assert!(state.model.lock().is_err(), "lock must be poisoned");
+
+        // Ticks against the poisoned lock must be skipped, not diffed against
+        // an empty snapshot (which would broadcast a removal of every
+        // workspace and surface to all subscribers).
+        tokio::time::sleep(EVENTS_TICK * 4).await;
+        assert!(
+            matches!(
+                receiver.try_recv(),
+                Err(broadcast::error::TryRecvError::Empty)
+            ),
+            "no events may be broadcast while the lock is poisoned"
+        );
+    }
+
+    #[tokio::test]
     async fn stalled_subscriber_is_dropped_by_the_write_timeout() {
         use tokio::io::AsyncReadExt;
 
@@ -6894,6 +7165,53 @@ mod tests {
         let err = result
             .unwrap()
             .expect_err("stream must end with a timeout error");
+        assert!(
+            err.to_string().contains("stopped reading"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stalled_request_client_is_dropped_by_the_response_write_timeout() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+
+        // Enough log payload that the serialized metadata.list_logs response
+        // cannot fit in the kernel socket buffers, so the response write
+        // stalls until the timeout fires.
+        let big_message = "x".repeat(16_000);
+        for _ in 0..64 {
+            dispatch(
+                &state,
+                "metadata.log",
+                json!({"workspace_id": workspace_id, "message": big_message}),
+            )
+            .await
+            .unwrap();
+        }
+
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let connection_task = tokio::spawn(handle_connection_with_write_timeout(
+            server,
+            state,
+            Duration::from_millis(200),
+        ));
+
+        // Send a request whose response is huge, then never read. Both client
+        // halves stay open: a stalled client, not a disconnected one (EOF or
+        // EPIPE would end the connection without the write timeout).
+        let (_client_read_keepalive, mut client_write) = client.into_split();
+        let request = format!(
+            "{{\"id\":1,\"method\":\"metadata.list_logs\",\"params\":{{\"workspace_id\":\"{workspace_id}\"}}}}\n"
+        );
+        client_write.write_all(request.as_bytes()).await.unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(10), connection_task)
+            .await
+            .expect("stalled client must be dropped, not held forever")
+            .unwrap();
+        let err = result.expect_err("connection must end with a timeout error");
         assert!(
             err.to_string().contains("stopped reading"),
             "unexpected error: {err}"
