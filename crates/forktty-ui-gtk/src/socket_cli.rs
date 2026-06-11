@@ -5095,8 +5095,16 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
     if spec.key == "codex" && hooks_installed {
         report["trustCheck"] = describe_codex_hook_trust(&config_path);
     }
+    let healthy = report["socket"]["inspect"]["exists"] == json!(true)
+        && report["socket"]["inspect"]["readable"] == json!(true)
+        && report["socket"]["inspect"]["writable"] == json!(true)
+        && report["hookConfig"]["exists"] == json!(true)
+        && report["launcherCheck"]["status"] == json!("ok");
+    report["version"] = json!(1);
+    report["ok"] = json!(healthy);
     if context.json {
-        return print_json(&report);
+        print_json(&report)?;
+        return hooks_health_exit("hooks doctor", spec.key, healthy);
     }
     eprintln!("ForkTTY {} hook doctor", spec.label);
     eprintln!(
@@ -5133,7 +5141,38 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
     if let Some(line) = format_codex_trust_check(&report["trustCheck"]) {
         eprintln!("{line}");
     }
-    Ok(())
+    hooks_health_exit("hooks doctor", spec.key, healthy)
+}
+
+/// Exit-code contract for hooks doctor/test: 0 when every check passes,
+/// 1 otherwise, so CI can gate on the exit code alone.
+fn hooks_health_exit(command: &str, agent: &str, healthy: bool) -> CliResult<()> {
+    if healthy {
+        Ok(())
+    } else {
+        Err(CliError {
+            message: format!("{command} {agent}: problems found (see report above)"),
+            code: None,
+            exit: 1,
+        })
+    }
+}
+
+fn record_hook_check(
+    checks: &mut Vec<Value>,
+    method: &str,
+    result: Result<Value, CliError>,
+) -> Option<Value> {
+    match result {
+        Ok(value) => {
+            checks.push(json!({ "method": method, "ok": true }));
+            Some(value)
+        }
+        Err(err) => {
+            checks.push(json!({ "method": method, "ok": false, "error": err.message }));
+            None
+        }
+    }
 }
 
 fn format_codex_trust_check(check: &Value) -> Option<String> {
@@ -5462,29 +5501,28 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let target = hook_target_params();
     let status_key = format!("agent:{}:hook-test", spec.key);
     let order = next_hook_event_order();
-    eprintln!("ForkTTY {} hook test", spec.label);
-    eprintln!("socket: {}", context.socket_path.display());
-    eprintln!(
-        "workspace: {}",
-        target
-            .get("workspace_id")
-            .and_then(Value::as_str)
-            .unwrap_or("(active workspace fallback)")
-    );
-    eprintln!(
-        "surface: {}",
-        target
-            .get("surface_id")
-            .and_then(Value::as_str)
-            .unwrap_or("(none)")
-    );
-    let ping = send_socket_request(&context.socket_path, "system.ping", json!({}))?;
-    if ping.as_str() != Some("pong") {
-        return Err(CliError::new(format!(
-            "system.ping returned {ping}, expected \"pong\""
-        )));
-    }
-    eprintln!("system.ping: ok");
+    let workspace = target
+        .get("workspace_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let surface = target
+        .get("surface_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    // Every method is attempted even after a failure: the point of the
+    // report is per-method pass/fail, and cleanup calls must run regardless.
+    let mut checks: Vec<Value> = Vec::new();
+
+    let ping = match send_socket_request(&context.socket_path, "system.ping", json!({})) {
+        Ok(value) if value.as_str() == Some("pong") => Ok(value),
+        Ok(value) => Err(CliError::new(format!(
+            "system.ping returned {value}, expected \"pong\""
+        ))),
+        Err(err) => Err(err),
+    };
+    record_hook_check(&mut checks, "system.ping", ping);
+
     let mut status_params = target.clone();
     status_params.insert("key".to_string(), Value::String(status_key.clone()));
     status_params.insert(
@@ -5497,25 +5535,34 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         HOOK_EVENT_ORDER_PARAM.to_string(),
         Value::String(order.clone()),
     );
-    send_socket_request(
-        &context.socket_path,
+    record_hook_check(
+        &mut checks,
         "metadata.set_status",
-        Value::Object(status_params),
-    )?;
-    eprintln!("metadata.set_status: ok");
+        send_socket_request(
+            &context.socket_path,
+            "metadata.set_status",
+            Value::Object(status_params),
+        ),
+    );
+
     let mut log_params = target.clone();
     log_params.insert("level".to_string(), Value::String("info".to_string()));
     log_params.insert(
         "message".to_string(),
         Value::String(format!("{} hook roundtrip test", spec.label)),
     );
-    send_socket_request(
-        &context.socket_path,
+    record_hook_check(
+        &mut checks,
         "metadata.log",
-        Value::Object(log_params),
-    )?;
-    eprintln!("metadata.log: ok");
-    let before = send_socket_request(&context.socket_path, "notification.list", json!({}))?;
+        send_socket_request(
+            &context.socket_path,
+            "metadata.log",
+            Value::Object(log_params),
+        ),
+    );
+
+    let before = send_socket_request(&context.socket_path, "notification.list", json!({}))
+        .unwrap_or(Value::Null);
     let mut notification_params = target.clone();
     notification_params.insert(
         "title".to_string(),
@@ -5526,36 +5573,93 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Value::String("Roundtrip validation".to_string()),
     );
     notification_params.insert("kind".to_string(), Value::String("prompt".to_string()));
-    let created = send_socket_request(
-        &context.socket_path,
+    let created = record_hook_check(
+        &mut checks,
         "notification.create",
-        Value::Object(notification_params),
-    )?;
-    eprintln!("notification.create: ok");
+        send_socket_request(
+            &context.socket_path,
+            "notification.create",
+            Value::Object(notification_params),
+        ),
+    );
+
     let mut clear_status = target.clone();
     clear_status.insert("key".to_string(), Value::String(status_key));
     clear_status.insert(
         HOOK_EVENT_ORDER_PARAM.to_string(),
         Value::String(increment_hook_event_order(&order)),
     );
-    let _ = send_socket_request(
-        &context.socket_path,
+    record_hook_check(
+        &mut checks,
         "metadata.clear_status",
-        Value::Object(clear_status),
+        send_socket_request(
+            &context.socket_path,
+            "metadata.clear_status",
+            Value::Object(clear_status),
+        ),
     );
-    eprintln!("metadata.clear_status: ok");
-    if before.as_array().is_some_and(Vec::is_empty) && created.get("id").is_some() {
-        let after = send_socket_request(&context.socket_path, "notification.list", json!({}))?;
-        if after
-            .as_array()
-            .is_some_and(|items| items.len() == 1 && items[0].get("id") == created.get("id"))
-        {
-            let _ = send_socket_request(&context.socket_path, "notification.clear", json!({}));
-            eprintln!("notification.clear: ok");
+
+    if before.as_array().is_some_and(Vec::is_empty)
+        && created
+            .as_ref()
+            .is_some_and(|value| value.get("id").is_some())
+    {
+        let after = send_socket_request(&context.socket_path, "notification.list", json!({}))
+            .unwrap_or(Value::Null);
+        if after.as_array().is_some_and(|items| {
+            items.len() == 1
+                && items[0].get("id") == created.as_ref().and_then(|value| value.get("id"))
+        }) {
+            record_hook_check(
+                &mut checks,
+                "notification.clear",
+                send_socket_request(&context.socket_path, "notification.clear", json!({})),
+            );
         }
     }
-    eprintln!("ForkTTY {} hook test: ok", spec.label);
-    Ok(())
+
+    let healthy = checks.iter().all(|check| check["ok"] == json!(true));
+    let report = json!({
+        "version": 1,
+        "agent": spec.key,
+        "socket": context.socket_path.display().to_string(),
+        "workspace": workspace,
+        "surface": surface,
+        "checks": checks,
+        "ok": healthy,
+    });
+    if context.json {
+        print_json(&report)?;
+        return hooks_health_exit("hooks test", spec.key, healthy);
+    }
+    eprintln!("ForkTTY {} hook test", spec.label);
+    eprintln!("socket: {}", context.socket_path.display());
+    eprintln!(
+        "workspace: {}",
+        workspace
+            .as_deref()
+            .unwrap_or("(active workspace fallback)")
+    );
+    eprintln!("surface: {}", surface.as_deref().unwrap_or("(none)"));
+    if let Some(entries) = report["checks"].as_array() {
+        for check in entries {
+            let method = check["method"].as_str().unwrap_or("?");
+            if check["ok"] == json!(true) {
+                eprintln!("{method}: ok");
+            } else {
+                eprintln!(
+                    "{method}: failed: {}",
+                    check["error"].as_str().unwrap_or("unknown error")
+                );
+            }
+        }
+    }
+    eprintln!(
+        "ForkTTY {} hook test: {}",
+        spec.label,
+        if healthy { "ok" } else { "failed" }
+    );
+    hooks_health_exit("hooks test", spec.key, healthy)
 }
 
 fn single_agent_command(
@@ -9710,6 +9814,88 @@ mod tests {
                 assert!(err.message.contains("events.subscribe response exceeds"));
             },
         );
+    }
+
+    fn hook_test_ok_response(
+        request: &Value,
+        list_calls: &std::sync::atomic::AtomicUsize,
+    ) -> String {
+        let result = match request["method"].as_str().unwrap_or("") {
+            "system.ping" => json!("pong"),
+            "notification.create" => json!({ "id": "n1" }),
+            "notification.list" => {
+                if list_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    json!([])
+                } else {
+                    json!([{ "id": "n1" }])
+                }
+            }
+            _ => json!({}),
+        };
+        format!(
+            "{}\n",
+            json!({ "id": request["id"], "ok": true, "result": result })
+        )
+    }
+
+    #[test]
+    fn hooks_test_green_path_runs_full_roundtrip() {
+        let list_calls = std::sync::atomic::AtomicUsize::new(0);
+        let requests = with_socket_server(
+            8,
+            move |request| hook_test_ok_response(request, &list_calls),
+            |socket_path| {
+                handle_hooks_test(&ctx_for(socket_path), strings(&["claude"])).unwrap();
+            },
+        );
+        let methods = requests
+            .iter()
+            .filter_map(|request| request["method"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            methods,
+            vec![
+                "system.ping",
+                "metadata.set_status",
+                "metadata.log",
+                "notification.list",
+                "notification.create",
+                "metadata.clear_status",
+                "notification.list",
+                "notification.clear",
+            ]
+        );
+    }
+
+    #[test]
+    fn hooks_test_continues_after_failure_and_exits_nonzero() {
+        let list_calls = std::sync::atomic::AtomicUsize::new(0);
+        let requests = with_socket_server(
+            6,
+            move |request| {
+                if request["method"] == "notification.create" {
+                    format!(
+                        "{}\n",
+                        json!({
+                            "id": request["id"],
+                            "ok": false,
+                            "error": { "code": "error", "message": "boom" }
+                        })
+                    )
+                } else {
+                    hook_test_ok_response(request, &list_calls)
+                }
+            },
+            |socket_path| {
+                let error =
+                    handle_hooks_test(&ctx_for(socket_path), strings(&["claude"])).unwrap_err();
+                assert_eq!(error.exit, 1);
+                assert!(error.message.contains("hooks test"));
+            },
+        );
+        // The cleanup call must still run after the failed method: the report
+        // is per-method, not abort-on-first-error.
+        assert_eq!(requests[5]["method"], "metadata.clear_status");
     }
 
     #[test]

@@ -1031,13 +1031,11 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name)
             .collect::<Vec<_>>();
-        for code in ["precondition_failed"] {
-            let (_, suggested_tool) = error_recovery(code).unwrap();
-            assert!(
-                names.contains(&suggested_tool),
-                "suggested_tool {suggested_tool} for {code} is not a real tool"
-            );
-        }
+        let (_, suggested_tool) = error_recovery("precondition_failed").unwrap();
+        assert!(
+            names.contains(&suggested_tool),
+            "suggested_tool {suggested_tool} is not a real tool"
+        );
     }
 
     #[test]
