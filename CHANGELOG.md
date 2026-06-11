@@ -4,12 +4,34 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
-### Fixed
-- The "Merge Worktree" context-menu action now actually merges the worktree branch into the base checkout. It used to focus the worktree's own workspace first and run the merge from there, so git merged the branch into itself and always reported "Already up to date" without touching the base. Merge now always resolves to the base repository regardless of which workspace is active.
-- A fast-forward worktree merge now writes the merged files into the base checkout's working tree. Previously it moved the branch ref but left the working tree and index pointing at the old commit, leaving the base checkout inconsistent with HEAD.
-
 ### Security
-- Pasting now routes clipboard text through libghostty's paste encoder, which strips ESC and other unsafe control bytes before wrapping in bracketed paste. Clipboard content carrying its own `\x1b[201~` end sequence (or a raw ESC) can no longer terminate bracketed-paste mode early and inject the trailing bytes as typed commands into the shell.
+- Pasted text is now encoded with libghostty's paste encoder, which neutralizes control bytes in the payload: clipboard content containing `\x1b[201~` can no longer terminate the bracketed-paste wrapper early and inject the remainder as typed input (including command execution in a shell).
+- A socket client that sends a request and then stops reading the response is now disconnected after a write timeout instead of holding one of the 64 connection slots forever; enough stuck clients used to deny the socket to agent hooks.
+
+### Fixed
+- "Merge Worktree" now works when invoked from inside a linked worktree (it used to always fail with "Cannot resolve admin directory"), and fast-forward merges update the main checkout's files instead of only moving the branch ref.
+- Large pastes (bigger than the kernel pty buffer, ~12KB) are no longer silently truncated; the terminal now waits for the child to drain its input, with a 10s safety timeout. Automatic VT query replies sent over the same path can no longer be cut off mid-sequence either.
+- Splitting panes beyond the persistable depth (6 nested splits) is refused instead of silently breaking every subsequent session autosave and losing the layout on restart.
+- Ctrl with non-letter keys (Space, `[`, `\`, `]`, `^`, `_`, `?`) now sends the standard C0 control codes instead of nothing.
+- In maximize mode, focus changes that don't alter the pane tree (command palette "Focus Next Pane", socket `surface.focus`) now switch the visible pane instead of leaving a stale one on screen.
+- The Close Pane confirmation now closes the pane it was opened for, even if a socket client switched the active workspace while the dialog was open.
+- Piped CLI output (`forktty list --json | head -1` and similar) no longer panics with exit 101 and a panic.log entry when the consumer closes the pipe early.
+- "Reset Terminal" no longer reverts the pane to libghostty's default colors; the configured theme is re-applied and stale paste/focus mode state is cleared.
+- A configured shell or notification command that is temporarily missing from disk no longer quarantines the whole config and resets every setting to defaults; the value is normalized (default shell / cleared command) on load instead.
+- The socket server keeps serving through transient `accept()` failures such as file-descriptor exhaustion (EMFILE/ENFILE) instead of shutting down for the rest of the app's lifetime.
+- Two concurrent closes of the last workspace (or a close racing a worktree removal) no longer leave a duplicate replacement workspace.
+- Replacing a pane or workspace context menu no longer risks a re-entrant `RefCell` crash from the popover's synchronous `closed` signal.
+- Saving a setting from the Settings dialog no longer reverts config changes made outside the dialog while it was open (e.g. the F9 sidebar toggle); each change is rebased onto the config on disk.
+- `forktty doctor --socket/--verbose/--debug` now explains that `doctor` runs locally and that the socket doctor takes global flags first (`forktty --json doctor`); the CLI help documents the reachable spelling.
+- Hook event ordering now uses CLOCK_BOOTTIME instead of the wall clock, so hook status updates are no longer silently dropped after the system clock steps backwards; orders from different clock sources are no longer compared against each other.
+- `forktty hooks` with a missing or typoed subcommand now exits with a helpful error instead of printing hook continue-JSON and exiting 0.
+- `worktree-status` rejects combining a positional path with `--path`/`--cwd` instead of silently ignoring the positional, matching its sibling commands.
+- `forktty --json doctor` and `forktty hooks setup` no longer hang forever when an inspected config path is a FIFO.
+- Socket connections from the CLI and agent hooks are bounded by a connect timeout instead of hanging when the app's accept backlog is full.
+- A poisoned model lock no longer makes the socket event stream broadcast false removal events for every workspace and surface.
+- Workspace cwd validation no longer runs git repository discovery while holding the model lock shared with the UI thread, and the startup socket probe now has an overall deadline instead of only per-read timeouts.
+- Shell-trampoline detection for the notification command now catches clustered flags (`bash -lc`), separated flags (`bash -x -c`), and `env`-wrapped shells (`env bash -c`).
+- A child process flooding its terminal can no longer hold the UI in a single unbounded read; terminal reads are capped at 1MiB per pump tick.
 
 ## [0.2.0-alpha.9] - 2026-06-11
 
