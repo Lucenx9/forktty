@@ -245,6 +245,25 @@ The socket CLI and agent hook bridge are native Rust code in the
 `forktty` binary, so source checkouts and packaged builds do not
 require Node.js.
 
+### MCP server
+
+ForkTTY can also expose the same local automation surface as MCP tools for
+agents that support stdio MCP servers:
+
+```bash
+forktty mcp                              # run the MCP server on stdio
+forktty mcp setup                        # register Codex, Claude, Gemini, Antigravity
+forktty mcp setup codex claude --dry-run
+forktty mcp remove gemini
+```
+
+The MCP server is local-only: it opens no network listener and bridges validated
+tool calls to the owner-only ForkTTY Unix socket. It exposes workspace/surface
+inspection, pane split/focus/send-text, worktree create/attach/remove/merge,
+notifications, and `status_set`. `FORKTTY_SOCKET_PATH`,
+`FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
+the MCP host launches from a ForkTTY pane.
+
 Spawned shells receive:
 
 - `TERM=xterm-256color`
@@ -269,12 +288,16 @@ and OpenCode:
 forktty hooks setup                       # install all supported agents
 forktty hooks setup codex                 # install just one
 forktty hooks setup codex claude --dry-run
+forktty hooks setup --full claude         # include Claude per-tool hooks
 forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
 ```
 
-`--dry-run` prints the would-be diff without touching disk. `hooks remove`
-removes only ForkTTY-managed entries/plugins and leaves unrelated agent hooks in
-place.
+`--dry-run` prints the would-be diff without touching disk. Claude Code setup
+uses the lifecycle profile by default, avoiding blocking per-tool hooks on every
+tool call; pass `--full` to include `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, and `PostToolBatch`. Re-running setup migrates Claude to
+the lifecycle profile unless `--full` is passed. `hooks remove` removes only
+ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
 
 The installer merges commands into the agent's own config file:
 

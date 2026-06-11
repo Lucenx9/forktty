@@ -175,7 +175,7 @@ Implemented categories:
 | Events | `events.subscribe` |
 | Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`, `browser.import.discover`, `browser.import.preview`, `browser.import.run` |
 
-Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Hook-originated metadata/notification requests that carry `hook_session_id` can use a bounded server-side session-to-surface cache when later hook requests lose their explicit `workspace_id`/`surface_id`; explicit targets always win, and stale cached surfaces are discarded instead of reviving closed panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 
@@ -190,6 +190,26 @@ Error responses include a structured `code` field so clients can branch on outco
 | `not_ready` | A target exists but is not ready to accept the operation. |
 | `invalid_param` | A supplied parameter has an invalid value. |
 | `error` | Catch-all for other failures (carries a `message`). |
+
+### MCP stdio bridge
+
+`forktty mcp` runs a local Model Context Protocol server over stdio. It does
+not listen on a network port; each MCP tool call is validated and then bridged
+to the same owner-only Unix socket described above. The server exposes
+`workspace_list`, `surface_list`, `surface_split`, `surface_send_text`,
+`surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
+`worktree_attach`, `worktree_remove`, `worktree_merge`,
+`notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the
+socket, and `FORKTTY_WORKSPACE_ID`/`FORKTTY_SURFACE_ID` are used as default
+targets when a tool omits an explicit target.
+
+`forktty mcp setup` registers this stdio server in verified user-scope MCP
+config locations for Codex (`$CODEX_HOME/config.toml` or
+`~/.codex/config.toml`), Claude Code (`~/.claude.json`), Gemini CLI
+(`~/.gemini/settings.json`), and Antigravity (`~/.gemini/config/mcp_config.json`).
+Registration writes a ForkTTY-managed server named `forktty`, preserves
+foreign MCP servers, writes atomically, and creates a `.bak-*` backup when
+content changes. `forktty mcp remove` removes only that managed server entry.
 
 ## Browser Pane Feature
 
@@ -247,7 +267,11 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 - No telemetry, update checks, or product-service network calls. Optional
   browser panes and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
+- `forktty mcp` is a local stdio bridge only; it opens no network listener and
+  enforces the same Unix socket ownership boundary as the CLI.
 - 1 MiB bounds for socket requests, config, and session files.
+- Hook session-to-surface correlation is local process memory only, capped at
+  256 entries, and evicted on session-end or surface close.
 - Shell and notification executables must be absolute executable files.
 - Hooks are limited to verified worktree-local paths.
 - Worktree removal rejects dirty/tampered targets.

@@ -38,12 +38,8 @@ const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
     ("UserPromptSubmit", "prompt-submit", 30),
     ("UserPromptExpansion", "prompt-expansion", 30),
     ("Setup", "setup", 30),
-    ("PreToolUse", "pre-tool", 30),
     ("PermissionRequest", "permission-request", 30),
     ("PermissionDenied", "permission-denied", 30),
-    ("PostToolUse", "post-tool", 30),
-    ("PostToolUseFailure", "post-tool-failure", 30),
-    ("PostToolBatch", "post-tool-batch", 30),
     ("SubagentStart", "subagent-start", 30),
     ("SubagentStop", "subagent-stop", 30),
     ("TaskCreated", "task-created", 30),
@@ -94,6 +90,8 @@ const TEMPLATES: &[HookTemplate] = &[
         label: "Claude",
         disabled_env: "FORKTTY_CLAUDE_HOOKS_DISABLED",
         matcher: Some("*"),
+        // The checked-in Claude template represents the default lifecycle
+        // profile; `forktty hooks setup --full claude` adds per-tool events.
         entries: CLAUDE_ENTRIES,
     },
     HookTemplate {

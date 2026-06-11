@@ -18,6 +18,7 @@ USAGE:
     forktty doctor          Print a local diagnostics report and exit.
     forktty hooks setup     Install Codex, Claude Code, Gemini, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
+    forktty mcp             Run the ForkTTY MCP stdio server.
     forktty ping            Check the ForkTTY socket daemon.
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
@@ -154,6 +155,7 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "notifications-clear"
             | "notification:clear"
             | "hooks"
+            | "mcp"
             | "ping"
             | "capabilities"
             | "events"
