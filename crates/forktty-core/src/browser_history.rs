@@ -620,32 +620,32 @@ mod tests {
     }
 
     #[test]
-    fn test_history_path() {
-        if dirs::data_local_dir().is_none() {
-            return; // Test environment does not provide a local data dir
-        }
+    fn history_path_uses_browser_profile_data_dir() {
+        let Some(data_dir) = dirs::data_local_dir() else {
+            return; // Test environment does not provide a local data dir.
+        };
         let profile = ProfileId::default();
-        let path = history_path(profile.clone()).expect("expected Some path");
-        assert!(path.ends_with("history.sqlite"));
+        let expected = data_dir
+            .join("forktty")
+            .join("browser_profiles")
+            .join(profile.to_string())
+            .join("history.sqlite");
 
-        let path_str = path.to_string_lossy();
-        assert!(path_str.contains("forktty"));
-        assert!(path_str.contains("browser_profiles"));
-        assert!(path_str.contains(&profile.to_string()));
+        assert_eq!(history_path(profile), Some(expected));
     }
 
     #[test]
-    fn test_bookmarks_path() {
-        if dirs::data_local_dir().is_none() {
-            return; // Test environment does not provide a local data dir
-        }
+    fn bookmarks_path_uses_browser_profile_data_dir() {
+        let Some(data_dir) = dirs::data_local_dir() else {
+            return; // Test environment does not provide a local data dir.
+        };
         let profile = ProfileId::default();
-        let path = bookmarks_path(profile.clone()).expect("expected Some path");
-        assert!(path.ends_with("bookmarks.json"));
+        let expected = data_dir
+            .join("forktty")
+            .join("browser_profiles")
+            .join(profile.to_string())
+            .join("bookmarks.json");
 
-        let path_str = path.to_string_lossy();
-        assert!(path_str.contains("forktty"));
-        assert!(path_str.contains("browser_profiles"));
-        assert!(path_str.contains(&profile.to_string()));
+        assert_eq!(bookmarks_path(profile), Some(expected));
     }
 }
