@@ -898,8 +898,30 @@ pub(super) fn settings_spin_row(
         spin_button.set_valign(gtk::Align::Center);
         spin_button.set_width_request(176);
         EditableExt::set_alignment(&spin_button, 1.0);
+        replace_spin_button_icons_with_glyphs(&spin_button);
     }
     row
+}
+
+// The +/- buttons use the icon theme's list-add/list-remove symbolics, which
+// some system icon themes ship in a form GTK cannot recolor (invisible on our
+// dark surfaces). ForkTTY otherwise only uses bundled icons; swap the spin
+// glyphs to theme-independent text labels like the rest of the app.
+fn replace_spin_button_icons_with_glyphs(spin_button: &gtk::SpinButton) {
+    let mut child = spin_button.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        if let Some(button) = current.downcast_ref::<gtk::Button>() {
+            let glyph = if button.has_css_class("down") {
+                "\u{2212}"
+            } else {
+                "+"
+            };
+            let label = gtk::Label::new(Some(glyph));
+            label.add_css_class("ft-spin-glyph");
+            button.set_child(Some(&label));
+        }
+    }
 }
 
 fn descendant_spin_button(widget: &gtk::Widget) -> Option<gtk::SpinButton> {
