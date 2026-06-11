@@ -173,7 +173,6 @@ fn install_browser_shortcuts<W: IsA<gtk::Widget>>(
 /// A browser pane: an address bar (entry + back/forward/reload) above a WebView.
 ///
 /// Wired into the pane layout in a later task; unused until then.
-#[allow(dead_code)]
 pub struct BrowserPaneWidget {
     container: gtk::Box,
     toolbar: gtk::Box,
@@ -190,7 +189,6 @@ pub struct BrowserPaneWidget {
     committed_uri_handlers: UriCommittedHandlers,
 }
 
-#[allow(dead_code)]
 impl BrowserPaneWidget {
     pub fn new(profile_id: &str, initial_url: &str) -> Self {
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -499,10 +497,6 @@ impl BrowserPaneWidget {
             last_requested: self.last_requested.clone(),
         }
         .load_uri(url);
-    }
-
-    pub fn current_uri(&self) -> Option<String> {
-        self.web_view.uri().map(|g| g.to_string())
     }
 
     pub fn go_back(&self) {
