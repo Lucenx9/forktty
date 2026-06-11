@@ -1,10 +1,13 @@
 //! Read history and bookmarks from source browsers.
 //! Firefox uses `places.sqlite`; Chromium family uses `History` (sqlite) + `Bookmarks` (JSON).
 
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, fmt, path::Path};
 
 use rusqlite::{Connection, OpenFlags};
-use serde::Deserialize;
+use serde::{
+    de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer,
+};
 
 use crate::model::{ImportedBookmark, ImportedVisit};
 
@@ -25,8 +28,95 @@ struct ChromiumBookmarkNode {
     name: Option<String>,
     #[serde(default)]
     url: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_chromium_bookmark_children")]
     children: Vec<ChromiumBookmarkNode>,
+}
+
+fn deserialize_chromium_bookmark_children<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ChromiumBookmarkNode>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_any(ChromiumBookmarkChildrenVisitor)
+}
+
+struct ChromiumBookmarkChildrenVisitor;
+
+impl<'de> Visitor<'de> for ChromiumBookmarkChildrenVisitor {
+    type Value = Vec<ChromiumBookmarkNode>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a Chromium bookmark children array")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut children = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(child) = seq.next_element()? {
+            children.push(child);
+        }
+        Ok(children)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_string<E>(self, _value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Vec::new())
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Vec::new())
+    }
 }
 
 fn open_ro(path: &Path) -> rusqlite::Result<Connection> {
@@ -239,6 +329,42 @@ mod tests {
         assert_eq!(bms.len(), 2);
         assert_eq!(bms[0].url, "https://d.test/");
         assert_eq!(bms[1].url, "https://e.test/");
+    }
+
+    #[test]
+    fn chromium_bookmarks_treat_null_children_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        fs::write(
+            &path,
+            r#"{"roots":{"bookmark_bar":{"children":[
+                {"type":"folder","name":"bad-folder","children":null},
+                {"type":"url","name":"Valid","url":"https://valid.test/"}]}}}"#,
+        )
+        .unwrap();
+
+        let bms = read_chromium_bookmarks(&path).unwrap();
+
+        assert_eq!(bms.len(), 1);
+        assert_eq!(bms[0].url, "https://valid.test/");
+    }
+
+    #[test]
+    fn chromium_bookmarks_treat_non_array_children_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        fs::write(
+            &path,
+            r#"{"roots":{"bookmark_bar":{"children":[
+                {"type":"folder","name":"bad-folder","children":{"oops":"not-array"}},
+                {"type":"url","name":"Valid","url":"https://valid.test/"}]}}}"#,
+        )
+        .unwrap();
+
+        let bms = read_chromium_bookmarks(&path).unwrap();
+
+        assert_eq!(bms.len(), 1);
+        assert_eq!(bms[0].url, "https://valid.test/");
     }
 
     #[test]
