@@ -163,11 +163,26 @@ mod tests {
     #[test]
     fn test_browser_family_safe_storage_label() {
         assert_eq!(BrowserFamily::Firefox.safe_storage_label(), None);
-        assert_eq!(BrowserFamily::Chrome.safe_storage_label(), Some("Chrome Safe Storage"));
-        assert_eq!(BrowserFamily::Chromium.safe_storage_label(), Some("Chromium Safe Storage"));
-        assert_eq!(BrowserFamily::Brave.safe_storage_label(), Some("Brave Safe Storage"));
-        assert_eq!(BrowserFamily::Edge.safe_storage_label(), Some("Microsoft Edge Safe Storage"));
-        assert_eq!(BrowserFamily::Vivaldi.safe_storage_label(), Some("Vivaldi Safe Storage"));
+        assert_eq!(
+            BrowserFamily::Chrome.safe_storage_label(),
+            Some("Chrome Safe Storage")
+        );
+        assert_eq!(
+            BrowserFamily::Chromium.safe_storage_label(),
+            Some("Chromium Safe Storage")
+        );
+        assert_eq!(
+            BrowserFamily::Brave.safe_storage_label(),
+            Some("Brave Safe Storage")
+        );
+        assert_eq!(
+            BrowserFamily::Edge.safe_storage_label(),
+            Some("Microsoft Edge Safe Storage")
+        );
+        assert_eq!(
+            BrowserFamily::Vivaldi.safe_storage_label(),
+            Some("Vivaldi Safe Storage")
+        );
     }
 
     #[test]
