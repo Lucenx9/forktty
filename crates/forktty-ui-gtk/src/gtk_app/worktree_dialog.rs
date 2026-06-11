@@ -236,10 +236,10 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     });
 
     for (button, next_mode) in [
-        (create_mode.clone(), WorktreeDialogMode::Create),
-        (attach_mode.clone(), WorktreeDialogMode::Attach),
-        (merge_mode.clone(), WorktreeDialogMode::Merge),
-        (remove_mode.clone(), WorktreeDialogMode::Remove),
+        (create_mode, WorktreeDialogMode::Create),
+        (attach_mode, WorktreeDialogMode::Attach),
+        (merge_mode, WorktreeDialogMode::Merge),
+        (remove_mode, WorktreeDialogMode::Remove),
     ] {
         let mode = mode.clone();
         let refresh = refresh.clone();
