@@ -302,7 +302,11 @@ pub fn prepare_remove(
 }
 
 pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
-    let repo = open_repo(repo_path)?;
+    // Resolve to the base checkout even when `repo_path` points inside a linked
+    // worktree: in a worktree, HEAD *is* the branch being merged, so opening it
+    // directly would merge the branch into itself (always "Already up to date")
+    // instead of into the base checkout the caller intends.
+    let repo = open_worktree_admin_repo(repo_path)?;
     ensure_clean_checkout(&repo)?;
     let selector = validate_worktree_name(selector).map_err(WorktreeError::InvalidName)?;
     ensure_clean_source_worktree(&repo, selector)?;
@@ -333,8 +337,13 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
             &format!("Fast-forward merge of '{branch_name}'"),
         )?;
         repo.set_head(&head_ref_name)?;
+        // Force the checkout: moving the ref by hand leaves the index pointing at
+        // the old commit, and a SAFE checkout_head then leaves the new files
+        // unwritten, desyncing the working tree from HEAD. `ensure_clean_checkout`
+        // above already guaranteed there are no local changes to clobber, so a
+        // force checkout brings the working tree and index to match the new HEAD.
         let mut checkout = git2::build::CheckoutBuilder::new();
-        checkout.safe();
+        checkout.force();
         repo.checkout_head(Some(&mut checkout))?;
         return Ok(format!("Fast-forward merged '{branch_name}'"));
     }
@@ -1381,6 +1390,27 @@ mod tests {
             result,
             Err(WorktreeError::SourceDirty(name)) if name == info.worktree_name
         ));
+    }
+
+    #[test]
+    fn merge_from_worktree_cwd_targets_base_checkout() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "merge-from-wt", "nested").unwrap();
+        // Advance the worktree's branch ahead of the base checkout.
+        commit_file(Path::new(&info.path), "feature.txt", "from worktree\n");
+
+        // Pass the worktree's own directory as the repo path. Before the fix
+        // this resolved to the worktree (whose HEAD is the branch itself),
+        // producing a self-merge that always reported "Already up to date".
+        let result = merge(&info.path, &info.worktree_name).unwrap();
+
+        assert!(
+            result.contains("merged"),
+            "unexpected merge result: {result}"
+        );
+        // The commit must have landed in the base checkout's working tree, not
+        // just had its branch ref moved.
+        assert!(dir.path().join("feature.txt").exists());
     }
 
     #[test]

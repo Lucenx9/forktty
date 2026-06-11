@@ -535,16 +535,32 @@ impl GhosttyCore {
     }
 
     pub fn paste_bytes(&self, text: &str) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
         let bracketed = self.bracketed_paste || !paste::is_safe(text);
-        if bracketed {
-            bytes.extend_from_slice(b"\x1b[200~");
+        // Use libghostty's paste encoder rather than wrapping the raw bytes
+        // ourselves: it strips unsafe control bytes (including ESC and an
+        // embedded `\x1b[201~` end sequence) that would otherwise let pasted
+        // clipboard content terminate bracketed-paste mode early and inject
+        // commands into the shell.
+        let mut data = text.as_bytes().to_vec();
+        // Bracketed wrapping adds the 6-byte start/end markers; pad generously
+        // so the common case encodes in one pass.
+        let mut buf = vec![0u8; data.len() + 16];
+        match paste::encode(&mut data, bracketed, &mut buf) {
+            Ok(len) => {
+                buf.truncate(len);
+                Ok(buf)
+            }
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                // `data` is modified in place during encoding, so retry from a
+                // fresh copy with an exactly-sized output buffer.
+                let mut data = text.as_bytes().to_vec();
+                let mut buf = vec![0u8; required];
+                let len = paste::encode(&mut data, bracketed, &mut buf)?;
+                buf.truncate(len);
+                Ok(buf)
+            }
+            Err(err) => Err(err),
         }
-        bytes.extend_from_slice(text.as_bytes());
-        if bracketed {
-            bytes.extend_from_slice(b"\x1b[201~");
-        }
-        Ok(bytes)
     }
 
     pub fn encode_key(&self, input: TerminalKeyInput) -> Result<Vec<u8>> {
@@ -1382,6 +1398,30 @@ mod tests {
         .unwrap();
 
         assert_eq!(core.paste_bytes("echo one").unwrap(), b"echo one");
+    }
+
+    #[test]
+    fn paste_strips_embedded_bracketed_paste_end_sequence() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.set_bracketed_paste_for_test(true).unwrap();
+
+        // Clipboard content carrying its own end sequence must not be able to
+        // close bracketed paste early and inject the trailing command.
+        let encoded = core.paste_bytes("foo\x1b[201~\nmalicious\n").unwrap();
+
+        // The payload between the start/end markers must not contain a second
+        // end marker or a raw ESC byte.
+        assert!(encoded.starts_with(b"\x1b[200~"));
+        assert!(encoded.ends_with(b"\x1b[201~"));
+        let inner = &encoded[6..encoded.len() - 6];
+        assert!(!inner.windows(6).any(|w| w == b"\x1b[201~"));
+        assert!(!inner.contains(&0x1b));
     }
 
     #[test]

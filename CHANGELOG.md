@@ -4,6 +4,13 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- The "Merge Worktree" context-menu action now actually merges the worktree branch into the base checkout. It used to focus the worktree's own workspace first and run the merge from there, so git merged the branch into itself and always reported "Already up to date" without touching the base. Merge now always resolves to the base repository regardless of which workspace is active.
+- A fast-forward worktree merge now writes the merged files into the base checkout's working tree. Previously it moved the branch ref but left the working tree and index pointing at the old commit, leaving the base checkout inconsistent with HEAD.
+
+### Security
+- Pasting now routes clipboard text through libghostty's paste encoder, which strips ESC and other unsafe control bytes before wrapping in bracketed paste. Clipboard content carrying its own `\x1b[201~` end sequence (or a raw ESC) can no longer terminate bracketed-paste mode early and inject the trailing bytes as typed commands into the shell.
+
 ## [0.2.0-alpha.9] - 2026-06-11
 
 ### Changed
