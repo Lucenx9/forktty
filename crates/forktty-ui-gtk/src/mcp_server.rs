@@ -425,13 +425,24 @@ fn tools_call_result_with_validation(
         Value::Object(call.params),
         MCP_SOCKET_TIMEOUT,
     ) {
-        Ok(result) => Ok(json!({
-            "content": [{
-                "type": "text",
-                "text": success_text(name, &result),
-            }],
-            "structuredContent": result,
-        })),
+        Ok(result) => {
+            let text = success_text(name, &result);
+            // The MCP spec requires structuredContent to be a JSON object;
+            // socket list methods return bare arrays, so wrap non-objects
+            // (strict clients reject the whole tool result otherwise).
+            let structured = if result.is_object() {
+                result
+            } else {
+                json!({ "result": result })
+            };
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": text,
+                }],
+                "structuredContent": structured,
+            }))
+        }
         Err(err) => Ok(tool_error_result(
             err.code.as_deref().unwrap_or("socket_error"),
             sanitize_tool_error_message(&err.message),
@@ -918,6 +929,29 @@ mod tests {
         let response: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(response["id"], 9);
         assert_eq!(response["result"]["structuredContent"]["sent"], true);
+        assert_eq!(requests_handle.join().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tools_call_wraps_array_results_in_object_structured_content() {
+        let (socket_path, requests_handle) = fake_socket(1, |request| {
+            assert_eq!(request["method"], "workspace.list");
+            JsonRpcResponse::ok(
+                request["id"].clone(),
+                json!([{ "id": "workspace-1", "name": "main" }]),
+            )
+        });
+        let input = br#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"workspace_list","arguments":{}}}
+"#;
+        let mut output = Vec::new();
+        run_with_io(BufReader::new(&input[..]), &mut output, socket_path).unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        let structured = &response["result"]["structuredContent"];
+        assert!(
+            structured.is_object(),
+            "structuredContent must be a JSON object per the MCP spec: {structured}"
+        );
+        assert_eq!(structured["result"][0]["id"], "workspace-1");
         assert_eq!(requests_handle.join().unwrap().len(), 1);
     }
 

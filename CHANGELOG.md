@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- MCP list tools (`workspace_list`, `surface_list`, `worktree_list`) no longer fail with strict MCP clients (including Claude Code): the socket returns bare JSON arrays for list methods and the server passed them straight through as `structuredContent`, which the MCP spec requires to be an object. Non-object results are now wrapped as `{"result": ...}`.
+
 ## [0.2.0-alpha.10] - 2026-06-11
 
 ### Fixed
