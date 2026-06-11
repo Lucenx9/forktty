@@ -1,14 +1,14 @@
 use crate::SpawnRequest;
 use nix::{
-    fcntl::{fcntl, FcntlArg, FdFlag, OFlag},
+    fcntl::{fcntl, FcntlArg, OFlag},
     poll::{poll, PollFd, PollFlags, PollTimeout},
-    pty::{openpty, Winsize},
+    pty::Winsize,
     unistd::setsid,
 };
 use std::{
     fs::File,
     io::{self, Read, Write},
-    os::fd::{AsFd, AsRawFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
     os::unix::process::CommandExt,
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -44,16 +44,32 @@ impl PtySession {
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        let pty = openpty(Some(&winsize), None).map_err(io_error)?;
-        set_nonblocking(&pty.master)?;
-        // openpty does not set CLOEXEC: without it every spawned child (and any
-        // other subprocess forked while this pty is open) inherits the master fd,
-        // keeping the pty alive after we drop it and leaking one fd per process.
-        set_cloexec(&pty.master)?;
-        let slave_fd = pty.slave.as_raw_fd();
-        let slave_stdin = duplicate_fd(&pty.slave)?;
-        let slave_stdout = duplicate_fd(&pty.slave)?;
-        let slave_stderr = pty.slave;
+        // Master and slave are opened with O_CLOEXEC atomically: openpty()
+        // cannot set the flag at open time, and setting it afterwards leaves
+        // a window where a fork on another thread (worktree hooks,
+        // notification commands) inherits the fd, keeping the pty alive
+        // after we drop it and leaking one fd per process.
+        let master_pt = nix::pty::posix_openpt(OFlag::O_RDWR | OFlag::O_NOCTTY | OFlag::O_CLOEXEC)
+            .map_err(io_error)?;
+        nix::pty::grantpt(&master_pt).map_err(io_error)?;
+        nix::pty::unlockpt(&master_pt).map_err(io_error)?;
+        let slave_path = nix::pty::ptsname_r(&master_pt).map_err(io_error)?;
+        let master = OwnedFd::from(master_pt);
+        let slave = nix::fcntl::open(
+            slave_path.as_str(),
+            OFlag::O_RDWR | OFlag::O_NOCTTY | OFlag::O_CLOEXEC,
+            nix::sys::stat::Mode::empty(),
+        )
+        .map_err(io_error)?;
+        unsafe {
+            tiocswinsz(master.as_raw_fd(), &winsize)
+                .map_err(|err| io::Error::from_raw_os_error(err as i32))?;
+        }
+        set_nonblocking(&master)?;
+        let slave_fd = slave.as_raw_fd();
+        let slave_stdin = duplicate_fd(&slave)?;
+        let slave_stdout = duplicate_fd(&slave)?;
+        let slave_stderr = slave;
 
         let argv = crate::spawn::child_argv(request, crate::spawn::appimage_runtime_env_keys());
         let (program, args) = argv
@@ -79,7 +95,7 @@ impl PtySession {
             });
         }
         let child = command.spawn()?;
-        let master = File::from(pty.master);
+        let master = File::from(master);
         Ok(Self {
             master,
             child,
@@ -230,14 +246,12 @@ fn set_nonblocking(fd: &OwnedFd) -> io::Result<()> {
     Ok(())
 }
 
-fn set_cloexec(fd: &OwnedFd) -> io::Result<()> {
-    fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).map_err(io_error)?;
-    Ok(())
-}
-
 fn duplicate_fd(fd: &OwnedFd) -> io::Result<OwnedFd> {
-    let raw = nix::unistd::dup(fd).map_err(io_error)?;
-    Ok(raw)
+    // F_DUPFD_CLOEXEC, not dup(): the duplicate must not be inheritable by a
+    // fork racing on another thread; the spawned child's dup2 onto
+    // stdin/stdout clears the flag for the intended process only.
+    let raw = fcntl(fd, FcntlArg::F_DUPFD_CLOEXEC(0)).map_err(io_error)?;
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
 fn parse_env(env: Vec<String>) -> impl Iterator<Item = (String, String)> {

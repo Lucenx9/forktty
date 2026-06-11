@@ -7,6 +7,7 @@ All notable changes to ForkTTY are documented here.
 ## [0.2.0-alpha.10] - 2026-06-11
 
 ### Fixed
+- The pty master and slave are now opened with `O_CLOEXEC` atomically (`posix_openpt`) instead of setting the flag after `openpty()`: a process forked on another thread in that window (worktree hooks, notification commands) inherited the descriptors and kept the pty alive past its session. Slave duplicates for the child's stdio use `F_DUPFD_CLOEXEC` for the same reason.
 - Release binaries no longer inherit the CPU feature set of the CI build machine: libghostty's zig build now targets the generic x86-64 baseline (`-Dcpu=baseline`, via a vendored one-line patch in `vendor/libghostty-rs`). The first alpha.10 cut was built on an AVX-512 runner and its statically linked `memset` crashed every non-AVX-512 machine with SIGILL at startup; the same lottery silently applied to every release since alpha.7.
 
 ### Added
