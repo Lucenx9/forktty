@@ -175,6 +175,35 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: String,
+        original_value: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn new(key: &str, value: &str) -> Self {
+            let original_value = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self {
+                key: key.to_string(),
+                original_value,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(ref val) = self.original_value {
+                std::env::set_var(&self.key, val);
+            } else {
+                std::env::remove_var(&self.key);
+            }
+        }
+    }
 
     // The appimage runtime's vars must not leak into terminal children, but
     // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
@@ -197,5 +226,30 @@ mod tests {
         for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH"] {
             assert!(!is_appimage_runtime_env(kept), "{kept} must survive");
         }
+    }
+
+    #[test]
+    fn appimage_runtime_env_keys_retrieves_and_sorts_correctly() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+
+        // Set test variables safely using EnvGuard
+        let _guard_appdir = EnvGuard::new("APPDIR", "1");
+        let _guard_owd = EnvGuard::new("OWD", "2");
+        let _guard_appimage = EnvGuard::new("APPIMAGE", "3");
+        let _guard_not = EnvGuard::new("NOT_APPIMAGE_KEY", "4");
+
+        let new_keys = appimage_runtime_env_keys();
+
+        // Verify correct keys are included
+        assert!(new_keys.contains(&"APPDIR".to_string()));
+        assert!(new_keys.contains(&"OWD".to_string()));
+        assert!(new_keys.contains(&"APPIMAGE".to_string()));
+        assert!(!new_keys.contains(&"NOT_APPIMAGE_KEY".to_string()));
+
+        // Verify keys are sorted and deduplicated
+        let mut expected_sorted = new_keys.clone();
+        expected_sorted.sort();
+        expected_sorted.dedup();
+        assert_eq!(new_keys, expected_sorted);
     }
 }
