@@ -26,8 +26,8 @@ entry:focus-visible,
 .status-location:focus-visible,
 .app-header-title:focus-visible,
 .sidebar-add:focus-visible {
-  outline: 1px solid #e88745;
-  outline-offset: 1px;
+  outline: 2px solid alpha(#e88745, 0.6);
+  outline-offset: 2px;
 }
 
 window {
@@ -90,7 +90,7 @@ window {
   color: #8a8a8a;
   font-size: 0.86em;
   font-weight: 500;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .app-header-title:hover {
@@ -114,7 +114,7 @@ window {
   background: transparent;
   border: 0;
   box-shadow: none;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .app-header .header-action image,
@@ -186,7 +186,7 @@ window {
   background: transparent;
   color: #8a8a8a;
   box-shadow: none;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .app-header .app-window-control image {
@@ -224,7 +224,7 @@ window {
   background: transparent;
   color: #8a8a8a;
   box-shadow: none;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .app-header button.titlebutton image,
@@ -267,8 +267,8 @@ popover.ft-workspace-popover contents {
   padding: 6px;
   background: #181818;
   border: 1px solid #303030;
-  border-radius: 7px;
-  box-shadow: 0 12px 28px alpha(#000000, 0.34);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px alpha(#000000, 0.38);
 }
 
 popover.ft-app-menu contents {
@@ -356,7 +356,7 @@ popover.ft-context-menu contents {
   background: alpha(@window_fg_color, 0.10);
   min-width: 3px;
   min-height: 3px;
-  transition: background-color 90ms ease-out;
+  transition: background-color 150ms ease-out;
 }
 
 .workspace-paned > separator:hover,
@@ -404,7 +404,7 @@ popover.ft-context-menu contents {
   color: #8a8a8a;
   background: transparent;
   border: 0;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .sidebar-add:hover {
@@ -432,7 +432,7 @@ popover.ft-context-menu contents {
   margin: 0;
   background: transparent;
   padding: 0;
-  transition: background-color 90ms ease-out;
+  transition: background-color 150ms ease-out;
 }
 
 .navigation-sidebar row:hover {
@@ -470,14 +470,14 @@ popover.ft-context-menu contents {
   background: transparent;
   border: 0;
   border-left: 2px solid transparent;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 .workspace-drag-grip {
   color: #626262;
   min-width: 14px;
   -gtk-icon-size: 14px;
-  transition: color 90ms ease-out;
+  transition: color 150ms ease-out;
 }
 
 .navigation-sidebar row:hover .workspace-drag-grip {
@@ -682,7 +682,7 @@ popover.ft-context-menu contents {
   border-color: #292929;
   background: #232323;
   color: #8a8a8a;
-  transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
 }
 
 .status-shortcut:hover {
@@ -794,7 +794,7 @@ popover.ft-context-menu contents {
   background: alpha(@window_fg_color, 0.12);
   min-width: 4px;
   min-height: 4px;
-  transition: background-color 90ms ease-out;
+  transition: background-color 150ms ease-out;
 }
 
 .terminal-stage paned > separator:hover,
@@ -810,7 +810,7 @@ popover.ft-context-menu contents {
 .terminal-pane {
   background: #1c1c1c;
   border: 1px solid transparent;
-  transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 .terminal-pane.active {
@@ -860,7 +860,7 @@ popover.ft-context-menu contents {
   border-bottom: 1px solid #292929;
   min-height: 25px;
   padding: 1px 5px 1px 7px;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
 }
 
 .pane-tabstrip:drop(active) {
@@ -879,7 +879,7 @@ popover.ft-context-menu contents {
   border-radius: 3px;
   background: #141414;
   color: #8a8a8a;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
 }
 
 .pane-tab:hover {
@@ -981,7 +981,7 @@ popover.ft-context-menu contents {
   box-shadow: none;
   color: #626262;
   opacity: 0;
-  transition: background-color 90ms ease-out, color 90ms ease-out, opacity 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out, opacity 150ms ease-out;
 }
 
 .pane-tab-close image {
@@ -1067,7 +1067,7 @@ button.flat.pane-tab-close:active {
 .terminal-pane-actions {
   margin-left: 6px;
   opacity: 0;
-  transition: opacity 90ms ease-out;
+  transition: opacity 150ms ease-out;
 }
 
 .terminal-pane-actions.revealed,
@@ -1085,7 +1085,7 @@ button.flat.pane-tab-close:active {
   border: 0;
   background: transparent;
   color: #8a8a8a;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .terminal-pane-action image {
@@ -1127,7 +1127,7 @@ button.flat.pane-tab-close:active {
   background: transparent;
   box-shadow: none;
   opacity: 0.42;
-  transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: opacity 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 .single-pane-actions:hover,
@@ -1177,7 +1177,7 @@ button.flat.pane-tab-close:active {
 .browser-pane {
   background: #1c1c1c;
   border: 1px solid transparent;
-  transition: border-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 .browser-pane.active {
@@ -1207,7 +1207,7 @@ button.flat.pane-tab-close:active {
   color: #8a8a8a;
   background: transparent;
   border: 0;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .browser-action image {
@@ -1309,7 +1309,7 @@ textview {
   padding: 6px 8px;
   min-height: 30px;
   box-shadow: inset 0 1px 2px alpha(#000000, 0.20), 0 0 0 0 transparent;
-  transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 entry:hover,
@@ -1415,7 +1415,7 @@ button {
   background: #1b1b1b;
   border: 1px solid #303030;
   box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(#000000, 0.20);
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out, box-shadow 90ms ease-out, transform 90ms ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out;
 }
 
 button:hover {
@@ -1518,7 +1518,7 @@ window.ft-dialog,
   border-radius: 6px;
   background: transparent;
   border: 1px solid transparent;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
 }
 
 .ft-dialog-close image {
@@ -2099,7 +2099,7 @@ entry.search.command-search:focus-within,
   border-radius: 6px;
   margin: 0;
   padding: 0;
-  transition: background-color 90ms ease-out;
+  transition: background-color 150ms ease-out;
 }
 
 /* Suppress the global 2px accent outline on command-list rows; the
@@ -2374,7 +2374,7 @@ scrollbar slider {
   margin: 2px;
   border-radius: 999px;
   background-color: alpha(@window_fg_color, 0.15);
-  transition: background-color 90ms ease-out, min-width 90ms ease-out;
+  transition: background-color 150ms ease-out, min-width 150ms ease-out;
 }
 
 scrollbar slider:hover,

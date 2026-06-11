@@ -10,6 +10,7 @@ All notable changes to ForkTTY are documented here.
 - `forktty hooks doctor codex` now reports `trustCheck`: Codex requires per-hook trust approval (recorded under `[hooks.state]` in its `config.toml`) before running installed hooks, so the doctor lists events with no approval record yet and points at `/hooks` inside Codex.
 
 ### Changed
+- Refined UI polish across GTK components: increased transition duration to 150ms for a smoother appearance, adjusted focus rings to be thicker and softer, and increased popover border radius and box-shadow depth for a more premium feel.
 - `forktty hooks setup claude` now installs lifecycle hooks by default and omits the blocking per-tool `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`PostToolBatch` hooks; use `forktty hooks setup --full claude` to restore the previous full profile. Existing installs keep working, and re-running setup migrates Claude hooks to the lifecycle default unless `--full` is passed.
 - Chromium bookmark import now deserializes only the bookmark fields ForkTTY uses, avoiding large extra allocations for ignored browser metadata.
 
