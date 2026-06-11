@@ -175,6 +175,7 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // The appimage runtime's vars must not leak into terminal children, but
     // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
@@ -197,5 +198,127 @@ mod tests {
         for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH"] {
             assert!(!is_appimage_runtime_env(kept), "{kept} must survive");
         }
+    }
+
+    fn dummy_spawn_request() -> SpawnRequest {
+        SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/bash".to_string(),
+            args: vec!["--login".to_string()],
+            cwd: std::path::PathBuf::from("/tmp"),
+            socket_path: std::path::PathBuf::from("/tmp/sock"),
+            extra_env: vec![("CUSTOM_KEY".to_string(), "CUSTOM_VAL".to_string())],
+        }
+    }
+
+    #[test]
+    fn test_child_cwd() {
+        let req = dummy_spawn_request();
+        assert_eq!(child_cwd(&req), "/tmp");
+    }
+
+    #[test]
+    fn test_child_argv() {
+        let req = dummy_spawn_request();
+        let argv = child_argv(&req, &[]);
+        assert_eq!(argv, vec!["/bin/bash", "--login"]);
+    }
+
+    #[test]
+    fn test_child_argv_with_unset_env() {
+        let req = dummy_spawn_request();
+        let unset = vec!["BAD_ENV".to_string(), "ANOTHER".to_string()];
+        let argv = child_argv(&req, &unset);
+
+        // env_command_path might be None on some systems, but assuming /usr/bin/env or /bin/env exists.
+        // If env_command_path returns Some, it should look like:
+        // [env, "-u", "BAD_ENV", "-u", "ANOTHER", "/bin/bash", "--login"]
+        if let Some(env_cmd) = env_command_path() {
+            assert_eq!(
+                argv,
+                vec![
+                    env_cmd,
+                    "-u".to_string(),
+                    "BAD_ENV".to_string(),
+                    "-u".to_string(),
+                    "ANOTHER".to_string(),
+                    "/bin/bash".to_string(),
+                    "--login".to_string()
+                ]
+            );
+        } else {
+            assert_eq!(argv, vec!["/bin/bash", "--login"]);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_appimage_runtime_dirs() {
+        std::env::set_var("APPDIR", "/tmp/.mount_app");
+        std::env::set_var("FORKTTY_APPIMAGE_DIR", "/opt/forktty");
+        let dirs = appimage_runtime_dirs();
+        assert!(dirs.contains(&"/tmp/.mount_app".to_string()));
+        assert!(dirs.contains(&"/opt/forktty".to_string()));
+        std::env::remove_var("APPDIR");
+        std::env::remove_var("FORKTTY_APPIMAGE_DIR");
+    }
+
+    #[test]
+    fn test_sanitize_appimage_child_environment() {
+        let mut env = BTreeMap::new();
+        env.insert(
+            "LD_LIBRARY_PATH".to_string(),
+            "/usr/lib:/tmp/.mount_app/usr/lib:/usr/local/lib".to_string(),
+        );
+        env.insert(
+            "GDK_PIXBUF_MODULE_FILE".to_string(),
+            "/tmp/.mount_app/usr/lib/gdk-pixbuf.so".to_string(),
+        );
+        env.insert("NORMAL_VAR".to_string(), "/tmp/.mount_app/bin".to_string());
+
+        let appimage_dirs = vec!["/tmp/.mount_app".to_string()];
+        sanitize_appimage_child_environment(&mut env, &appimage_dirs);
+
+        assert_eq!(
+            env.get("LD_LIBRARY_PATH").unwrap(),
+            "/usr/lib:/usr/local/lib"
+        );
+        assert!(!env.contains_key("GDK_PIXBUF_MODULE_FILE"));
+        assert_eq!(env.get("NORMAL_VAR").unwrap(), "/tmp/.mount_app/bin");
+    }
+
+    #[test]
+    #[serial]
+    fn test_child_environment() {
+        std::env::set_var("APPDIR", "/tmp/.mount_app");
+        std::env::set_var("APPIMAGE_VAR", "value");
+        std::env::set_var("LD_LIBRARY_PATH", "/tmp/.mount_app/lib:/usr/lib");
+        std::env::set_var("NORMAL_SYSTEM_VAR", "system_val");
+
+        let req = dummy_spawn_request();
+        let env_vars = child_environment(&req);
+
+        std::env::remove_var("APPDIR");
+        std::env::remove_var("APPIMAGE_VAR");
+        std::env::remove_var("LD_LIBRARY_PATH");
+        std::env::remove_var("NORMAL_SYSTEM_VAR");
+
+        // The APPIMAGE_VAR should be filtered out
+        assert!(!env_vars.iter().any(|v| v.starts_with("APPIMAGE_VAR=")));
+
+        // NORMAL_SYSTEM_VAR should be present
+        assert!(env_vars.iter().any(|v| v == "NORMAL_SYSTEM_VAR=system_val"));
+
+        // LD_LIBRARY_PATH should be stripped of /tmp/.mount_app/lib
+        assert!(env_vars.iter().any(|v| v == "LD_LIBRARY_PATH=/usr/lib"));
+
+        // CUSTOM_KEY from extra_env should be present
+        assert!(env_vars.iter().any(|v| v == "CUSTOM_KEY=CUSTOM_VAL"));
+
+        // FORKTTY_WORKSPACE_ID should be present (added by request.forktty_env())
+        assert!(env_vars
+            .iter()
+            .any(|v| v == "FORKTTY_WORKSPACE_ID=workspace-1"));
     }
 }
