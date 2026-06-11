@@ -184,6 +184,7 @@ pub enum DispatchError {
     AlreadyExists(String),
     NotReady(String),
     InvalidParam(String),
+    PreconditionFailed(String),
     Other(String),
 }
 
@@ -198,6 +199,7 @@ impl DispatchError {
             DispatchError::AlreadyExists(_) => "already_exists",
             DispatchError::NotReady(_) => "not_ready",
             DispatchError::InvalidParam(_) => "invalid_param",
+            DispatchError::PreconditionFailed(_) => "precondition_failed",
             DispatchError::Other(_) => "error",
         }
     }
@@ -231,6 +233,7 @@ impl std::fmt::Display for DispatchError {
             DispatchError::AlreadyExists(message) => f.write_str(message),
             DispatchError::NotReady(message) => f.write_str(message),
             DispatchError::InvalidParam(message) => f.write_str(message),
+            DispatchError::PreconditionFailed(message) => f.write_str(message),
             DispatchError::Other(message) => f.write_str(message),
         }
     }
@@ -2052,7 +2055,7 @@ async fn resolve_open_repo_cwd_param(
     })
     .await
     {
-        Ok(result) => result.map_err(DispatchError::from)?,
+        Ok(result) => result.map_err(DispatchError::PreconditionFailed)?,
         Err(err) => return Err(format!("Validation task failed: {err}").into()),
     }
     Ok(cwd.to_string_lossy().to_string())
@@ -6902,9 +6905,10 @@ mod tests {
             json!({"name": "blocked", "cwd": unopened_repo.path()}),
         )
         .await
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
 
+        assert_eq!(error.code(), "precondition_failed");
+        let error = error.to_string();
         assert!(error.contains("open workspace"));
         // The rejection must tell the caller how to satisfy the precondition.
         assert!(error.contains("create-workspace"));

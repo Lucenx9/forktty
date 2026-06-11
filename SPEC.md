@@ -186,6 +186,7 @@ Error responses include a structured `code` field so clients can branch on outco
 | `not_found` | The referenced workspace, surface, worktree, or metadata entry does not exist. |
 | `payload_too_large` | The request line exceeds 1 MiB, or `surface.send_text` text exceeds 256 KiB. |
 | `conflict` | The operation is valid but blocked by current state, such as dirty worktrees or in-use browser profiles. |
+| `precondition_failed` | The request needs setup the caller can perform first: the worktree open-workspace boundary returns this, naming the remedy (`forktty create-workspace` / the `workspace_create` MCP tool). |
 | `already_exists` | The requested worktree or resource already exists. |
 | `not_ready` | A target exists but is not ready to accept the operation. |
 | `invalid_param` | A supplied parameter has an invalid value. |

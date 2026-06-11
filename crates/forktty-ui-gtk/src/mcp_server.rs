@@ -226,17 +226,36 @@ fn tools_call_validation_error(err: ToolCallError) -> Value {
 
 fn tool_error_result(code: &str, message: impl Into<String>) -> Value {
     let message = message.into();
+    let mut structured = json!({
+        "code": code,
+        "message": message,
+    });
+    if let Some((remedy, suggested_tool)) = error_recovery(code) {
+        structured["remedy"] = json!(remedy);
+        structured["suggested_tool"] = json!(suggested_tool);
+    }
     json!({
         "isError": true,
         "content": [{
             "type": "text",
             "text": message,
         }],
-        "structuredContent": {
-            "code": code,
-            "message": message,
-        },
+        "structuredContent": structured,
     })
+}
+
+/// Machine-readable recovery for error codes with a known remedy. Only codes
+/// whose recovery is real get fields — boilerplate on every error would
+/// train agents to ignore them. `suggested_tool` must name a tool present in
+/// tool_specs(); a test pins that.
+fn error_recovery(code: &str) -> Option<(&'static str, &'static str)> {
+    match code {
+        "precondition_failed" => Some((
+            "Open a ForkTTY workspace on the target repository first, then retry.",
+            "workspace_create",
+        )),
+        _ => None,
+    }
 }
 
 fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall, ToolCallError> {
@@ -1003,6 +1022,42 @@ mod tests {
         let response: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(response["id"], 9);
         assert_eq!(response["result"]["structuredContent"]["sent"], true);
+        assert_eq!(requests_handle.join().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn error_recovery_suggested_tools_exist() {
+        let names = tool_specs()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+        for code in ["precondition_failed"] {
+            let (_, suggested_tool) = error_recovery(code).unwrap();
+            assert!(
+                names.contains(&suggested_tool),
+                "suggested_tool {suggested_tool} for {code} is not a real tool"
+            );
+        }
+    }
+
+    #[test]
+    fn precondition_errors_carry_remedy_and_suggested_tool() {
+        let (socket_path, requests_handle) = fake_socket(1, |request| {
+            JsonRpcResponse::error(
+                request["id"].clone(),
+                "precondition_failed",
+                "cwd is not inside the git repository of any open workspace",
+            )
+        });
+        let input = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"worktree_list","arguments":{"cwd":"/tmp"}}}
+"#;
+        let mut output = Vec::new();
+        run_with_io(BufReader::new(&input[..]), &mut output, socket_path).unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        let structured = &response["result"]["structuredContent"];
+        assert_eq!(structured["code"], "precondition_failed");
+        assert_eq!(structured["suggested_tool"], "workspace_create");
+        assert!(structured["remedy"].as_str().unwrap().contains("workspace"));
         assert_eq!(requests_handle.join().unwrap().len(), 1);
     }
 
