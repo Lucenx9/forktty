@@ -831,27 +831,42 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "worktree.list" => {
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let worktrees = worktree::list(&cwd).map_err(DispatchError::from)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let worktrees = run_worktree_blocking(move || worktree::list(&cwd)).await?;
             Ok(json!(worktrees))
         }
         "worktree.status" => {
-            let path =
-                resolve_open_repo_cwd_param(state, &params, &["path", "cwd"], "path or cwd")?;
-            let status = worktree::status(&path).map_err(DispatchError::from)?;
+            let path = resolve_open_repo_cwd_param(state, &params, &["path", "cwd"], "path or cwd")
+                .await?;
+            let status = run_worktree_blocking(move || worktree::status(&path)).await?;
             Ok(json!({"status": status}))
         }
         "worktree.create" => {
             let name = worktree_name_from_params(&params, &["name"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let layout = worktree_layout();
-            let info = worktree::create(&cwd, name, &layout).map_err(DispatchError::from)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let info = {
+                let cwd = cwd.clone();
+                let name = name.to_string();
+                // worktree_layout() reads config.toml, so it joins the
+                // blocking task too.
+                run_worktree_blocking(move || {
+                    let layout = worktree_layout();
+                    worktree::create(&cwd, &name, &layout)
+                })
+                .await?
+            };
             let workspace = match open_worktree_workspace(state, &info).await {
                 Ok(workspace) => workspace,
                 Err(err) => {
-                    return Err(
-                        rollback_created_worktree_after_spawn_failure(&cwd, &info, err).into(),
-                    );
+                    let message = match tokio::task::spawn_blocking(move || {
+                        rollback_created_worktree_after_spawn_failure(&cwd, &info, err)
+                    })
+                    .await
+                    {
+                        Ok(message) => message,
+                        Err(join_err) => format!("worktree rollback task failed: {join_err}"),
+                    };
+                    return Err(message.into());
                 }
             };
             notify_worktree_setup_warning(state, &workspace.id, info.setup_warning.as_deref())?;
@@ -866,9 +881,15 @@ pub async fn dispatch(
         }
         "worktree.attach" => {
             let name = worktree_name_from_params(&params, &["name", "branch"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let layout = worktree_layout();
-            let info = worktree::attach(&cwd, name, &layout).map_err(DispatchError::from)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let info = {
+                let name = name.to_string();
+                run_worktree_blocking(move || {
+                    let layout = worktree_layout();
+                    worktree::attach(&cwd, &name, &layout)
+                })
+                .await?
+            };
             let workspace = open_worktree_workspace(state, &info).await?;
             notify_worktree_setup_warning(state, &workspace.id, info.setup_warning.as_deref())?;
             Ok(json!({
@@ -882,10 +903,16 @@ pub async fn dispatch(
         }
         "worktree.remove" => {
             let name = worktree_name_from_params(&params, &["name"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let fallback_path =
-                worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
-            let removal = worktree::prepare_remove(&cwd, name).map_err(DispatchError::from)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let (fallback_path, removal) = {
+                let name = name.to_string();
+                run_worktree_blocking(move || {
+                    let fallback =
+                        worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
+                    worktree::prepare_remove(&cwd, &name).map(|removal| (fallback, removal))
+                })
+                .await?
+            };
             let workspace_worktree_name = removal.worktree_name().to_string();
             let (workspace, surfaces, is_last_workspace) = {
                 let model = state
@@ -907,7 +934,7 @@ pub async fn dispatch(
                 .map(|surface| surface.id.clone())
                 .collect::<Vec<_>>();
             if workspace.is_none() {
-                removal.finish(false).map_err(DispatchError::from)?;
+                finish_removal_blocking(removal, false).await?;
                 return Ok(json!({"removed": name}));
             }
             if is_last_workspace {
@@ -948,7 +975,7 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
-                if let Err(err) = removal.finish(false) {
+                if let Err(err) = finish_removal_blocking(removal, false).await {
                     let mut err = err.to_string();
                     if let Err(cleanup_err) =
                         forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
@@ -999,7 +1026,7 @@ pub async fn dispatch(
                 return Ok(json!({"removed": name}));
             }
             close_terminal_surfaces_if_present(state, &surface_ids)?;
-            if let Err(err) = removal.finish(false) {
+            if let Err(err) = finish_removal_blocking(removal, false).await {
                 let mut err = err.to_string();
                 if let Err(respawn_err) = spawn_terminal_surfaces(state, &surfaces) {
                     err = format!("{err}; terminal restore failed: {respawn_err}");
@@ -1024,8 +1051,11 @@ pub async fn dispatch(
         }
         "worktree.merge" => {
             let name = worktree_name_from_params(&params, &["name"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd")?;
-            let result = worktree::merge(&cwd, name).map_err(DispatchError::from)?;
+            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let result = {
+                let name = name.to_string();
+                run_worktree_blocking(move || worktree::merge(&cwd, &name)).await?
+            };
             Ok(json!(result))
         }
         "surface.list" => {
@@ -1721,6 +1751,28 @@ fn rollback_created_worktree_after_spawn_failure(
     }
 }
 
+/// Run blocking worktree/git work off the socket runtime: these operations
+/// walk the repository on disk, and create/remove additionally run the
+/// repo's setup/teardown hook for up to HOOK_TIMEOUT (30s), which would pin
+/// a tokio worker and starve every other socket connection.
+async fn run_worktree_blocking<T, F>(task: F) -> Result<T, DispatchError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, worktree::WorktreeError> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(task).await {
+        Ok(result) => result.map_err(DispatchError::from),
+        Err(err) => Err(format!("Worktree task failed: {err}").into()),
+    }
+}
+
+async fn finish_removal_blocking(
+    removal: worktree::PreparedWorktreeRemoval,
+    delete_branch: bool,
+) -> Result<(), DispatchError> {
+    run_worktree_blocking(move || removal.finish(delete_branch)).await
+}
+
 fn spawn_workspace_terminal(
     state: &SocketAppState,
     workspace: &forktty_core::Workspace,
@@ -1983,15 +2035,39 @@ fn resolve_cwd_param(params: &Value) -> Result<String, String> {
         .to_string())
 }
 
-fn resolve_open_repo_cwd_param(
+async fn resolve_open_repo_cwd_param(
     state: &SocketAppState,
     params: &Value,
     keys: &[&str],
     missing_param: &'static str,
 ) -> Result<String, DispatchError> {
     let cwd = resolve_required_existing_dir_param(params, keys, missing_param)?;
-    validate_socket_cwd_against_open_workspaces(state, &cwd).map_err(DispatchError::from)?;
+    // Copy the open-workspace roots out under the lock, then run the git2
+    // discovery off the runtime: it walks the filesystem once per open
+    // workspace plus once for the candidate.
+    let working_dirs = open_workspace_working_dirs(state)?;
+    let candidate = cwd.clone();
+    match tokio::task::spawn_blocking(move || {
+        validate_cwd_against_working_dirs(&working_dirs, &candidate)
+    })
+    .await
+    {
+        Ok(result) => result.map_err(DispatchError::from)?,
+        Err(err) => return Err(format!("Validation task failed: {err}").into()),
+    }
     Ok(cwd.to_string_lossy().to_string())
+}
+
+fn open_workspace_working_dirs(state: &SocketAppState) -> Result<Vec<PathBuf>, DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    Ok(model
+        .list_workspaces()
+        .into_iter()
+        .map(|workspace| workspace.working_dir)
+        .collect())
 }
 
 fn resolve_required_existing_dir_param(
@@ -2056,25 +2132,8 @@ fn canonical_existing_dir(path: &Path, key: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-fn validate_socket_cwd_against_open_workspaces(
-    state: &SocketAppState,
-    cwd: &Path,
-) -> Result<(), String> {
+fn validate_cwd_against_working_dirs(working_dirs: &[PathBuf], cwd: &Path) -> Result<(), String> {
     let candidate = canonical_repo_common_dir(cwd)?;
-    // Copy the working dirs out first: canonical_repo_common_dir does git2
-    // repository discovery and filesystem I/O, which must not run while
-    // holding the model lock shared with the GTK main thread.
-    let working_dirs = {
-        let model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        model
-            .list_workspaces()
-            .into_iter()
-            .map(|workspace| workspace.working_dir)
-            .collect::<Vec<_>>()
-    };
     let allowed = working_dirs
         .iter()
         .filter_map(|working_dir| canonical_repo_common_dir(working_dir).ok())
