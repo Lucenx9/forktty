@@ -2076,13 +2076,22 @@ fn validate_socket_cwd_against_open_workspaces(
             .collect::<Vec<_>>()
     };
     let allowed = working_dirs
-        .into_iter()
-        .filter_map(|working_dir| canonical_repo_common_dir(&working_dir).ok())
+        .iter()
+        .filter_map(|working_dir| canonical_repo_common_dir(working_dir).ok())
         .any(|open_repo| open_repo == candidate);
     if allowed {
         Ok(())
     } else {
-        Err("cwd must be inside the git repository of an open workspace".to_string())
+        let roots = working_dirs
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(format!(
+            "cwd is not inside the git repository of any open workspace; \
+             open a workspace on the repo first (`forktty create-workspace \
+             --working-dir <repo>`). Open workspace roots: {roots}"
+        ))
     }
 }
 
@@ -6838,6 +6847,8 @@ mod tests {
         .to_string();
 
         assert!(error.contains("open workspace"));
+        // The rejection must tell the caller how to satisfy the precondition.
+        assert!(error.contains("create-workspace"));
         assert!(worktree::list(unopened_repo.path().to_str().unwrap())
             .unwrap()
             .is_empty());

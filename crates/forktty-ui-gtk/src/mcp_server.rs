@@ -724,7 +724,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "worktree_list",
-            description: "List git worktrees for a repository path so agents can see existing parallel work.",
+            description: "List git worktrees for a repository path so agents can see existing parallel work. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: object_schema(
                 &["cwd"],
                 json!({
@@ -734,7 +734,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "worktree_status",
-            description: "Report whether a worktree is clean, dirty, or otherwise blocked before attach/remove/merge operations.",
+            description: "Report whether a worktree is clean, dirty, or otherwise blocked before attach/remove/merge operations. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -745,22 +745,22 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "worktree_create",
-            description: "Create an isolated git worktree + ForkTTY workspace for parallel agent work. Pass a branch/worktree name and repo cwd.",
+            description: "Create an isolated git worktree + ForkTTY workspace for parallel agent work. Pass a branch/worktree name and repo cwd. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "worktree_attach",
-            description: "Attach an existing branch/worktree to a ForkTTY workspace so another agent can work there.",
+            description: "Attach an existing branch/worktree to a ForkTTY workspace so another agent can work there. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "worktree_remove",
-            description: "Remove a ForkTTY-managed worktree after checking worktree_status; closes its workspace when present.",
+            description: "Remove a ForkTTY-managed worktree after checking worktree_status; closes its workspace when present. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
             name: "worktree_merge",
-            description: "Merge a completed worktree branch back into the repository. Use worktree_status first to avoid merging dirty work.",
+            description: "Merge a completed worktree branch back into the repository. Use worktree_status first to avoid merging dirty work. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
             input_schema: worktree_named_schema(),
         },
         ToolSpec {
