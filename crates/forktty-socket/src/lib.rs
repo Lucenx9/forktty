@@ -5616,7 +5616,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn metadata_commands_reject_invalid_required_fields() {
+    async fn metadata_set_status_rejects_invalid_required_fields() {
         let (state, _backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspaces[0]["id"].as_str().unwrap();
@@ -5652,6 +5652,31 @@ mod tests {
                 }),
                 "Invalid parameter value",
             ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains(message));
+        }
+
+        assert!(dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_set_progress_rejects_invalid_required_fields() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        for (method, params, message) in [
             (
                 "metadata.set_progress",
                 json!({
@@ -5682,6 +5707,31 @@ mod tests {
                 }),
                 "Invalid parameter value",
             ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "error");
+            assert!(error.to_string().contains(message));
+        }
+
+        assert!(dispatch(
+            &state,
+            "metadata.list_progress",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_log_rejects_invalid_required_fields() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
+        for (method, params, message) in [
             (
                 "metadata.log",
                 json!({
@@ -5704,6 +5754,24 @@ mod tests {
             assert!(error.to_string().contains(message));
         }
 
+        assert!(dispatch(
+            &state,
+            "metadata.list_logs",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_set_progress_rejects_missing_required_fields() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+
         let error = dispatch(
             &state,
             "metadata.set_progress",
@@ -5720,27 +5788,7 @@ mod tests {
 
         assert!(dispatch(
             &state,
-            "metadata.list_status",
-            json!({"workspace_id": workspace_id}),
-        )
-        .await
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .is_empty());
-        assert!(dispatch(
-            &state,
             "metadata.list_progress",
-            json!({"workspace_id": workspace_id}),
-        )
-        .await
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .is_empty());
-        assert!(dispatch(
-            &state,
-            "metadata.list_logs",
             json!({"workspace_id": workspace_id}),
         )
         .await
