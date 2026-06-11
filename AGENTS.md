@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for coding agents (Claude Code, Codex, Gemini CLI, …) working in this repository. `CLAUDE.md` is a symlink to this file.
+Guidance for coding agents (Claude Code, Codex, Gemini CLI, …) working in this repository. `CLAUDE.md` and `GEMINI.md` are symlinks to this file.
 
 ForkTTY is a Linux-only GTK4/libadwaita terminal multiplexer for coding agents: embedded Ghostty-backed terminals, a JSON-RPC Unix socket API, git worktree workflows, and agent hook integration. Rust workspace, AGPL-3.0-only, currently in alpha.
 
