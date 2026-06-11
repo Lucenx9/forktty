@@ -64,7 +64,8 @@ experimental in this alpha; they have a separate opt-in smoke section.
 - Symlink `~/.config/forktty/config.toml` to a real managed TOML file, toggle
   the sidebar, and confirm the target updates while the symlink remains a symlink.
 - Restart the app and confirm workspace/pane layout restores.
-- Set an invalid shell path in Settings and confirm the pane shows a recovery state.
+- Enter an invalid shell path in Settings and apply it: the Shell command row is marked with a red error state, an error toast names the validation failure, and the config file keeps the previous shell (the invalid value is never saved).
+- Open the Settings font family picker and confirm the dropdown lists installed monospace fonts with a working search field; the font size and scrollback spin rows show theme-independent −/+ glyph buttons.
 - Open Notifications, dismiss one notification, then Clear All.
 
 ## Config Recovery Smoke
