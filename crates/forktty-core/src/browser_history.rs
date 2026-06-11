@@ -618,4 +618,34 @@ mod tests {
         };
         assert!(err.to_string().contains("exceeds limit"));
     }
+
+    #[test]
+    fn history_path_uses_browser_profile_data_dir() {
+        let Some(data_dir) = dirs::data_local_dir() else {
+            return; // Test environment does not provide a local data dir.
+        };
+        let profile = ProfileId::default();
+        let expected = data_dir
+            .join("forktty")
+            .join("browser_profiles")
+            .join(profile.to_string())
+            .join("history.sqlite");
+
+        assert_eq!(history_path(profile), Some(expected));
+    }
+
+    #[test]
+    fn bookmarks_path_uses_browser_profile_data_dir() {
+        let Some(data_dir) = dirs::data_local_dir() else {
+            return; // Test environment does not provide a local data dir.
+        };
+        let profile = ProfileId::default();
+        let expected = data_dir
+            .join("forktty")
+            .join("browser_profiles")
+            .join(profile.to_string())
+            .join("bookmarks.json");
+
+        assert_eq!(bookmarks_path(profile), Some(expected));
+    }
 }
