@@ -239,6 +239,16 @@ mod tests {
         args.iter().map(|value| (*value).to_string()).collect()
     }
 
+    fn env_map(entries: Vec<String>) -> BTreeMap<String, String> {
+        entries
+            .into_iter()
+            .map(|entry| {
+                let (key, value) = entry.split_once('=').unwrap();
+                (key.to_string(), value.to_string())
+            })
+            .collect()
+    }
+
     fn spawn_request() -> SpawnRequest {
         SpawnRequest {
             surface_id: "surface-1".to_string(),
@@ -249,6 +259,97 @@ mod tests {
             socket_path: PathBuf::from("/run/user/1000/forktty.sock"),
             extra_env: Vec::new(),
         }
+    }
+
+    #[test]
+    fn appimage_runtime_dirs_returns_sorted_runtime_dirs() {
+        let dirs = with_env(
+            &[
+                ("APPDIR", Some("/run/user/1000/.mount_forktty")),
+                ("FORKTTY_APPIMAGE_DIR", Some("/opt/forktty")),
+            ],
+            appimage_runtime_dirs,
+        );
+
+        assert_eq!(
+            dirs,
+            strings(&["/opt/forktty", "/run/user/1000/.mount_forktty"])
+        );
+    }
+
+    #[test]
+    fn sanitize_appimage_child_environment_removes_runtime_paths() {
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let mut env = BTreeMap::from([
+            (
+                "LD_LIBRARY_PATH".to_string(),
+                format!("/usr/lib:{appimage_dir}/usr/lib:/usr/local/lib"),
+            ),
+            (
+                "GDK_PIXBUF_MODULE_FILE".to_string(),
+                format!("{appimage_dir}/usr/lib/gdk-pixbuf/loaders.cache"),
+            ),
+            (
+                "NORMAL_VAR".to_string(),
+                format!("{appimage_dir}/bin/forktty"),
+            ),
+        ]);
+
+        sanitize_appimage_child_environment(&mut env, &[appimage_dir.to_string()]);
+
+        assert_eq!(
+            env.get("LD_LIBRARY_PATH").map(String::as_str),
+            Some("/usr/lib:/usr/local/lib")
+        );
+        assert!(!env.contains_key("GDK_PIXBUF_MODULE_FILE"));
+        assert_eq!(
+            env.get("NORMAL_VAR").map(String::as_str),
+            Some("/run/user/1000/.mount_forktty/bin/forktty")
+        );
+    }
+
+    #[test]
+    fn child_environment_strips_appimage_runtime_and_adds_request_env() {
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let ld_library_path = format!("{appimage_dir}/lib:/usr/lib");
+        let env = with_env(
+            &[
+                ("APPDIR", Some(appimage_dir)),
+                ("APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("APPIMAGE_VAR", Some("runtime")),
+                ("LD_LIBRARY_PATH", Some(ld_library_path.as_str())),
+                ("NORMAL_SYSTEM_VAR", Some("system-value")),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.extra_env = vec![("CUSTOM_KEY".to_string(), "custom-value".to_string())];
+                env_map(child_environment(&request))
+            },
+        );
+
+        assert!(!env.contains_key("APPDIR"));
+        assert!(!env.contains_key("APPIMAGE"));
+        assert!(!env.contains_key("APPIMAGE_VAR"));
+        assert_eq!(
+            env.get("LD_LIBRARY_PATH").map(String::as_str),
+            Some("/usr/lib")
+        );
+        assert_eq!(
+            env.get("NORMAL_SYSTEM_VAR").map(String::as_str),
+            Some("system-value")
+        );
+        assert_eq!(
+            env.get("CUSTOM_KEY").map(String::as_str),
+            Some("custom-value")
+        );
+        assert_eq!(
+            env.get("FORKTTY_WORKSPACE_ID").map(String::as_str),
+            Some("workspace-1")
+        );
+        assert_eq!(
+            env.get("FORKTTY_SOCKET_PATH").map(String::as_str),
+            Some("/run/user/1000/forktty.sock")
+        );
     }
 
     #[test]
