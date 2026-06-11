@@ -28,8 +28,8 @@ fn main() -> ExitCode {
         cli::CliAction::SocketCli(args) => {
             ExitCode::from(socket_cli::run(args).clamp(0, 255) as u8)
         }
-        cli::CliAction::Unknown(arg) => {
-            eprintln!("forktty: unknown argument: {arg}");
+        cli::CliAction::Unknown(message) => {
+            eprintln!("forktty: {message}");
             eprintln!("Run `forktty --help` for usage.");
             ExitCode::from(2)
         }

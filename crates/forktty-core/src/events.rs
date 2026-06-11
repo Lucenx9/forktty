@@ -10,7 +10,7 @@
 //! from the GTK UI or from a socket request, which is why it captures both
 //! without instrumenting any mutation site.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
@@ -231,14 +231,29 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
         }
     }
 
-    // Surface removes, then adds.
+    // Surface removes, then adds. A surface that keeps its id but changes an
+    // identity-bearing field (owning workspace, kind) is re-asserted as
+    // remove + add: the protocol has no move/kind-change event, and clients
+    // already handle add/remove. The realizable case is `workspace_id`, which
+    // `repair_session_invariants` reassigns in place; comparing `kind` too
+    // closes the same snapshotted-but-never-diffed gap the rename event had.
+    let replaced: BTreeSet<&str> = next
+        .surfaces
+        .iter()
+        .filter(|(id, surf)| {
+            prev.surfaces
+                .get(id.as_str())
+                .is_some_and(|p| p.workspace_id != surf.workspace_id || p.kind != surf.kind)
+        })
+        .map(|(id, _)| id.as_str())
+        .collect();
     for id in prev.surfaces.keys() {
-        if !next.surfaces.contains_key(id) {
+        if !next.surfaces.contains_key(id) || replaced.contains(id.as_str()) {
             events.push(ModelEvent::SurfaceRemoved { id: id.clone() });
         }
     }
     for (id, surf) in &next.surfaces {
-        if !prev.surfaces.contains_key(id) {
+        if !prev.surfaces.contains_key(id) || replaced.contains(id.as_str()) {
             events.push(ModelEvent::SurfaceAdded {
                 id: id.clone(),
                 workspace_id: surf.workspace_id.clone(),
@@ -299,7 +314,13 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
     // default so a titled/browsed surface advertises its state on replay too.
     let default_surf = SurfSnap::default();
     for (id, next_surf) in &next.surfaces {
-        let prev_surf = prev.surfaces.get(id).unwrap_or(&default_surf);
+        // A re-asserted (removed + re-added) surface diffs against the default
+        // like a brand-new one, so its post-add title/url are advertised too.
+        let prev_surf = if replaced.contains(id.as_str()) {
+            &default_surf
+        } else {
+            prev.surfaces.get(id).unwrap_or(&default_surf)
+        };
         if prev_surf.title != next_surf.title {
             events.push(ModelEvent::SurfaceTitleChanged {
                 id: id.clone(),
@@ -471,6 +492,79 @@ mod tests {
                 id: Some("w2".into())
             }]
         );
+    }
+
+    #[test]
+    fn surface_reassigned_to_another_workspace_is_reasserted_as_remove_add() {
+        // `repair_session_invariants` can change a surface's workspace_id in
+        // place; with no move event in the protocol, the diff must re-assert
+        // the surface so clients' per-workspace lists stay correct.
+        let mut prev = Snapshot::default();
+        prev.workspaces.insert("w1".into(), ws("main", "s1"));
+        prev.workspaces.insert("w2".into(), ws("other", "s1"));
+        prev.surfaces.insert(
+            "s1".into(),
+            SurfSnap {
+                workspace_id: "w1".into(),
+                title: "shell".into(),
+                kind: SurfaceSnapKind::Terminal,
+                url: None,
+            },
+        );
+        let mut next = prev.clone();
+        next.surfaces.get_mut("s1").unwrap().workspace_id = "w2".into();
+
+        let events = diff(&prev, &next);
+
+        let remove_idx = events
+            .iter()
+            .position(|e| matches!(e, ModelEvent::SurfaceRemoved { id } if id == "s1"))
+            .expect("surface re-asserted with a remove");
+        let add_idx = events
+            .iter()
+            .position(|e| {
+                matches!(e, ModelEvent::SurfaceAdded { id, workspace_id, .. }
+                    if id == "s1" && workspace_id == "w2")
+            })
+            .expect("surface re-added under the new workspace");
+        assert!(remove_idx < add_idx, "remove must precede the re-add");
+        // The post-add state is fully advertised, like for a new surface.
+        assert!(events.contains(&ModelEvent::SurfaceTitleChanged {
+            id: "s1".into(),
+            title: "shell".into(),
+        }));
+    }
+
+    #[test]
+    fn surface_kind_change_is_reasserted_without_stale_url() {
+        let mut prev = Snapshot::default();
+        prev.workspaces.insert("w1".into(), ws("main", "s1"));
+        prev.surfaces.insert(
+            "s1".into(),
+            SurfSnap {
+                workspace_id: "w1".into(),
+                title: "tab".into(),
+                kind: SurfaceSnapKind::Browser,
+                url: Some("https://example.test".into()),
+            },
+        );
+        let mut next = prev.clone();
+        let surf = next.surfaces.get_mut("s1").unwrap();
+        surf.kind = SurfaceSnapKind::Terminal;
+        surf.url = None;
+
+        let events = diff(&prev, &next);
+
+        assert!(events.contains(&ModelEvent::SurfaceRemoved { id: "s1".into() }));
+        assert!(events.contains(&ModelEvent::SurfaceAdded {
+            id: "s1".into(),
+            workspace_id: "w1".into(),
+            kind: SurfaceSnapKind::Terminal,
+        }));
+        // The cleared url must not surface as a stale SurfaceUrlChanged.
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, ModelEvent::SurfaceUrlChanged { .. })));
     }
 
     #[test]

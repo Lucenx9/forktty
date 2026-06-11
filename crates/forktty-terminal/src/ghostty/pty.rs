@@ -1,18 +1,27 @@
 use crate::SpawnRequest;
 use nix::{
     fcntl::{fcntl, FcntlArg, FdFlag, OFlag},
+    poll::{poll, PollFd, PollFlags, PollTimeout},
     pty::{openpty, Winsize},
     unistd::setsid,
 };
 use std::{
     fs::File,
     io::{self, Read, Write},
-    os::fd::{AsRawFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, OwnedFd},
     os::unix::process::CommandExt,
     process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
+
+/// Overall cap on a single `write_all`: long enough for a slow consumer of a
+/// huge paste, short enough that a child ignoring its tty cannot wedge us.
+const WRITE_ALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Per-call cap on `read_available`: bounds main-loop time per pump tick
+/// under a flooding child (the pump runs every ~16ms and picks up the rest).
+const READ_AVAILABLE_BYTE_CAP: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PtySize {
@@ -79,7 +88,37 @@ impl PtySession {
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.master.write_all(bytes)
+        // The master fd is O_NONBLOCK, so std's write_all would fail with
+        // WouldBlock after a partial write once the kernel pty buffer fills
+        // (large pastes). Drain manually, polling for writability instead.
+        // The overall deadline is a generous cap so a child that never reads
+        // its tty cannot wedge the caller forever.
+        let deadline = Instant::now() + WRITE_ALL_TIMEOUT;
+        let mut written = 0;
+        while written < bytes.len() {
+            match self.master.write(&bytes[written..]) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "pty master accepted no bytes",
+                    ));
+                }
+                Ok(n) => written += n,
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "terminal child did not drain pty input before timeout",
+                        ));
+                    }
+                    let mut fds = [PollFd::new(self.master.as_fd(), PollFlags::POLLOUT)];
+                    poll(&mut fds, PollTimeout::from(100u16)).map_err(io_error)?;
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
     }
 
     pub fn read_available(&mut self) -> io::Result<Vec<u8>> {
@@ -88,7 +127,14 @@ impl PtySession {
         loop {
             match self.master.read(&mut buf) {
                 Ok(0) => break,
-                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Ok(n) => {
+                    out.extend_from_slice(&buf[..n]);
+                    // Bounds main-loop time per pump tick under a flooding
+                    // child; the next tick picks up the rest.
+                    if out.len() >= READ_AVAILABLE_BYTE_CAP {
+                        break;
+                    }
+                }
                 Err(err)
                     if err.kind() == io::ErrorKind::WouldBlock
                         || err.raw_os_error() == Some(libc::EIO) =>
@@ -291,6 +337,49 @@ mod tests {
             .filter(|target| target.to_string_lossy().contains("ptmx"))
             .collect();
         assert!(leaked.is_empty(), "child inherited pty master: {leaked:?}");
+    }
+
+    #[test]
+    fn pty_write_all_delivers_payloads_larger_than_the_kernel_buffer() {
+        let request = test_spawn_request_for_shell("/bin/sh").with_args(["-c", "wc -c"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        // Echo would mirror every input byte into the slave->master buffer,
+        // which nothing drains while write_all runs; turn it off so the only
+        // output is the byte count wc prints at EOF.
+        let mut termios = nix::sys::termios::tcgetattr(&session.master).unwrap();
+        termios
+            .local_flags
+            .remove(nix::sys::termios::LocalFlags::ECHO);
+        nix::sys::termios::tcsetattr(
+            &session.master,
+            nix::sys::termios::SetArg::TCSANOW,
+            &termios,
+        )
+        .unwrap();
+
+        // 256 KiB of newline-terminated lines: far beyond the kernel pty
+        // buffer, so the nonblocking master hits WouldBlock mid-write (std's
+        // write_all used to error there, silently truncating large pastes).
+        let line = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd\n";
+        let mut payload = Vec::new();
+        while payload.len() < 256 * 1024 {
+            payload.extend_from_slice(line);
+        }
+
+        session.write_all(&payload).unwrap();
+        // VEOF at the start of a line delivers EOF: wc prints the count.
+        session.write_all(b"\x04").unwrap();
+
+        let expected = payload.len().to_string();
+        let output = session
+            .read_until(expected.as_bytes(), Duration::from_secs(10))
+            .unwrap();
+        let output = String::from_utf8_lossy(&output);
+        assert!(
+            output.contains(&expected),
+            "child saw a truncated paste: wc reported {output:?}, expected {expected} bytes"
+        );
     }
 
     #[test]

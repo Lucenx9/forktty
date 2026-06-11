@@ -339,23 +339,37 @@ pub(super) fn surface_is_in_multi_tab_leaf(node: &PaneNode, surface_id: &str) ->
     }
 }
 
+// Production close paths resolve a concrete surface id before closing (the
+// active workspace can change while a confirmation dialog is open); this
+// focused-surface wrapper remains for tests pinning its semantics.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn close_active_surface(state: &SocketAppState) {
+    let focused = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        model
+            .active_workspace()
+            .map(|workspace| workspace.focused_surface_id)
+    };
+    let Some(focused) = focused else {
+        return;
+    };
+    close_surface_by_id(state, &focused);
+}
+
+pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
     let (focused, root_replacement) = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
         };
-        let focused = model
-            .active_workspace()
-            .map(|workspace| workspace.focused_surface_id);
-        let Some(focused) = focused else {
-            return;
-        };
-        if model.surface(&focused).is_none() {
+        if model.surface(surface_id).is_none() {
             return;
         }
-        let root_replacement = model.prepare_root_surface_replacement(&focused);
-        (focused, root_replacement)
+        let root_replacement = model.prepare_root_surface_replacement(surface_id);
+        (surface_id.to_string(), root_replacement)
     };
 
     if let Some(replacement) = root_replacement {

@@ -1,5 +1,5 @@
 use crate::command_safety::is_valid_ssh_host;
-use crate::model::{PaneNode, SplitAxis, Surface, SurfaceKind, Workspace};
+use crate::model::{PaneNode, SplitAxis, Surface, SurfaceKind, Workspace, MAX_SESSION_SPLIT_DEPTH};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -32,7 +32,6 @@ pub enum SessionError {
 
 pub const SESSION_FORMAT_VERSION: u32 = 3;
 const MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
-const MAX_SESSION_SPLIT_DEPTH: usize = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionData {

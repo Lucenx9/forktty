@@ -527,7 +527,10 @@ pub(super) fn install_terminal_context_menu(
             let _ = model.focus_surface(&surface_id_for_menu);
             let _ = model.mark_surface_unread(&surface_id_for_menu, false);
         }
-        if let Some(popover) = current_popover_for_menu.borrow_mut().take() {
+        // Drop the RefMut before popdown(): it emits `closed` synchronously and
+        // its handler re-borrows the same cell.
+        let previous_popover = current_popover_for_menu.borrow_mut().take();
+        if let Some(popover) = previous_popover {
             popover.popdown();
             if popover.parent().is_some() {
                 popover.unparent();

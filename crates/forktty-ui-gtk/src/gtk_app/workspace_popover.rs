@@ -94,12 +94,16 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
             inner.append(&body);
             row.set_child(Some(&inner));
 
-            let popover_for_row = popover.clone();
+            // A strong popover ref here would form a GObject self-cycle and
+            // leak the popover on every open; capture a weak ref instead.
+            let popover_for_row = popover.downgrade();
             let state_for_row = state.clone();
             let controller_for_row = controller.clone();
             let ws_id = ws.id.clone();
             row.connect_clicked(move |_| {
-                popover_for_row.popdown();
+                if let Some(popover) = popover_for_row.upgrade() {
+                    popover.popdown();
+                }
                 select_sidebar_workspace(&state_for_row, &ws_id, &controller_for_row);
             });
             container.append(&row);
@@ -126,19 +130,20 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
         .build();
     new_inner.append(&new_label);
     new_btn.set_child(Some(&new_inner));
-    let popover_for_new = popover.clone();
+    let popover_for_new = popover.downgrade();
     let state_for_new = state.clone();
     new_btn.connect_clicked(move |_| {
-        popover_for_new.popdown();
+        if let Some(popover) = popover_for_new.upgrade() {
+            popover.popdown();
+        }
         create_plain_workspace(&state_for_new);
     });
     container.append(&new_btn);
 
     popover.set_child(Some(&container));
 
-    let popover_for_cleanup = popover.clone();
-    popover.connect_closed(move |_| {
-        popover_for_cleanup.unparent();
+    popover.connect_closed(|popover| {
+        popover.unparent();
     });
 
     popover.popup();

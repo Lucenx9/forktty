@@ -4,14 +4,58 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Pasted text is now encoded with libghostty's paste encoder, which neutralizes control bytes in the payload: clipboard content containing `\x1b[201~` can no longer terminate the bracketed-paste wrapper early and inject the remainder as typed input (including command execution in a shell).
+- A socket client that sends a request and then stops reading the response is now disconnected after a write timeout instead of holding one of the 64 connection slots forever; enough stuck clients used to deny the socket to agent hooks.
+
+### Fixed
+- "Merge Worktree" now works when invoked from inside a linked worktree (it used to always fail with "Cannot resolve admin directory"), and fast-forward merges update the main checkout's files instead of only moving the branch ref.
+- Large pastes (bigger than the kernel pty buffer, ~12KB) are no longer silently truncated; the terminal now waits for the child to drain its input, with a 10s safety timeout. Automatic VT query replies sent over the same path can no longer be cut off mid-sequence either.
+- Splitting panes beyond the persistable depth (6 nested splits) is refused instead of silently breaking every subsequent session autosave and losing the layout on restart.
+- Ctrl with non-letter keys (Space, `[`, `\`, `]`, `^`, `_`, `?`) now sends the standard C0 control codes instead of nothing.
+- In maximize mode, focus changes that don't alter the pane tree (command palette "Focus Next Pane", socket `surface.focus`) now switch the visible pane instead of leaving a stale one on screen.
+- The Close Pane confirmation now closes the pane it was opened for, even if a socket client switched the active workspace while the dialog was open.
+- Piped CLI output (`forktty list --json | head -1` and similar) no longer panics with exit 101 and a panic.log entry when the consumer closes the pipe early.
+- "Reset Terminal" no longer reverts the pane to libghostty's default colors; the configured theme is re-applied and stale paste/focus mode state is cleared.
+- A configured shell or notification command that is temporarily missing from disk no longer quarantines the whole config and resets every setting to defaults; the value is normalized (default shell / cleared command) on load instead.
+- The socket server keeps serving through transient `accept()` failures such as file-descriptor exhaustion (EMFILE/ENFILE) instead of shutting down for the rest of the app's lifetime.
+- Two concurrent closes of the last workspace (or a close racing a worktree removal) no longer leave a duplicate replacement workspace.
+- Replacing a pane or workspace context menu no longer risks a re-entrant `RefCell` crash from the popover's synchronous `closed` signal.
+- Saving a setting from the Settings dialog no longer reverts config changes made outside the dialog while it was open (e.g. the F9 sidebar toggle); each change is rebased onto the config on disk.
+- `forktty doctor --socket/--verbose/--debug` now explains that `doctor` runs locally and that the socket doctor takes global flags first (`forktty --json doctor`); the CLI help documents the reachable spelling.
+- Hook event ordering now uses CLOCK_BOOTTIME instead of the wall clock, so hook status updates are no longer silently dropped after the system clock steps backwards; orders from different clock sources are no longer compared against each other.
+- `forktty hooks` with a missing or typoed subcommand now exits with a helpful error instead of printing hook continue-JSON and exiting 0.
+- `worktree-status` rejects combining a positional path with `--path`/`--cwd` instead of silently ignoring the positional, matching its sibling commands.
+- `forktty --json doctor` and `forktty hooks setup` no longer hang forever when an inspected config path is a FIFO.
+- Socket connections from the CLI and agent hooks are bounded by a connect timeout instead of hanging when the app's accept backlog is full.
+- A poisoned model lock no longer makes the socket event stream broadcast false removal events for every workspace and surface.
+- Workspace cwd validation no longer runs git repository discovery while holding the model lock shared with the UI thread, and the startup socket probe now has an overall deadline instead of only per-read timeouts.
+- Shell-trampoline detection for the notification command now catches clustered flags (`bash -lc`), separated flags (`bash -x -c`), and `env`-wrapped shells (`env bash -c`).
+- A child process flooding its terminal can no longer hold the UI in a single unbounded read; terminal reads are capped at 1MiB per pump tick.
+
+## [0.2.0-alpha.9] - 2026-06-11
+
+### Changed
+- The Settings dialog was reorganized and rebuilt with standard GNOME preference rows: the terminal palette now lives on the Terminal page next to font and scrollback, the Alerts page is named Notifications, enum options (palette, window mode, sidebar position, worktree layout, font family) use combo rows with explicit value mapping instead of free-form combo boxes, font size and scrollback use spin rows with the validated bounds, the font picker is searchable, and an invalid shell or notification command now marks the row in red in addition to the error toast.
+- Dropped the vendored `libghostty-vt-sys` copy: upstream libghostty-rs now makes the zig optimize mode follow the Cargo profile (uzaaft/libghostty-rs#55), so both libghostty crates are pinned to upstream master via `[patch.crates-io]`, with `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe` pinned in `.cargo/config.toml` so debug and test builds keep the optimized VT parser. The lines-to-bytes scrollback conversion stays on our side (upstream C API issue, uzaaft/libghostty-rs#56).
+
 ### Added
+- Double-click selects the word under the pointer (ghostty's default word boundaries, so paths like `/tmp/a.txt` select whole) and triple-click selects the visual row; both publish to the PRIMARY selection like a finished drag and work with Shift inside mouse-tracking apps.
+- Dragging a selection past the top or bottom edge of a pane now autoscrolls the viewport (faster the further the pointer goes) and keeps extending the selection; the selection is re-anchored under the scroll instead of being dropped.
 - Panics now also append message, location, and backtrace to `$XDG_STATE_HOME/forktty/panic.log` before the process dies, so field crashes (which abort inside GTK signal trampolines) no longer require coredump symbolization to diagnose.
 - The session state is now guarded by a lock file: a second running instance (e.g. a deb-installed and an AppImage forktty that DBus could not deduplicate) refuses to start instead of silently fighting the first one's session autosave.
 
 ### Fixed
+- An empty or malformed OSC 99 sequence no longer leaves a debug-formatted "Terminal metadata" status entry in the sidebar; it is ignored.
+- Terminal pixel-size reports now keep the measured cell dimensions after pane-only cell resizes instead of reverting to the 10x20 startup fallback.
+- Terminal OSC 110/111/104 color resets now restore ForkTTY's configured theme defaults instead of falling back to libghostty's built-in black/background palette.
+- Dead-key and compose-key input now has the GTK input-method handoff documented at the terminal key fallback, clarifying why committed text is not duplicated by fallback key encoding.
 - The search bar's match counter no longer shows a stale "current/total" after new terminal output removes the match highlight; it resets to 0/0 until the next step.
 - Two processes quarantining the same corrupt profile/bookmark store at the same time can no longer overwrite each other's backup file.
 - The sidebar toggle and the periodic PR lookup no longer read the config file on the GTK main thread, and the 2s session autosave no longer builds a debug dump of the whole session to detect changes.
+- An `events.subscribe` client that stops reading is now disconnected after 10s instead of holding one of the 64 socket connection slots forever; enough stuck subscribers used to silently deny the socket to agent hooks.
+- The event stream now reports a surface whose owning workspace changes (session-restore repair) by re-asserting it as removed + added; subscribers' per-workspace surface lists used to go silently stale.
+- `forktty events` flushes every event line, so piped consumers (`| jq`, `| while read`) see events as they happen instead of in 8KB bursts; when the server drops events because the consumer lags, a warning now also lands on stderr.
 
 ### CI
 - CI now verifies on every push that the binary carries the RUNPATH it needs to find the bundled libghostty, and the release smoke test runs the packaged binaries exactly the way the alpha.7 field failures did: the deb tree and the extracted AppImage's inner binary without any `LD_LIBRARY_PATH`, plus the `FORKTTY_APPIMAGE` exports in AppRun.

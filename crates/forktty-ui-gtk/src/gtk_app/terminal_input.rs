@@ -275,9 +275,18 @@ pub(super) fn terminal_scroll_viewport_delta(delta_y: f64) -> Option<isize> {
 fn control_code(ch: char) -> Option<u8> {
     let lower = ch.to_ascii_lowercase();
     if lower.is_ascii_lowercase() {
-        Some((lower as u8) - b'a' + 1)
-    } else {
-        None
+        return Some((lower as u8) - b'a' + 1);
+    }
+    // Standard C0 mappings for Ctrl with non-letter keys.
+    match ch {
+        ' ' | '@' => Some(0x00),
+        '[' => Some(0x1b),
+        '\\' => Some(0x1c),
+        ']' => Some(0x1d),
+        '^' => Some(0x1e),
+        '_' => Some(0x1f),
+        '?' => Some(0x7f),
+        _ => None,
     }
 }
 
@@ -345,6 +354,36 @@ mod tests {
     fn key_translation_encodes_enter_and_ctrl_c() {
         assert_eq!(encode_test_key(GhosttyKeySpec::enter()).unwrap(), b"\r");
         assert_eq!(encode_test_key(GhosttyKeySpec::ctrl('c')).unwrap(), b"\x03");
+    }
+
+    #[test]
+    fn key_translation_encodes_ctrl_with_non_letter_keys() {
+        assert_eq!(encode_test_key(GhosttyKeySpec::ctrl(' ')).unwrap(), b"\x00");
+        assert_eq!(encode_test_key(GhosttyKeySpec::ctrl('[')).unwrap(), b"\x1b");
+        assert_eq!(
+            encode_test_key(GhosttyKeySpec::ctrl('\\')).unwrap(),
+            b"\x1c"
+        );
+        assert_eq!(encode_test_key(GhosttyKeySpec::ctrl('_')).unwrap(), b"\x1f");
+
+        // The GTK key path must reach the same C0 codes with Ctrl held.
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::space, ctrl, Some(" ")).unwrap(),
+            TerminalInput::Bytes(b"\x00".to_vec())
+        );
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::bracketleft, ctrl, Some("[")).unwrap(),
+            TerminalInput::Bytes(b"\x1b".to_vec())
+        );
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::backslash, ctrl, Some("\\")).unwrap(),
+            TerminalInput::Bytes(b"\x1c".to_vec())
+        );
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::underscore, ctrl, Some("_")).unwrap(),
+            TerminalInput::Bytes(b"\x1f".to_vec())
+        );
     }
 
     #[test]

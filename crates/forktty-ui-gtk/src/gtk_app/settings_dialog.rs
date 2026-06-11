@@ -55,12 +55,12 @@ pub(super) fn show_settings_dialog(
     let terminal_nav = settings_nav_button(
         "forktty-terminal-symbolic",
         "Terminal",
-        "Shell, font, scrollback",
+        "Shell, font, palette, scrollback",
     );
     let interface_nav = settings_nav_button(
         "forktty-theme-symbolic",
         "Interface",
-        "Window, palette, sidebar",
+        "Window mode, sidebar",
     );
     let worktrees_nav = settings_nav_button(
         "forktty-grid-symbolic",
@@ -69,8 +69,8 @@ pub(super) fn show_settings_dialog(
     );
     let alerts_nav = settings_nav_button(
         "forktty-notifications-symbolic",
-        "Alerts",
-        "Notifications and command hook",
+        "Notifications",
+        "Desktop alerts, sound, command hook",
     );
     let advanced_nav =
         settings_nav_button("forktty-refresh-symbolic", "Advanced", "Reset defaults");
@@ -117,48 +117,45 @@ pub(super) fn show_settings_dialog(
 
     let (font_section, font_list) =
         settings_section("Text", "Applied immediately to all open Ghostty panes.");
-    let font_family = font_family_combo(parent, &loaded.appearance.font_family);
-    font_family.set_tooltip_text(Some("Terminal font family"));
-    font_family.set_hexpand(false);
-    font_family.set_halign(gtk::Align::End);
-    font_family.set_valign(gtk::Align::Center);
-    font_family.set_width_request(220);
-    for cell in font_family.cells() {
-        if let Ok(text) = cell.downcast::<gtk::CellRendererText>() {
-            text.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            text.set_max_width_chars(28);
-        }
-    }
-    let font_family_row =
-        settings_action_row("Font family", "Monospace font with symbol coverage.");
-    font_family_row.add_suffix(&font_family);
-    font_family_row.set_activatable_widget(Some(&font_family));
-    font_list.append(&font_family_row);
+    let (font_family, font_family_ids) =
+        font_family_combo_row(parent, &loaded.appearance.font_family);
+    font_list.append(&font_family);
 
-    let (font_size_row, font_size) = settings_number_row(
+    let font_size = settings_spin_row(
         "Font size",
         "Terminal text size, in points.",
-        8,
-        64,
-        1,
-        i64::from(loaded.appearance.font_size),
-        96,
+        8.0,
+        64.0,
+        1.0,
+        f64::from(loaded.appearance.font_size),
     );
-    font_list.append(&font_size_row);
+    font_list.append(&font_size);
     terminal_content.append(&font_section);
+
+    let (palette_section, palette_list) = settings_section(
+        "Palette",
+        "Controls the color palette used inside terminal panes.",
+    );
+    let terminal_theme = settings_combo_row(
+        "Terminal palette",
+        "System uses ForkTTY's neutral dark palette; named themes use fixed dark palettes.",
+        TERMINAL_THEME_ITEMS,
+        &loaded.appearance.terminal_theme,
+    );
+    palette_list.append(&terminal_theme);
+    terminal_content.append(&palette_section);
 
     let (behavior_section, behavior_list) =
         settings_section("Behavior", "Runtime behavior for Ghostty panes.");
-    let (scrollback_lines_row, scrollback_lines) = settings_number_row(
+    let scrollback_lines = settings_spin_row(
         "Scrollback lines",
         "Set to 0 to disable saved scrollback for each pane.",
-        0,
-        500_000,
-        1000,
-        i64::from(loaded.appearance.scrollback_lines),
-        128,
+        0.0,
+        500_000.0,
+        1000.0,
+        f64::from(loaded.appearance.scrollback_lines),
     );
-    behavior_list.append(&scrollback_lines_row);
+    behavior_list.append(&scrollback_lines);
     let terminal_audible_bell = adw::SwitchRow::builder()
         .title("Audible bell")
         .subtitle("Let terminal bell sequences play the system alert sound.")
@@ -171,29 +168,16 @@ pub(super) fn show_settings_dialog(
 
     let (interface_page, interface_content) = settings_page(
         "Interface",
-        "Control the visible chrome, palette, and workspace sidebar.",
+        "Control the app window and the workspace sidebar.",
     );
-    let (theme_section, theme_list) = settings_section(
-        "Theme",
-        "Controls the color palette used inside terminal panes.",
-    );
-    let (terminal_theme_row, terminal_theme) = settings_combo_row(
-        "Terminal palette",
-        "System uses ForkTTY's neutral dark palette; named themes use fixed dark palettes.",
-        TERMINAL_THEME_ITEMS,
-        &loaded.appearance.terminal_theme,
-    );
-    theme_list.append(&terminal_theme_row);
-    interface_content.append(&theme_section);
-
     let (window_section, window_list) = settings_section("Window", "Controls the app window mode.");
-    let (window_mode_row, window_mode) = settings_combo_row(
+    let window_mode = settings_combo_row(
         "Window mode",
         "Quake mode uses a drop-down window after restart.",
-        &[("normal", "Normal"), ("quake", "Quake")],
+        WINDOW_MODE_ITEMS,
         &loaded.appearance.window_mode,
     );
-    window_list.append(&window_mode_row);
+    window_list.append(&window_mode);
     interface_content.append(&window_section);
 
     let (sidebar_section, sidebar_list) = settings_section(
@@ -207,13 +191,13 @@ pub(super) fn show_settings_dialog(
         .build();
     sidebar_visible.add_css_class("settings-row");
     sidebar_list.append(&sidebar_visible);
-    let (sidebar_position_row, sidebar_position) = settings_combo_row(
+    let sidebar_position = settings_combo_row(
         "Sidebar position",
         "Side of the main window used for workspaces.",
-        &[("left", "Left"), ("right", "Right")],
+        SIDEBAR_POSITION_ITEMS,
         &loaded.appearance.sidebar_position,
     );
-    sidebar_list.append(&sidebar_position_row);
+    sidebar_list.append(&sidebar_position);
     interface_content.append(&sidebar_section);
     stack.add_named(&interface_page, Some("interface"));
 
@@ -226,17 +210,13 @@ pub(super) fn show_settings_dialog(
         "Git Worktrees",
         "Controls worktree creation and branch status hints.",
     );
-    let (worktree_layout_row, worktree_layout) = settings_combo_row(
+    let worktree_layout = settings_combo_row(
         "Worktree layout",
         "Placement for new worktree directories relative to the repository root.",
-        &[
-            ("nested", "Nested"),
-            ("sibling", "Sibling"),
-            ("outer-nested", "Outer nested"),
-        ],
+        WORKTREE_LAYOUT_ITEMS,
         &loaded.general.worktree_layout,
     );
-    worktree_list.append(&worktree_layout_row);
+    worktree_list.append(&worktree_layout);
     let pr_lookup = adw::SwitchRow::builder()
         .title("GitHub PR lookup")
         .subtitle("Use the GitHub CLI to show PR status for workspace branches.")
@@ -276,7 +256,7 @@ pub(super) fn show_settings_dialog(
     }
 
     let (alerts_page, alerts_content) = settings_page(
-        "Alerts",
+        "Notifications",
         "Choose where ForkTTY sends notifications and optional command hooks.",
     );
     let (delivery_section, delivery_list) =
@@ -341,75 +321,90 @@ pub(super) fn show_settings_dialog(
     terminal_nav.set_active(true);
     stack.set_visible_child_name("terminal");
 
+    shell_entry.connect_changed(|row| {
+        row.remove_css_class("error");
+    });
     shell_entry.connect_apply({
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         move |row: &adw::EntryRow| {
-            let mut next = current.borrow().clone();
-            next.general.shell = normalized_settings_entry_text(row);
+            let shell = normalized_settings_entry_text(row);
+            let saved = persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.general.shell = shell,
+                "Shell saved. Restart ForkTTY to use it.",
+            );
+            if saved {
+                row.remove_css_class("error");
+            } else {
+                row.add_css_class("error");
+            }
+        }
+    });
+    font_family.connect_selected_notify({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        let font_family_ids = font_family_ids.clone();
+        move |row| {
+            if suppress_updates.get() {
+                return;
+            }
+            let Some(family) = font_family_ids.get(row.selected() as usize) else {
+                return;
+            };
+            let font_family = match family.as_str() {
+                DEFAULT_FONT_FAMILY_ID => String::new(),
+                SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
+                _ => decode_font_family_row_id(family),
+            };
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
-                "Shell saved. Restart ForkTTY to use it.",
+                |config| config.appearance.font_family = font_family,
+                "Terminal font applied.",
             );
         }
     });
-    font_family.connect_changed({
+    font_size.connect_notify_local(Some("value"), {
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
-        move |combo| {
+        move |row: &adw::SpinRow, _| {
             if suppress_updates.get() {
                 return;
             }
-            if let Some(family) = combo.active_id() {
-                let family = family.to_string();
-                let mut next = current.borrow().clone();
-                next.appearance.font_family = match family.as_str() {
-                    DEFAULT_FONT_FAMILY_ID => String::new(),
-                    SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
-                    _ => decode_font_family_row_id(&family),
-                };
-                persist_settings_change(
-                    &dialog,
-                    &current,
-                    &on_apply,
-                    next,
-                    "Terminal font applied.",
-                );
-            }
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.font_size = row.value() as u16,
+                "Font size applied.",
+            );
         }
     });
-    connect_settings_number_control(&font_size, {
+    scrollback_lines.connect_notify_local(Some("value"), {
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
-        move |value| {
+        move |row: &adw::SpinRow, _| {
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.font_size = value as u16;
-            persist_settings_change(&dialog, &current, &on_apply, next, "Font size applied.");
-        }
-    });
-    connect_settings_number_control(&scrollback_lines, {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |value| {
-            if suppress_updates.get() {
-                return;
-            }
-            let mut next = current.borrow().clone();
-            next.appearance.scrollback_lines = value as u32;
-            persist_settings_change(&dialog, &current, &on_apply, next, "Scrollback updated.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.scrollback_lines = row.value() as u32,
+                "Scrollback updated.",
+            );
         }
     });
     terminal_audible_bell.connect_notify_local(Some("active"), {
@@ -421,68 +416,72 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.terminal_audible_bell = row.is_active();
-            persist_settings_change(&dialog, &current, &on_apply, next, "Terminal bell updated.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.terminal_audible_bell = row.is_active(),
+                "Terminal bell updated.",
+            );
         }
     });
-    terminal_theme.connect_changed({
+    terminal_theme.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
-        move |combo| {
+        move |row| {
             if suppress_updates.get() {
                 return;
             }
-            if let Some(theme) = combo.active_id() {
-                let mut next = current.borrow().clone();
-                next.appearance.terminal_theme = theme.to_string();
+            if let Some(theme) = settings_choice_value(TERMINAL_THEME_ITEMS, row.selected()) {
                 persist_settings_change(
                     &dialog,
                     &current,
                     &on_apply,
-                    next,
+                    |config| config.appearance.terminal_theme = theme.to_string(),
                     "Terminal theme applied.",
                 );
             }
         }
     });
-    window_mode.connect_changed({
+    window_mode.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
-        move |combo| {
+        move |row| {
             if suppress_updates.get() {
                 return;
             }
-            if let Some(mode) = combo.active_id() {
-                let mut next = current.borrow().clone();
-                next.appearance.window_mode = mode.to_string();
+            if let Some(mode) = settings_choice_value(WINDOW_MODE_ITEMS, row.selected()) {
                 persist_settings_change(
                     &dialog,
                     &current,
                     &on_apply,
-                    next,
+                    |config| config.appearance.window_mode = mode.to_string(),
                     "Window mode saved. Restart ForkTTY to use it.",
                 );
             }
         }
     });
-    sidebar_position.connect_changed({
+    sidebar_position.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
-        move |combo| {
+        move |row| {
             if suppress_updates.get() {
                 return;
             }
-            if let Some(position) = combo.active_id() {
-                let mut next = current.borrow().clone();
-                next.appearance.sidebar_position = position.to_string();
-                persist_settings_change(&dialog, &current, &on_apply, next, "Sidebar moved.");
+            if let Some(position) = settings_choice_value(SIDEBAR_POSITION_ITEMS, row.selected()) {
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    |config| config.appearance.sidebar_position = position.to_string(),
+                    "Sidebar moved.",
+                );
             }
         }
     });
@@ -495,34 +494,30 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.appearance.sidebar_visible = row.is_active();
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.appearance.sidebar_visible = row.is_active(),
                 "Sidebar visibility updated.",
             );
         }
     });
-    worktree_layout.connect_changed({
+    worktree_layout.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
-        move |combo| {
+        move |row| {
             if suppress_updates.get() {
                 return;
             }
-            if let Some(layout) = combo.active_id() {
-                let mut next = current.borrow().clone();
-                next.general.worktree_layout = layout.to_string();
+            if let Some(layout) = settings_choice_value(WORKTREE_LAYOUT_ITEMS, row.selected()) {
                 persist_settings_change(
                     &dialog,
                     &current,
                     &on_apply,
-                    next,
+                    |config| config.general.worktree_layout = layout.to_string(),
                     "Worktree layout saved.",
                 );
             }
@@ -537,25 +532,36 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.general.enable_pr_lookup = row.is_active();
-            persist_settings_change(&dialog, &current, &on_apply, next, "PR lookup updated.");
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.general.enable_pr_lookup = row.is_active(),
+                "PR lookup updated.",
+            );
         }
+    });
+    notification_command.connect_changed(|row| {
+        row.remove_css_class("error");
     });
     notification_command.connect_apply({
         let dialog = dialog.clone();
         let current = current.clone();
         let on_apply = on_apply.clone();
         move |row: &adw::EntryRow| {
-            let mut next = current.borrow().clone();
-            next.general.notification_command = normalized_settings_entry_text(row);
-            persist_settings_change(
+            let notification_command = normalized_settings_entry_text(row);
+            let saved = persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.general.notification_command = notification_command,
                 "Notification command saved.",
             );
+            if saved {
+                row.remove_css_class("error");
+            } else {
+                row.add_css_class("error");
+            }
         }
     });
     desktop_notifications.connect_notify_local(Some("active"), {
@@ -567,13 +573,11 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.notifications.desktop = row.is_active();
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.notifications.desktop = row.is_active(),
                 "Desktop notifications updated.",
             );
         }
@@ -587,13 +591,11 @@ pub(super) fn show_settings_dialog(
             if suppress_updates.get() {
                 return;
             }
-            let mut next = current.borrow().clone();
-            next.notifications.sound = row.is_active();
             persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                next,
+                |config| config.notifications.sound = row.is_active(),
                 "Notification sound updated.",
             );
         }
@@ -612,6 +614,7 @@ pub(super) fn show_settings_dialog(
             let suppress_updates_for_reset = suppress_updates.clone();
             let shell_entry_for_reset = shell_entry.clone();
             let font_family_for_reset = font_family.clone();
+            let font_family_ids_for_reset = font_family_ids.clone();
             let font_size_for_reset = font_size.clone();
             let scrollback_lines_for_reset = scrollback_lines.clone();
             let terminal_audible_bell_for_reset = terminal_audible_bell.clone();
@@ -633,23 +636,36 @@ pub(super) fn show_settings_dialog(
                     let defaults = config::AppConfig::default();
                     suppress_updates_for_reset.set(true);
                     shell_entry_for_reset.set_text(&defaults.general.shell);
-                    let _ = font_family_for_reset.set_active_id(Some(DEFAULT_FONT_FAMILY_ID));
-                    font_size_for_reset.set_value(i64::from(defaults.appearance.font_size));
+                    shell_entry_for_reset.remove_css_class("error");
+                    font_family_for_reset.set_selected(settings_id_index(
+                        &font_family_ids_for_reset,
+                        DEFAULT_FONT_FAMILY_ID,
+                    ));
+                    font_size_for_reset.set_value(f64::from(defaults.appearance.font_size));
                     scrollback_lines_for_reset
-                        .set_value(i64::from(defaults.appearance.scrollback_lines));
+                        .set_value(f64::from(defaults.appearance.scrollback_lines));
                     terminal_audible_bell_for_reset
                         .set_active(defaults.appearance.terminal_audible_bell);
-                    let _ = terminal_theme_for_reset
-                        .set_active_id(Some(&defaults.appearance.terminal_theme));
-                    let _ =
-                        window_mode_for_reset.set_active_id(Some(&defaults.appearance.window_mode));
-                    let _ = sidebar_position_for_reset
-                        .set_active_id(Some(&defaults.appearance.sidebar_position));
+                    terminal_theme_for_reset.set_selected(settings_choice_index(
+                        TERMINAL_THEME_ITEMS,
+                        &defaults.appearance.terminal_theme,
+                    ));
+                    window_mode_for_reset.set_selected(settings_choice_index(
+                        WINDOW_MODE_ITEMS,
+                        &defaults.appearance.window_mode,
+                    ));
+                    sidebar_position_for_reset.set_selected(settings_choice_index(
+                        SIDEBAR_POSITION_ITEMS,
+                        &defaults.appearance.sidebar_position,
+                    ));
                     sidebar_visible_for_reset.set_active(defaults.appearance.sidebar_visible);
-                    let _ =
-                        worktree_layout_for_reset.set_active_id(Some(&defaults.general.worktree_layout));
+                    worktree_layout_for_reset.set_selected(settings_choice_index(
+                        WORKTREE_LAYOUT_ITEMS,
+                        &defaults.general.worktree_layout,
+                    ));
                     pr_lookup_for_reset.set_active(defaults.general.enable_pr_lookup);
                     notification_command_for_reset.set_text(&defaults.general.notification_command);
+                    notification_command_for_reset.remove_css_class("error");
                     desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
                     notification_sound_for_reset.set_active(defaults.notifications.sound);
                     suppress_updates_for_reset.set(false);
@@ -657,7 +673,7 @@ pub(super) fn show_settings_dialog(
                         &dialog_for_reset,
                         &current_for_reset,
                         &on_apply_for_reset,
-                        defaults,
+                        |config| *config = defaults,
                         "Defaults restored.",
                     );
                 },
@@ -831,180 +847,106 @@ pub(super) fn normalized_settings_entry_text(row: &adw::EntryRow) -> String {
     normalized
 }
 
+pub(super) const WINDOW_MODE_ITEMS: &[(&str, &str)] = &[("normal", "Normal"), ("quake", "Quake")];
+pub(super) const SIDEBAR_POSITION_ITEMS: &[(&str, &str)] = &[("left", "Left"), ("right", "Right")];
+pub(super) const WORKTREE_LAYOUT_ITEMS: &[(&str, &str)] = &[
+    ("nested", "Nested"),
+    ("sibling", "Sibling"),
+    ("outer-nested", "Outer nested"),
+];
+
+pub(super) fn settings_choice_index(items: &[(&str, &str)], value: &str) -> u32 {
+    items.iter().position(|(id, _)| *id == value).unwrap_or(0) as u32
+}
+
+pub(super) fn settings_choice_value<'a>(items: &'a [(&str, &str)], index: u32) -> Option<&'a str> {
+    items.get(index as usize).map(|(id, _)| *id)
+}
+
+pub(super) fn settings_id_index(ids: &[String], id: &str) -> u32 {
+    ids.iter()
+        .position(|candidate| candidate == id)
+        .unwrap_or(0) as u32
+}
+
 pub(super) fn settings_combo_row(
     title: &str,
     subtitle: &str,
     items: &[(&str, &str)],
     active_id: &str,
-) -> (adw::ActionRow, gtk::ComboBoxText) {
-    let row = settings_action_row(title, subtitle);
-    let combo = combo_with_ids(items, active_id);
-    combo.set_valign(gtk::Align::Center);
-    combo.set_width_request(180);
-    combo.update_property(&[gtk::accessible::Property::Label(title)]);
-    row.add_suffix(&combo);
-    row.set_activatable_widget(Some(&combo));
-    (row, combo)
+) -> adw::ComboRow {
+    let labels: Vec<&str> = items.iter().map(|(_, label)| *label).collect();
+    let row = adw::ComboRow::builder()
+        .title(title)
+        .subtitle(subtitle)
+        .subtitle_lines(0)
+        .model(&gtk::StringList::new(&labels))
+        .build();
+    row.add_css_class("settings-row");
+    row.set_selected(settings_choice_index(items, active_id));
+    row
 }
 
-#[derive(Clone)]
-pub(super) struct SettingsNumberControl {
-    entry: gtk::Entry,
-    decrement: gtk::Button,
-    increment: gtk::Button,
-    last_value: Rc<Cell<i64>>,
-    min: i64,
-    max: i64,
-    step: i64,
-}
-
-impl SettingsNumberControl {
-    fn value(&self) -> i64 {
-        settings_number_value_from_text(
-            &self.entry.text(),
-            self.min,
-            self.max,
-            self.last_value.get(),
-        )
-    }
-
-    fn set_value(&self, value: i64) {
-        let value = value.clamp(self.min, self.max);
-        self.last_value.set(value);
-        self.entry.set_text(&value.to_string());
-    }
-
-    fn stepped_value(&self, delta: i64) -> i64 {
-        self.value().saturating_add(delta).clamp(self.min, self.max)
-    }
-}
-
-pub(super) fn settings_number_value_from_text(
-    text: &str,
-    min: i64,
-    max: i64,
-    fallback: i64,
-) -> i64 {
-    text.trim()
-        .parse::<i64>()
-        .map(|value| value.clamp(min, max))
-        .unwrap_or_else(|_| fallback.clamp(min, max))
-}
-
-pub(super) fn settings_number_row(
+pub(super) fn settings_spin_row(
     title: &str,
     subtitle: &str,
-    min: i64,
-    max: i64,
-    step: i64,
-    value: i64,
-    width: i32,
-) -> (adw::ActionRow, SettingsNumberControl) {
-    let row = settings_action_row(title, subtitle);
-    let value = value.clamp(min, max);
-    let control = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    control.add_css_class("settings-number-control");
-    control.set_valign(gtk::Align::Center);
-    control.set_halign(gtk::Align::End);
-
-    let entry = gtk::Entry::builder()
-        .text(value.to_string())
-        .width_request(width)
-        .input_purpose(gtk::InputPurpose::Digits)
-        .build();
-    entry.add_css_class("settings-number-entry");
-    gtk::prelude::EntryExt::set_alignment(&entry, 1.0);
-    entry.update_property(&[gtk::accessible::Property::Label(title)]);
-
-    let decrement = gtk::Button::with_label("\u{2212}");
-    decrement.add_css_class("settings-number-button");
-    let decrement_label = format!("Decrease {title}");
-    decrement.set_tooltip_text(Some(&decrement_label));
-    set_accessible_button_text(&decrement, &decrement_label, None);
-
-    let increment = gtk::Button::with_label("+");
-    increment.add_css_class("settings-number-button");
-    let increment_label = format!("Increase {title}");
-    increment.set_tooltip_text(Some(&increment_label));
-    set_accessible_button_text(&increment, &increment_label, None);
-
-    control.append(&decrement);
-    control.append(&entry);
-    control.append(&increment);
-    row.add_suffix(&control);
-    row.set_activatable_widget(Some(&entry));
-
-    (
-        row,
-        SettingsNumberControl {
-            entry,
-            decrement,
-            increment,
-            last_value: Rc::new(Cell::new(value)),
-            min,
-            max,
-            step,
-        },
-    )
+    min: f64,
+    max: f64,
+    step: f64,
+    value: f64,
+) -> adw::SpinRow {
+    let row = adw::SpinRow::with_range(min, max, step);
+    row.set_title(title);
+    row.set_subtitle(subtitle);
+    row.set_subtitle_lines(0);
+    row.add_css_class("settings-row");
+    row.set_value(value.clamp(min, max));
+    // AdwSpinRow stretches its spin button across all space after the title;
+    // compact it to a fixed-width control at the row end instead.
+    if let Some(spin_button) = descendant_spin_button(row.upcast_ref()) {
+        spin_button.set_hexpand(false);
+        spin_button.set_halign(gtk::Align::End);
+        spin_button.set_valign(gtk::Align::Center);
+        spin_button.set_width_request(176);
+        EditableExt::set_alignment(&spin_button, 1.0);
+        replace_spin_button_icons_with_glyphs(&spin_button);
+    }
+    row
 }
 
-pub(super) fn connect_settings_number_control<F>(control: &SettingsNumberControl, apply: F)
-where
-    F: Fn(i64) + 'static,
-{
-    let apply: Rc<dyn Fn(i64)> = Rc::new(apply);
-
-    control.decrement.connect_clicked({
-        let control = control.clone();
-        let apply = apply.clone();
-        move |_| {
-            let value = control.stepped_value(-control.step);
-            control.set_value(value);
-            apply(value);
+// The +/- buttons use the icon theme's list-add/list-remove symbolics, which
+// some system icon themes ship in a form GTK cannot recolor (invisible on our
+// dark surfaces). ForkTTY otherwise only uses bundled icons; swap the spin
+// glyphs to theme-independent text labels like the rest of the app.
+fn replace_spin_button_icons_with_glyphs(spin_button: &gtk::SpinButton) {
+    let mut child = spin_button.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        if let Some(button) = current.downcast_ref::<gtk::Button>() {
+            let glyph = if button.has_css_class("down") {
+                "\u{2212}"
+            } else {
+                "+"
+            };
+            let label = gtk::Label::new(Some(glyph));
+            label.add_css_class("ft-spin-glyph");
+            button.set_child(Some(&label));
         }
-    });
-
-    control.increment.connect_clicked({
-        let control = control.clone();
-        let apply = apply.clone();
-        move |_| {
-            let value = control.stepped_value(control.step);
-            control.set_value(value);
-            apply(value);
-        }
-    });
-
-    control.entry.connect_activate({
-        let control = control.clone();
-        let apply = apply.clone();
-        move |_| {
-            let value = control.value();
-            control.set_value(value);
-            apply(value);
-        }
-    });
-
-    let focus = gtk::EventControllerFocus::new();
-    focus.connect_leave({
-        let control = control.clone();
-        move |_| {
-            let value = control.value();
-            control.set_value(value);
-            apply(value);
-        }
-    });
-    control.entry.add_controller(focus);
+    }
 }
 
-pub(super) fn combo_with_ids(items: &[(&str, &str)], active_id: &str) -> gtk::ComboBoxText {
-    let combo = gtk::ComboBoxText::new();
-    for (id, label) in items {
-        combo.append(Some(id), label);
+fn descendant_spin_button(widget: &gtk::Widget) -> Option<gtk::SpinButton> {
+    if let Some(spin) = widget.downcast_ref::<gtk::SpinButton>() {
+        return Some(spin.clone());
     }
-    if !combo.set_active_id(Some(active_id)) {
-        combo.set_active(Some(0));
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = descendant_spin_button(&current) {
+            return Some(found);
+        }
+        child = current.next_sibling();
     }
-    combo
+    None
 }
 
 #[cfg(feature = "browser")]
@@ -1468,14 +1410,31 @@ pub(super) fn browser_import_run_summary(value: &Value) -> String {
     )
 }
 
-pub(super) fn persist_settings_change(
+// Applies a single settings change on top of `base`, leaving every other
+// field of `base` intact.
+pub(super) fn rebased_settings_config<F: FnOnce(&mut config::AppConfig)>(
+    base: &config::AppConfig,
+    apply_change: F,
+) -> config::AppConfig {
+    let mut next = base.clone();
+    apply_change(&mut next);
+    next
+}
+
+pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
     dialog: &adw::ToastOverlay,
     current: &Rc<RefCell<config::AppConfig>>,
     on_apply: &SettingsApplyCallback,
-    next: config::AppConfig,
+    apply_change: F,
     message: &str,
 ) -> bool {
-    if *current.borrow() == next {
+    // Rebase the dialog's single change onto a fresh disk read so saving the
+    // whole struct does not revert config edits made outside the dialog while
+    // it was open (e.g. the F9 sidebar toggle saves independently).
+    let base = config::load_config().unwrap_or_else(|_| current.borrow().clone());
+    let next = rebased_settings_config(&base, apply_change);
+    if next == base {
+        *current.borrow_mut() = next;
         return true;
     }
     match config::save_config(&next) {
@@ -1502,29 +1461,34 @@ pub(super) fn decode_font_family_row_id(id: &str) -> String {
         .to_string()
 }
 
-pub(super) fn font_family_combo(
-    parent: &impl IsA<gtk::Widget>,
-    active_family: &str,
-) -> gtk::ComboBoxText {
-    let combo = gtk::ComboBoxText::new();
-    let active_family = active_family.trim();
-    let all_names = installed_font_families(parent);
-    let default_family = default_terminal_font_family(&all_names);
-    combo.append(
-        Some(DEFAULT_FONT_FAMILY_ID),
-        &format!("Default terminal font ({default_family})"),
-    );
-    let system_monospace =
-        resolved_system_monospace_family(parent).unwrap_or_else(|| "monospace".to_string());
-    combo.append(
-        Some(SYSTEM_MONOSPACE_FONT_FAMILY_ID),
-        &format!("System monospace ({system_monospace})"),
-    );
+pub(super) struct FontFamilyChoices {
+    pub(super) ids: Vec<String>,
+    pub(super) labels: Vec<String>,
+    pub(super) active_index: u32,
+}
 
-    let mut names = installed_monospace_font_families(parent);
-    if names.is_empty() {
-        names = all_names;
-    }
+pub(super) fn font_family_choices(
+    all_names: &[String],
+    monospace_names: &[String],
+    system_monospace: &str,
+    active_family: &str,
+) -> FontFamilyChoices {
+    let active_family = active_family.trim();
+    let default_family = default_terminal_font_family(all_names);
+    let mut ids = vec![
+        DEFAULT_FONT_FAMILY_ID.to_string(),
+        SYSTEM_MONOSPACE_FONT_FAMILY_ID.to_string(),
+    ];
+    let mut labels = vec![
+        format!("Default terminal font ({default_family})"),
+        format!("System monospace ({system_monospace})"),
+    ];
+
+    let mut names = if monospace_names.is_empty() {
+        all_names.to_vec()
+    } else {
+        monospace_names.to_vec()
+    };
     names.sort_by_key(|name| name.to_ascii_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
 
@@ -1534,13 +1498,12 @@ pub(super) fn font_family_combo(
         if name == active_family {
             has_active = true;
         }
-        combo.append(Some(&installed_font_family_row_id(name)), name);
+        ids.push(installed_font_family_row_id(name));
+        labels.push(name.clone());
     }
     if !has_active {
-        combo.append(
-            Some(&installed_font_family_row_id(active_family)),
-            &format!("{active_family} (saved)"),
-        );
+        ids.push(installed_font_family_row_id(active_family));
+        labels.push(format!("{active_family} (saved)"));
     }
 
     let active_id = if active_family.is_empty() {
@@ -1550,8 +1513,42 @@ pub(super) fn font_family_combo(
     } else {
         installed_font_family_row_id(active_family)
     };
-    if !combo.set_active_id(Some(&active_id)) {
-        combo.set_active(Some(0));
+    let active_index = settings_id_index(&ids, &active_id);
+    FontFamilyChoices {
+        ids,
+        labels,
+        active_index,
     }
-    combo
+}
+
+pub(super) fn font_family_combo_row(
+    parent: &impl IsA<gtk::Widget>,
+    active_family: &str,
+) -> (adw::ComboRow, Rc<Vec<String>>) {
+    let all_names = installed_font_families(parent);
+    let monospace_names = installed_monospace_font_families(parent);
+    let system_monospace =
+        resolved_system_monospace_family(parent).unwrap_or_else(|| "monospace".to_string());
+    let choices = font_family_choices(
+        &all_names,
+        &monospace_names,
+        &system_monospace,
+        active_family,
+    );
+    let labels: Vec<&str> = choices.labels.iter().map(String::as_str).collect();
+    let row = adw::ComboRow::builder()
+        .title("Font family")
+        .subtitle("Monospace font with symbol coverage.")
+        .subtitle_lines(0)
+        .model(&gtk::StringList::new(&labels))
+        .enable_search(true)
+        .expression(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            gtk::Expression::NONE,
+            "string",
+        ))
+        .build();
+    row.add_css_class("settings-row");
+    row.set_selected(choices.active_index);
+    (row, Rc::new(choices.ids))
 }

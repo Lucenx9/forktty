@@ -402,8 +402,12 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
 }
 
 fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
+    // Whether the configured shell exists is environment-dependent (deleted
+    // shell, config copied from another machine), so fall back to the default
+    // shell on load instead of failing validation and quarantining the whole
+    // config.
     let shell = config.general.shell.trim();
-    if shell.is_empty() {
+    if shell.is_empty() || !is_executable_file(Path::new(shell)) {
         config.general.shell = default_shell();
     } else {
         config.general.shell = shell.to_string();
@@ -416,6 +420,19 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     )
     .unwrap_or_else(default_worktree_layout);
     config.general.notification_command = config.general.notification_command.trim().to_string();
+    // Drop a notification command whose program is missing or not executable:
+    // like the shell above, that is environment-dependent, so normalize like
+    // the `font_size` guard below instead of quarantining on load. Structural
+    // problems (unparseable quoting, shell `-c` trampolines) still fail
+    // validation and quarantine.
+    if let Ok(parts) = shell_words::split(&config.general.notification_command) {
+        if let Some(program) = parts.first() {
+            if !is_shell_trampoline(program, &parts[1..]) && !is_executable_file(Path::new(program))
+            {
+                config.general.notification_command = String::new();
+            }
+        }
+    }
     config.appearance.sidebar_position =
         normalize_config_choice(&config.appearance.sidebar_position, &["left", "right"])
             .unwrap_or_else(default_sidebar_position);
@@ -469,7 +486,7 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
             "general.notification_command must not be empty".to_string(),
         ));
     };
-    if is_shell_trampoline(program, parts.get(1).map(String::as_str)) {
+    if is_shell_trampoline(program, &parts[1..]) {
         return Err(ConfigError::Invalid(
             "general.notification_command must not invoke a shell with -c".to_string(),
         ));
@@ -814,11 +831,14 @@ mod tests {
     fn loaded_config_rejects_invalid_saved_values() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
+        // A shell `-c` trampoline is structurally invalid (not merely
+        // environment-dependent), so loading must still hard-error.
         fs::write(
             &path,
             r#"
             [general]
-            shell = "relative-shell"
+            shell = "/bin/sh"
+            notification_command = "/bin/sh -c notify-send"
             "#,
         )
         .unwrap();
@@ -1133,6 +1153,53 @@ mod tests {
         assert_eq!(config.appearance.scrollback_lines, 500_000);
         // Unrelated fields survive instead of being reset to defaults.
         assert_eq!(config.general.worktree_layout, "sibling");
+    }
+
+    #[test]
+    fn loaded_config_falls_back_to_default_shell_instead_of_quarantining() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/definitely/missing/forktty-shell"
+            worktree_layout = "sibling"
+            "#,
+        )
+        .unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        // A missing shell is environment-dependent: normalize on load instead
+        // of quarantining the whole config and reverting it to defaults.
+        assert!(recovery.is_none());
+        assert!(path.exists(), "config file must not be renamed/quarantined");
+        assert_eq!(config.general.shell, default_shell());
+        assert!(is_executable_file(Path::new(&config.general.shell)));
+        // Unrelated fields survive instead of being reset to defaults.
+        assert_eq!(config.general.worktree_layout, "sibling");
+    }
+
+    #[test]
+    fn loaded_config_clears_missing_notification_command_instead_of_quarantining() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+            notification_command = "/definitely/missing/forktty-notify --flag"
+            "#,
+        )
+        .unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        assert!(recovery.is_none());
+        assert!(path.exists(), "config file must not be renamed/quarantined");
+        assert_eq!(config.general.notification_command, "");
     }
 
     #[test]

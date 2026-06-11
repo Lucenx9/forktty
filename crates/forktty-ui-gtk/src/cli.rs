@@ -60,21 +60,33 @@ where
         Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
         Some("doctor") => match parse_doctor_options(&rest[1..]) {
             Ok(options) => CliAction::Doctor(options),
-            Err(flag) => CliAction::Unknown(flag),
+            Err(message) => CliAction::Unknown(message),
         },
         Some(command) if is_socket_cli_command(command) => return CliAction::SocketCli(rest),
         Some(option) if is_socket_cli_global_option(option) => return CliAction::SocketCli(rest),
-        Some(other) => return CliAction::Unknown(other.to_string()),
-        None => return CliAction::Unknown("<non-utf8>".to_string()),
+        Some(other) => return CliAction::Unknown(unknown_argument(other)),
+        None => return CliAction::Unknown(unknown_argument("<non-utf8>")),
     };
-    if rest.len() > 1 && !matches!(action, CliAction::SocketCli(_) | CliAction::Doctor(_)) {
+    if rest.len() > 1
+        && !matches!(
+            action,
+            // Unknown already carries the precise parse error (e.g. the
+            // doctor flag-ordering hint); don't overwrite it with a generic
+            // unknown-argument message for the trailing token.
+            CliAction::SocketCli(_) | CliAction::Doctor(_) | CliAction::Unknown(_)
+        )
+    {
         let extra = &rest[1];
         return match extra.to_str() {
-            Some(value) => CliAction::Unknown(value.to_string()),
-            None => CliAction::Unknown("<non-utf8>".to_string()),
+            Some(value) => CliAction::Unknown(unknown_argument(value)),
+            None => CliAction::Unknown(unknown_argument("<non-utf8>")),
         };
     }
     action
+}
+
+fn unknown_argument(argument: &str) -> String {
+    format!("unknown argument: {argument}")
 }
 
 fn is_socket_cli_global_option(option: &str) -> bool {
@@ -187,12 +199,19 @@ fn parse_doctor_options(args: &[OsString]) -> Result<DoctorOptions, String> {
     };
     for arg in args {
         let Some(flag) = arg.to_str() else {
-            return Err("<non-utf8>".to_string());
+            return Err(unknown_argument("<non-utf8>"));
         };
         match flag {
             "--json" => options.json = true,
             "--strict" => options.strict = true,
-            other => return Err(other.to_string()),
+            // `forktty doctor --socket <path>` is the wrong order for the
+            // socket/hook doctor: a leading global flag routes to it instead.
+            other if is_socket_cli_global_option(other) => {
+                return Err(format!(
+                    "doctor runs locally and does not accept {other}; for the socket doctor put global flags first: forktty --socket <path> doctor"
+                ));
+            }
+            other => return Err(unknown_argument(other)),
         }
     }
     Ok(options)
@@ -610,7 +629,18 @@ fn appdir_contains_library(appdir: &Path, lib_prefix: &str) -> bool {
         .any(|dir| directory_contains_library(dir, lib_prefix))
 }
 
+/// Real AppImage lib trees are at most a few levels deep; the cap only
+/// exists so a pathological AppDir cannot overflow the doctor's stack.
+const LIBRARY_SCAN_MAX_DEPTH: usize = 16;
+
 fn directory_contains_library(dir: &Path, lib_prefix: &str) -> bool {
+    directory_contains_library_bounded(dir, lib_prefix, LIBRARY_SCAN_MAX_DEPTH)
+}
+
+fn directory_contains_library_bounded(dir: &Path, lib_prefix: &str, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
@@ -630,7 +660,7 @@ fn directory_contains_library(dir: &Path, lib_prefix: &str) -> bool {
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_dir() && directory_contains_library(&path, lib_prefix) {
+        if file_type.is_dir() && directory_contains_library_bounded(&path, lib_prefix, depth - 1) {
             return true;
         }
     }
@@ -1026,7 +1056,7 @@ mod tests {
         #[cfg(not(feature = "browser"))]
         assert_eq!(
             parse::<_, &str>(["forktty", "browser", "open", "https://example.com"]),
-            CliAction::Unknown("browser".to_string())
+            CliAction::Unknown("unknown argument: browser".to_string())
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "ssh", "user@example.com"]),
@@ -1063,7 +1093,7 @@ mod tests {
     fn parse_unknown_returns_unknown() {
         assert_eq!(
             parse::<_, &str>(["forktty", "explode"]),
-            CliAction::Unknown("explode".to_string())
+            CliAction::Unknown("unknown argument: explode".to_string())
         );
     }
 
@@ -1071,15 +1101,52 @@ mod tests {
     fn parse_rejects_extra_args_for_builtin_commands() {
         assert_eq!(
             parse::<_, &str>(["forktty", "doctor", "--wat"]),
-            CliAction::Unknown("--wat".to_string())
+            CliAction::Unknown("unknown argument: --wat".to_string())
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "--help", "doctor"]),
-            CliAction::Unknown("doctor".to_string())
+            CliAction::Unknown("unknown argument: doctor".to_string())
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "--version", "--help"]),
-            CliAction::Unknown("--help".to_string())
+            CliAction::Unknown("unknown argument: --help".to_string())
+        );
+    }
+
+    #[test]
+    fn doctor_rejects_socket_cli_globals_with_a_pointer_to_the_socket_doctor() {
+        for args in [
+            vec!["forktty", "doctor", "--socket", "/run/forktty.sock"],
+            vec!["forktty", "doctor", "--socket=/run/forktty.sock"],
+            vec!["forktty", "doctor", "--verbose"],
+            vec!["forktty", "doctor", "--debug"],
+        ] {
+            let CliAction::Unknown(message) = parse(args.clone()) else {
+                panic!("expected Unknown for {args:?}");
+            };
+            assert!(
+                message.contains("doctor runs locally")
+                    && message.contains("put global flags first")
+                    && message.contains("forktty --socket <path> doctor"),
+                "unexpected message for {args:?}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn doctor_routing_depends_on_global_flag_position() {
+        // A global flag before `doctor` selects the socket/hook doctor…
+        assert_eq!(
+            parse::<_, &str>(["forktty", "--json", "doctor"]),
+            CliAction::SocketCli(vec![OsString::from("--json"), OsString::from("doctor")])
+        );
+        // …while `doctor` first always runs the local filesystem doctor.
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--json"]),
+            CliAction::Doctor(DoctorOptions {
+                json: true,
+                strict: false
+            })
         );
     }
 
@@ -1163,6 +1230,27 @@ mod tests {
             ),
             2
         );
+    }
+
+    #[test]
+    fn library_scan_finds_nested_libs_but_stops_at_the_depth_cap() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let shallow = dir.path().join("a/b/c");
+        fs::create_dir_all(&shallow).unwrap();
+        fs::write(shallow.join("libgtk-4.so.1"), b"").unwrap();
+        assert!(directory_contains_library(dir.path(), "libgtk-4.so"));
+
+        // A library buried deeper than the cap must be ignored instead of
+        // recursing without bound (pathological/tampered AppDir).
+        let deep_root = tempfile::tempdir().unwrap();
+        let mut deep = deep_root.path().to_path_buf();
+        for index in 0..LIBRARY_SCAN_MAX_DEPTH {
+            deep.push(format!("level{index}"));
+        }
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("libgtk-4.so.1"), b"").unwrap();
+        assert!(!directory_contains_library(deep_root.path(), "libgtk-4.so"));
     }
 
     #[test]

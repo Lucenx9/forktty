@@ -9,6 +9,9 @@ use forktty_terminal::ghostty::{
 };
 use std::os::unix::process::ExitStatusExt;
 
+const DEFAULT_CELL_WIDTH_PX: u32 = 10;
+const DEFAULT_CELL_HEIGHT_PX: u32 = 20;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TerminalSpawnPid(pub i32);
 
@@ -17,9 +20,13 @@ pub(super) struct TerminalRuntime {
     core: GhosttyCore,
     pty: PtySession,
     size: PtySize,
+    last_cell_width_px: u32,
+    last_cell_height_px: u32,
     exit_reported: bool,
     #[cfg(test)]
     pty_writes: Vec<Vec<u8>>,
+    #[cfg(test)]
+    core_resize_pixels: Vec<(u32, u32)>,
 }
 
 fn configured_theme_colors() -> GhosttyThemeColors {
@@ -75,9 +82,13 @@ impl TerminalRuntime {
             core,
             pty,
             size,
+            last_cell_width_px: DEFAULT_CELL_WIDTH_PX,
+            last_cell_height_px: DEFAULT_CELL_HEIGHT_PX,
             exit_reported: false,
             #[cfg(test)]
             pty_writes: Vec::new(),
+            #[cfg(test)]
+            core_resize_pixels: Vec::new(),
         })
     }
 
@@ -148,6 +159,8 @@ impl TerminalRuntime {
     ) -> Result<(), TerminalError> {
         let cols = pixel_cells(width_px, cell_width_px);
         let rows = pixel_cells(height_px, cell_height_px);
+        self.last_cell_width_px = cell_pixel_dimension(cell_width_px);
+        self.last_cell_height_px = cell_pixel_dimension(cell_height_px);
         self.resize_cells(cols, rows)
     }
 
@@ -156,8 +169,13 @@ impl TerminalRuntime {
         self.pty
             .resize(size)
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        let cell_width_px = self.last_cell_width_px;
+        let cell_height_px = self.last_cell_height_px;
+        #[cfg(test)]
+        self.core_resize_pixels
+            .push((cell_width_px, cell_height_px));
         self.core
-            .resize(cols, rows, 10, 20)
+            .resize(cols, rows, cell_width_px, cell_height_px)
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
         self.size = size;
         Ok(())
@@ -251,7 +269,6 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
-    #[cfg(test)]
     pub(super) fn size(&self) -> PtySize {
         self.size
     }
@@ -260,11 +277,20 @@ impl TerminalRuntime {
     pub(super) fn pty_writes(&self) -> Vec<Vec<u8>> {
         self.pty_writes.clone()
     }
+
+    #[cfg(test)]
+    pub(super) fn core_resize_pixels(&self) -> Vec<(u32, u32)> {
+        self.core_resize_pixels.clone()
+    }
 }
 
 fn pixel_cells(pixels: i32, cell_pixels: i32) -> u16 {
     let cell_pixels = cell_pixels.max(1);
     ((pixels.max(1) / cell_pixels).max(1)).min(i32::from(u16::MAX)) as u16
+}
+
+fn cell_pixel_dimension(cell_pixels: i32) -> u32 {
+    cell_pixels.max(1) as u32
 }
 
 fn exit_status_code(status: std::process::ExitStatus) -> i32 {
@@ -454,6 +480,27 @@ mod tests {
         harness.resize_pixels("surface-1", 800, 480, 10, 20);
 
         assert_eq!(harness.runtime_size("surface-1"), Some((80, 24)));
+    }
+
+    #[test]
+    fn resize_cells_uses_initial_default_cell_pixels_before_allocation() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
+
+        runtime.resize_cells(40, 10).unwrap();
+
+        assert_eq!(runtime.core_resize_pixels().last(), Some(&(10, 20)));
+    }
+
+    #[test]
+    fn resize_cells_uses_last_measured_cell_pixels_after_allocation() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
+
+        runtime.resize_pixels(880, 528, 11, 22).unwrap();
+        runtime.resize_cells(40, 10).unwrap();
+
+        assert_eq!(runtime.core_resize_pixels().last(), Some(&(11, 22)));
     }
 
     #[test]

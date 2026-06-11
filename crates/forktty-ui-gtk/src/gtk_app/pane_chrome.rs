@@ -353,14 +353,19 @@ pub(super) fn show_close_pane_confirmation(
     let body = close_pane_confirmation_body(&state, &surface_id);
     show_destructive_confirmation(parent, "Close Pane?", &body, "Close Pane", move || {
         // The pane may have been closed by other means (shortcut, socket
-        // client) while the dialog was open; refocusing would then fail and
-        // close_active_surface would close whichever pane is focused now.
+        // client) while the dialog was open; skip the close entirely then.
         let still_exists = state
             .model
             .lock()
             .is_ok_and(|model| model.surface(&surface_id).is_some());
         if still_exists {
-            focus_surface_and(&state, &surface_id, close_active_surface);
+            // Close by explicit id: the active workspace may have changed
+            // (e.g. socket workspace.select) while the dialog was open, so
+            // closing the "active" surface could target the wrong pane.
+            // Focus first so the surviving neighbor inherits focus as before.
+            focus_surface_and(&state, &surface_id, |state| {
+                close_surface_by_id(state, &surface_id);
+            });
         }
     });
 }

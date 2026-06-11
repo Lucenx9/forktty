@@ -19,7 +19,7 @@ Thumbs.db
 .env
 .env.local
 .mcp.json
-CLAUDE.md
+CLAUDE.local.md
 
 # Claude Code personal settings (team settings are in .claude/settings.json)
 .claude/

@@ -4,16 +4,18 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, IsTerminal, Read, Seek, SeekFrom, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
 const HOOK_STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 const HOOK_CONTINUE_JSON: &str = "{\"continue\":true,\"suppressOutput\":false}\n";
-const HOOK_EVENT_CLOCK: &str = "monotonic-ns";
+const HOOK_EVENT_CLOCK: &str = "boottime-ns";
 const HOOK_EVENT_ORDER_PARAM: &str = "hook_event_order";
 const HOOK_TOOL_LABEL_MAX: usize = 48;
 const HOOK_TOKEN_CEILING_DEFAULT: u64 = 200_000;
@@ -64,7 +66,8 @@ Usage:
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
-  forktty doctor
+  forktty --json doctor                            Socket/hook doctor; needs a global flag before
+                                                   `doctor` (bare `forktty doctor` runs the local doctor)
   forktty ping
   forktty capabilities [--json]
   forktty events [--no-replay]
@@ -920,6 +923,156 @@ fn send_socket_request(socket_path: &Path, method: &str, params: Value) -> CliRe
     send_socket_request_with_timeout(socket_path, method, params, SOCKET_TIMEOUT)
 }
 
+/// Connect to a Unix socket with a hard upper bound. `UnixStream::connect`
+/// blocks indefinitely while the server's accept backlog is full (a wedged
+/// GTK app used to hang agent hooks forever): connect non-blocking, wait
+/// within `timeout`, then restore blocking mode for the caller.
+fn connect_unix_stream_with_timeout(
+    socket_path: &Path,
+    timeout: Duration,
+) -> io::Result<UnixStream> {
+    let (addr, addr_len) = unix_socket_address(socket_path)?;
+    let deadline = Instant::now() + timeout;
+    // SAFETY: plain socket(2) call; the result is checked before use.
+    let fd = unsafe {
+        libc::socket(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a freshly created socket owned by no one else.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    loop {
+        // SAFETY: `addr` is a valid sockaddr_un of `addr_len` bytes.
+        let rc = unsafe {
+            libc::connect(
+                fd.as_raw_fd(),
+                &addr as *const libc::sockaddr_un as *const libc::sockaddr,
+                addr_len,
+            )
+        };
+        if rc == 0 {
+            break;
+        }
+        let err = io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::EINTR) => continue,
+            Some(libc::EISCONN) => break,
+            Some(libc::EINPROGRESS) => {
+                poll_writable_until(fd.as_raw_fd(), deadline)?;
+                let so_error = take_socket_error(fd.as_raw_fd())?;
+                if so_error != 0 {
+                    return Err(io::Error::from_raw_os_error(so_error));
+                }
+                break;
+            }
+            // AF_UNIX returns EAGAIN when the accept backlog is full; no
+            // pending connection exists, so polling cannot report progress —
+            // retry until the deadline instead of blocking forever.
+            Some(libc::EAGAIN) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "timed out waiting for the socket accept backlog to drain",
+                    ));
+                }
+                std::thread::sleep(remaining.min(Duration::from_millis(20)));
+            }
+            _ => return Err(err),
+        }
+    }
+    set_blocking(fd.as_raw_fd())?;
+    Ok(UnixStream::from(fd))
+}
+
+fn unix_socket_address(path: &Path) -> io::Result<(libc::sockaddr_un, libc::socklen_t)> {
+    let bytes = path.as_os_str().as_bytes();
+    // SAFETY: all-zero is a valid bit pattern for sockaddr_un.
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if bytes.is_empty() || bytes.contains(&0) || bytes.len() >= addr.sun_path.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "socket path is empty, contains NUL, or is too long for sun_path",
+        ));
+    }
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (dst, src) in addr.sun_path.iter_mut().zip(bytes) {
+        *dst = *src as libc::c_char;
+    }
+    let len = std::mem::size_of::<libc::sa_family_t>() + bytes.len() + 1;
+    Ok((addr, len as libc::socklen_t))
+}
+
+fn poll_writable_until(fd: RawFd, deadline: Instant) -> io::Result<()> {
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out connecting to the socket",
+            ));
+        }
+        let mut poll_fd = libc::pollfd {
+            fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let millis = remaining.as_millis().clamp(1, i32::MAX as u128) as libc::c_int;
+        // SAFETY: `poll_fd` is a valid pollfd for the duration of the call.
+        let rc = unsafe { libc::poll(&mut poll_fd, 1, millis) };
+        if rc > 0 {
+            return Ok(());
+        }
+        if rc == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out connecting to the socket",
+            ));
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+fn take_socket_error(fd: RawFd) -> io::Result<libc::c_int> {
+    let mut so_error: libc::c_int = 0;
+    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `so_error`/`len` are valid out-pointers for SO_ERROR.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_ERROR,
+            &mut so_error as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(so_error)
+}
+
+fn set_blocking(fd: RawFd) -> io::Result<()> {
+    // SAFETY: fcntl(2) on a descriptor we own.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: see above; clears O_NONBLOCK only.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 fn send_socket_request_with_timeout(
     socket_path: &Path,
     method: &str,
@@ -932,7 +1085,7 @@ fn send_socket_request_with_timeout(
         method: method.to_string(),
         params,
     };
-    let mut stream = UnixStream::connect(socket_path)
+    let mut stream = connect_unix_stream_with_timeout(socket_path, timeout)
         .map_err(|err| format_socket_connect_error(err, socket_path))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
@@ -1088,9 +1241,23 @@ fn read_optional_stdin_json() -> CliResult<Value> {
     serde_json::from_str(trimmed).or_else(|_| Ok(json!({ "raw": trimmed })))
 }
 
+/// Write one line of command output, treating a consumer that closed the pipe
+/// (`forktty list --json | head -1`) as normal termination instead of a panic,
+/// matching the `stream_events` convention.
+fn write_output_line(out: &mut impl Write, text: &str) -> CliResult<()> {
+    match writeln!(out, "{text}") {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn write_stdout_line(text: &str) -> CliResult<()> {
+    write_output_line(&mut io::stdout().lock(), text)
+}
+
 fn print_json(value: &Value) -> CliResult<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
-    Ok(())
+    write_stdout_line(&serde_json::to_string_pretty(value)?)
 }
 
 fn print_result_or_json(
@@ -1101,8 +1268,7 @@ fn print_result_or_json(
     if context.json {
         print_json(&json_value)
     } else {
-        println!("{}", text.as_ref());
-        Ok(())
+        write_stdout_line(text.as_ref())
     }
 }
 
@@ -1124,12 +1290,12 @@ fn handle_capabilities(context: &CliContext, args: Vec<String>) -> CliResult<()>
         return print_json(&result);
     }
     if let Some(version) = string_field(&result, "version") {
-        println!("version {version}");
+        write_stdout_line(&format!("version {version}"))?;
     }
     if let Some(methods) = result.get("methods").and_then(Value::as_array) {
         for method in methods {
             if let Some(name) = method.as_str() {
-                println!("{name}");
+                write_stdout_line(name)?;
             }
         }
     }
@@ -1160,7 +1326,7 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
         method: "events.subscribe".to_string(),
         params: json!({ "replay": replay }),
     };
-    let mut stream = UnixStream::connect(socket_path)
+    let mut stream = connect_unix_stream_with_timeout(socket_path, SOCKET_TIMEOUT)
         .map_err(|err| format_socket_connect_error(err, socket_path))?;
     // Bound the subscribe round-trip so a wedged server cannot hang the CLI
     // forever; the timeout is lifted once the stream is established because
@@ -1204,17 +1370,44 @@ fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
 
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    if writeln!(handle, "{}", first.trim_end()).is_err() {
+    // Flush after every event: piped stdout (`forktty events | jq`) is
+    // block-buffered, and at terminal event rates a script would otherwise
+    // see nothing until 8KB accumulate or the stream ends.
+    if writeln!(handle, "{}", first.trim_end()).is_err() || handle.flush().is_err() {
         return Ok(());
     }
     while let Some(line) =
         read_limited_response_line(&mut reader, MAX_SOCKET_RESPONSE_BYTES, "events stream line")?
     {
-        if writeln!(handle, "{line}").is_err() {
+        warn_if_lagged(&line);
+        if writeln!(handle, "{line}").is_err() || handle.flush().is_err() {
             break;
         }
     }
     Ok(())
+}
+
+/// Surface the server's lag notice on stderr too: the NDJSON line alone is
+/// easy to miss for a consumer filtering stdout (e.g. `| jq 'select(...)'`),
+/// and dropped events mean the stream must be re-synced by reconnecting.
+fn warn_if_lagged(line: &str) {
+    if let Some(dropped) = lagged_dropped_count(line) {
+        eprintln!(
+            "forktty: events stream lagged, {dropped} event(s) dropped; \
+             re-run `forktty events` to resync"
+        );
+    }
+}
+
+/// Dropped-event count if `line` is the server's lag notice. The prefix check
+/// is exact: event payloads embedding the same text in a string field arrive
+/// with escaped quotes, so they cannot match.
+fn lagged_dropped_count(line: &str) -> Option<u64> {
+    if !line.starts_with(r#"{"event":"lagged""#) {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    Some(value.get("dropped").and_then(Value::as_u64).unwrap_or(0))
 }
 
 fn handle_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -1225,7 +1418,7 @@ fn handle_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     }
     if let Some(items) = workspaces.as_array() {
         for workspace in items {
-            println!("{}", format_workspace_line(workspace));
+            write_stdout_line(&format_workspace_line(workspace))?;
         }
     }
     Ok(())
@@ -1561,10 +1754,10 @@ fn handle_surfaces(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         return Ok(());
     };
     if items.is_empty() {
-        println!("No surfaces");
+        write_stdout_line("No surfaces")?;
     } else {
         for surface in items {
-            println!("{}", format_surface_line(surface));
+            write_stdout_line(&format_surface_line(surface))?;
         }
     }
     Ok(())
@@ -2473,7 +2666,7 @@ fn handle_worktree_list(context: &CliContext, args: Vec<String>) -> CliResult<()
     }
     if let Some(items) = result.as_array() {
         for worktree in items {
-            println!("{}", format_worktree_line(worktree));
+            write_stdout_line(&format_worktree_line(worktree))?;
         }
     }
     Ok(())
@@ -2493,6 +2686,11 @@ fn handle_worktree_status(context: &CliContext, args: Vec<String>) -> CliResult<
     if path_option.is_some() && cwd_option.is_some() {
         return Err(CliError::new(
             "worktree-status: cannot combine --path and --cwd",
+        ));
+    }
+    if !parsed.positionals.is_empty() && (path_option.is_some() || cwd_option.is_some()) {
+        return Err(CliError::new(
+            "worktree-status: cannot combine a positional path with --path or --cwd",
         ));
     }
     let path_value = path_option
@@ -2912,10 +3110,10 @@ fn list_metadata(
         return Ok(());
     };
     if items.is_empty() {
-        println!("{empty_message}");
+        write_stdout_line(empty_message)?;
     } else {
         for item in items {
-            println!("{}", formatter(item));
+            write_stdout_line(&formatter(item))?;
         }
     }
     Ok(())
@@ -2986,10 +3184,10 @@ fn handle_notifications(context: &CliContext, args: Vec<String>) -> CliResult<()
         return Ok(());
     };
     if items.is_empty() {
-        println!("No notifications");
+        write_stdout_line("No notifications")?;
     } else {
         for notification in items {
-            println!("{}", format_notification_line(notification));
+            write_stdout_line(&format_notification_line(notification))?;
         }
     }
     Ok(())
@@ -3055,31 +3253,25 @@ fn handle_socket_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()
     if context.json {
         return print_json(&report);
     }
-    println!("ForkTTY doctor");
-    println!(
+    write_stdout_line("ForkTTY doctor")?;
+    write_stdout_line(&format!(
         "socket source: {}",
         report["socket"]["source"].as_str().unwrap_or("default")
-    );
-    println!(
-        "{}",
-        format_doctor_path("socket", &report["socket"]["inspect"])
-    );
+    ))?;
+    write_stdout_line(&format_doctor_path("socket", &report["socket"]["inspect"]))?;
     if let Some(info) = report["executable"]["forktty"].as_object() {
-        println!(
-            "{}",
-            format_doctor_path("forktty", &Value::Object(info.clone()))
-        );
+        write_stdout_line(&format_doctor_path("forktty", &Value::Object(info.clone())))?;
     }
-    println!("environment:");
+    write_stdout_line("environment:")?;
     if let Some(env) = report["env"].as_object() {
         for (key, value) in env {
-            println!("  {key}={}", value.as_str().unwrap_or("(unset)"));
+            write_stdout_line(&format!("  {key}={}", value.as_str().unwrap_or("(unset)")))?;
         }
     }
-    println!("hook configs:");
+    write_stdout_line("hook configs:")?;
     if let Some(configs) = report["hookConfigs"].as_object() {
         for (agent, info) in configs {
-            println!("  {}", format_doctor_path(agent, info));
+            write_stdout_line(&format!("  {}", format_doctor_path(agent, info)))?;
         }
     }
     Ok(())
@@ -3153,8 +3345,20 @@ fn handle_hooks(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Some("remove") | Some("uninstall") => handle_hooks_remove(context, args[1..].to_vec()),
         Some("doctor") => handle_hooks_doctor(context, args[1..].to_vec()),
         Some("test") => handle_hooks_test(context, args[1..].to_vec()),
-        _ => handle_hook_event(context, args),
+        Some(_) => handle_hook_event(context, args),
+        None => Err(CliError::new(format!(
+            "hooks requires a subcommand: setup, remove, doctor, test, or `<agent> <event>` (agents: {})",
+            supported_agent_keys()
+        ))),
     }
+}
+
+fn supported_agent_keys() -> String {
+    AGENTS
+        .iter()
+        .map(|spec| spec.key)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -3213,9 +3417,9 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
         } else {
             "already configured"
         };
-        println!("{agent}: {verb} at {config_path}");
+        write_stdout_line(&format!("{agent}: {verb} at {config_path}"))?;
         if let Some(backup) = summary["backupPath"].as_str() {
-            println!("  backup: {backup}");
+            write_stdout_line(&format!("  backup: {backup}"))?;
         }
     }
     Ok(())
@@ -3279,9 +3483,9 @@ fn handle_hooks_remove(context: &CliContext, args: Vec<String>) -> CliResult<()>
         } else {
             "not installed"
         };
-        println!("{agent}: {verb} at {config_path}");
+        write_stdout_line(&format!("{agent}: {verb} at {config_path}"))?;
         if let Some(backup) = summary["backupPath"].as_str() {
-            println!("  backup: {backup}");
+            write_stdout_line(&format!("  backup: {backup}"))?;
         }
     }
     Ok(())
@@ -3671,9 +3875,14 @@ fn read_agent_config(spec: &AgentSpec, path: &Path) -> CliResult<Value> {
 }
 
 fn read_json_file(path: &Path) -> CliResult<Value> {
-    let file = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => match File::open(path) {
-            Ok(file) => file,
+    let link_meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(err) => return Err(err.into()),
+    };
+    let followed = if link_meta.file_type().is_symlink() {
+        match fs::metadata(path) {
+            Ok(meta) => meta,
             // Treat a broken symlink the same as a missing file: the
             // subsequent write replaces the dangling link with a real file.
             // Previously this aborted `hooks setup` with a confusing
@@ -3686,11 +3895,17 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
                 return Ok(json!({}));
             }
             Err(err) => return Err(err.into()),
-        },
-        Ok(_) => File::open(path)?,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
-        Err(err) => return Err(err.into()),
+        }
+    } else {
+        link_meta
     };
+    // Reject non-regular files before open(2): opening a FIFO blocks until a
+    // peer shows up, which used to hang `forktty hooks setup` forever.
+    if !followed.is_file() {
+        return Err(CliError::new("path exists but is not a regular file"));
+    }
+    let file = File::open(path)?;
+    // TOCTOU backstop: re-check the opened file, not just the pre-open stat.
     let stat = file.metadata()?;
     if !stat.is_file() {
         return Err(CliError::new("path exists but is not a regular file"));
@@ -3720,9 +3935,14 @@ fn read_json_file(path: &Path) -> CliResult<Value> {
 }
 
 fn read_opencode_plugin_file(spec: &AgentSpec, path: &Path) -> CliResult<Option<String>> {
-    let file = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => match File::open(path) {
-            Ok(file) => file,
+    let link_meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    let followed = if link_meta.file_type().is_symlink() {
+        match fs::metadata(path) {
+            Ok(meta) => meta,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 eprintln!(
                     "warning: {} is a broken symlink; replacing with a fresh file",
@@ -3731,11 +3951,15 @@ fn read_opencode_plugin_file(spec: &AgentSpec, path: &Path) -> CliResult<Option<
                 return Ok(None);
             }
             Err(err) => return Err(err.into()),
-        },
-        Ok(_) => File::open(path)?,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err.into()),
+        }
+    } else {
+        link_meta
     };
+    // See read_json_file: never open(2) a non-regular file (FIFOs block).
+    if !followed.is_file() {
+        return Err(CliError::new("path exists but is not a regular file"));
+    }
+    let file = File::open(path)?;
     let stat = file.metadata()?;
     if !stat.is_file() {
         return Err(CliError::new("path exists but is not a regular file"));
@@ -4307,16 +4531,15 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         .get(1)
         .map(|value| value.to_lowercase())
         .unwrap_or_default();
+    // Real hooks always pass a known agent key from the generated templates,
+    // so an unknown name here is a typed-in typo: fail loudly instead of
+    // printing the lenient continue JSON and exiting 0.
     let Some(spec) = agent_spec(&agent_name) else {
-        eprintln!(
-            "{}",
-            sanitize_for_terminal(&format!(
-                "Unsupported hook agent: {}",
-                args.first().map(String::as_str).unwrap_or("(missing)")
-            ))
-        );
-        print!("{HOOK_CONTINUE_JSON}");
-        return Ok(());
+        return Err(CliError::new(format!(
+            "Unsupported hooks subcommand or agent: {}. Expected setup, remove, doctor, test, or `<agent> <event>` (agents: {})",
+            args.first().map(String::as_str).unwrap_or("(missing)"),
+            supported_agent_keys()
+        )));
     };
     if !is_supported_hook_event(&event) {
         eprintln!(
@@ -4400,7 +4623,7 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         }
     }
     let response = build_hook_response(spec, &event, &enrichments)?;
-    println!("{}", serde_json::to_string(&response)?);
+    write_stdout_line(&serde_json::to_string(&response)?)?;
     Ok(())
 }
 
@@ -4459,8 +4682,28 @@ fn is_truthy_env(key: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Hook event ordering must survive wall-clock steps (NTP, manual `date`):
+/// orders are compared across short-lived CLI processes, so use
+/// CLOCK_BOOTTIME — system-wide, monotonic, and advancing across suspend —
+/// instead of `SystemTime`, which previously dropped every hook update issued
+/// after the clock stepped backwards.
 fn next_hook_event_order() -> String {
-    now_nanos().to_string()
+    boottime_nanos().to_string()
+}
+
+fn boottime_nanos() -> u128 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid, writable timespec for the duration of the call.
+    if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) } == 0 {
+        (ts.tv_sec as u128) * 1_000_000_000 + (ts.tv_nsec as u128)
+    } else {
+        // CLOCK_BOOTTIME cannot fail on the Linux kernels ForkTTY supports;
+        // fall back to the wall clock rather than aborting a hook.
+        now_nanos()
+    }
 }
 
 fn increment_hook_event_order(order: &str) -> String {
@@ -5352,14 +5595,26 @@ fn inspect_path(path: &Path) -> Value {
                 "other"
             };
             result.insert("kind".to_string(), Value::String(kind.to_string()));
-            result.insert(
-                "readable".to_string(),
-                Value::Bool(File::open(path).is_ok()),
-            );
-            result.insert(
-                "writable".to_string(),
-                Value::Bool(OpenOptions::new().write(true).open(path).is_ok()),
-            );
+            // Only probe regular files: open(2) on a FIFO blocks until a peer
+            // shows up, which used to hang `forktty --json doctor` forever.
+            // Non-regular paths keep the readable/writable defaults (false).
+            let followed_is_file = if stat.file_type().is_symlink() {
+                fs::metadata(path)
+                    .map(|meta| meta.is_file())
+                    .unwrap_or(false)
+            } else {
+                stat.is_file()
+            };
+            if followed_is_file {
+                result.insert(
+                    "readable".to_string(),
+                    Value::Bool(File::open(path).is_ok()),
+                );
+                result.insert(
+                    "writable".to_string(),
+                    Value::Bool(OpenOptions::new().write(true).open(path).is_ok()),
+                );
+            }
             result.insert(
                 "executable".to_string(),
                 Value::Bool(stat.permissions().mode() & 0o111 != 0),
@@ -5426,6 +5681,22 @@ mod tests {
     use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
     use std::sync::Mutex;
     use std::thread;
+
+    #[test]
+    fn lagged_detection_matches_the_notice_but_not_embedded_payloads() {
+        assert_eq!(
+            lagged_dropped_count(r#"{"event":"lagged","dropped":15}"#),
+            Some(15)
+        );
+        // A title that embeds the notice text arrives with escaped quotes.
+        assert_eq!(
+            lagged_dropped_count(
+                r#"{"event":"surface_title_changed","title":"{\"event\":\"lagged\"}"}"#
+            ),
+            None
+        );
+        assert_eq!(lagged_dropped_count(r#"{"event":"subscribed"}"#), None);
+    }
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -5853,6 +6124,183 @@ mod tests {
                 strings(&["--path", "/tmp/a", "--cwd", "/tmp/b"]),
             ),
             "worktree-status: cannot combine --path and --cwd",
+        );
+    }
+
+    #[test]
+    fn worktree_status_rejects_positional_combined_with_path_or_cwd() {
+        assert_err_contains(
+            handle_worktree_status(&test_context(), strings(&["--path", "/tmp/a", "/tmp/b"])),
+            "worktree-status: cannot combine a positional path with --path or --cwd",
+        );
+        assert_err_contains(
+            handle_worktree_status(&test_context(), strings(&["--cwd", "/tmp/a", "/tmp/b"])),
+            "worktree-status: cannot combine a positional path with --path or --cwd",
+        );
+    }
+
+    #[test]
+    fn write_output_line_treats_closed_pipe_as_success() {
+        let (mut writer, reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        drop(reader);
+        // Prove the transport reports BrokenPipe once the reader is gone (the
+        // kernel may buffer an initial write before failing)…
+        let mut raw = None;
+        for _ in 0..64 {
+            if let Err(err) = writer.write_all(b"x\n") {
+                raw = Some(err);
+                break;
+            }
+        }
+        assert_eq!(
+            raw.expect("write to closed pipe must fail").kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        // …and that the helper converts it to silent success, so
+        // `forktty list --json | head -1` exits 0 instead of panicking.
+        assert!(write_output_line(&mut writer, "payload").is_ok());
+
+        // Other write errors still surface as CLI errors.
+        struct FailWriter;
+        impl Write for FailWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        assert_err_contains(write_output_line(&mut FailWriter, "payload"), "disk full");
+    }
+
+    #[test]
+    fn hook_event_order_is_monotone_non_decreasing() {
+        let mut previous = next_hook_event_order()
+            .parse::<u128>()
+            .expect("order is numeric");
+        for _ in 0..100 {
+            let next = next_hook_event_order()
+                .parse::<u128>()
+                .expect("order is numeric");
+            assert!(next >= previous, "{next} went backwards from {previous}");
+            previous = next;
+        }
+    }
+
+    #[test]
+    fn hooks_typos_and_missing_subcommands_error_instead_of_exiting_zero() {
+        assert_err_contains(
+            handle_hooks(&test_context(), strings(&["setupp"])),
+            "Unsupported hooks subcommand or agent: setupp",
+        );
+        assert_err_contains(
+            handle_hooks(&test_context(), Vec::new()),
+            "hooks requires a subcommand",
+        );
+    }
+
+    #[test]
+    fn hooks_keep_lenient_continue_json_for_future_events_of_known_agents() {
+        // Generated hook templates can outlive this binary: an event added by
+        // a newer template must not fail the agent's hook invocation.
+        handle_hooks(&test_context(), strings(&["claude", "some-future-event"]))
+            .expect("unknown event for a known agent stays lenient");
+    }
+
+    #[test]
+    fn read_json_file_rejects_fifo_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("hooks.json");
+        let c_path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c_path` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+        // Watchdog: before the metadata-first check, open(2) blocked forever
+        // waiting for a FIFO peer, so a regression would hang the suite.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let probe = thread::spawn(move || {
+            sender.send(read_json_file(&fifo).map(|_| ())).ok();
+        });
+        let result = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("read_json_file must not block on a FIFO");
+        assert_err_contains(result, "path exists but is not a regular file");
+        probe.join().unwrap();
+    }
+
+    #[test]
+    fn bounded_connect_reaches_an_accepting_listener() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("ok.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            stream.write_all(b"pong\n").unwrap();
+            line
+        });
+
+        let mut stream =
+            connect_unix_stream_with_timeout(&socket_path, Duration::from_secs(5)).unwrap();
+        stream.write_all(b"ping\n").unwrap();
+        // The blocking read also proves O_NONBLOCK was cleared after connect.
+        let mut reply = String::new();
+        BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut reply)
+            .unwrap();
+        assert_eq!(reply, "pong\n");
+        assert_eq!(server.join().unwrap(), "ping\n");
+    }
+
+    #[test]
+    fn bounded_connect_errors_within_the_timeout_when_backlog_is_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("busy.sock");
+        let (addr, addr_len) = unix_socket_address(&socket_path).unwrap();
+        // Hand-rolled listener with a zero backlog that never accepts.
+        // SAFETY: plain socket(2); the result is checked before use.
+        let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+        assert!(fd >= 0, "{}", io::Error::last_os_error());
+        // SAFETY: freshly created descriptor owned by no one else.
+        let listener = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: `addr` is a valid sockaddr_un of `addr_len` bytes.
+        let bound = unsafe {
+            libc::bind(
+                listener.as_raw_fd(),
+                &addr as *const libc::sockaddr_un as *const libc::sockaddr,
+                addr_len,
+            )
+        };
+        assert_eq!(bound, 0, "{}", io::Error::last_os_error());
+        // SAFETY: listen(2) on the bound descriptor.
+        assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
+
+        // Saturate the backlog (listen(0) still admits a pending connection or
+        // two); hold the streams so they stay queued.
+        let mut held = Vec::new();
+        let saturated = loop {
+            match connect_unix_stream_with_timeout(&socket_path, Duration::from_millis(200)) {
+                Ok(stream) => held.push(stream),
+                Err(_) => break true,
+            }
+            if held.len() > 16 {
+                break false;
+            }
+        };
+        assert!(saturated, "accept backlog never filled");
+
+        // `UnixStream::connect` would block here forever; the bounded variant
+        // must fail within its timeout.
+        let start = Instant::now();
+        let result = connect_unix_stream_with_timeout(&socket_path, Duration::from_millis(300));
+        assert!(result.is_err());
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "bounded connect took {:?}",
+            start.elapsed()
         );
     }
 

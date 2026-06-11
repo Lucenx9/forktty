@@ -10,7 +10,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0-alpha.8"
+version = "0.2.0-alpha.9"
 edition = "2021"
 rust-version = "1.93"
 license = "AGPL-3.0-only"
@@ -45,8 +45,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net",
 toml = "1.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# libghostty-vt-sys 0.1.1 with -Doptimize=ReleaseSafe for the zig build;
-# upstream builds the library in zig's default Debug mode. See
-# vendor/libghostty-vt-sys/FORKTTY-VENDORED.md.
+# libghostty-rs master, pinned: upstreams our vendored ReleaseSafe patch
+# (uzaaft/libghostty-rs#55, commit 3378f0b makes the zig optimize mode follow
+# the Cargo profile / LIBGHOSTTY_VT_SYS_OPTIMIZE). Both crates come from the
+# same rev so the bindings and the built library cannot drift apart.
+# .cargo/config.toml pins LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe so debug and
+# test builds keep the optimized VT parser too. Drop the patch entirely once
+# upstream publishes a release newer than 0.1.1.
 [patch.crates-io]
-libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }
+libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "20edad15d7984c727acc4f4facdadf045609f543" }
+libghostty-vt-sys = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "20edad15d7984c727acc4f4facdadf045609f543" }

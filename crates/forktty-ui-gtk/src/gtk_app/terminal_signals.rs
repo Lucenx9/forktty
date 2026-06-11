@@ -244,6 +244,9 @@ fn non_empty_terminal_metadata_payload(payload: &str) -> Option<String> {
 }
 
 fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
+    if payload.trim().is_empty() {
+        return TerminalMetadataAction::Ignore;
+    }
     let Some((metadata, notification_payload)) = payload.split_once(';') else {
         return TerminalMetadataAction::Status;
     };
@@ -377,6 +380,34 @@ mod ghostty_tests {
             &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
                 payload: "i=build:d=0;Build".to_string(),
             })],
+        );
+
+        let model = model.lock().unwrap();
+        assert!(model.list_notifications().is_empty());
+        assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_empty_osc99_payload_is_ignored_not_shown_as_status() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[
+                GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                    payload: String::new(),
+                }),
+                GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                    payload: "   ".to_string(),
+                }),
+            ],
         );
 
         let model = model.lock().unwrap();

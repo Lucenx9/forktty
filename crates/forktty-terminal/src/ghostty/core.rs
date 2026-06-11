@@ -23,6 +23,7 @@ use std::{cell::RefCell, rc::Rc};
 pub type Result<T> = std::result::Result<T, libghostty_vt::Error>;
 
 const TERMINAL_MODE_TAIL_LIMIT: usize = 64;
+const TERMINAL_THEME_RESET_TAIL_LIMIT: usize = 256;
 
 /// ghostty's `max_scrollback` is a page-memory budget in BYTES, not rows
 /// (`Screen.zig`: "max_scrollback is the amount of scrollback to keep in
@@ -48,6 +49,8 @@ pub struct GhosttyCore {
     bracketed_paste: bool,
     focus_reporting: bool,
     terminal_mode_tail: Vec<u8>,
+    theme_colors: Option<GhosttyThemeColors>,
+    theme_reset_tail: Vec<u8>,
     /// Bumped whenever terminal content may have changed (feed/resize/reset;
     /// viewport scrolling does not count). Lets callers cache derived data
     /// such as full-text dumps.
@@ -383,6 +386,8 @@ impl GhosttyCore {
             bracketed_paste: false,
             focus_reporting: false,
             terminal_mode_tail: Vec::new(),
+            theme_colors: None,
+            theme_reset_tail: Vec::new(),
             content_generation: 0,
         })
     }
@@ -393,6 +398,7 @@ impl GhosttyCore {
 
     pub fn feed(&mut self, bytes: &[u8]) -> Result<Vec<GhosttyEvent>> {
         self.content_generation += 1;
+        let theme_resets = self.update_terminal_theme_resets(bytes);
         self.update_terminal_private_modes(bytes);
         let metadata_events = self
             .metadata
@@ -400,6 +406,7 @@ impl GhosttyCore {
             .into_iter()
             .map(GhosttyEvent::Metadata);
         self.terminal.vt_write(bytes);
+        self.reapply_theme_resets(theme_resets);
         let _snapshot = self.render_state.update(&self.terminal)?;
         let mut events = self.events.borrow_mut();
         events.extend(metadata_events);
@@ -427,6 +434,16 @@ impl GhosttyCore {
     pub fn reset(&mut self) -> Result<Vec<GhosttyEvent>> {
         self.content_generation += 1;
         self.terminal.reset();
+        // RIS reverts dynamic colors to libghostty's defaults: re-seed the
+        // configured theme, and drop scanner tails plus the DECSET 1004/2004
+        // mirrors (RIS clears those modes in the terminal).
+        if let Some(colors) = self.theme_colors {
+            self.terminal.vt_write(&theme_color_sequence(&colors));
+        }
+        self.terminal_mode_tail.clear();
+        self.theme_reset_tail.clear();
+        self.bracketed_paste = false;
+        self.focus_reporting = false;
         let _snapshot = self.render_state.update(&self.terminal)?;
         let mut events = self.events.borrow_mut();
         events.push(GhosttyEvent::VisibleContentChanged);
@@ -462,6 +479,7 @@ impl GhosttyCore {
     }
 
     pub fn apply_theme_colors(&mut self, colors: &GhosttyThemeColors) -> Result<()> {
+        self.theme_colors = Some(*colors);
         self.terminal.vt_write(&theme_color_sequence(colors));
         Ok(())
     }
@@ -527,16 +545,32 @@ impl GhosttyCore {
     }
 
     pub fn paste_bytes(&self, text: &str) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
         let bracketed = self.bracketed_paste || !paste::is_safe(text);
-        if bracketed {
-            bytes.extend_from_slice(b"\x1b[200~");
+        // Use libghostty's paste encoder rather than wrapping the raw bytes
+        // ourselves: it strips unsafe control bytes (including ESC and an
+        // embedded `\x1b[201~` end sequence) that would otherwise let pasted
+        // clipboard content terminate bracketed-paste mode early and inject
+        // commands into the shell.
+        let mut data = text.as_bytes().to_vec();
+        // Bracketed wrapping adds the 6-byte start/end markers; pad generously
+        // so the common case encodes in one pass.
+        let mut buf = vec![0u8; data.len() + 16];
+        match paste::encode(&mut data, bracketed, &mut buf) {
+            Ok(len) => {
+                buf.truncate(len);
+                Ok(buf)
+            }
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                // `data` is modified in place during encoding, so retry from a
+                // fresh copy with an exactly-sized output buffer.
+                let mut data = text.as_bytes().to_vec();
+                let mut buf = vec![0u8; required];
+                let len = paste::encode(&mut data, bracketed, &mut buf)?;
+                buf.truncate(len);
+                Ok(buf)
+            }
+            Err(err) => Err(err),
         }
-        bytes.extend_from_slice(text.as_bytes());
-        if bracketed {
-            bytes.extend_from_slice(b"\x1b[201~");
-        }
-        Ok(bytes)
     }
 
     pub fn encode_key(&self, input: TerminalKeyInput) -> Result<Vec<u8>> {
@@ -595,6 +629,30 @@ impl GhosttyCore {
         Ok(())
     }
 
+    fn update_terminal_theme_resets(&mut self, bytes: &[u8]) -> TerminalThemeResets {
+        let previous_tail_len = self.theme_reset_tail.len();
+        let mut scan = self.theme_reset_tail.clone();
+        scan.extend_from_slice(bytes);
+        let resets = scan_osc_theme_reset_sequences(&scan, previous_tail_len);
+        self.theme_reset_tail = if scan.len() > TERMINAL_THEME_RESET_TAIL_LIMIT {
+            scan[scan.len() - TERMINAL_THEME_RESET_TAIL_LIMIT..].to_vec()
+        } else {
+            scan
+        };
+        resets
+    }
+
+    fn reapply_theme_resets(&mut self, resets: TerminalThemeResets) {
+        let Some(colors) = self.theme_colors else {
+            return;
+        };
+        if !resets.any() {
+            return;
+        }
+        self.terminal
+            .vt_write(&theme_color_reset_sequence(&colors, resets));
+    }
+
     fn update_terminal_private_modes(&mut self, bytes: &[u8]) {
         let mut scan = self.terminal_mode_tail.clone();
         scan.extend_from_slice(bytes);
@@ -613,14 +671,26 @@ impl GhosttyCore {
     fn format_plain_text(&self, trim: bool) -> Result<String> {
         let mut formatter = Formatter::new(
             &self.terminal,
-            FormatterOptions {
-                format: Format::Plain,
-                trim,
-                unwrap: false,
-            },
+            FormatterOptions::new()
+                .with_format(Format::Plain)
+                .with_trim(trim)
+                .with_unwrap(false),
         )?;
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct TerminalThemeResets {
+    foreground: bool,
+    background: bool,
+    palette: bool,
+}
+
+impl TerminalThemeResets {
+    fn any(self) -> bool {
+        self.foreground || self.background || self.palette
     }
 }
 
@@ -634,6 +704,22 @@ fn theme_color_sequence(colors: &GhosttyThemeColors) -> Vec<u8> {
     seq
 }
 
+fn theme_color_reset_sequence(colors: &GhosttyThemeColors, resets: TerminalThemeResets) -> Vec<u8> {
+    let mut seq = Vec::new();
+    if resets.foreground {
+        push_osc_color(&mut seq, "10", colors.foreground);
+    }
+    if resets.background {
+        push_osc_color(&mut seq, "11", colors.background);
+    }
+    if resets.palette {
+        for (index, color) in colors.palette.iter().enumerate() {
+            push_osc_color(&mut seq, &format!("4;{index}"), *color);
+        }
+    }
+    seq
+}
+
 fn push_osc_color(seq: &mut Vec<u8>, code: &str, color: TerminalRgb) {
     seq.extend_from_slice(
         format!(
@@ -642,6 +728,53 @@ fn push_osc_color(seq: &mut Vec<u8>, code: &str, color: TerminalRgb) {
         )
         .as_bytes(),
     );
+}
+
+fn scan_osc_theme_reset_sequences(bytes: &[u8], previous_tail_len: usize) -> TerminalThemeResets {
+    let mut resets = TerminalThemeResets::default();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] != 0x1b || bytes[index + 1] != b']' {
+            index += 1;
+            continue;
+        }
+
+        let params_start = index + 2;
+        let mut end = params_start;
+        let mut terminator_start = None;
+        let mut sequence_end = None;
+        while end < bytes.len() {
+            match bytes[end] {
+                0x07 => {
+                    terminator_start = Some(end);
+                    sequence_end = Some(end);
+                    break;
+                }
+                0x1b if end + 1 < bytes.len() && bytes[end + 1] == b'\\' => {
+                    terminator_start = Some(end);
+                    sequence_end = Some(end + 1);
+                    break;
+                }
+                _ => end += 1,
+            }
+        }
+
+        let (Some(terminator_start), Some(sequence_end)) = (terminator_start, sequence_end) else {
+            break;
+        };
+        if sequence_end >= previous_tail_len {
+            let params = &bytes[params_start..terminator_start];
+            if params == b"110" {
+                resets.foreground = true;
+            } else if params == b"111" {
+                resets.background = true;
+            } else if params == b"104" || params.starts_with(b"104;") {
+                resets.palette = true;
+            }
+        }
+        index = sequence_end + 1;
+    }
+    resets
 }
 
 fn scan_terminal_private_mode_sequences(
@@ -703,6 +836,32 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn test_theme_colors() -> GhosttyThemeColors {
+        let mut palette = [TerminalRgb {
+            red: 0x10,
+            green: 0x20,
+            blue: 0x30,
+        }; 16];
+        palette[0] = TerminalRgb {
+            red: 0x12,
+            green: 0x34,
+            blue: 0x56,
+        };
+        GhosttyThemeColors {
+            foreground: TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            background: TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            palette,
+        }
     }
 
     #[test]
@@ -1030,6 +1189,96 @@ mod tests {
     }
 
     #[test]
+    fn core_reapplies_theme_background_after_osc_111_reset() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        core.feed(b"\x1b]111\x07").unwrap();
+
+        assert_eq!(core.render_frame().unwrap().background, colors.background);
+    }
+
+    #[test]
+    fn core_reapplies_theme_foreground_after_osc_110_reset() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        core.feed(b"\x1b]110\x07").unwrap();
+
+        assert_eq!(core.render_frame().unwrap().foreground, colors.foreground);
+    }
+
+    #[test]
+    fn core_reapplies_theme_palette_after_osc_104_reset() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        core.feed(b"\x1b]104\x07\x1b[30mX").unwrap();
+
+        let frame = core.render_frame().unwrap();
+        assert_eq!(frame.rows[0].cells[0].foreground, Some(colors.palette[0]));
+    }
+
+    #[test]
+    fn core_reset_reapplies_theme_colors_and_clears_mode_mirrors() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+        core.feed(b"\x1b]10;#112233\x07\x1b]11;#445566\x07\x1b[?2004hhello")
+            .unwrap();
+
+        core.reset().unwrap();
+
+        let frame = core.render_frame().unwrap();
+        assert_eq!(frame.background, colors.background);
+        assert_eq!(frame.foreground, colors.foreground);
+        // RIS cleared DECSET 2004 in the terminal; the mirror must follow or
+        // safe pastes would stay bracketed forever.
+        assert_eq!(core.paste_bytes("plain").unwrap(), b"plain");
+    }
+
+    #[test]
+    fn core_reapplies_theme_background_after_chunked_osc_111_reset() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+        core.feed(b"\x1b]11;#010203\x07").unwrap();
+
+        core.feed(b"\x1b]1").unwrap();
+        core.feed(b"11\x07").unwrap();
+
+        assert_eq!(core.render_frame().unwrap().background, colors.background);
+    }
+
+    #[test]
     fn core_render_frame_preserves_inverse_as_style_not_swapped_colors() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 20,
@@ -1182,6 +1431,30 @@ mod tests {
         .unwrap();
 
         assert_eq!(core.paste_bytes("echo one").unwrap(), b"echo one");
+    }
+
+    #[test]
+    fn paste_strips_embedded_bracketed_paste_end_sequence() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.set_bracketed_paste_for_test(true).unwrap();
+
+        // Clipboard content carrying its own end sequence must not be able to
+        // close bracketed paste early and inject the trailing command.
+        let encoded = core.paste_bytes("foo\x1b[201~\nmalicious\n").unwrap();
+
+        // The payload between the start/end markers must not contain a second
+        // end marker or a raw ESC byte.
+        assert!(encoded.starts_with(b"\x1b[200~"));
+        assert!(encoded.ends_with(b"\x1b[201~"));
+        let inner = &encoded[6..encoded.len() - 6];
+        assert!(!inner.windows(6).any(|w| w == b"\x1b[201~"));
+        assert!(!inner.contains(&0x1b));
     }
 
     #[test]
