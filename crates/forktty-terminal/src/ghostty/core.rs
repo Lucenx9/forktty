@@ -434,6 +434,16 @@ impl GhosttyCore {
     pub fn reset(&mut self) -> Result<Vec<GhosttyEvent>> {
         self.content_generation += 1;
         self.terminal.reset();
+        // RIS reverts dynamic colors to libghostty's defaults: re-seed the
+        // configured theme, and drop scanner tails plus the DECSET 1004/2004
+        // mirrors (RIS clears those modes in the terminal).
+        if let Some(colors) = self.theme_colors {
+            self.terminal.vt_write(&theme_color_sequence(&colors));
+        }
+        self.terminal_mode_tail.clear();
+        self.theme_reset_tail.clear();
+        self.bracketed_paste = false;
+        self.focus_reporting = false;
         let _snapshot = self.render_state.update(&self.terminal)?;
         let mut events = self.events.borrow_mut();
         events.push(GhosttyEvent::VisibleContentChanged);
@@ -1225,6 +1235,29 @@ mod tests {
 
         let frame = core.render_frame().unwrap();
         assert_eq!(frame.rows[0].cells[0].foreground, Some(colors.palette[0]));
+    }
+
+    #[test]
+    fn core_reset_reapplies_theme_colors_and_clears_mode_mirrors() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+        core.feed(b"\x1b]10;#112233\x07\x1b]11;#445566\x07\x1b[?2004hhello")
+            .unwrap();
+
+        core.reset().unwrap();
+
+        let frame = core.render_frame().unwrap();
+        assert_eq!(frame.background, colors.background);
+        assert_eq!(frame.foreground, colors.foreground);
+        // RIS cleared DECSET 2004 in the terminal; the mirror must follow or
+        // safe pastes would stay bracketed forever.
+        assert_eq!(core.paste_bytes("plain").unwrap(), b"plain");
     }
 
     #[test]
