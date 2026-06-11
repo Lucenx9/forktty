@@ -61,7 +61,7 @@ Usage:
   forktty clear-logs [--workspace-id <id>]
   forktty notifications [--json]
   forktty clear-notifications
-  forktty hooks setup [codex] [claude] [gemini] [opencode]
+  forktty hooks setup [--full] [codex] [claude] [gemini] [opencode]
   forktty hooks remove [codex] [claude] [gemini] [opencode]
   forktty hooks doctor codex
   forktty hooks test codex
@@ -192,6 +192,12 @@ enum HookInstallKind {
     // no argument splitting and no shell — so the JSON config points at
     // generated wrapper scripts that invoke the forktty launcher.
     AntigravityConfig,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HookSetupProfile {
+    Lifecycle,
+    Full,
 }
 
 #[derive(Clone, Copy)]
@@ -429,6 +435,29 @@ const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "SessionEnd",
         hook_event_name: "session-end",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+];
+
+const CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES: &[HookEntrySpec] = &[
+    HookEntrySpec {
+        event_name: "PreToolUse",
+        hook_event_name: "pre-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostToolUse",
+        hook_event_name: "post-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostToolUseFailure",
+        hook_event_name: "post-tool-failure",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostToolBatch",
+        hook_event_name: "post-tool-batch",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];
@@ -3457,12 +3486,20 @@ fn supported_agent_keys() -> String {
 }
 
 fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &["dry-run"]);
-    reject_unknown_options(&parsed.options, &["dry-run"], "hooks setup")?;
+    let parsed = parse_flags(args, &["dry-run", "full"]);
+    reject_unknown_options(&parsed.options, &["dry-run", "full"], "hooks setup")?;
     let Some(dry_run) = bool_option(&parsed.options, "dry-run") else {
         return Err(CliError::new(
             "hooks setup: --dry-run must be true or false",
         ));
+    };
+    let Some(full) = bool_option(&parsed.options, "full") else {
+        return Err(CliError::new("hooks setup: --full must be true or false"));
+    };
+    let profile = if full {
+        HookSetupProfile::Full
+    } else {
+        HookSetupProfile::Lifecycle
     };
     let agents = supported_agents(&parsed.positionals)?;
     let launcher = stable_hook_launcher_path().ok_or_else(|| {
@@ -3476,7 +3513,12 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
 
     let mut plans = Vec::new();
     for spec in agents {
-        plans.push(build_hook_setup_plan(spec, &launcher)?);
+        let plan = if profile == HookSetupProfile::Lifecycle {
+            build_hook_setup_plan(spec, &launcher)?
+        } else {
+            build_hook_setup_plan_with_profile(spec, &launcher, profile)?
+        };
+        plans.push(plan);
     }
 
     let mut summaries = Vec::new();
@@ -3493,13 +3535,17 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
                 fs::set_permissions(script_path, fs::Permissions::from_mode(0o700))?;
             }
         }
-        summaries.push(json!({
+        let mut summary = json!({
             "agent": plan.spec.key,
             "configPath": plan.config_path,
             "changed": plan.changed,
             "backupPath": backup_path,
             "dryRun": dry_run,
-        }));
+        });
+        if plan.spec.key == "claude" {
+            summary["profile"] = json!(hook_setup_profile_name(profile));
+        }
+        summaries.push(summary);
     }
 
     if context.json {
@@ -3774,11 +3820,23 @@ struct McpRemovePlan {
 }
 
 fn build_hook_setup_plan(spec: &'static AgentSpec, launcher: &Path) -> CliResult<HookSetupPlan> {
+    build_hook_setup_plan_with_profile(spec, launcher, HookSetupProfile::Lifecycle)
+}
+
+fn build_hook_setup_plan_with_profile(
+    spec: &'static AgentSpec,
+    launcher: &Path,
+    profile: HookSetupProfile,
+) -> CliResult<HookSetupPlan> {
     let config_path = (spec.config_path)();
     match spec.install_kind {
         HookInstallKind::JsonConfig => {
             let existing = read_agent_config(spec, &config_path)?;
-            let (changed, config) = merge_hook_config(&existing, spec, launcher)?;
+            let (changed, config) = if profile == HookSetupProfile::Full {
+                merge_hook_config(&existing, spec, launcher)?
+            } else {
+                merge_hook_config_with_profile(&existing, spec, launcher, profile)?
+            };
             Ok(HookSetupPlan {
                 spec,
                 config_path,
@@ -4336,6 +4394,15 @@ fn merge_hook_config(
     spec: &AgentSpec,
     launcher: &Path,
 ) -> CliResult<(bool, Value)> {
+    merge_hook_config_with_profile(existing, spec, launcher, HookSetupProfile::Full)
+}
+
+fn merge_hook_config_with_profile(
+    existing: &Value,
+    spec: &AgentSpec,
+    launcher: &Path,
+    profile: HookSetupProfile,
+) -> CliResult<(bool, Value)> {
     let mut config = existing.as_object().cloned().unwrap_or_default();
     let hooks_was_object = config.get("hooks").is_some_and(Value::is_object);
     if !hooks_was_object && config.contains_key("hooks") {
@@ -4351,7 +4418,11 @@ fn merge_hook_config(
         .unwrap_or_default();
     let mut changed = !hooks_was_object;
 
-    for entry_spec in spec.hook_entries {
+    for entry_spec in spec
+        .hook_entries
+        .iter()
+        .filter(|entry| hook_entry_enabled_for_setup(spec, profile, entry))
+    {
         let command = build_hook_shell_command(launcher, spec, entry_spec.hook_event_name);
         let next_entry = build_hook_entry(spec, command.clone(), entry_spec.timeout);
         let existing_entries = hooks
@@ -4378,9 +4449,78 @@ fn merge_hook_config(
         }
         hooks.insert(entry_spec.event_name.to_string(), Value::Array(filtered));
     }
+    for entry_spec in spec
+        .hook_entries
+        .iter()
+        .filter(|entry| hook_entry_removed_by_setup(spec, profile, entry))
+    {
+        let Some(existing_entries) = hooks
+            .get(entry_spec.event_name)
+            .and_then(Value::as_array)
+            .cloned()
+        else {
+            continue;
+        };
+        let command = build_hook_shell_command(launcher, spec, entry_spec.hook_event_name);
+        let filtered = existing_entries
+            .iter()
+            .filter(|entry| {
+                !is_forktty_managed_entry(entry)
+                    && !is_legacy_forktty_hook_command(
+                        entry,
+                        spec,
+                        entry_spec.hook_event_name,
+                        &command,
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if filtered == existing_entries {
+            continue;
+        }
+        changed = true;
+        if filtered.is_empty() {
+            hooks.remove(entry_spec.event_name);
+        } else {
+            hooks.insert(entry_spec.event_name.to_string(), Value::Array(filtered));
+        }
+    }
 
     config.insert("hooks".to_string(), Value::Object(hooks));
     Ok((changed, Value::Object(config)))
+}
+
+fn hook_entry_enabled_for_setup(
+    spec: &AgentSpec,
+    profile: HookSetupProfile,
+    entry_spec: &HookEntrySpec,
+) -> bool {
+    !(spec.key == "claude"
+        && profile == HookSetupProfile::Lifecycle
+        && is_claude_high_frequency_event(entry_spec.event_name))
+}
+
+fn hook_entry_removed_by_setup(
+    spec: &AgentSpec,
+    profile: HookSetupProfile,
+    entry_spec: &HookEntrySpec,
+) -> bool {
+    spec.key == "claude"
+        && profile == HookSetupProfile::Lifecycle
+        && is_claude_high_frequency_event(entry_spec.event_name)
+}
+
+fn is_claude_high_frequency_event(event_name: &str) -> bool {
+    CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES
+        .iter()
+        .any(|entry| entry.event_name == event_name)
+}
+
+fn hook_setup_profile_name(profile: HookSetupProfile) -> &'static str {
+    match profile {
+        HookSetupProfile::Lifecycle => "lifecycle",
+        HookSetupProfile::Full => "full",
+    }
 }
 
 fn remove_hook_config(
@@ -4920,6 +5060,9 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         "launcherCheck": launcher_check,
         "supportedEvents": supported_events,
     });
+    if spec.key == "claude" {
+        report["installedProfile"] = json!(describe_claude_installed_profile(&config_path));
+    }
     let hooks_installed = report["launcherCheck"]["status"].as_str() != Some("not_installed");
     if spec.key == "codex" && hooks_installed {
         report["trustCheck"] = describe_codex_hook_trust(&config_path);
@@ -4953,6 +5096,9 @@ fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()>
         format_doctor_path(&format!("{} hook config", spec.key), &report["hookConfig"])
     );
     eprintln!("supported events: {}", supported_events.join(", "));
+    if let Some(profile) = report["installedProfile"].as_str() {
+        eprintln!("installed profile: {profile}");
+    }
     if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
         eprintln!("{line}");
     }
@@ -5027,6 +5173,55 @@ fn describe_launcher_check(
         "status": status,
         "installedLauncher": installed,
         "currentLauncher": current,
+    })
+}
+
+fn describe_claude_installed_profile(config_path: &Path) -> &'static str {
+    let Some(spec) = agent_spec("claude") else {
+        return "not_installed";
+    };
+    let Ok(config) = read_json_file(config_path) else {
+        return "not_installed";
+    };
+    let has_high_frequency = CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES
+        .iter()
+        .any(|entry| config_has_forktty_hook(&config, spec, entry));
+    if has_high_frequency {
+        return "full";
+    }
+    let has_lifecycle = CLAUDE_HOOK_ENTRIES
+        .iter()
+        .filter(|entry| !is_claude_high_frequency_event(entry.event_name))
+        .any(|entry| config_has_forktty_hook(&config, spec, entry));
+    if has_lifecycle {
+        "lifecycle"
+    } else {
+        "not_installed"
+    }
+}
+
+fn config_has_forktty_hook(config: &Value, spec: &AgentSpec, entry_spec: &HookEntrySpec) -> bool {
+    let Some(entries) = config
+        .get("hooks")
+        .and_then(Value::as_object)
+        .and_then(|hooks| hooks.get(entry_spec.event_name))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    let suffix = format!(" hooks {} {}", spec.key, entry_spec.hook_event_name);
+    entries.iter().any(|entry| {
+        is_forktty_managed_entry(entry)
+            || entry
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_some_and(|hooks| {
+                    hooks.iter().any(|hook| {
+                        hook.get("command")
+                            .and_then(Value::as_str)
+                            .is_some_and(|command| command.contains(&suffix))
+                    })
+                })
     })
 }
 
@@ -8033,9 +8228,6 @@ mod tests {
 
                 let claude = read_json(&claude_path);
                 for event in [
-                    "PreToolUse",
-                    "PostToolUse",
-                    "PostToolUseFailure",
                     "PermissionRequest",
                     "SubagentStart",
                     "SubagentStop",
@@ -8046,10 +8238,24 @@ mod tests {
                 ] {
                     assert!(claude["hooks"][event].is_array(), "missing {event}");
                 }
-                assert!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-                    .as_str()
-                    .unwrap()
-                    .contains(" hooks claude pre-tool"));
+                for event in [
+                    "PreToolUse",
+                    "PostToolUse",
+                    "PostToolUseFailure",
+                    "PostToolBatch",
+                ] {
+                    assert!(
+                        claude["hooks"].get(event).is_none(),
+                        "default Claude setup should omit {event}"
+                    );
+                }
+                assert!(
+                    claude["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+                        .as_str()
+                        .unwrap()
+                        .contains(" hooks claude permission-request")
+                );
+                assert_eq!(describe_claude_installed_profile(&claude_path), "lifecycle");
 
                 let gemini = read_json(&gemini_path);
                 for event in [
@@ -8076,6 +8282,112 @@ mod tests {
                 handle_hooks_setup(&context, strings(&["codex"])).unwrap();
                 assert_eq!(fs::read_to_string(&codex_path).unwrap(), first);
                 assert_eq!(backup_count(&codex_home, "hooks.json.bak-"), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn claude_hook_setup_profiles_migrate_and_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join("claude config");
+        let home = dir.path().join("home dir");
+        let claude_dir_s = claude_dir.display().to_string();
+        let home_s = home.display().to_string();
+
+        with_env(
+            &[
+                ("CLAUDE_CONFIG_DIR", Some(&claude_dir_s)),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let context = test_context();
+                let claude_path = claude_dir.join("settings.json");
+
+                handle_hooks_setup(&context, strings(&["claude"])).unwrap();
+                let lifecycle = read_json(&claude_path);
+                assert!(lifecycle["hooks"]["SessionStart"].is_array());
+                assert!(lifecycle["hooks"]["PermissionRequest"].is_array());
+                assert!(lifecycle["hooks"].get("PreToolUse").is_none());
+                assert_eq!(describe_claude_installed_profile(&claude_path), "lifecycle");
+
+                handle_hooks_setup(&context, strings(&["--full", "claude"])).unwrap();
+                let full = read_json(&claude_path);
+                for event in [
+                    "PreToolUse",
+                    "PostToolUse",
+                    "PostToolUseFailure",
+                    "PostToolBatch",
+                ] {
+                    assert!(full["hooks"][event].is_array(), "missing full {event}");
+                }
+                assert!(full["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains(" hooks claude pre-tool"));
+                assert_eq!(describe_claude_installed_profile(&claude_path), "full");
+
+                handle_hooks_setup(&context, strings(&["claude"])).unwrap();
+                let migrated = read_json(&claude_path);
+                assert!(migrated["hooks"]["SessionStart"].is_array());
+                assert!(migrated["hooks"]["PermissionRequest"].is_array());
+                for event in [
+                    "PreToolUse",
+                    "PostToolUse",
+                    "PostToolUseFailure",
+                    "PostToolBatch",
+                ] {
+                    assert!(
+                        migrated["hooks"].get(event).is_none(),
+                        "default rerun should remove {event}"
+                    );
+                }
+                assert_eq!(describe_claude_installed_profile(&claude_path), "lifecycle");
+
+                handle_hooks_setup(&context, strings(&["--full", "claude"])).unwrap();
+                handle_hooks_remove(&context, strings(&["claude"])).unwrap();
+                let removed = read_json(&claude_path);
+                assert!(removed.get("hooks").is_none());
+                assert_eq!(
+                    describe_claude_installed_profile(&claude_path),
+                    "not_installed"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn claude_hook_setup_plan_profiles_control_tool_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join("claude config");
+        let home = dir.path().join("home dir");
+        let claude_dir_s = claude_dir.display().to_string();
+        let home_s = home.display().to_string();
+
+        with_env(
+            &[
+                ("CLAUDE_CONFIG_DIR", Some(&claude_dir_s)),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let spec = agent_spec("claude").unwrap();
+                let launcher = Path::new("/usr/bin/forktty");
+                let default_plan = build_hook_setup_plan(spec, launcher).unwrap();
+                let default_config: Value = serde_json::from_str(&default_plan.content).unwrap();
+                assert!(default_config["hooks"]["SessionStart"].is_array());
+                assert!(default_config["hooks"].get("PreToolUse").is_none());
+
+                let full_plan =
+                    build_hook_setup_plan_with_profile(spec, launcher, HookSetupProfile::Full)
+                        .unwrap();
+                let full_config: Value = serde_json::from_str(&full_plan.content).unwrap();
+                for event in [
+                    "PreToolUse",
+                    "PostToolUse",
+                    "PostToolUseFailure",
+                    "PostToolBatch",
+                ] {
+                    assert!(full_config["hooks"][event].is_array(), "missing {event}");
+                }
             },
         );
     }
@@ -9044,10 +9356,17 @@ mod tests {
                 .join(template);
             let template_json: Value =
                 serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            let (_, generated) = merge_hook_config(
+            let spec = agent_spec(agent).unwrap();
+            let profile = if agent == "claude" {
+                HookSetupProfile::Lifecycle
+            } else {
+                HookSetupProfile::Full
+            };
+            let (_, generated) = merge_hook_config_with_profile(
                 &json!({}),
-                agent_spec(agent).unwrap(),
+                spec,
                 Path::new("{{FORKTTY_LAUNCHER}}"),
+                profile,
             )
             .unwrap();
             assert_eq!(

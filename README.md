@@ -288,12 +288,16 @@ and OpenCode:
 forktty hooks setup                       # install all supported agents
 forktty hooks setup codex                 # install just one
 forktty hooks setup codex claude --dry-run
+forktty hooks setup --full claude         # include Claude per-tool hooks
 forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
 ```
 
-`--dry-run` prints the would-be diff without touching disk. `hooks remove`
-removes only ForkTTY-managed entries/plugins and leaves unrelated agent hooks in
-place.
+`--dry-run` prints the would-be diff without touching disk. Claude Code setup
+uses the lifecycle profile by default, avoiding blocking per-tool hooks on every
+tool call; pass `--full` to include `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, and `PostToolBatch`. Re-running setup migrates Claude to
+the lifecycle profile unless `--full` is passed. `hooks remove` removes only
+ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
 
 The installer merges commands into the agent's own config file:
 

@@ -9,6 +9,9 @@ All notable changes to ForkTTY are documented here.
 - Agent hooks for Antigravity CLI (`agy`, Google's Gemini CLI successor): `forktty hooks setup antigravity` installs a ForkTTY-owned `"forktty"` group in `~/.gemini/config/hooks.json` for the verified `PreInvocation`/`PreToolUse`/`PostToolUse` events, plus generated wrapper scripts (Antigravity executes a hook command as one bare executable path, without arguments or a shell). Sessions are correlated via `conversationId`, hook responses use the strict-`protojson`-safe `{}`, and `hooks doctor antigravity` reports the launcher state from the generated scripts. Gemini CLI hooks remain supported.
 - `forktty hooks doctor codex` now reports `trustCheck`: Codex requires per-hook trust approval (recorded under `[hooks.state]` in its `config.toml`) before running installed hooks, so the doctor lists events with no approval record yet and points at `/hooks` inside Codex.
 
+### Changed
+- `forktty hooks setup claude` now installs lifecycle hooks by default and omits the blocking per-tool `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`PostToolBatch` hooks; use `forktty hooks setup --full claude` to restore the previous full profile. Existing installs keep working, and re-running setup migrates Claude hooks to the lifecycle default unless `--full` is passed.
+
 ### Security
 - Pasted text is now encoded with libghostty's paste encoder, which neutralizes control bytes in the payload: clipboard content containing `\x1b[201~` can no longer terminate the bracketed-paste wrapper early and inject the remainder as typed input (including command execution in a shell).
 - A socket client that sends a request and then stops reading the response is now disconnected after a write timeout instead of holding one of the 64 connection slots forever; enough stuck clients used to deny the socket to agent hooks.

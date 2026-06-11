@@ -24,6 +24,7 @@ binary moves. `--dry-run` prints the would-be diff without touching disk:
 ```bash
 forktty hooks setup --dry-run
 forktty hooks setup codex --dry-run
+forktty hooks setup --full claude
 forktty hooks remove codex --dry-run
 ```
 
@@ -33,6 +34,13 @@ backup next to the original. The OpenCode file is intentionally generated
 under its plugins directory so `opencode.json` does not need to be edited.
 `forktty hooks remove` deletes only ForkTTY-managed entries or the generated
 OpenCode plugin; custom hook commands are preserved.
+
+Claude Code setup installs a lifecycle profile by default. That profile omits
+the high-frequency `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and
+`PostToolBatch` hooks that block every tool call; pass `--full` to include
+those events. Existing full installs keep working, but re-running
+`forktty hooks setup claude` migrates the ForkTTY-managed entries back to the
+lifecycle profile unless `--full` is passed. Removal cleans either profile.
 
 ## MCP tools
 
@@ -98,8 +106,10 @@ against the current `forktty` executable and reports `launcherCheck.status`
 status means the AppImage or installed binary has moved since the last
 `hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
-event names ForkTTY installs hooks for (Codex: 10; Claude Code: 29;
-Gemini: 11; Antigravity: 3; OpenCode plugin events: 11).
+event names ForkTTY can install hooks for (Codex: 10; Claude Code: 25
+lifecycle / 29 full; Gemini: 11; Antigravity: 3; OpenCode plugin events: 11).
+For Claude Code it also reports `installedProfile` as `lifecycle`, `full`, or
+`not_installed`.
 
 For Codex, `hooks doctor codex` additionally reports `trustCheck`: Codex
 records per-hook trust approvals under `[hooks.state]` in its `config.toml`,
@@ -128,7 +138,8 @@ that are documented by the provider.
 Files in this directory are canonical examples for review or manual repair:
 
 - `codex-hooks.json`
-- `claude-settings.json`
+- `claude-settings.json` (Claude lifecycle profile; use `hooks setup --full`
+  to generate the full profile)
 - `gemini-settings.json`
 - OpenCode uses a generated plugin file instead of a JSON template.
 - Antigravity uses a generated `"forktty"` group plus wrapper scripts
