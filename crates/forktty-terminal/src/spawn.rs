@@ -175,6 +175,7 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     // The appimage runtime's vars must not leak into terminal children, but
     // ForkTTY's own launcher vars MUST survive: `forktty hooks setup` run from
@@ -197,5 +198,43 @@ mod tests {
         for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH"] {
             assert!(!is_appimage_runtime_env(kept), "{kept} must survive");
         }
+    }
+
+    #[test]
+    fn test_child_cwd_normal() {
+        let mut request = SpawnRequest {
+            surface_id: "s1".to_string(),
+            workspace_id: "w1".to_string(),
+            shell: "bash".to_string(),
+            args: vec![],
+            cwd: PathBuf::from("/normal/utf8/path"),
+            socket_path: PathBuf::from("/tmp/sock"),
+            extra_env: vec![],
+        };
+        assert_eq!(child_cwd(&request), "/normal/utf8/path");
+
+        request.cwd = PathBuf::from("/weird/🚀/path");
+        assert_eq!(child_cwd(&request), "/weird/🚀/path");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_child_cwd_invalid_utf8() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid_utf8_path = OsString::from_vec(vec![0x2f, 0x62, 0x61, 0x64, 0x2f, 0xff, 0xfe]);
+        let request = SpawnRequest {
+            surface_id: "s1".to_string(),
+            workspace_id: "w1".to_string(),
+            shell: "bash".to_string(),
+            args: vec![],
+            cwd: PathBuf::from(invalid_utf8_path),
+            socket_path: PathBuf::from("/tmp/sock"),
+            extra_env: vec![],
+        };
+        // 0x2f -> '/', 0x62 -> 'b', 0x61 -> 'a', 0x64 -> 'd', 0x2f -> '/', 0xff -> invalid, 0xfe -> invalid
+        // to_string_lossy replaces each invalid byte sequence with U+FFFD ()
+        assert_eq!(child_cwd(&request), "/bad/\u{FFFD}\u{FFFD}");
     }
 }
