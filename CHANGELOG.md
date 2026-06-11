@@ -15,6 +15,7 @@ All notable changes to ForkTTY are documented here.
 - The session state is now guarded by a lock file: a second running instance (e.g. a deb-installed and an AppImage forktty that DBus could not deduplicate) refuses to start instead of silently fighting the first one's session autosave.
 
 ### Fixed
+- An empty or malformed OSC 99 sequence no longer leaves a debug-formatted "Terminal metadata" status entry in the sidebar; it is ignored.
 - Terminal pixel-size reports now keep the measured cell dimensions after pane-only cell resizes instead of reverting to the 10x20 startup fallback.
 - Terminal OSC 110/111/104 color resets now restore ForkTTY's configured theme defaults instead of falling back to libghostty's built-in black/background palette.
 - Dead-key and compose-key input now has the GTK input-method handoff documented at the terminal key fallback, clarifying why committed text is not duplicated by fallback key encoding.
