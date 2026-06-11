@@ -145,3 +145,83 @@ impl ImportResult {
         self.skipped += other.skipped;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_family_chromium_classification_matches_supported_sources() {
+        let cases = [
+            (BrowserFamily::Firefox, false),
+            (BrowserFamily::Chrome, true),
+            (BrowserFamily::Chromium, true),
+            (BrowserFamily::Brave, true),
+            (BrowserFamily::Edge, true),
+            (BrowserFamily::Vivaldi, true),
+        ];
+
+        for (family, is_chromium) in cases {
+            assert_eq!(family.is_chromium(), is_chromium, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn browser_family_safe_storage_labels_match_secret_service_names() {
+        let cases = [
+            (BrowserFamily::Firefox, None),
+            (BrowserFamily::Chrome, Some("Chrome Safe Storage")),
+            (BrowserFamily::Chromium, Some("Chromium Safe Storage")),
+            (BrowserFamily::Brave, Some("Brave Safe Storage")),
+            (BrowserFamily::Edge, Some("Microsoft Edge Safe Storage")),
+            (BrowserFamily::Vivaldi, Some("Vivaldi Safe Storage")),
+        ];
+
+        for (family, label) in cases {
+            assert_eq!(family.safe_storage_label(), label, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn browser_family_labels_match_display_names() {
+        let cases = [
+            (BrowserFamily::Firefox, "Firefox"),
+            (BrowserFamily::Chrome, "Google Chrome"),
+            (BrowserFamily::Chromium, "Chromium"),
+            (BrowserFamily::Brave, "Brave"),
+            (BrowserFamily::Edge, "Microsoft Edge"),
+            (BrowserFamily::Vivaldi, "Vivaldi"),
+        ];
+
+        for (family, label) in cases {
+            assert_eq!(family.label(), label, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn import_result_add_accumulates_counts() {
+        let mut result = ImportResult::default();
+        result.add(&ImportResult {
+            cookies: 10,
+            history: 20,
+            bookmarks: 30,
+            skipped: 5,
+        });
+        result.add(&ImportResult {
+            cookies: 5,
+            history: 10,
+            bookmarks: 15,
+            skipped: 2,
+        });
+
+        assert_eq!(
+            result,
+            ImportResult {
+                cookies: 15,
+                history: 30,
+                bookmarks: 45,
+                skipped: 7,
+            }
+        );
+    }
+}
