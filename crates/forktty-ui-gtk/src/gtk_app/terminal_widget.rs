@@ -24,6 +24,9 @@ pub(super) struct GhosttyTerminalWidget {
     // True when the current workspace layout shows this pane alongside another
     // pane. Single-pane workspaces never dim terminals when focus sits outside.
     has_siblings: Rc<Cell<bool>>,
+    // Fractional smooth-scroll line remainder. Wheel events stay discrete and
+    // clear this so switching devices never inherits stale partial lines.
+    smooth_scroll_remainder: Rc<Cell<f64>>,
     // Index of the active scrollback search match; matches themselves are
     // recomputed on every step so new output never leaves stale positions.
     search_index: Rc<Cell<Option<usize>>>,
@@ -99,6 +102,7 @@ impl GhosttyTerminalWidget {
         let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
         let cursor_blink_visible = Rc::new(Cell::new(true));
         let has_siblings = Rc::new(Cell::new(false));
+        let smooth_scroll_remainder = Rc::new(Cell::new(reset_smooth_scroll_accumulator()));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
         let im_context = gtk::IMMulticontext::new();
@@ -545,60 +549,105 @@ impl GhosttyTerminalWidget {
             });
             drawing_area.add_controller(motion);
 
-            let scroll = gtk::EventControllerScroll::new(
-                gtk::EventControllerScrollFlags::VERTICAL
-                    | gtk::EventControllerScrollFlags::DISCRETE,
-            );
+            let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
             scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
             {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.downgrade();
                 let selection = selection.clone();
+                let smooth_scroll_remainder = smooth_scroll_remainder.clone();
+                let smooth_scroll_remainder_for_scroll = smooth_scroll_remainder.clone();
                 scroll.connect_scroll(move |controller, _dx, dy| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return glib::Propagation::Proceed;
                     };
-                    let Some(button) = terminal_scroll_button(dy) else {
-                        return glib::Propagation::Proceed;
-                    };
-                    let (x, y) = controller
-                        .current_event()
+                    let current_event = controller.current_event();
+                    let smooth_scroll = current_event.as_ref().is_some_and(scroll_event_is_smooth);
+                    let (x, y) = current_event
+                        .as_ref()
                         .and_then(|event| event.position())
                         .unwrap_or((0.0, 0.0));
-                    let input = terminal_mouse_input_for_area(
-                        &drawing_area,
-                        &renderer,
-                        TerminalMouseEventInput {
-                            action: TerminalMouseAction::Press,
-                            button: Some(button),
-                            modifiers: controller.current_event_state(),
-                            x,
-                            y,
-                            any_button_pressed: false,
-                        },
-                    );
-                    match route_terminal_scroll(&runtime, input, dy) {
-                        Ok(ScrollRouting::Forwarded) => {
-                            drawing_area.queue_draw();
-                            glib::Propagation::Stop
-                        }
-                        Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
-                            if scrolled {
-                                // Selection coordinates are viewport-relative;
-                                // scrolling would leave the highlight on the
-                                // wrong text.
-                                selection.borrow_mut().clear();
+                    if smooth_scroll {
+                        let accumulated =
+                            accumulate_smooth_scroll(smooth_scroll_remainder_for_scroll.get(), dy);
+                        smooth_scroll_remainder_for_scroll.set(accumulated.remainder);
+                        let Some(button) = terminal_scroll_button(accumulated.lines as f64) else {
+                            return glib::Propagation::Stop;
+                        };
+                        let input = terminal_mouse_input_for_area(
+                            &drawing_area,
+                            &renderer,
+                            TerminalMouseEventInput {
+                                action: TerminalMouseAction::Press,
+                                button: Some(button),
+                                modifiers: controller.current_event_state(),
+                                x,
+                                y,
+                                any_button_pressed: false,
+                            },
+                        );
+                        match route_terminal_scroll_lines(&runtime, input, accumulated.lines) {
+                            Ok(ScrollRouting::Forwarded) => {
                                 drawing_area.queue_draw();
+                                glib::Propagation::Stop
                             }
-                            glib::Propagation::Stop
+                            Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
+                                if scrolled {
+                                    selection.borrow_mut().clear();
+                                    drawing_area.queue_draw();
+                                }
+                                glib::Propagation::Stop
+                            }
+                            Ok(ScrollRouting::NotHandled) => glib::Propagation::Stop,
+                            Err(err) => {
+                                eprintln!("Failed to route terminal smooth scroll input: {err}");
+                                glib::Propagation::Proceed
+                            }
                         }
-                        Ok(ScrollRouting::NotHandled) => glib::Propagation::Proceed,
-                        Err(err) => {
-                            eprintln!("Failed to route terminal scroll input: {err}");
-                            glib::Propagation::Proceed
+                    } else {
+                        smooth_scroll_remainder_for_scroll.set(reset_smooth_scroll_accumulator());
+                        let Some(button) = terminal_scroll_button(dy) else {
+                            return glib::Propagation::Proceed;
+                        };
+                        let input = terminal_mouse_input_for_area(
+                            &drawing_area,
+                            &renderer,
+                            TerminalMouseEventInput {
+                                action: TerminalMouseAction::Press,
+                                button: Some(button),
+                                modifiers: controller.current_event_state(),
+                                x,
+                                y,
+                                any_button_pressed: false,
+                            },
+                        );
+                        match route_terminal_scroll(&runtime, input, dy) {
+                            Ok(ScrollRouting::Forwarded) => {
+                                drawing_area.queue_draw();
+                                glib::Propagation::Stop
+                            }
+                            Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
+                                if scrolled {
+                                    // Selection coordinates are viewport-relative;
+                                    // scrolling would leave the highlight on the
+                                    // wrong text.
+                                    selection.borrow_mut().clear();
+                                    drawing_area.queue_draw();
+                                }
+                                glib::Propagation::Stop
+                            }
+                            Ok(ScrollRouting::NotHandled) => glib::Propagation::Proceed,
+                            Err(err) => {
+                                eprintln!("Failed to route terminal scroll input: {err}");
+                                glib::Propagation::Proceed
+                            }
                         }
                     }
+                });
+                let smooth_scroll_remainder = smooth_scroll_remainder.clone();
+                scroll.connect_scroll_end(move |_| {
+                    smooth_scroll_remainder.set(reset_smooth_scroll_accumulator());
                 });
             }
             drawing_area.add_controller(scroll);
@@ -626,6 +675,7 @@ impl GhosttyTerminalWidget {
             hover_link,
             cursor_blink_visible,
             has_siblings,
+            smooth_scroll_remainder,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
@@ -667,6 +717,7 @@ impl GhosttyTerminalWidget {
             selection: Rc::downgrade(&self.selection),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
             has_siblings: Rc::downgrade(&self.has_siblings),
+            smooth_scroll_remainder: Rc::downgrade(&self.smooth_scroll_remainder),
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
@@ -866,6 +917,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
     has_siblings: std::rc::Weak<Cell<bool>>,
+    smooth_scroll_remainder: std::rc::Weak<Cell<f64>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
@@ -880,6 +932,7 @@ impl WeakGhosttyTerminalWidget {
             selection: self.selection.upgrade()?,
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
             has_siblings: self.has_siblings.upgrade()?,
+            smooth_scroll_remainder: self.smooth_scroll_remainder.upgrade()?,
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,
@@ -1231,6 +1284,43 @@ enum ScrollRouting {
     NotHandled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SmoothScrollAccumulation {
+    lines: isize,
+    remainder: f64,
+}
+
+const SMOOTH_SCROLL_LINES_PER_UNIT: f64 = 3.0;
+
+fn accumulate_smooth_scroll(remainder: f64, delta_y: f64) -> SmoothScrollAccumulation {
+    let line_delta = delta_y * SMOOTH_SCROLL_LINES_PER_UNIT;
+    if line_delta == 0.0 {
+        return SmoothScrollAccumulation {
+            lines: 0,
+            remainder,
+        };
+    }
+    let same_direction =
+        remainder == 0.0 || remainder.is_sign_positive() == line_delta.is_sign_positive();
+    let mut accumulated = if same_direction { remainder } else { 0.0 };
+    accumulated += line_delta;
+    let lines = accumulated.trunc() as isize;
+    SmoothScrollAccumulation {
+        lines,
+        remainder: accumulated - lines as f64,
+    }
+}
+
+fn reset_smooth_scroll_accumulator() -> f64 {
+    0.0
+}
+
+fn scroll_event_is_smooth(event: &gtk::gdk::Event) -> bool {
+    event
+        .downcast_ref::<gtk::gdk::ScrollEvent>()
+        .is_some_and(|event| matches!(event.direction(), gtk::gdk::ScrollDirection::Smooth))
+}
+
 /// The link currently under a Ctrl-hover: viewport cell bounds plus target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HoverLink {
@@ -1323,6 +1413,25 @@ fn route_terminal_scroll(
         return Ok(ScrollRouting::NotHandled);
     };
     let scrolled = runtime.borrow_mut().scroll_viewport_lines(delta);
+    Ok(ScrollRouting::ViewportScrolled(scrolled?))
+}
+
+fn route_terminal_scroll_lines(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    input: TerminalMouseInput,
+    lines: isize,
+) -> Result<ScrollRouting, TerminalError> {
+    if lines == 0 {
+        return Ok(ScrollRouting::NotHandled);
+    }
+    let wrote = runtime.borrow_mut().write_mouse(input);
+    if wrote? {
+        for _ in 1..lines.unsigned_abs() {
+            runtime.borrow_mut().write_mouse(input)?;
+        }
+        return Ok(ScrollRouting::Forwarded);
+    }
+    let scrolled = runtime.borrow_mut().scroll_viewport_lines(lines);
     Ok(ScrollRouting::ViewportScrolled(scrolled?))
 }
 
@@ -2134,5 +2243,40 @@ mod mouse_tests {
             }
         );
         assert!(input.any_button_pressed);
+    }
+
+    fn assert_f64_eq(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn smooth_scroll_accumulator_emits_integer_lines_and_keeps_remainder() {
+        let first = accumulate_smooth_scroll(0.0, 0.2);
+        assert_eq!(first.lines, 0);
+        assert_f64_eq(first.remainder, 0.6);
+
+        let second = accumulate_smooth_scroll(first.remainder, 0.2);
+        assert_eq!(second.lines, 1);
+        assert!((second.remainder - 0.2).abs() < f64::EPSILON);
+
+        let third = accumulate_smooth_scroll(second.remainder, -0.2);
+        assert_eq!(third.lines, 0);
+        assert_f64_eq(third.remainder, -0.6);
+    }
+
+    #[test]
+    fn smooth_scroll_accumulator_handles_negative_steps() {
+        let first = accumulate_smooth_scroll(0.0, -0.5);
+        assert_eq!(first.lines, -1);
+        assert_f64_eq(first.remainder, -0.5);
+
+        let second = accumulate_smooth_scroll(first.remainder, -0.5);
+        assert_eq!(second.lines, -2);
+        assert_f64_eq(second.remainder, 0.0);
+    }
+
+    #[test]
+    fn smooth_scroll_reset_clears_fractional_remainder() {
+        assert_eq!(reset_smooth_scroll_accumulator(), 0.0);
     }
 }

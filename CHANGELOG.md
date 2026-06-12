@@ -15,6 +15,7 @@ All notable changes to ForkTTY are documented here.
 - The worktree open-workspace boundary rejection now carries the structured error code `precondition_failed` (documented in SPEC.md), and MCP tool errors with a known recovery carry machine-readable `remedy` and `suggested_tool` fields in `structuredContent` — the boundary error points at `workspace_create`, so an agent can recover without parsing prose.
 
 ### Changed
+- Touchpad scrolling in terminal panes now accumulates smooth deltas instead of forcing chunky wheel ticks.
 - The declared Rust MSRV is now 1.96, matching the current `rusqlite`/`libsqlite3-sys` dependency chain required by the workspace lockfile.
 
 ### Fixed
