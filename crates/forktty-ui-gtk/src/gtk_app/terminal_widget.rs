@@ -2371,6 +2371,27 @@ mod mouse_tests {
         assert!(input.any_button_pressed);
     }
 
+    #[test]
+    fn terminal_mouse_input_clamps_trailing_padding_to_grid_bounds() {
+        let input = terminal_mouse_input(
+            TerminalMouseEventInput {
+                action: TerminalMouseAction::Motion,
+                button: None,
+                modifiers: gtk::gdk::ModifierType::empty(),
+                x: 799.0,
+                y: 479.0,
+                any_button_pressed: false,
+            },
+            TerminalMouseWidgetMetrics {
+                grid: terminal_grid_geometry(800, 480, 78, 23, 10, 20),
+                cell_width: 10,
+                cell_height: 20,
+            },
+        );
+
+        assert_eq!(input.position, TerminalMousePosition { x: 779.0, y: 459.0 });
+    }
+
     fn assert_f64_eq(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
     }

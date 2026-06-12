@@ -66,13 +66,18 @@ pub(super) fn padded_cell_for_position(
 
 pub(super) fn padded_mouse_position(geometry: &TerminalGridGeometry, x: f64, y: f64) -> (f64, f64) {
     (
-        (x - f64::from(geometry.origin_x)).max(0.0),
-        (y - f64::from(geometry.origin_y)).max(0.0),
+        padded_mouse_axis_position(x, geometry.origin_x, geometry.grid_width),
+        padded_mouse_axis_position(y, geometry.origin_y, geometry.grid_height),
     )
 }
 
 fn padded_axis_cell(position: f64, origin: i32, cell_pixels: i32) -> usize {
     ((position - f64::from(origin)).max(0.0) / f64::from(cell_pixels.max(1))) as usize
+}
+
+fn padded_mouse_axis_position(position: f64, origin: i32, grid_pixels: i32) -> f64 {
+    let max_position = f64::from(grid_pixels.saturating_sub(1).max(0));
+    (position - f64::from(origin)).clamp(0.0, max_position)
 }
 
 fn pixel_cells(pixels: i32, cell_pixels: i32) -> u16 {
@@ -146,5 +151,6 @@ mod tests {
 
         assert_eq!(padded_mouse_position(&geometry, 7.0, 6.0), (0.0, 0.0));
         assert_eq!(padded_mouse_position(&geometry, 19.5, 30.0), (10.5, 22.0));
+        assert_eq!(padded_mouse_position(&geometry, 200.0, 200.0), (99.0, 59.0));
     }
 }
