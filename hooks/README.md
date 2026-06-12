@@ -63,6 +63,13 @@ network listener. The tool set covers workspace/surface listing, pane split /
 focus / send-text, worktree list/status/create/attach/remove/merge,
 notifications, and `status_set`.
 
+The server also publishes an operating guide in three MCP-native places:
+initialize `instructions`, resource `forktty://agent/operating-guide`, and
+prompt `forktty_operating_guide`. The guide tells agents to reach for ForkTTY
+only when coordinating panes/workspaces, agent sessions, worktrees, visible
+status, notifications, or cross-surface text; normal edits in the current repo
+should not trigger ForkTTY tool calls.
+
 `forktty mcp setup` writes a ForkTTY-managed MCP server named `forktty` into
 the default Codex, Claude Code, and Antigravity config locations. Gemini CLI is
 legacy opt-in via `forktty mcp setup gemini`:

@@ -1,3 +1,4 @@
+use crate::agent_guide;
 use forktty_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, VecDeque};
@@ -6941,7 +6942,7 @@ fn build_hook_response(
                 )
             })
             .unwrap_or_else(|| format!("Workspace: {workspace_id}; branch unknown."));
-        let additional_context = [
+        let mut context_lines = vec![
             format!(
                 "Running inside ForkTTY. workspace_id={} surface_id={} socket={}.",
                 workspace_id,
@@ -6952,8 +6953,13 @@ fn build_hook_response(
             "MCP tools: workspace_list and surface_list inspect panes; surface_focus and surface_send_text drive them.".to_string(),
             "Worktrees: worktree_create creates an isolated git worktree + workspace; worktree_attach, worktree_remove, and worktree_merge manage branches.".to_string(),
             "Status: status_set and notification_create publish progress; CLI fallback is forktty list/surfaces/send-text/worktree-*.".to_string(),
-        ]
-        .join("\n");
+        ];
+        context_lines.extend(
+            agent_guide::session_context_lines()
+                .into_iter()
+                .map(str::to_string),
+        );
+        let additional_context = context_lines.join("\n");
         let mut hook_output = Map::new();
         hook_output.insert(
             "hookEventName".to_string(),
@@ -8495,6 +8501,12 @@ mod tests {
         assert!(context.contains("Feature Shell on branch feature/mcp"));
         assert!(context.contains("workspace_list and surface_list"));
         assert!(context.contains("worktree_create creates an isolated git worktree"));
+        assert!(context.contains(
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, or sending text to another surface."
+        ));
+        assert!(context.contains(
+            "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
+        ));
         assert_eq!(
             response["hookSpecificOutput"]["sessionTitle"],
             "Feature Shell"

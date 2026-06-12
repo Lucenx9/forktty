@@ -208,6 +208,15 @@ to the same owner-only Unix socket described above. The server exposes
 socket, and `FORKTTY_WORKSPACE_ID`/`FORKTTY_SURFACE_ID` are used as default
 targets when a tool omits an explicit target.
 
+The MCP server also declares `resources` and `prompts` capabilities. It exposes
+a read-only `forktty://agent/operating-guide` text resource and a
+`forktty_operating_guide` prompt with the same content. The guide tells agents
+to use ForkTTY tools for pane/workspace coordination, agent session discovery or
+resume, worktree management, visible status/notifications, and sending text to a
+different surface; ordinary code edits in the current repository should proceed
+without ForkTTY tool calls. The server's `initialize` instructions include the
+same short policy and point at the resource/prompt for the full guide.
+
 `forktty mcp setup` registers this stdio server in verified user-scope MCP
 config locations for Codex (`$CODEX_HOME/config.toml` or
 `~/.codex/config.toml`), Claude Code (`~/.claude.json`), and Antigravity
