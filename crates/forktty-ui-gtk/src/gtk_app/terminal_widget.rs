@@ -213,9 +213,12 @@ impl GhosttyTerminalWidget {
         }
         {
             let any_button_pressed = Rc::new(Cell::new(false));
-            // Set on a word/line click selection whose press was not
-            // forwarded to the application; the matching release must then
-            // not be forwarded either.
+            // Set when a press was handled locally and not forwarded to the
+            // application (word/line click selection, middle-click paste); the
+            // matching release must then not be forwarded either. Shared between
+            // Left and Middle: a simultaneous Left+Middle chord can let one
+            // button's release consume the other's flag, which at worst forwards
+            // one spurious release to a mouse-tracking app.
             let suppress_release = Rc::new(Cell::new(false));
             let autoscroll = Rc::new(SelectionAutoscroll::default());
             let click = gtk::GestureClick::new();
@@ -238,6 +241,31 @@ impl GhosttyTerminalWidget {
                     };
                     any_button_pressed.set(true);
                     let modifiers = gesture.current_event_state();
+                    if matches!(button, TerminalMouseButton::Middle) {
+                        let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                        let input = terminal_mouse_input_for_area(
+                            &drawing_area,
+                            &renderer,
+                            TerminalMouseEventInput {
+                                action: TerminalMouseAction::Press,
+                                button: Some(button),
+                                modifiers,
+                                x,
+                                y,
+                                any_button_pressed: true,
+                            },
+                        );
+                        match route_middle_click(&runtime, input, shift) {
+                            Ok(MiddleClickRouting::Forwarded) => drawing_area.queue_draw(),
+                            Ok(MiddleClickRouting::PastePrimary) => {
+                                // The press was not forwarded; its release must not be either.
+                                suppress_release.set(true);
+                                paste_primary_selection(&runtime, &selection, &drawing_area);
+                            }
+                            Err(err) => eprintln!("Failed to route middle click: {err}"),
+                        }
+                        return;
+                    }
                     let is_left = matches!(button, TerminalMouseButton::Left);
                     // Shift bypasses application mouse tracking so text can be
                     // selected even inside mouse-aware apps (vim, htop, ...).
@@ -342,6 +370,11 @@ impl GhosttyTerminalWidget {
                         if suppress_release.replace(false) {
                             return;
                         }
+                    }
+                    if matches!(button, TerminalMouseButton::Middle)
+                        && suppress_release.replace(false)
+                    {
+                        return;
                     }
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
@@ -1081,6 +1114,32 @@ fn route_terminal_scroll(
     Ok(ScrollRouting::ViewportScrolled(scrolled?))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MiddleClickRouting {
+    /// The press was encoded and written to a mouse-tracking application.
+    Forwarded,
+    /// Tracking is off (or Shift bypassed it): paste the PRIMARY selection.
+    PastePrimary,
+}
+
+/// Routes a middle-button press: to the application when it tracks the mouse
+/// (unless Shift bypasses, mirroring Shift+drag selection), otherwise to a
+/// PRIMARY-selection paste. Borrows are sequential, never held across arms
+/// (see `route_terminal_scroll`).
+fn route_middle_click(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    input: TerminalMouseInput,
+    shift: bool,
+) -> Result<MiddleClickRouting, TerminalError> {
+    if !shift {
+        let wrote = runtime.borrow_mut().write_mouse(input);
+        if wrote? {
+            return Ok(MiddleClickRouting::Forwarded);
+        }
+    }
+    Ok(MiddleClickRouting::PastePrimary)
+}
+
 /// Snaps the viewport to the bottom before user input reaches the PTY
 /// ("scroll on keystroke"). A finished selection is viewport-relative, so a
 /// jump that actually moved drops it like a wheel scroll does.
@@ -1093,6 +1152,34 @@ fn kick_viewport_to_bottom(
         selection.borrow_mut().clear();
     }
     Ok(scrolled)
+}
+
+/// Pastes the PRIMARY selection (Linux middle-click paste), through the same
+/// sanitizing/bracketed paste encoder as the regular clipboard paste.
+fn paste_primary_selection(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    drawing_area: &gtk::DrawingArea,
+) {
+    let runtime = runtime.clone();
+    let selection = selection.clone();
+    let drawing_area = drawing_area.clone();
+    if let Some(display) = gtk::gdk::Display::default() {
+        display
+            .primary_clipboard()
+            .read_text_async(None::<&gio::Cancellable>, move |result| {
+                let Ok(Some(text)) = result else {
+                    return;
+                };
+                if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
+                    eprintln!("Failed to scroll terminal to bottom: {err}");
+                }
+                if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
+                    eprintln!("Failed to paste into terminal: {err}");
+                }
+                drawing_area.queue_draw();
+            });
+    }
 }
 
 /// Applies a Shift+PageUp/PageDown/Home/End scrollback navigation. Returns
@@ -1640,6 +1727,63 @@ mod selection_tests {
             !handle_scrollback_navigation(&runtime, &selection, ScrollbackNavigation::PageUp)
                 .unwrap()
         );
+    }
+
+    fn middle_press_input() -> TerminalMouseInput {
+        TerminalMouseInput {
+            action: TerminalMouseAction::Press,
+            button: Some(TerminalMouseButton::Middle),
+            modifiers: Default::default(),
+            position: TerminalMousePosition { x: 10.0, y: 20.0 },
+            size: TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+            any_button_pressed: true,
+        }
+    }
+
+    #[test]
+    fn middle_click_pastes_when_tracking_is_off_and_forwards_when_on() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+
+        // Tracking off → paste.
+        assert_eq!(
+            route_middle_click(&runtime, middle_press_input(), false).unwrap(),
+            MiddleClickRouting::PastePrimary
+        );
+        assert!(runtime.borrow().pty_writes().is_empty());
+
+        // Tracking on → forwarded to the application.
+        runtime
+            .borrow_mut()
+            .feed_pty_bytes(b"\x1b[?1000h\x1b[?1006h")
+            .unwrap();
+        assert_eq!(
+            route_middle_click(&runtime, middle_press_input(), false).unwrap(),
+            MiddleClickRouting::Forwarded
+        );
+        let writes_after_forward = runtime.borrow().pty_writes().len();
+        assert!(writes_after_forward > 0);
+
+        // Shift bypasses tracking, like it does for selection.
+        assert_eq!(
+            route_middle_click(&runtime, middle_press_input(), true).unwrap(),
+            MiddleClickRouting::PastePrimary
+        );
+        assert_eq!(runtime.borrow().pty_writes().len(), writes_after_forward);
     }
 
     #[test]
