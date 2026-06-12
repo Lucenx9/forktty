@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Dry-run of GitHub's forced Node 24 migration (2026-06-16): verify the
+# pinned setup-zig (still node20 upstream) works when forced onto node24.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
