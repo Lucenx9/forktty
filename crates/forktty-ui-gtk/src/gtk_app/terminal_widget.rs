@@ -9,6 +9,7 @@ use forktty_terminal::ghostty::events::GhosttyEvent;
 /// Blink half-period for the focused cursor: visible for one interval, hidden
 /// for the next. Matches the conventional terminal cadence.
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+const LOCAL_DRAG_SELECTION_THRESHOLD_PX: f64 = 6.0;
 
 #[derive(Debug, Clone)]
 pub(super) struct GhosttyTerminalWidget {
@@ -28,6 +29,9 @@ pub(super) struct GhosttyTerminalWidget {
     search_invalidated: Rc<SearchInvalidatedSlot>,
     // The link currently being highlighted by a Ctrl+hover, if any.
     hover_link: Rc<RefCell<Option<HoverLink>>>,
+    // Agent TUIs often grab mouse tracking. For them, a short click should
+    // still reach the app, while a real drag should select text locally.
+    local_selection_on_mouse_drag: Rc<Cell<bool>>,
 }
 
 #[derive(Default)]
@@ -90,6 +94,7 @@ impl GhosttyTerminalWidget {
         let runtime = Rc::new(RefCell::new(runtime));
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
         let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
+        let local_selection_on_mouse_drag = Rc::new(Cell::new(false));
         let cursor_blink_visible = Rc::new(Cell::new(true));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
@@ -242,6 +247,7 @@ impl GhosttyTerminalWidget {
             // button's release consume the other's flag, which at worst forwards
             // one spurious release to a mouse-tracking app.
             let suppress_release = Rc::new(Cell::new(false));
+            let pending_left_press = Rc::new(RefCell::new(None::<DeferredLeftPress>));
             let autoscroll = Rc::new(SelectionAutoscroll::default());
             let click = gtk::GestureClick::new();
             click.set_button(0);
@@ -252,9 +258,11 @@ impl GhosttyTerminalWidget {
                 let drawing_area = drawing_area.downgrade();
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
+                let pending_left_press = pending_left_press.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 let hover_link_for_click = hover_link.clone();
+                let local_selection_on_mouse_drag = local_selection_on_mouse_drag.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
@@ -263,6 +271,7 @@ impl GhosttyTerminalWidget {
                         return;
                     };
                     any_button_pressed.set(true);
+                    pending_left_press.borrow_mut().take();
                     let modifiers = gesture.current_event_state();
                     let is_left = matches!(button, TerminalMouseButton::Left);
                     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
@@ -309,11 +318,26 @@ impl GhosttyTerminalWidget {
                         }
                         return;
                     }
-                    // Shift bypasses application mouse tracking so text can be
-                    // selected even inside mouse-aware apps (vim, htop, ...).
-                    let shift_select =
-                        is_left && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
-                    let forwarded = if shift_select {
+                    let left_decision = if is_left {
+                        left_mouse_press_decision(
+                            local_selection_on_mouse_drag.get(),
+                            modifiers,
+                            n_press,
+                        )
+                    } else {
+                        LeftMousePressDecision::ForwardOrSelectIfUntracked
+                    };
+                    if matches!(left_decision, LeftMousePressDecision::DeferForLocalDrag) {
+                        *pending_left_press.borrow_mut() =
+                            Some(DeferredLeftPress { x, y, modifiers });
+                        selection.borrow_mut().clear();
+                        drawing_area.queue_draw();
+                        return;
+                    }
+                    let forwarded = if matches!(
+                        left_decision,
+                        LeftMousePressDecision::SelectLocallyNow
+                    ) {
                         false
                     } else {
                         let input = terminal_mouse_input_for_area(
@@ -385,6 +409,7 @@ impl GhosttyTerminalWidget {
                 let drawing_area = drawing_area.downgrade();
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
+                let pending_left_press = pending_left_press.clone();
                 let selection = selection.clone();
                 click.connect_released(move |gesture, _n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
@@ -406,6 +431,35 @@ impl GhosttyTerminalWidget {
                                 x,
                                 y,
                             );
+                            return;
+                        }
+                        if let Some(pending) = pending_left_press.borrow_mut().take() {
+                            let press_input = terminal_mouse_input_for_area(
+                                &drawing_area,
+                                &renderer,
+                                TerminalMouseEventInput {
+                                    action: TerminalMouseAction::Press,
+                                    button: Some(button),
+                                    modifiers: pending.modifiers,
+                                    x: pending.x,
+                                    y: pending.y,
+                                    any_button_pressed: true,
+                                },
+                            );
+                            write_terminal_mouse(&runtime, &drawing_area, press_input);
+                            let release_input = terminal_mouse_input_for_area(
+                                &drawing_area,
+                                &renderer,
+                                TerminalMouseEventInput {
+                                    action: TerminalMouseAction::Release,
+                                    button: Some(button),
+                                    modifiers: gesture.current_event_state(),
+                                    x,
+                                    y,
+                                    any_button_pressed: false,
+                                },
+                            );
+                            write_terminal_mouse(&runtime, &drawing_area, release_input);
                             return;
                         }
                         // Same rule for a word/line click selection, which
@@ -443,6 +497,7 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.downgrade();
                 let any_button_pressed = any_button_pressed.clone();
+                let pending_left_press = pending_left_press.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 let hover_link = hover_link.clone();
@@ -479,6 +534,25 @@ impl GhosttyTerminalWidget {
                             );
                         }
                         drawing_area.queue_draw();
+                        return;
+                    }
+                    if let Some(pending) = *pending_left_press.borrow() {
+                        if deferred_local_drag_exceeded_threshold(pending.x, pending.y, x, y) {
+                            pending_left_press.borrow_mut().take();
+                            autoscroll.lines.set(0);
+                            clear_hover_link(&hover_link, &drawing_area);
+                            let start = selection_cell_for_position(
+                                &drawing_area,
+                                &renderer,
+                                pending.x,
+                                pending.y,
+                            );
+                            let end = selection_cell_for_position(&drawing_area, &renderer, x, y);
+                            let mut selection = selection.borrow_mut();
+                            selection.begin_drag(start);
+                            selection.extend_drag(end);
+                            drawing_area.queue_draw();
+                        }
                         return;
                     }
                     let ctrl = controller
@@ -613,6 +687,7 @@ impl GhosttyTerminalWidget {
             runtime,
             selection,
             hover_link,
+            local_selection_on_mouse_drag,
             cursor_blink_visible,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
@@ -658,7 +733,12 @@ impl GhosttyTerminalWidget {
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
             hover_link: Rc::downgrade(&self.hover_link),
+            local_selection_on_mouse_drag: Rc::downgrade(&self.local_selection_on_mouse_drag),
         }
+    }
+
+    pub(super) fn set_local_selection_on_mouse_drag(&self, enabled: bool) {
+        self.local_selection_on_mouse_drag.set(enabled);
     }
 
     /// Registers the search bar's reaction to a pump-side highlight drop.
@@ -850,6 +930,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
     hover_link: std::rc::Weak<RefCell<Option<HoverLink>>>,
+    local_selection_on_mouse_drag: std::rc::Weak<Cell<bool>>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -863,8 +944,23 @@ impl WeakGhosttyTerminalWidget {
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,
             hover_link: self.hover_link.upgrade()?,
+            local_selection_on_mouse_drag: self.local_selection_on_mouse_drag.upgrade()?,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeftMousePressDecision {
+    DeferForLocalDrag,
+    SelectLocallyNow,
+    ForwardOrSelectIfUntracked,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DeferredLeftPress {
+    x: f64,
+    y: f64,
+    modifiers: gtk::gdk::ModifierType,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -940,6 +1036,36 @@ fn terminal_mouse_input(
         },
         any_button_pressed: event.any_button_pressed,
     }
+}
+
+fn left_mouse_press_decision(
+    local_selection_on_mouse_drag: bool,
+    modifiers: gtk::gdk::ModifierType,
+    n_press: i32,
+) -> LeftMousePressDecision {
+    if modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+        return LeftMousePressDecision::SelectLocallyNow;
+    }
+    if local_selection_on_mouse_drag {
+        if n_press == 1 {
+            LeftMousePressDecision::DeferForLocalDrag
+        } else {
+            LeftMousePressDecision::SelectLocallyNow
+        }
+    } else {
+        LeftMousePressDecision::ForwardOrSelectIfUntracked
+    }
+}
+
+fn deferred_local_drag_exceeded_threshold(
+    start_x: f64,
+    start_y: f64,
+    current_x: f64,
+    current_y: f64,
+) -> bool {
+    let dx = current_x - start_x;
+    let dy = current_y - start_y;
+    dx.mul_add(dx, dy * dy) >= LOCAL_DRAG_SELECTION_THRESHOLD_PX * LOCAL_DRAG_SELECTION_THRESHOLD_PX
 }
 
 fn positive_u32(value: i32) -> u32 {
@@ -2168,5 +2294,39 @@ mod mouse_tests {
     fn terminal_content_size_excludes_css_padding_for_mouse_coordinates() {
         assert_eq!(terminal_content_size(100, 12, 12), 76);
         assert_eq!(terminal_content_size(10, 12, 12), 1);
+    }
+
+    #[test]
+    fn agent_mouse_drag_policy_defers_single_left_press_without_shift() {
+        assert_eq!(
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::empty(), 1),
+            LeftMousePressDecision::DeferForLocalDrag
+        );
+        assert_eq!(
+            left_mouse_press_decision(false, gtk::gdk::ModifierType::empty(), 1),
+            LeftMousePressDecision::ForwardOrSelectIfUntracked
+        );
+    }
+
+    #[test]
+    fn agent_mouse_drag_policy_keeps_shift_and_multi_click_local() {
+        assert_eq!(
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::SHIFT_MASK, 1),
+            LeftMousePressDecision::SelectLocallyNow
+        );
+        assert_eq!(
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::empty(), 2),
+            LeftMousePressDecision::SelectLocallyNow
+        );
+    }
+
+    #[test]
+    fn deferred_agent_drag_starts_only_after_threshold() {
+        assert!(!deferred_local_drag_exceeded_threshold(
+            10.0, 20.0, 13.0, 22.0
+        ));
+        assert!(deferred_local_drag_exceeded_threshold(
+            10.0, 20.0, 18.0, 20.0
+        ));
     }
 }

@@ -51,6 +51,10 @@ struct TabRefresh {
     active: bool,
 }
 
+fn surface_has_agent_session(surface: &forktty_core::Surface) -> bool {
+    surface.agent_session.is_some()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SurfacePid {
     pub(super) pid: i32,
@@ -190,6 +194,12 @@ impl TerminalController {
                     );
                 }
                 apply_terminal_appearance(&widget);
+                if let Ok(model) = self.model.lock() {
+                    if let Some(surface) = model.surface(&request.surface_id) {
+                        widget
+                            .set_local_selection_on_mouse_drag(surface_has_agent_session(surface));
+                    }
+                }
                 attach_terminal_signal_handlers(
                     &widget,
                     &self.model,
@@ -604,6 +614,9 @@ impl TerminalController {
             .collect::<BTreeMap<_, _>>();
         drop(model);
         for (surface_id, surface, active) in chrome_updates {
+            if let Some(widget) = self.widgets.get(&surface_id) {
+                widget.set_local_selection_on_mouse_drag(surface_has_agent_session(&surface));
+            }
             if let Some(chrome) = self.chromes.get(&surface_id) {
                 update_pane_chrome(chrome, &surface, active);
             }
