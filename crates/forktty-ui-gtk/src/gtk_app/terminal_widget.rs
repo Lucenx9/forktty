@@ -1,3 +1,8 @@
+use super::terminal_geometry::{
+    padded_cell_for_position, padded_cell_for_position_clamped, padded_mouse_position,
+    terminal_content_pixels, terminal_grid_cells_for_allocation, terminal_grid_geometry,
+    TerminalGridGeometry,
+};
 use super::terminal_links::url_at_point;
 use super::*;
 use forktty_terminal::ghostty::core::{
@@ -9,15 +14,54 @@ use forktty_terminal::ghostty::events::GhosttyEvent;
 /// Blink half-period for the focused cursor: visible for one interval, hidden
 /// for the next. Matches the conventional terminal cadence.
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+const VISUAL_BELL_DURATION: Duration = Duration::from_millis(150);
 const LOCAL_DRAG_SELECTION_THRESHOLD_PX: f64 = 6.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisualBellFlash {
+    active: bool,
+    generation: u64,
+}
+
+fn trigger_visual_bell_flash(state: VisualBellFlash) -> VisualBellFlash {
+    VisualBellFlash {
+        active: true,
+        generation: state.generation.checked_add(1).unwrap_or(1),
+    }
+}
+
+fn expire_visual_bell_flash(state: VisualBellFlash, generation: u64) -> VisualBellFlash {
+    if state.generation == generation {
+        VisualBellFlash {
+            active: false,
+            generation: state.generation,
+        }
+    } else {
+        state
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct GhosttyTerminalWidget {
     drawing_area: gtk::DrawingArea,
     runtime: Rc<RefCell<TerminalRuntime>>,
     selection: Rc<RefCell<TerminalSelection>>,
+    toast_handle: Option<ToastHandle>,
     // Blink phase for the focused cursor; `true` means the cursor is drawn.
     cursor_blink_visible: Rc<Cell<bool>>,
+    visual_bell_active: Rc<Cell<bool>>,
+    visual_bell_generation: Rc<Cell<u64>>,
+    // True when the current workspace layout shows this pane alongside another
+    // pane. Single-pane workspaces never dim terminals when focus sits outside.
+    has_siblings: Rc<Cell<bool>>,
+    // True when the model considers this pane focused. GTK focus leaves every
+    // drawing area while a search entry, the command palette, or a dialog is
+    // active; the model focus keeps the logically active pane undimmed.
+    is_model_focused: Rc<Cell<bool>>,
+    // Fractional scroll-line remainder shared by smooth and discrete events
+    // (hi-res wheels report fractional ticks). A direction flip or gesture
+    // end resets it so reversals never inherit stale partial lines.
+    scroll_remainder: Rc<Cell<f64>>,
     // Index of the active scrollback search match; matches themselves are
     // recomputed on every step so new output never leaves stale positions.
     search_index: Rc<Cell<Option<usize>>>,
@@ -57,16 +101,18 @@ impl SearchInvalidatedSlot {
 
 pub(super) fn spawn_terminal_with_callback<F>(
     request: &SpawnRequest,
+    toast_handle: Option<ToastHandle>,
     on_spawn_result: F,
 ) -> Result<GhosttyTerminalWidget, TerminalError>
 where
     F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
 {
-    spawn_terminal_with_callback_impl(request, on_spawn_result)
+    spawn_terminal_with_callback_impl(request, toast_handle, on_spawn_result)
 }
 
 fn spawn_terminal_with_callback_impl<F>(
     request: &SpawnRequest,
+    toast_handle: Option<ToastHandle>,
     on_spawn_result: F,
 ) -> Result<GhosttyTerminalWidget, TerminalError>
 where
@@ -79,13 +125,17 @@ where
         config.appearance.scrollback_lines as usize,
     )?;
     let pid = runtime.child_pid();
-    let widget = GhosttyTerminalWidget::new_with_config(runtime, &config);
+    let widget = GhosttyTerminalWidget::new_with_config(runtime, &config, toast_handle);
     on_spawn_result(Ok(pid));
     Ok(widget)
 }
 
 impl GhosttyTerminalWidget {
-    fn new_with_config(runtime: TerminalRuntime, config: &config::AppConfig) -> Self {
+    fn new_with_config(
+        runtime: TerminalRuntime,
+        config: &config::AppConfig,
+        toast_handle: Option<ToastHandle>,
+    ) -> Self {
         let drawing_area = gtk::DrawingArea::new();
         drawing_area.set_hexpand(true);
         drawing_area.set_vexpand(true);
@@ -96,6 +146,11 @@ impl GhosttyTerminalWidget {
         let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
         let local_selection_on_mouse_drag = Rc::new(Cell::new(false));
         let cursor_blink_visible = Rc::new(Cell::new(true));
+        let visual_bell_active = Rc::new(Cell::new(false));
+        let visual_bell_generation = Rc::new(Cell::new(0));
+        let has_siblings = Rc::new(Cell::new(false));
+        let is_model_focused = Rc::new(Cell::new(false));
+        let scroll_remainder = Rc::new(Cell::new(reset_scroll_accumulator()));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
         let im_context = gtk::IMMulticontext::new();
@@ -106,10 +161,20 @@ impl GhosttyTerminalWidget {
             let selection = selection.clone();
             let hover_link = hover_link.clone();
             let cursor_blink_visible = cursor_blink_visible.clone();
+            let visual_bell_active = visual_bell_active.clone();
+            let has_siblings = has_siblings.clone();
+            let is_model_focused = is_model_focused.clone();
             drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
                     Ok(frame) => {
+                        let viewport = runtime
+                            .borrow_mut()
+                            .scrollback_indicator_position()
+                            .unwrap_or_else(|err| {
+                                eprintln!("Failed to query scrollback indicator: {err}");
+                                None
+                            });
                         let range = selection.borrow().normalized_range();
                         let link_range = hover_link.borrow().as_ref().map(|l| (l.start, l.end));
                         renderer.draw_frame(
@@ -122,7 +187,11 @@ impl GhosttyTerminalWidget {
                             RendererCursorState {
                                 focused: area.has_focus(),
                                 blink_visible: cursor_blink_visible.get(),
+                                has_siblings: has_siblings.get(),
+                                model_focused: is_model_focused.get(),
+                                visual_bell_active: visual_bell_active.get(),
                             },
+                            viewport,
                         );
                     }
                     Err(err) => eprintln!("Failed to render terminal frame: {err}"),
@@ -261,6 +330,7 @@ impl GhosttyTerminalWidget {
                 let pending_left_press = pending_left_press.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
+                let toast_handle = toast_handle.clone();
                 let hover_link_for_click = hover_link.clone();
                 let local_selection_on_mouse_drag = local_selection_on_mouse_drag.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
@@ -277,7 +347,7 @@ impl GhosttyTerminalWidget {
                     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
                     if is_left && ctrl && n_press == 1 {
                         let point =
-                            selection_cell_for_position(&drawing_area, &renderer, x, y);
+                            selection_cell_for_position_clamped(&drawing_area, &renderer, x, y);
                         match link_at_point(&runtime, point) {
                             Ok(Some(link)) => {
                                 suppress_release.set(true);
@@ -312,7 +382,12 @@ impl GhosttyTerminalWidget {
                             Ok(MiddleClickRouting::PastePrimary) => {
                                 // The press was not forwarded; its release must not be either.
                                 suppress_release.set(true);
-                                paste_primary_selection(&runtime, &selection, &drawing_area);
+                                paste_primary_selection(
+                                    &runtime,
+                                    &selection,
+                                    &drawing_area,
+                                    toast_handle.clone(),
+                                );
                             }
                             Err(err) => eprintln!("Failed to route middle click: {err}"),
                         }
@@ -362,16 +437,28 @@ impl GhosttyTerminalWidget {
                             // A fresh gesture must not inherit a previous
                             // drag's pending autoscroll.
                             autoscroll.lines.set(0);
-                            let point =
-                                selection_cell_for_position(&drawing_area, &renderer, x, y);
                             if n_press == 1 {
                                 clear_hover_link(&hover_link_for_click, &drawing_area);
-                                selection.begin_drag(point);
+                                selection.begin_drag(selection_cell_for_position(
+                                    &drawing_area,
+                                    &renderer,
+                                    x,
+                                    y,
+                                ));
                             } else {
                                 // Double click selects the word, triple click
                                 // the visual row. Both finish immediately, so
                                 // the release needs explicit suppression.
+                                // The point query is clamped so a click a few
+                                // px into the trailing gutter still selects
+                                // the last row/column.
                                 suppress_release.set(true);
+                                let point = selection_cell_for_position_clamped(
+                                    &drawing_area,
+                                    &renderer,
+                                    x,
+                                    y,
+                                );
                                 let frame = runtime.borrow_mut().render_frame();
                                 match frame {
                                     Ok(frame) => {
@@ -561,7 +648,7 @@ impl GhosttyTerminalWidget {
                     let resolved = if ctrl {
                         link_at_point(
                             &runtime,
-                            selection_cell_for_position(&drawing_area, &renderer, x, y),
+                            selection_cell_for_position_clamped(&drawing_area, &renderer, x, y),
                         )
                         .unwrap_or_else(|err| {
                             eprintln!("Failed to resolve terminal link: {err}");
@@ -609,27 +696,39 @@ impl GhosttyTerminalWidget {
             });
             drawing_area.add_controller(motion);
 
-            let scroll = gtk::EventControllerScroll::new(
-                gtk::EventControllerScrollFlags::VERTICAL
-                    | gtk::EventControllerScrollFlags::DISCRETE,
-            );
+            let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
             scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
             {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.downgrade();
                 let selection = selection.clone();
+                let scroll_remainder = scroll_remainder.clone();
+                let scroll_remainder_for_scroll = scroll_remainder.clone();
+                let wayland_display = display_is_wayland();
                 scroll.connect_scroll(move |controller, _dx, dy| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return glib::Propagation::Proceed;
                     };
-                    let Some(button) = terminal_scroll_button(dy) else {
-                        return glib::Propagation::Proceed;
-                    };
-                    let (x, y) = controller
-                        .current_event()
+                    let current_event = controller.current_event();
+                    let smooth_scroll = current_event.as_ref().is_some_and(scroll_event_is_smooth);
+                    let (x, y) = current_event
+                        .as_ref()
                         .and_then(|event| event.position())
                         .unwrap_or((0.0, 0.0));
+                    let (_, cell_height) = renderer.cell_pixel_size_for_widget(&drawing_area);
+                    let line_delta =
+                        scroll_line_delta(smooth_scroll, wayland_display, dy, cell_height);
+                    let Some(button) = terminal_scroll_button(line_delta) else {
+                        // A true zero-delta event carries nothing to route;
+                        // smooth streams stay claimed (their fractions are
+                        // being accumulated across events).
+                        return if smooth_scroll {
+                            glib::Propagation::Stop
+                        } else {
+                            glib::Propagation::Proceed
+                        };
+                    };
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
                         &renderer,
@@ -642,7 +741,12 @@ impl GhosttyTerminalWidget {
                             any_button_pressed: false,
                         },
                     );
-                    match route_terminal_scroll(&runtime, input, dy) {
+                    match route_terminal_scroll(
+                        &runtime,
+                        input,
+                        &scroll_remainder_for_scroll,
+                        line_delta,
+                    ) {
                         Ok(ScrollRouting::Forwarded) => {
                             drawing_area.queue_draw();
                             glib::Propagation::Stop
@@ -657,12 +761,18 @@ impl GhosttyTerminalWidget {
                             }
                             glib::Propagation::Stop
                         }
-                        Ok(ScrollRouting::NotHandled) => glib::Propagation::Proceed,
+                        // Sub-threshold: the delta went into the accumulator,
+                        // so the event is consumed.
+                        Ok(ScrollRouting::NotHandled) => glib::Propagation::Stop,
                         Err(err) => {
                             eprintln!("Failed to route terminal scroll input: {err}");
                             glib::Propagation::Proceed
                         }
                     }
+                });
+                let scroll_remainder = scroll_remainder.clone();
+                scroll.connect_scroll_end(move |_| {
+                    scroll_remainder.set(reset_scroll_accumulator());
                 });
             }
             drawing_area.add_controller(scroll);
@@ -672,11 +782,12 @@ impl GhosttyTerminalWidget {
             let renderer = renderer.clone();
             drawing_area.connect_resize(move |area, width, height| {
                 let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-                if let Err(err) =
-                    runtime
-                        .borrow_mut()
-                        .resize_pixels(width, height, cell_width, cell_height)
-                {
+                if let Err(err) = runtime.borrow_mut().resize_pixels(
+                    terminal_content_pixels(width),
+                    terminal_content_pixels(height),
+                    cell_width,
+                    cell_height,
+                ) {
                     eprintln!("Failed to resize terminal runtime: {err}");
                 }
                 area.queue_draw();
@@ -687,8 +798,14 @@ impl GhosttyTerminalWidget {
             runtime,
             selection,
             hover_link,
+            toast_handle,
             local_selection_on_mouse_drag,
             cursor_blink_visible,
+            visual_bell_active,
+            visual_bell_generation,
+            has_siblings,
+            is_model_focused,
+            scroll_remainder,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
@@ -728,7 +845,13 @@ impl GhosttyTerminalWidget {
             drawing_area: self.drawing_area.downgrade(),
             runtime: Rc::downgrade(&self.runtime),
             selection: Rc::downgrade(&self.selection),
+            toast_handle: self.toast_handle.clone(),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
+            visual_bell_active: Rc::downgrade(&self.visual_bell_active),
+            visual_bell_generation: Rc::downgrade(&self.visual_bell_generation),
+            has_siblings: Rc::downgrade(&self.has_siblings),
+            is_model_focused: Rc::downgrade(&self.is_model_focused),
+            scroll_remainder: Rc::downgrade(&self.scroll_remainder),
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
@@ -746,6 +869,49 @@ impl GhosttyTerminalWidget {
     /// cycle: widget → slot → widget).
     pub(super) fn on_search_invalidated(&self, callback: impl Fn() + 'static) {
         *self.search_invalidated.callback.borrow_mut() = Some(Box::new(callback));
+    }
+
+    pub(super) fn set_has_siblings(&self, has_siblings: bool) {
+        if self.has_siblings.replace(has_siblings) != has_siblings {
+            self.drawing_area.queue_draw();
+        }
+    }
+
+    pub(super) fn set_is_model_focused(&self, is_model_focused: bool) {
+        if self.is_model_focused.replace(is_model_focused) != is_model_focused {
+            self.drawing_area.queue_draw();
+        }
+    }
+
+    pub(super) fn flash_visual_bell(&self) {
+        let state = VisualBellFlash {
+            active: self.visual_bell_active.get(),
+            generation: self.visual_bell_generation.get(),
+        };
+        let state = trigger_visual_bell_flash(state);
+        self.visual_bell_active.set(state.active);
+        self.visual_bell_generation.set(state.generation);
+        self.drawing_area.queue_draw();
+
+        let widget = self.downgrade_widget();
+        let expiry_generation = state.generation;
+        glib::timeout_add_local_once(VISUAL_BELL_DURATION, move || {
+            let Some(widget) = widget.upgrade() else {
+                return;
+            };
+            let previous = VisualBellFlash {
+                active: widget.visual_bell_active.get(),
+                generation: widget.visual_bell_generation.get(),
+            };
+            let state = expire_visual_bell_flash(previous, expiry_generation);
+            // A newer flash supersedes this timer; skip the redraw so bell
+            // storms don't queue a stack of no-op full-pane draws.
+            if state != previous {
+                widget.visual_bell_active.set(state.active);
+                widget.visual_bell_generation.set(state.generation);
+                widget.drawing_area.queue_draw();
+            }
+        });
     }
 
     pub(super) fn attach_navigation_key_fallback<W>(&self, target: &W)
@@ -925,7 +1091,13 @@ pub(super) struct WeakGhosttyTerminalWidget {
     drawing_area: glib::WeakRef<gtk::DrawingArea>,
     runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
+    toast_handle: Option<ToastHandle>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
+    visual_bell_active: std::rc::Weak<Cell<bool>>,
+    visual_bell_generation: std::rc::Weak<Cell<u64>>,
+    has_siblings: std::rc::Weak<Cell<bool>>,
+    is_model_focused: std::rc::Weak<Cell<bool>>,
+    scroll_remainder: std::rc::Weak<Cell<f64>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
@@ -939,7 +1111,13 @@ impl WeakGhosttyTerminalWidget {
             drawing_area: self.drawing_area.upgrade()?,
             runtime: self.runtime.upgrade()?,
             selection: self.selection.upgrade()?,
+            toast_handle: self.toast_handle.clone(),
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
+            visual_bell_active: self.visual_bell_active.upgrade()?,
+            visual_bell_generation: self.visual_bell_generation.upgrade()?,
+            has_siblings: self.has_siblings.upgrade()?,
+            is_model_focused: self.is_model_focused.upgrade()?,
+            scroll_remainder: self.scroll_remainder.upgrade()?,
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,
@@ -975,8 +1153,7 @@ struct TerminalMouseEventInput {
 
 #[derive(Debug, Clone, Copy)]
 struct TerminalMouseWidgetMetrics {
-    screen_width: i32,
-    screen_height: i32,
+    grid: TerminalGridGeometry,
     cell_width: i32,
     cell_height: i32,
 }
@@ -989,27 +1166,51 @@ struct TerminalContentPadding {
     bottom: i32,
 }
 
+/// Grid geometry, CSS padding, cell size, and grid bounds for a pane, all
+/// derived from the same allocation snapshot. Event coordinates include the
+/// CSS padding while the drawn grid lives in the content box, so every
+/// pointer consumer must shift positions by `padding` and build the grid from
+/// the content size — going through this one helper keeps the input mapping
+/// and the renderer from disagreeing by a padding's width.
+fn terminal_area_geometry(
+    area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
+) -> (
+    TerminalGridGeometry,
+    TerminalContentPadding,
+    i32,
+    i32,
+    (u16, u16),
+) {
+    let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+    let padding = terminal_content_padding(area);
+    let content_width = terminal_content_size(area.allocated_width(), padding.left, padding.right);
+    let content_height =
+        terminal_content_size(area.allocated_height(), padding.top, padding.bottom);
+    let (cols, rows) =
+        terminal_grid_cells_for_allocation(content_width, content_height, cell_width, cell_height);
+    let grid = terminal_grid_geometry(
+        content_width,
+        content_height,
+        cols,
+        rows,
+        cell_width,
+        cell_height,
+    );
+    (grid, padding, cell_width, cell_height, (cols, rows))
+}
+
 fn terminal_mouse_input_for_area(
     area: &gtk::DrawingArea,
     renderer: &TerminalRenderer,
     event: TerminalMouseEventInput,
 ) -> TerminalMouseInput {
-    let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-    let padding = terminal_content_padding(area);
+    let (grid, padding, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
     let (x, y) = terminal_content_position(event.x, event.y, padding);
     terminal_mouse_input(
         TerminalMouseEventInput { x, y, ..event },
         TerminalMouseWidgetMetrics {
-            screen_width: terminal_content_size(
-                area.allocated_width(),
-                padding.left,
-                padding.right,
-            ),
-            screen_height: terminal_content_size(
-                area.allocated_height(),
-                padding.top,
-                padding.bottom,
-            ),
+            grid,
             cell_width,
             cell_height,
         },
@@ -1020,17 +1221,18 @@ fn terminal_mouse_input(
     event: TerminalMouseEventInput,
     metrics: TerminalMouseWidgetMetrics,
 ) -> TerminalMouseInput {
+    let (x, y) = padded_mouse_position(&metrics.grid, event.x, event.y);
     TerminalMouseInput {
         action: event.action,
         button: event.button,
         modifiers: terminal_key_modifiers(event.modifiers),
         position: TerminalMousePosition {
-            x: event.x.max(0.0) as f32,
-            y: event.y.max(0.0) as f32,
+            x: x as f32,
+            y: y as f32,
         },
         size: TerminalMouseSize {
-            screen_width: positive_u32(metrics.screen_width),
-            screen_height: positive_u32(metrics.screen_height),
+            screen_width: positive_u32(metrics.grid.grid_width),
+            screen_height: positive_u32(metrics.grid.grid_height),
             cell_width: positive_u32(metrics.cell_width),
             cell_height: positive_u32(metrics.cell_height),
         },
@@ -1121,21 +1323,30 @@ fn selection_cell_for_position(
     x: f64,
     y: f64,
 ) -> SelectionPoint {
-    let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-    let (x, y) = terminal_content_position(x, y, terminal_content_padding(area));
-    selection_cell_for_content_position(x, y, cell_width, cell_height)
+    let (geometry, padding, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
+    let (x, y) = terminal_content_position(x, y, padding);
+    let (col, row) = padded_cell_for_position(&geometry, x, y, cell_width, cell_height);
+    SelectionPoint { row, col }
 }
 
-fn selection_cell_for_content_position(
+/// [`selection_cell_for_position`] clamped to the grid, for point queries
+/// (word/line click selection, link resolution): a pointer a few px into the
+/// trailing padding resolves to the last cell instead of one past the grid.
+/// Drag extension (`begin_drag`/`extend_drag`/autoscroll) keeps the unclamped
+/// mapping, where exceeding the last row is what extends a drag selection to
+/// end-of-line.
+fn selection_cell_for_position_clamped(
+    area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
     x: f64,
     y: f64,
-    cell_width: i32,
-    cell_height: i32,
 ) -> SelectionPoint {
-    SelectionPoint {
-        row: (y.max(0.0) / f64::from(cell_height.max(1))) as usize,
-        col: (x.max(0.0) / f64::from(cell_width.max(1))) as usize,
-    }
+    let (geometry, padding, cell_width, cell_height, (cols, rows)) =
+        terminal_area_geometry(area, renderer);
+    let (x, y) = terminal_content_position(x, y, padding);
+    let (col, row) =
+        padded_cell_for_position_clamped(&geometry, x, y, cell_width, cell_height, cols, rows);
+    SelectionPoint { row, col }
 }
 
 fn finish_selection_drag(
@@ -1335,6 +1546,21 @@ fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFra
     text.trim_end().to_string()
 }
 
+/// What a copy puts on the clipboard: the stored selection text when present
+/// (never touching the frame, so a render error cannot break copying a
+/// selection), otherwise the viewport text from `render`. With no selection,
+/// a render error propagates so the caller can report it without writing
+/// anything to the clipboard.
+fn copy_payload<E>(
+    selection_text: Option<String>,
+    render: impl FnOnce() -> Result<String, E>,
+) -> Result<String, E> {
+    match selection_text {
+        Some(text) => Ok(text),
+        None => render(),
+    }
+}
+
 fn selection_text_from_frame(
     frame: &forktty_terminal::ghostty::core::TerminalFrame,
     start: SelectionPoint,
@@ -1362,6 +1588,88 @@ enum ScrollRouting {
     ViewportScrolled(bool),
     /// Nothing to do (no line delta for this event).
     NotHandled,
+}
+
+/// Viewport lines per wheel unit: discrete wheel deltas (GDK fills ±1.0 per
+/// classic tick, fractions for hi-res value120 wheels) and X11 smooth deltas
+/// are in wheel-detent units, and one detent conventionally scrolls 3 lines.
+const LINES_PER_WHEEL_UNIT: f64 = 3.0;
+
+/// Lines consumed per wheel press forwarded to a mouse-tracking application:
+/// such applications scroll a detent's worth (vim: 3 lines) per press, so a
+/// press is owed every 3 accumulated lines — forwarding one press per line
+/// made touchpads scroll tracking apps 3x faster than physical wheels.
+const WHEEL_PRESS_LINES: isize = 3;
+
+/// One scroll event's worth of consumption from the line accumulator.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ScrollEmission {
+    /// Wheel presses owed to a mouse-tracking application (signed).
+    presses: isize,
+    /// Whole lines consumed (`presses * WHEEL_PRESS_LINES` when tracking).
+    lines: isize,
+    /// Sub-threshold lines carried over to the next event.
+    remainder: f64,
+}
+
+/// Folds a line delta into the fractional accumulator and takes out whole
+/// emissions: per line when scrolling the local viewport, per wheel detent
+/// (3 lines) when forwarding presses to a mouse-tracking application. A
+/// direction flip drops the leftover so reversals respond immediately.
+fn accumulate_scroll_emission(remainder: f64, line_delta: f64, tracking: bool) -> ScrollEmission {
+    if line_delta == 0.0 {
+        return ScrollEmission {
+            presses: 0,
+            lines: 0,
+            remainder,
+        };
+    }
+    let same_direction =
+        remainder == 0.0 || remainder.is_sign_positive() == line_delta.is_sign_positive();
+    let accumulated = if same_direction { remainder } else { 0.0 } + line_delta;
+    let (presses, lines) = if tracking {
+        let presses = (accumulated / WHEEL_PRESS_LINES as f64).trunc() as isize;
+        (presses, presses * WHEEL_PRESS_LINES)
+    } else {
+        (0, accumulated.trunc() as isize)
+    };
+    ScrollEmission {
+        presses,
+        lines,
+        remainder: accumulated - lines as f64,
+    }
+}
+
+fn reset_scroll_accumulator() -> f64 {
+    0.0
+}
+
+/// Converts a scroll event's vertical delta into viewport lines. Wayland
+/// smooth events (touchpads and other continuous devices) report SURFACE
+/// units — logical pixels — so one cell height of finger travel maps to one
+/// line; treating those as wheel units overscrolled ~30x. X11 smooth deltas
+/// and discrete UP/DOWN deltas are wheel units (one detent = 3 lines).
+fn scroll_line_delta(smooth: bool, wayland: bool, delta_y: f64, cell_height_px: i32) -> f64 {
+    if smooth && wayland {
+        delta_y / f64::from(cell_height_px.max(1))
+    } else {
+        delta_y * LINES_PER_WHEEL_UNIT
+    }
+}
+
+/// Whether the default display is Wayland, which determines the unit of
+/// smooth-scroll deltas (surface pixels there, wheel units on X11). The
+/// proper getter (`ScrollEvent::unit`) needs the gtk4 `v4_8` feature, which
+/// would raise the minimum GTK beyond what shipped hosts have.
+fn display_is_wayland() -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
+}
+
+fn scroll_event_is_smooth(event: &gtk::gdk::Event) -> bool {
+    event
+        .downcast_ref::<gtk::gdk::ScrollEvent>()
+        .is_some_and(|event| matches!(event.direction(), gtk::gdk::ScrollDirection::Smooth))
 }
 
 /// The link currently under a Ctrl-hover: viewport cell bounds plus target.
@@ -1436,26 +1744,45 @@ fn open_terminal_link(drawing_area: &gtk::DrawingArea, uri: &str) {
     gtk::show_uri(window.as_ref(), uri, gtk::gdk::CURRENT_TIME);
 }
 
-/// Routes a wheel event: forwarded to a mouse-tracking application, otherwise
-/// scrolled through the local viewport. Each runtime borrow is released
-/// before the next one — matching directly on `borrow_mut().write_mouse(..)`
-/// used to keep the `RefMut` alive across the arms, so the viewport-scroll
-/// re-borrow panicked, and that panic aborted the whole app because it cannot
-/// unwind across the GTK signal trampoline (wheel scroll over any pane with
-/// mouse tracking off, e.g. a plain shell prompt).
+/// Routes a scroll event's line delta: accumulated, then forwarded to a
+/// mouse-tracking application as whole wheel presses, or scrolled through
+/// the local viewport as whole lines; the fraction stays in `remainder`.
+/// Each runtime borrow is released before the next one — matching directly
+/// on `borrow_mut().write_mouse(..)` used to keep the `RefMut` alive across
+/// the arms, so the viewport-scroll re-borrow panicked, and that panic
+/// aborted the whole app because it cannot unwind across the GTK signal
+/// trampoline (wheel scroll over any pane with mouse tracking off, e.g. a
+/// plain shell prompt).
 fn route_terminal_scroll(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     input: TerminalMouseInput,
-    dy: f64,
+    remainder: &Cell<f64>,
+    line_delta: f64,
 ) -> Result<ScrollRouting, TerminalError> {
-    let wrote = runtime.borrow_mut().write_mouse(input);
-    if wrote? {
+    let tracking = runtime.borrow().is_mouse_tracking()?;
+    let emission = accumulate_scroll_emission(remainder.get(), line_delta, tracking);
+    remainder.set(emission.remainder);
+    if emission.presses != 0 {
+        for forwarded in 0..emission.presses.unsigned_abs() {
+            let wrote = runtime.borrow_mut().write_mouse(input);
+            if wrote? {
+                continue;
+            }
+            // Tracking flipped off between the mode check and the write:
+            // scroll the viewport by the consumed-but-unforwarded lines.
+            let forwarded_lines =
+                forwarded as isize * WHEEL_PRESS_LINES * emission.presses.signum();
+            let scrolled = runtime
+                .borrow_mut()
+                .scroll_viewport_lines(emission.lines - forwarded_lines);
+            return Ok(ScrollRouting::ViewportScrolled(scrolled?));
+        }
         return Ok(ScrollRouting::Forwarded);
     }
-    let Some(delta) = terminal_scroll_viewport_delta(dy) else {
+    if emission.lines == 0 {
         return Ok(ScrollRouting::NotHandled);
-    };
-    let scrolled = runtime.borrow_mut().scroll_viewport_lines(delta);
+    }
+    let scrolled = runtime.borrow_mut().scroll_viewport_lines(emission.lines);
     Ok(ScrollRouting::ViewportScrolled(scrolled?))
 }
 
@@ -1505,25 +1832,71 @@ fn paste_primary_selection(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
+    toast_handle: Option<ToastHandle>,
+) {
+    let Some(display) = gtk::gdk::Display::default() else {
+        eprintln!("Failed to paste PRIMARY selection: no display available");
+        show_user_action_toast(&toast_handle, "Paste failed");
+        return;
+    };
+    paste_clipboard_text(
+        runtime,
+        selection,
+        drawing_area,
+        toast_handle,
+        &display.primary_clipboard(),
+        "Failed to read PRIMARY selection",
+    );
+}
+
+/// Reads text from `clipboard` and pastes it through the sanitizing/bracketed
+/// paste encoder. An empty or non-text clipboard is a normal no-op, not a
+/// failure: GDK reports it as `Ok(None)` or as a `NotFound`/`NotSupported`
+/// error ("Cannot read from empty clipboard." / "No compatible formats..."),
+/// none of which deserve a "Paste failed" toast.
+fn paste_clipboard_text(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    drawing_area: &gtk::DrawingArea,
+    toast_handle: Option<ToastHandle>,
+    clipboard: &gtk::gdk::Clipboard,
+    read_error_prefix: &'static str,
 ) {
     let runtime = runtime.clone();
     let selection = selection.clone();
     let drawing_area = drawing_area.clone();
-    if let Some(display) = gtk::gdk::Display::default() {
-        display
-            .primary_clipboard()
-            .read_text_async(None::<&gio::Cancellable>, move |result| {
-                let Ok(Some(text)) = result else {
-                    return;
-                };
-                if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
-                    eprintln!("Failed to scroll terminal to bottom: {err}");
-                }
-                if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
-                    eprintln!("Failed to paste into terminal: {err}");
-                }
-                drawing_area.queue_draw();
-            });
+    clipboard.read_text_async(None::<&gio::Cancellable>, move |result| {
+        let text = match result {
+            Ok(Some(text)) => text,
+            Ok(None) => return,
+            Err(err)
+                if matches!(
+                    err.kind::<gio::IOErrorEnum>(),
+                    Some(gio::IOErrorEnum::NotFound | gio::IOErrorEnum::NotSupported)
+                ) =>
+            {
+                return;
+            }
+            Err(err) => {
+                eprintln!("{read_error_prefix}: {err}");
+                show_user_action_toast(&toast_handle, "Paste failed");
+                return;
+            }
+        };
+        if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
+            eprintln!("Failed to scroll terminal to bottom: {err}");
+        }
+        if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
+            eprintln!("Failed to paste into terminal: {err}");
+            show_user_action_toast(&toast_handle, "Paste failed");
+        }
+        drawing_area.queue_draw();
+    });
+}
+
+fn show_user_action_toast(toast_handle: &Option<ToastHandle>, message: &str) {
+    if let Some(toast_handle) = toast_handle {
+        toast_handle.show(message);
     }
 }
 
@@ -1626,42 +1999,48 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
     }
 
     fn copy_text(&self) {
-        if let Some(display) = gtk::gdk::Display::default() {
-            // With nothing selected, copy what is on screen — not the whole
-            // scrollback, which used to silently fill the clipboard with the
-            // entire session history.
-            let fallback = match self.runtime.borrow_mut().render_frame() {
-                Ok(frame) => viewport_text_from_frame(&frame),
-                Err(err) => {
-                    eprintln!("Failed to render terminal frame for copy: {err}");
-                    String::new()
-                }
-            };
-            let text = copy_source_text(&self.selection.borrow(), &fallback);
-            display.clipboard().set_text(&text);
+        let Some(display) = gtk::gdk::Display::default() else {
+            eprintln!("Failed to copy terminal text: no display available");
+            show_user_action_toast(&self.toast_handle, "Copy failed");
+            return;
+        };
+        // With nothing selected, copy what is on screen — not the whole
+        // scrollback, which used to silently fill the clipboard with the
+        // entire session history. The frame is only rendered for that
+        // fallback: a stored selection must still copy when the backend
+        // cannot render a frame.
+        let selection_text = self.selection.borrow().selected_text();
+        let payload = copy_payload(selection_text, || {
+            self.runtime
+                .borrow_mut()
+                .render_frame()
+                .map(|frame| viewport_text_from_frame(&frame))
+        });
+        match payload {
+            Ok(text) => display.clipboard().set_text(&text),
+            // No selection and no frame: keep the toast and leave the
+            // clipboard untouched rather than clobber it with nothing.
+            Err(err) => {
+                eprintln!("Failed to render terminal frame for copy: {err}");
+                show_user_action_toast(&self.toast_handle, "Copy failed");
+            }
         }
     }
 
     fn paste_from_clipboard(&self) {
-        let runtime = self.runtime.clone();
-        let selection = self.selection.clone();
-        let drawing_area = self.drawing_area.clone();
-        if let Some(display) = gtk::gdk::Display::default() {
-            display
-                .clipboard()
-                .read_text_async(None::<&gio::Cancellable>, move |result| {
-                    let Ok(Some(text)) = result else {
-                        return;
-                    };
-                    if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
-                        eprintln!("Failed to scroll terminal to bottom: {err}");
-                    }
-                    if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
-                        eprintln!("Failed to paste into terminal: {err}");
-                    }
-                    drawing_area.queue_draw();
-                });
-        }
+        let Some(display) = gtk::gdk::Display::default() else {
+            eprintln!("Failed to paste clipboard text: no display available");
+            show_user_action_toast(&self.toast_handle, "Paste failed");
+            return;
+        };
+        paste_clipboard_text(
+            &self.runtime,
+            &self.selection,
+            &self.drawing_area,
+            self.toast_handle.clone(),
+            &display.clipboard(),
+            "Failed to read clipboard text",
+        );
     }
 
     fn select_all_text(&self) {
@@ -1822,9 +2201,18 @@ mod selection_tests {
             any_button_pressed: false,
         };
 
-        let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
+        let remainder = Cell::new(0.0);
+        let routing =
+            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
 
         assert_eq!(routing, ScrollRouting::ViewportScrolled(true));
+        assert_eq!(remainder.get(), 0.0);
+
+        // A sub-line touchpad delta is accumulated, not routed anywhere yet.
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -0.5).unwrap();
+
+        assert_eq!(routing, ScrollRouting::NotHandled);
+        assert_eq!(remainder.get(), -0.5);
     }
 
     #[test]
@@ -1860,9 +2248,22 @@ mod selection_tests {
             any_button_pressed: false,
         };
 
-        let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
+        let remainder = Cell::new(0.0);
+        let routing =
+            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
 
         assert_eq!(routing, ScrollRouting::Forwarded);
+        assert_eq!(remainder.get(), 0.0);
+
+        // Touchpad lines accumulate until a full wheel tick (3 lines) is owed;
+        // forwarding per line used to make tracking apps scroll 3x too fast.
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0).unwrap();
+        assert_eq!(routing, ScrollRouting::NotHandled);
+        assert_eq!(remainder.get(), -2.0);
+
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0).unwrap();
+        assert_eq!(routing, ScrollRouting::Forwarded);
+        assert_eq!(remainder.get(), -1.0);
     }
 
     #[test]
@@ -1932,7 +2333,7 @@ mod selection_tests {
             SelectionPoint { row: 0, col: 6 },
             SelectionPoint { row: 0, col: 9 },
         );
-        assert_eq!(copy_source_text(&selection, "fallback"), "beta");
+        assert_eq!(selection.selected_text().as_deref(), Some("beta"));
         assert!(!selection.is_selecting());
         assert!(selection.normalized_range().is_some());
 
@@ -1943,8 +2344,34 @@ mod selection_tests {
             SelectionPoint { row: 3, col: 0 },
             SelectionPoint { row: 3, col: 5 },
         );
-        assert_eq!(copy_source_text(&selection, "fallback"), "fallback");
+        assert_eq!(selection.selected_text(), None);
         assert_eq!(selection.normalized_range(), None);
+    }
+
+    #[test]
+    fn copy_payload_prefers_the_selection_and_never_renders_for_it() {
+        // A stored selection copies without touching the frame, so a failing
+        // backend render cannot break it.
+        let rendered = Cell::new(false);
+        let payload = copy_payload(Some("selected".to_string()), || {
+            rendered.set(true);
+            Err("render failed")
+        });
+        assert_eq!(payload, Ok("selected".to_string()));
+        assert!(!rendered.get());
+
+        // No selection: the rendered viewport is the fallback.
+        assert_eq!(
+            copy_payload(None, || Ok::<_, &str>("screen".to_string())),
+            Ok("screen".to_string())
+        );
+
+        // No selection and no frame: the error propagates so the caller can
+        // toast without clobbering the clipboard.
+        assert_eq!(
+            copy_payload(None, || Err::<String, _>("render failed")),
+            Err("render failed")
+        );
     }
 
     #[test]
@@ -2024,21 +2451,26 @@ mod selection_tests {
 
     #[test]
     fn selection_cell_mapping_uses_terminal_content_origin_after_padding() {
+        // CSS padding shifts event coordinates relative to the drawn grid;
+        // the content-position shift plus the grid-origin mapping must agree
+        // (a grid sized exactly to its content has origin = the inner 6px
+        // gutter, so cells start there).
         let padding = TerminalContentPadding {
             left: 12,
             right: 12,
             top: 10,
             bottom: 10,
         };
-        let (x, y) = terminal_content_position(32.0, 50.0, padding);
+        let geometry = terminal_grid_geometry(112, 72, 10, 3, 10, 20);
+        assert_eq!((geometry.origin_x, geometry.origin_y), (6, 6));
 
+        let (x, y) = terminal_content_position(32.0, 50.0, padding);
+        assert_eq!(padded_cell_for_position(&geometry, x, y, 10, 20), (1, 1));
+        // Skipping the CSS-padding shift lands on a different cell: the raw
+        // event coordinates must never feed the grid mapping directly.
         assert_eq!(
-            selection_cell_for_content_position(x, y, 10, 20),
-            SelectionPoint { row: 2, col: 2 }
-        );
-        assert_eq!(
-            selection_cell_for_content_position(32.0, 50.0, 10, 20),
-            SelectionPoint { row: 2, col: 3 }
+            padded_cell_for_position(&geometry, 32.0, 50.0, 10, 20),
+            (2, 2)
         );
     }
 
@@ -2260,8 +2692,7 @@ mod mouse_tests {
                 any_button_pressed: true,
             },
             TerminalMouseWidgetMetrics {
-                screen_width: 800,
-                screen_height: 480,
+                grid: terminal_grid_geometry(800, 480, 78, 23, 10, 20),
                 cell_width: 10,
                 cell_height: 20,
             },
@@ -2277,17 +2708,176 @@ mod mouse_tests {
                 ctrl: false,
             }
         );
-        assert_eq!(input.position, TerminalMousePosition { x: 12.5, y: 24.0 });
+        assert_eq!(input.position, TerminalMousePosition { x: 2.5, y: 14.0 });
         assert_eq!(
             input.size,
             TerminalMouseSize {
-                screen_width: 800,
-                screen_height: 480,
+                screen_width: 780,
+                screen_height: 460,
                 cell_width: 10,
                 cell_height: 20,
             }
         );
         assert!(input.any_button_pressed);
+    }
+
+    #[test]
+    fn terminal_mouse_input_clamps_trailing_padding_to_grid_bounds() {
+        let input = terminal_mouse_input(
+            TerminalMouseEventInput {
+                action: TerminalMouseAction::Motion,
+                button: None,
+                modifiers: gtk::gdk::ModifierType::empty(),
+                x: 799.0,
+                y: 479.0,
+                any_button_pressed: false,
+            },
+            TerminalMouseWidgetMetrics {
+                grid: terminal_grid_geometry(800, 480, 78, 23, 10, 20),
+                cell_width: 10,
+                cell_height: 20,
+            },
+        );
+
+        assert_eq!(input.position, TerminalMousePosition { x: 779.0, y: 459.0 });
+    }
+
+    fn assert_f64_eq(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn scroll_line_delta_converts_wayland_smooth_pixels_through_cell_height() {
+        // One cell height of finger travel scrolls exactly one line.
+        assert_f64_eq(scroll_line_delta(true, true, 20.0, 20), 1.0);
+        assert_f64_eq(scroll_line_delta(true, true, -10.0, 20), -0.5);
+    }
+
+    #[test]
+    fn scroll_line_delta_treats_x11_smooth_deltas_as_wheel_units() {
+        assert_f64_eq(scroll_line_delta(true, false, 1.0, 20), 3.0);
+    }
+
+    #[test]
+    fn scroll_line_delta_maps_a_classic_wheel_tick_to_three_lines() {
+        assert_f64_eq(scroll_line_delta(false, true, 1.0, 20), 3.0);
+        assert_f64_eq(scroll_line_delta(false, false, -1.0, 20), -3.0);
+    }
+
+    #[test]
+    fn scroll_line_delta_scales_value120_fractional_ticks() {
+        // Hi-res wheels (Logitech free-spin) report fractional wheel units.
+        assert_f64_eq(scroll_line_delta(false, true, 0.25, 20), 0.75);
+    }
+
+    #[test]
+    fn scroll_emission_without_tracking_emits_whole_lines_and_keeps_remainder() {
+        let first = accumulate_scroll_emission(0.0, 0.6, false);
+        assert_eq!((first.presses, first.lines), (0, 0));
+        assert_f64_eq(first.remainder, 0.6);
+
+        let second = accumulate_scroll_emission(first.remainder, 0.6, false);
+        assert_eq!((second.presses, second.lines), (0, 1));
+        assert_f64_eq(second.remainder, 0.2);
+    }
+
+    #[test]
+    fn scroll_emission_resets_the_remainder_on_direction_flip() {
+        let flipped = accumulate_scroll_emission(0.6, -0.6, false);
+        assert_eq!((flipped.presses, flipped.lines), (0, 0));
+        assert_f64_eq(flipped.remainder, -0.6);
+
+        let tracked_flip = accumulate_scroll_emission(2.0, -3.0, true);
+        assert_eq!((tracked_flip.presses, tracked_flip.lines), (-1, -3));
+        assert_f64_eq(tracked_flip.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_handles_negative_steps() {
+        let first = accumulate_scroll_emission(0.0, -1.5, false);
+        assert_eq!((first.presses, first.lines), (0, -1));
+        assert_f64_eq(first.remainder, -0.5);
+
+        let second = accumulate_scroll_emission(first.remainder, -1.5, false);
+        assert_eq!((second.presses, second.lines), (0, -2));
+        assert_f64_eq(second.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_with_tracking_forwards_one_press_per_three_lines() {
+        // A classic wheel tick (3 lines) forwards exactly one press, like the
+        // old discrete path did.
+        let tick = accumulate_scroll_emission(0.0, 3.0, true);
+        assert_eq!((tick.presses, tick.lines), (1, 3));
+        assert_f64_eq(tick.remainder, 0.0);
+
+        // Touchpad lines accumulate; only every third line becomes a press.
+        let partial = accumulate_scroll_emission(0.0, 2.0, true);
+        assert_eq!((partial.presses, partial.lines), (0, 0));
+        assert_f64_eq(partial.remainder, 2.0);
+
+        let press = accumulate_scroll_emission(partial.remainder, 2.0, true);
+        assert_eq!((press.presses, press.lines), (1, 3));
+        assert_f64_eq(press.remainder, 1.0);
+    }
+
+    #[test]
+    fn scroll_emission_accumulates_value120_notches_into_one_press() {
+        // Four 0.25-tick events = one notch = exactly one press / three lines.
+        let mut remainder = 0.0;
+        let mut presses = 0;
+        let mut lines = 0;
+        for _ in 0..4 {
+            let emission = accumulate_scroll_emission(remainder, 0.75, true);
+            presses += emission.presses;
+            lines += emission.lines;
+            remainder = emission.remainder;
+        }
+        assert_eq!((presses, lines), (1, 3));
+        assert_f64_eq(remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_ignores_zero_deltas() {
+        let emission = accumulate_scroll_emission(0.4, 0.0, false);
+        assert_eq!((emission.presses, emission.lines), (0, 0));
+        assert_f64_eq(emission.remainder, 0.4);
+    }
+
+    #[test]
+    fn scroll_reset_clears_fractional_remainder() {
+        assert_eq!(reset_scroll_accumulator(), 0.0);
+    }
+
+    #[test]
+    fn visual_bell_flash_sets_active_and_advances_generation() {
+        let initial = VisualBellFlash {
+            active: false,
+            generation: 41,
+        };
+
+        let flashed = trigger_visual_bell_flash(initial);
+
+        assert!(flashed.active);
+        assert_eq!(flashed.generation, 42);
+    }
+
+    #[test]
+    fn visual_bell_flash_expiry_only_clears_matching_generation() {
+        let first = trigger_visual_bell_flash(VisualBellFlash {
+            active: false,
+            generation: 0,
+        });
+        let second = trigger_visual_bell_flash(first);
+
+        assert_eq!(expire_visual_bell_flash(second, first.generation), second);
+        assert_eq!(
+            expire_visual_bell_flash(second, second.generation),
+            VisualBellFlash {
+                active: false,
+                generation: second.generation
+            }
+        );
     }
 
     #[test]

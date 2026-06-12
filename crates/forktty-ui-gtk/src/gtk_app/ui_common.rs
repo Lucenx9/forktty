@@ -1,5 +1,30 @@
 use super::*;
 
+#[derive(Clone)]
+pub(super) struct ToastHandle {
+    overlay: glib::WeakRef<adw::ToastOverlay>,
+}
+
+impl std::fmt::Debug for ToastHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ToastHandle")
+    }
+}
+
+impl ToastHandle {
+    pub(super) fn new(overlay: &adw::ToastOverlay) -> Self {
+        Self {
+            overlay: overlay.downgrade(),
+        }
+    }
+
+    pub(super) fn show(&self, message: &str) {
+        if let Some(overlay) = self.overlay.upgrade() {
+            overlay.add_toast(adw::Toast::new(message));
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum StatusKind {
     Success,

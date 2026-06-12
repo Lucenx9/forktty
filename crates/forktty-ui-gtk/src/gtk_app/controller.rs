@@ -19,6 +19,7 @@ pub(super) struct TerminalController {
     parent_window: adw::ApplicationWindow,
     pub(super) model: Arc<Mutex<WorkspaceModel>>,
     state: Option<SocketAppState>,
+    toast_handle: Option<ToastHandle>,
     pub(super) widgets: BTreeMap<String, GhosttyTerminalWidget>,
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeSet<String>,
@@ -87,6 +88,7 @@ impl TerminalController {
             parent_window,
             model,
             state: None,
+            toast_handle: None,
             widgets: BTreeMap::new(),
             chromes: BTreeMap::new(),
             pending_spawns: BTreeSet::new(),
@@ -102,6 +104,10 @@ impl TerminalController {
 
     pub(super) fn attach_state(&mut self, state: SocketAppState) {
         self.state = Some(state);
+    }
+
+    pub(super) fn attach_toast_handle(&mut self, toast_handle: ToastHandle) {
+        self.toast_handle = Some(toast_handle);
     }
 
     pub(super) fn handle(&mut self, command: GtkTerminalCommand) {
@@ -153,36 +159,38 @@ impl TerminalController {
         let spawn_pid_surface_id = request.surface_id.clone();
         self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
         let spawn_token = self.next_spawn_token;
-        match spawn_terminal_with_callback(&request, move |result| match result {
-            Ok(pid) => {
-                spawn_pids.borrow_mut().insert(
-                    spawn_pid_surface_id.clone(),
-                    SurfacePid {
-                        pid: pid.0,
-                        spawn_token,
-                    },
-                );
-                if let Some(state) = &spawn_state_for_ready {
-                    if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
-                        eprintln!(
-                            "Failed to mark terminal surface ready {}: {err}",
-                            spawn_surface_id
-                        );
+        match spawn_terminal_with_callback(&request, self.toast_handle.clone(), move |result| {
+            match result {
+                Ok(pid) => {
+                    spawn_pids.borrow_mut().insert(
+                        spawn_pid_surface_id.clone(),
+                        SurfacePid {
+                            pid: pid.0,
+                            spawn_token,
+                        },
+                    );
+                    if let Some(state) = &spawn_state_for_ready {
+                        if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
+                            eprintln!(
+                                "Failed to mark terminal surface ready {}: {err}",
+                                spawn_surface_id
+                            );
+                        }
                     }
                 }
-            }
-            Err(err) => {
-                record_terminal_spawn_failure(
-                    &spawn_model,
-                    &spawn_workspace_id,
-                    &spawn_surface_id,
-                    &err.to_string(),
-                    spawn_state_for_error
-                        .as_ref()
-                        .is_none_or(|state| state.notification_dispatch),
-                );
-                if let Some(state) = &spawn_state_for_error {
-                    let _ = state.terminal.close(&spawn_surface_id);
+                Err(err) => {
+                    record_terminal_spawn_failure(
+                        &spawn_model,
+                        &spawn_workspace_id,
+                        &spawn_surface_id,
+                        &err.to_string(),
+                        spawn_state_for_error
+                            .as_ref()
+                            .is_none_or(|state| state.notification_dispatch),
+                    );
+                    if let Some(state) = &spawn_state_for_error {
+                        let _ = state.terminal.close(&spawn_surface_id);
+                    }
                 }
             }
         }) {
@@ -285,6 +293,7 @@ impl TerminalController {
         let Some((signature, pane_tree, focused_surface_id, workspace_id)) =
             active_layout_snapshot(&self.model)
         else {
+            self.set_terminal_sibling_flags(&BTreeSet::new(), false);
             self.last_layout_signature = Some(EMPTY_LAYOUT_SIGNATURE.to_string());
             self.container.append(&empty_terminal_stage(
                 self.state.as_ref(),
@@ -297,8 +306,11 @@ impl TerminalController {
         } else {
             pane_tree
         };
+        let visible_panes = collect_panes(&visible_tree);
+        let visible_surface_ids = collect_leaves(&visible_tree).into_iter().collect();
+        let single_pane = visible_panes.len() == 1;
+        self.set_terminal_sibling_flags(&visible_surface_ids, !single_pane);
         let widget = self.widget_for_pane(&visible_tree, &workspace_id);
-        let single_pane = collect_panes(&visible_tree).len() == 1;
         for chrome in self.chromes.values() {
             chrome.header_revealer.set_reveal_child(!single_pane);
             chrome.single_pane_actions.set_visible(single_pane);
@@ -445,6 +457,34 @@ impl TerminalController {
         }
     }
 
+    fn set_terminal_sibling_flags(
+        &self,
+        visible_surface_ids: &BTreeSet<String>,
+        has_siblings: bool,
+    ) {
+        for (surface_id, widget) in &self.widgets {
+            widget.set_has_siblings(has_siblings && visible_surface_ids.contains(surface_id));
+        }
+    }
+
+    /// Pushes the model's focused surface into each terminal widget so the
+    /// renderer never dims the logically active pane while GTK focus sits in
+    /// a non-terminal widget (the pane's search entry, the command palette,
+    /// dialogs). Runs from `ensure_layout_current` (the 16ms UI timer):
+    /// focus-only changes don't alter the layout signature, so the sibling
+    /// flag path alone would miss them.
+    fn sync_terminal_model_focus_flags(&self) {
+        let focused_surface_id = self
+            .model
+            .lock()
+            .ok()
+            .and_then(|model| model.active_workspace())
+            .map(|workspace| workspace.focused_surface_id);
+        for (surface_id, widget) in &self.widgets {
+            widget.set_is_model_focused(focused_surface_id.as_deref() == Some(surface_id.as_str()));
+        }
+    }
+
     pub(super) fn sync_model_focus_to_ui(&mut self) {
         self.ensure_layout_current();
         if let Some(surface_id) = self
@@ -465,6 +505,7 @@ impl TerminalController {
             if self.last_layout_signature.as_deref() != Some(EMPTY_LAYOUT_SIGNATURE) {
                 self.rebuild_layout();
             }
+            self.sync_terminal_model_focus_flags();
             return;
         };
         let signature =
@@ -474,6 +515,7 @@ impl TerminalController {
         } else {
             self.refresh_chromes();
         }
+        self.sync_terminal_model_focus_flags();
     }
 
     fn spawn_active_surfaces_if_needed(&mut self) {

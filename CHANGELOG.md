@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Terminal panes now show terse toasts for copy/paste failures and flash an accent border for visual bell events.
+- Terminal panes now show a minimal overlay scrollback indicator while viewing history.
+- Terminal content now has balanced 6px inner padding so text does not touch pane edges.
+- Split terminal panes now dim unfocused panes slightly so the focused pane is easier to pick out.
 - Ctrl+click opens links: OSC 8 hyperlinks and plain `http(s)://`/`file://` URLs in the output (also when wrapped across lines). Hovering with Ctrl held shows a pointer cursor and underlines the target.
 - Middle-click pastes the PRIMARY selection (select text, middle-click to paste — the standard Linux flow); Shift+middle-click pastes even inside mouse-tracking apps.
 - Shift+PageUp/PageDown page through the terminal scrollback, Shift+Home/End jump to its start/end; inside full-screen apps (vim, htop) the keys keep going to the app.
@@ -23,12 +27,18 @@ All notable changes to ForkTTY are documented here.
 - The worktree open-workspace boundary rejection now carries the structured error code `precondition_failed` (documented in SPEC.md), and MCP tool errors with a known recovery carry machine-readable `remedy` and `suggested_tool` fields in `structuredContent` — the boundary error points at `workspace_create`, so an agent can recover without parsing prose.
 
 ### Changed
+- Touchpad scrolling in terminal panes now accumulates smooth deltas instead of forcing chunky wheel ticks.
 - The declared Rust MSRV is now 1.96, matching the current `rusqlite`/`libsqlite3-sys` dependency chain required by the workspace lockfile.
 - The competitive gap inventory now includes the non-browser cmux gaps plus the additional control-plane gaps found in oh-my-codex and oh-my-claudecode: workflow state/artifacts, team runtime, HUD/statusline export, and agent/skill catalogs.
 - Gemini CLI integrations are now legacy opt-in: default `forktty hooks setup` and `forktty mcp setup` skip Gemini and prefer Antigravity, while explicit Gemini setup/remove/doctor/test and persisted Gemini resume compatibility remain supported.
 - Claude Code session-start context now includes the same concise ForkTTY tool-use policy as the MCP operating guide: use ForkTTY for panes, agents, worktrees, status, or cross-surface text, but avoid tool calls for ordinary single-repo edits.
 
 ### Fixed
+- Terminal pane edge polish: double/triple-clicks and Ctrl+click/Ctrl+hover a few pixels into a pane's trailing gutter now select the last row/word and resolve last-row links instead of doing nothing; the pane being searched no longer dims while its search entry holds focus; middle-click or paste with an empty clipboard no longer shows a spurious "Paste failed" toast; and copying with an active selection still works when the terminal backend fails to render a frame.
+- Wayland touchpad scrolling in terminal panes no longer overscrolls roughly 30x: smooth-scroll deltas arrive in surface (logical pixel) units on Wayland and are now converted through the pane's cell height, while X11 smooth deltas and wheel ticks keep the 3-lines-per-tick mapping.
+- Scrolling inside mouse-tracking applications (vim, htop, tmux) now forwards one wheel press per three accumulated lines — matching physical-wheel speed — instead of one press per line, and hi-resolution wheels' fractional ticks accumulate into whole presses/lines instead of overscrolling on every fraction of a notch.
+- Mouse events in terminal padding now clamp to the nearest grid edge instead of reporting past the last cell to mouse-tracking applications.
+- Terminal copy failures no longer clear the existing clipboard contents, and the scrollback indicator no longer risks a panic during very small transient GTK allocations.
 - Terminal resize no longer aborts inside libghostty when GTK briefly reports a one-row allocation after wrapped output.
 - Terminal resize no longer aborts inside libghostty when maximizing a window with wrapped scrollback; the vendored Ghostty build now uses a temporary cursor-preservation pin and bounded wrap-count walks during column reflow.
 - Terminal mouse selection, Ctrl+click link detection, and mouse-tracking coordinates now account for the terminal widget's CSS padding, so highlighted/copied text lines up with the visible character grid.

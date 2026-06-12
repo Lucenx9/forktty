@@ -288,6 +288,9 @@ pub(super) fn build_ui(app: &adw::Application) {
     content.append(&header);
     content.append(&paned);
     content.append(&status_bar);
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&content));
+    let toast_handle = ToastHandle::new(&toast_overlay);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -299,7 +302,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         })
         .default_width(default_width)
         .default_height(default_height)
-        .content(&content)
+        .content(&toast_overlay)
         .build();
     if quake_mode {
         if configure_quake_layer_shell(&window) {
@@ -349,6 +352,9 @@ pub(super) fn build_ui(app: &adw::Application) {
         window.clone(),
         model.clone(),
     )));
+    controller
+        .borrow_mut()
+        .attach_toast_handle(toast_handle.clone());
     controller.borrow_mut().attach_state(state.clone());
     install_terminal_navigation_fallback(&window, &window, &controller);
 

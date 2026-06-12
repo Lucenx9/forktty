@@ -1,8 +1,17 @@
+use super::terminal_geometry::{terminal_grid_geometry, TerminalGridGeometry, TERMINAL_PADDING_PX};
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalCell, TerminalCellWidth, TerminalCursorStyle, TerminalFrame, TerminalRgb, TerminalRow,
+    TerminalViewportPosition,
 };
-use std::fmt;
+use std::{f64::consts::PI, fmt};
+
+/// Ghostty-style inactive split dim: enough to clarify focus without making
+/// background panes unreadable.
+const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.08;
+const SCROLLBACK_INDICATOR_WIDTH_PX: f64 = 4.0;
+const SCROLLBACK_INDICATOR_ALPHA: f64 = 0.25;
+const VISUAL_BELL_BORDER_PX: f64 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererColor {
@@ -52,6 +61,15 @@ impl RendererColor {
         blue: 0,
     };
 }
+
+// Mirrors the brand accent in style.css (`@define-color accent_color`);
+// keep the two in sync when retheming. CSS can't be shared here because
+// GTK 4.14 drops custom properties.
+const VISUAL_BELL_ACCENT: RendererColor = RendererColor {
+    red: 0xe8,
+    green: 0x87,
+    blue: 0x45,
+};
 
 impl fmt::Display for RendererColor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -164,12 +182,24 @@ struct RendererFrameDefaults {
     background: RendererColor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScrollbackIndicatorGeometry {
+    y: i32,
+    height: i32,
+}
+
 /// How the cursor overlay should be drawn for the current frame: unfocused
 /// panes get a steady hollow cursor, focused panes blink with `blink_visible`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererCursorState {
     pub(super) focused: bool,
     pub(super) blink_visible: bool,
+    pub(super) has_siblings: bool,
+    /// Whether the model considers this pane focused. GTK focus leaves every
+    /// drawing area when a search entry, the command palette, or a dialog is
+    /// active; the model focus keeps the logically active pane undimmed.
+    pub(super) model_focused: bool,
+    pub(super) visual_bell_active: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -216,6 +246,7 @@ impl TerminalRenderer {
         selection: Option<(SelectionPoint, SelectionPoint)>,
         hover_link: Option<(SelectionPoint, SelectionPoint)>,
         cursor_state: RendererCursorState,
+        viewport: Option<TerminalViewportPosition>,
     ) {
         let defaults = self.frame_defaults(frame);
         let default_background = defaults.background;
@@ -223,16 +254,26 @@ impl TerminalRenderer {
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
         let metrics = self.cell_metrics(cr);
+        let grid = terminal_grid_geometry(
+            width,
+            height,
+            frame.cols,
+            frame.row_count,
+            metrics.width as i32,
+            metrics.height as i32,
+        );
+        let origin_x = f64::from(grid.origin_x);
+        let origin_y = f64::from(grid.origin_y);
 
         for (row_idx, row) in frame.rows.iter().enumerate() {
-            let y = row_idx as f64 * metrics.height;
+            let y = origin_y + row_idx as f64 * metrics.height;
             let selected_span = selection
                 .and_then(|(start, end)| {
                     selection_cols_for_row(start, end, row_idx, row.cells.len())
                 })
                 .map(|(from, to)| {
                     (
-                        from as f64 * metrics.width,
+                        origin_x + from as f64 * metrics.width,
                         (to - from) as f64 * metrics.width,
                     )
                 });
@@ -242,7 +283,7 @@ impl TerminalRenderer {
             for background in self.background_runs_for_frame_row(frame, row) {
                 background.background.set_cairo_source(cr);
                 cr.rectangle(
-                    background.start_col as f64 * metrics.width,
+                    origin_x + background.start_col as f64 * metrics.width,
                     y,
                     background.cell_span as f64 * metrics.width,
                     metrics.height,
@@ -261,7 +302,7 @@ impl TerminalRenderer {
                 let _ = cr.fill();
             }
 
-            self.draw_row_text(cr, frame, row, metrics, y, None, link_cols);
+            self.draw_row_text(cr, frame, row, metrics, origin_x, y, None, link_cols);
 
             if let Some((x, width)) = selected_span {
                 let _ = cr.save();
@@ -272,6 +313,7 @@ impl TerminalRenderer {
                     frame,
                     row,
                     metrics,
+                    origin_x,
                     y,
                     Some(self.palette.highlight_foreground),
                     link_cols,
@@ -287,9 +329,28 @@ impl TerminalRenderer {
                 cursor.style = RendererCursorStyle::BlockHollow;
             } else if !cursor_state.blink_visible {
                 // Hidden half of the focused cursor's blink cycle.
-                return;
+                cursor.cell_span = 0;
             }
-            self.draw_cursor_overlay(cr, &cursor, metrics);
+            if cursor.cell_span > 0 {
+                self.draw_cursor_overlay(cr, &cursor, metrics, grid);
+            }
+        }
+        if should_dim_pane(
+            cursor_state.focused,
+            cursor_state.has_siblings,
+            cursor_state.model_focused,
+        ) {
+            paint_unfocused_split_dim(cr, width, height);
+        }
+        if let Some(viewport) = viewport {
+            if let Some(indicator) =
+                scrollback_indicator_geometry(viewport.top, viewport.rows, viewport.total, height)
+            {
+                paint_scrollback_indicator(cr, width, indicator);
+            }
+        }
+        if cursor_state.visual_bell_active {
+            paint_visual_bell_border(cr, width, height);
         }
     }
 
@@ -511,6 +572,7 @@ impl TerminalRenderer {
         frame: &TerminalFrame,
         row: &TerminalRow,
         metrics: RendererCellMetrics,
+        origin_x: f64,
         y: f64,
         color: Option<RendererColor>,
         link_cols: Option<(usize, usize)>,
@@ -527,9 +589,9 @@ impl TerminalRenderer {
             }
             layout.set_font_description(Some(&font));
             layout.set_text(&run.text);
-            cr.move_to(run.start_col as f64 * metrics.width, y);
+            cr.move_to(origin_x + run.start_col as f64 * metrics.width, y);
             pangocairo::functions::show_layout(cr, &layout);
-            self.draw_text_decorations(cr, &run, metrics, y);
+            self.draw_text_decorations(cr, &run, metrics, origin_x, y);
         }
     }
 
@@ -538,9 +600,10 @@ impl TerminalRenderer {
         cr: &gtk::cairo::Context,
         run: &RendererTextRun,
         metrics: RendererCellMetrics,
+        origin_x: f64,
         y: f64,
     ) {
-        let x = run.start_col as f64 * metrics.width;
+        let x = origin_x + run.start_col as f64 * metrics.width;
         let width = run.cell_span as f64 * metrics.width;
         if run.underline {
             cr.move_to(x, y + metrics.height - 2.0);
@@ -559,9 +622,10 @@ impl TerminalRenderer {
         cr: &gtk::cairo::Context,
         cursor: &RendererCursorOverlay,
         metrics: RendererCellMetrics,
+        grid: TerminalGridGeometry,
     ) {
-        let x = cursor.col as f64 * metrics.width;
-        let y = cursor.row as f64 * metrics.height;
+        let x = f64::from(grid.origin_x) + cursor.col as f64 * metrics.width;
+        let y = f64::from(grid.origin_y) + cursor.row as f64 * metrics.height;
         cursor.background.set_cairo_source(cr);
         let width = cursor.cell_span as f64 * metrics.width;
         match cursor.style {
@@ -655,6 +719,73 @@ fn cell_grid_span(cell: &TerminalCell) -> usize {
         | TerminalCellWidth::SpacerHead
         | TerminalCellWidth::SpacerTail => 1,
     }
+}
+
+fn should_dim_pane(focused: bool, has_siblings: bool, model_focused: bool) -> bool {
+    has_siblings && !focused && !model_focused
+}
+
+fn paint_unfocused_split_dim(cr: &gtk::cairo::Context, width: i32, height: i32) {
+    cr.set_source_rgba(0.0, 0.0, 0.0, UNFOCUSED_SPLIT_DIM_ALPHA);
+    cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+    let _ = cr.fill();
+}
+
+fn scrollback_indicator_geometry(
+    top: usize,
+    rows: usize,
+    total: usize,
+    widget_height: i32,
+) -> Option<ScrollbackIndicatorGeometry> {
+    if total == 0 || rows >= total || top.saturating_add(rows) >= total {
+        return None;
+    }
+    let track_height = widget_height.saturating_sub(TERMINAL_PADDING_PX * 2).max(1);
+    let min_height = (SCROLLBACK_INDICATOR_WIDTH_PX as i32).min(track_height);
+    let height = ((track_height as f64 * rows as f64 / total as f64).round() as i32)
+        .clamp(min_height, track_height);
+    let max_offset = track_height.saturating_sub(height);
+    let offset =
+        ((track_height as f64 * top as f64 / total as f64).round() as i32).clamp(0, max_offset);
+    Some(ScrollbackIndicatorGeometry {
+        y: TERMINAL_PADDING_PX + offset,
+        height,
+    })
+}
+
+fn paint_scrollback_indicator(
+    cr: &gtk::cairo::Context,
+    width: i32,
+    indicator: ScrollbackIndicatorGeometry,
+) {
+    let x = f64::from(width - TERMINAL_PADDING_PX) - SCROLLBACK_INDICATOR_WIDTH_PX;
+    if x < 0.0 {
+        return;
+    }
+    let y = f64::from(indicator.y);
+    let height = f64::from(indicator.height);
+    let radius = SCROLLBACK_INDICATOR_WIDTH_PX / 2.0;
+    cr.set_source_rgba(1.0, 1.0, 1.0, SCROLLBACK_INDICATOR_ALPHA);
+    cr.new_sub_path();
+    cr.arc(x + radius, y + radius, radius, PI, PI * 2.0);
+    cr.arc(x + radius, y + height - radius, radius, 0.0, PI);
+    cr.close_path();
+    let _ = cr.fill();
+}
+
+fn paint_visual_bell_border(cr: &gtk::cairo::Context, width: i32, height: i32) {
+    if width <= VISUAL_BELL_BORDER_PX as i32 || height <= VISUAL_BELL_BORDER_PX as i32 {
+        return;
+    }
+    let inset = VISUAL_BELL_BORDER_PX / 2.0;
+    let border_width = f64::from(width) - VISUAL_BELL_BORDER_PX;
+    let border_height = f64::from(height) - VISUAL_BELL_BORDER_PX;
+    let _ = cr.save();
+    cr.set_line_width(VISUAL_BELL_BORDER_PX);
+    VISUAL_BELL_ACCENT.set_cairo_source(cr);
+    cr.rectangle(inset, inset, border_width, border_height);
+    let _ = cr.stroke();
+    let _ = cr.restore();
 }
 
 #[cfg(test)]
@@ -1037,6 +1168,54 @@ mod tests {
 
         assert_eq!(overlay.style, RendererCursorStyle::Bar);
         assert_eq!(overlay.cell_span, 1);
+    }
+
+    #[test]
+    fn terminal_renderer_dims_only_unfocused_panes_with_siblings() {
+        assert!(!should_dim_pane(true, false, false));
+        assert!(!should_dim_pane(false, false, false));
+        assert!(!should_dim_pane(true, true, false));
+        assert!(should_dim_pane(false, true, false));
+    }
+
+    #[test]
+    fn terminal_renderer_never_dims_the_model_focused_pane() {
+        // The model-focused pane stays undimmed even while its search entry
+        // (or the command palette, or a dialog) owns GTK focus.
+        assert!(!should_dim_pane(false, true, true));
+        assert!(!should_dim_pane(false, false, true));
+        // A sibling that is neither GTK- nor model-focused still dims.
+        assert!(should_dim_pane(false, true, false));
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_hides_at_bottom_or_without_scrollback() {
+        assert_eq!(scrollback_indicator_geometry(90, 10, 100, 116), None);
+        assert_eq!(scrollback_indicator_geometry(0, 10, 10, 116), None);
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_scales_with_viewport() {
+        assert_eq!(
+            scrollback_indicator_geometry(20, 10, 100, 116),
+            Some(ScrollbackIndicatorGeometry { y: 27, height: 10 })
+        );
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_rounds_thumb_edges() {
+        assert_eq!(
+            scrollback_indicator_geometry(7, 33, 100, 115),
+            Some(ScrollbackIndicatorGeometry { y: 13, height: 34 })
+        );
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_handles_tiny_widget_height() {
+        assert_eq!(
+            scrollback_indicator_geometry(0, 1, 10, 2),
+            Some(ScrollbackIndicatorGeometry { y: 6, height: 1 })
+        );
     }
 
     #[test]

@@ -500,6 +500,13 @@ impl GhosttyCore {
         Ok(self.terminal.active_screen()? == Screen::Alternate)
     }
 
+    /// Whether the application has enabled any mouse-tracking mode (X10,
+    /// normal, button-event, or any-event), i.e. wheel input should be
+    /// forwarded to it instead of scrolling the local viewport.
+    pub fn is_mouse_tracking(&self) -> Result<bool> {
+        self.terminal.is_mouse_tracking()
+    }
+
     /// Plain-text dump of the entire scrollable area (scrollback history plus
     /// the active screen). Soft-wrapped rows stay split (`unwrap: false`), so
     /// line `i` of the dump corresponds to grid row `i` counted from the top
@@ -1160,6 +1167,21 @@ mod tests {
         assert!(core.is_alternate_screen().unwrap());
         core.feed(b"\x1b[?1049l").unwrap();
         assert!(!core.is_alternate_screen().unwrap());
+    }
+
+    #[test]
+    fn core_detects_mouse_tracking() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        assert!(!core.is_mouse_tracking().unwrap());
+        core.feed(b"\x1b[?1000h\x1b[?1006h").unwrap();
+        assert!(core.is_mouse_tracking().unwrap());
+        core.feed(b"\x1b[?1000l").unwrap();
+        assert!(!core.is_mouse_tracking().unwrap());
     }
 
     #[test]
