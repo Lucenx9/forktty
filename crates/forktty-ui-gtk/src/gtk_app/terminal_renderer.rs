@@ -4,6 +4,10 @@ use forktty_terminal::ghostty::core::{
 };
 use std::fmt;
 
+/// Ghostty-style inactive split dim: enough to clarify focus without making
+/// background panes unreadable.
+const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.13;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererColor {
     red: u8,
@@ -170,6 +174,7 @@ struct RendererFrameDefaults {
 pub(super) struct RendererCursorState {
     pub(super) focused: bool,
     pub(super) blink_visible: bool,
+    pub(super) has_siblings: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -287,9 +292,15 @@ impl TerminalRenderer {
                 cursor.style = RendererCursorStyle::BlockHollow;
             } else if !cursor_state.blink_visible {
                 // Hidden half of the focused cursor's blink cycle.
+                if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
+                    paint_unfocused_split_dim(cr, width, height);
+                }
                 return;
             }
             self.draw_cursor_overlay(cr, &cursor, metrics);
+        }
+        if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
+            paint_unfocused_split_dim(cr, width, height);
         }
     }
 
@@ -655,6 +666,16 @@ fn cell_grid_span(cell: &TerminalCell) -> usize {
         | TerminalCellWidth::SpacerHead
         | TerminalCellWidth::SpacerTail => 1,
     }
+}
+
+fn should_dim_pane(focused: bool, has_siblings: bool) -> bool {
+    has_siblings && !focused
+}
+
+fn paint_unfocused_split_dim(cr: &gtk::cairo::Context, width: i32, height: i32) {
+    cr.set_source_rgba(0.0, 0.0, 0.0, UNFOCUSED_SPLIT_DIM_ALPHA);
+    cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+    let _ = cr.fill();
 }
 
 #[cfg(test)]
@@ -1037,6 +1058,14 @@ mod tests {
 
         assert_eq!(overlay.style, RendererCursorStyle::Bar);
         assert_eq!(overlay.cell_span, 1);
+    }
+
+    #[test]
+    fn terminal_renderer_dims_only_unfocused_panes_with_siblings() {
+        assert!(!should_dim_pane(true, false));
+        assert!(!should_dim_pane(false, false));
+        assert!(!should_dim_pane(true, true));
+        assert!(should_dim_pane(false, true));
     }
 
     #[test]

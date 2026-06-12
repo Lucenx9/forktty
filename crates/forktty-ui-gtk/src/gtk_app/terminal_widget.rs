@@ -17,6 +17,9 @@ pub(super) struct GhosttyTerminalWidget {
     selection: Rc<RefCell<TerminalSelection>>,
     // Blink phase for the focused cursor; `true` means the cursor is drawn.
     cursor_blink_visible: Rc<Cell<bool>>,
+    // True when the current workspace layout shows this pane alongside another
+    // pane. Single-pane workspaces never dim terminals when focus sits outside.
+    has_siblings: Rc<Cell<bool>>,
     // Index of the active scrollback search match; matches themselves are
     // recomputed on every step so new output never leaves stale positions.
     search_index: Rc<Cell<Option<usize>>>,
@@ -91,6 +94,7 @@ impl GhosttyTerminalWidget {
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
         let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
         let cursor_blink_visible = Rc::new(Cell::new(true));
+        let has_siblings = Rc::new(Cell::new(false));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
         let im_context = gtk::IMMulticontext::new();
@@ -101,6 +105,7 @@ impl GhosttyTerminalWidget {
             let selection = selection.clone();
             let hover_link = hover_link.clone();
             let cursor_blink_visible = cursor_blink_visible.clone();
+            let has_siblings = has_siblings.clone();
             drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
@@ -117,6 +122,7 @@ impl GhosttyTerminalWidget {
                             RendererCursorState {
                                 focused: area.has_focus(),
                                 blink_visible: cursor_blink_visible.get(),
+                                has_siblings: has_siblings.get(),
                             },
                         );
                     }
@@ -614,6 +620,7 @@ impl GhosttyTerminalWidget {
             selection,
             hover_link,
             cursor_blink_visible,
+            has_siblings,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
@@ -654,6 +661,7 @@ impl GhosttyTerminalWidget {
             runtime: Rc::downgrade(&self.runtime),
             selection: Rc::downgrade(&self.selection),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
+            has_siblings: Rc::downgrade(&self.has_siblings),
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
@@ -666,6 +674,12 @@ impl GhosttyTerminalWidget {
     /// cycle: widget → slot → widget).
     pub(super) fn on_search_invalidated(&self, callback: impl Fn() + 'static) {
         *self.search_invalidated.callback.borrow_mut() = Some(Box::new(callback));
+    }
+
+    pub(super) fn set_has_siblings(&self, has_siblings: bool) {
+        if self.has_siblings.replace(has_siblings) != has_siblings {
+            self.drawing_area.queue_draw();
+        }
     }
 
     pub(super) fn attach_navigation_key_fallback<W>(&self, target: &W)
@@ -846,6 +860,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
+    has_siblings: std::rc::Weak<Cell<bool>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
@@ -859,6 +874,7 @@ impl WeakGhosttyTerminalWidget {
             runtime: self.runtime.upgrade()?,
             selection: self.selection.upgrade()?,
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
+            has_siblings: self.has_siblings.upgrade()?,
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,

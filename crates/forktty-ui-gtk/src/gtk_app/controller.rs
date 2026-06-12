@@ -275,6 +275,7 @@ impl TerminalController {
         let Some((signature, pane_tree, focused_surface_id, workspace_id)) =
             active_layout_snapshot(&self.model)
         else {
+            self.set_terminal_sibling_flags(&BTreeSet::new(), false);
             self.last_layout_signature = Some(EMPTY_LAYOUT_SIGNATURE.to_string());
             self.container.append(&empty_terminal_stage(
                 self.state.as_ref(),
@@ -287,8 +288,11 @@ impl TerminalController {
         } else {
             pane_tree
         };
+        let visible_panes = collect_panes(&visible_tree);
+        let visible_surface_ids = collect_leaves(&visible_tree).into_iter().collect();
+        let single_pane = visible_panes.len() == 1;
+        self.set_terminal_sibling_flags(&visible_surface_ids, !single_pane);
         let widget = self.widget_for_pane(&visible_tree, &workspace_id);
-        let single_pane = collect_panes(&visible_tree).len() == 1;
         for chrome in self.chromes.values() {
             chrome.header_revealer.set_reveal_child(!single_pane);
             chrome.single_pane_actions.set_visible(single_pane);
@@ -432,6 +436,16 @@ impl TerminalController {
             if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
                 queue_widget_focus(pane.focus_target());
             }
+        }
+    }
+
+    fn set_terminal_sibling_flags(
+        &self,
+        visible_surface_ids: &BTreeSet<String>,
+        has_siblings: bool,
+    ) {
+        for (surface_id, widget) in &self.widgets {
+            widget.set_has_siblings(has_siblings && visible_surface_ids.contains(surface_id));
         }
     }
 
