@@ -42,6 +42,10 @@ Usage:
   forktty close-workspace <selector>
   forktty notify [message] [--title <title>] [--kind <kind>]
   forktty surfaces [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty agents [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty agent-health [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty agent-reclaim-plan [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--min-idle-ms <ms>] [--json]
+  forktty resume-agent [--surface-id <id>] [--json]
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
   forktty focus-surface <surface-id>
   forktty close-surface <surface-id>
@@ -60,18 +64,21 @@ Usage:
   forktty set-progress --key <key> --value <number> [--label <label>] [--total <number>]
   forktty list-progress [--workspace-id <id>]
   forktty clear-progress [--key <key>]
+  forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty log [message] [--message <message>] [--level info|warn|error]
   forktty logs [--workspace-id <id>]
   forktty clear-logs [--workspace-id <id>]
   forktty notifications [--json]
   forktty clear-notifications
   forktty hooks setup [--full] [codex] [claude] [gemini] [antigravity] [opencode]
+      default setup agents: codex, claude, antigravity, opencode; gemini is legacy opt-in
   forktty hooks remove [codex] [claude] [gemini] [antigravity] [opencode]
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
   forktty mcp                                      Run the ForkTTY MCP stdio server
   forktty mcp setup [codex] [claude] [gemini] [antigravity]
+      default setup agents: codex, claude, antigravity; gemini is legacy opt-in
   forktty mcp remove [codex] [claude] [gemini] [antigravity]
   forktty --json doctor                            Socket/hook doctor; needs a global flag before
                                                    `doctor` (bare `forktty doctor` runs the local doctor)
@@ -653,6 +660,8 @@ const AGENTS: &[AgentSpec] = &[
     },
 ];
 
+const DEFAULT_HOOK_SETUP_AGENT_KEYS: &[&str] = &["codex", "claude", "antigravity", "opencode"];
+
 const MCP_AGENTS: &[McpAgentSpec] = &[
     McpAgentSpec {
         key: "codex",
@@ -679,6 +688,8 @@ const MCP_AGENTS: &[McpAgentSpec] = &[
         config_kind: McpConfigKind::JsonMcpServers,
     },
 ];
+
+const DEFAULT_MCP_SETUP_AGENT_KEYS: &[&str] = &["codex", "claude", "antigravity"];
 
 pub fn run(args: Vec<OsString>) -> i32 {
     match run_inner(args) {
@@ -719,6 +730,12 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "close-workspace" => handle_close_workspace(&context, args),
         "notify" => handle_notify(&context, args),
         "surfaces" | "surface-list" | "surface:list" => handle_surfaces(&context, args),
+        "agents" | "agent-list" | "agent:list" => handle_agents(&context, args),
+        "agent-health" | "agent:health" => handle_agent_health(&context, args),
+        "agent-reclaim-plan" | "agent:reclaim-plan" | "agent.reclaim.plan" => {
+            handle_agent_reclaim_plan(&context, args)
+        }
+        "resume-agent" | "agent-resume" | "agent:resume" => handle_resume_agent(&context, args),
         "split-surface" | "surface-split" | "surface:split" => handle_split_surface(&context, args),
         "focus-surface" | "surface-focus" | "surface:focus" => handle_focus_surface(&context, args),
         "close-surface" | "surface-close" | "surface:close" => handle_close_surface(&context, args),
@@ -741,6 +758,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "set-progress" => handle_set_progress(&context, args),
         "list-progress" => handle_list_progress(&context, args),
         "clear-progress" => handle_clear_progress(&context, args),
+        "statusline" | "status-line" | "status:summary" => handle_statusline(&context, args),
         "log" => handle_log(&context, args),
         "logs" | "list-logs" => handle_logs(&context, args),
         "clear-logs" => handle_clear_logs(&context, args),
@@ -974,7 +992,6 @@ fn required_trimmed_arg(arg: Option<&String>, message: &str) -> CliResult<String
     Ok(required_non_blank_arg(arg, message)?.trim().to_string())
 }
 
-#[cfg(any(feature = "browser", test))]
 fn parse_u64_option(
     options: &BTreeMap<String, FlagValue>,
     key: &str,
@@ -1923,6 +1940,387 @@ fn format_surface_line(surface: &Value) -> String {
         .map(|cwd| format!(" {cwd}"))
         .unwrap_or_default();
     format!("{id} [{workspace_id}] {state}{title}{cwd}")
+}
+
+fn handle_agents(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "agents")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name"],
+        "agents",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "agent.list",
+        Value::Object(build_target_params(&parsed.options, "agents")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    let Some(items) = result.as_array() else {
+        return Ok(());
+    };
+    if items.is_empty() {
+        write_stdout_line("No agent sessions")?;
+    } else {
+        for session in items {
+            write_stdout_line(&format_agent_session_line(session))?;
+        }
+    }
+    Ok(())
+}
+
+fn format_agent_session_line(session: &Value) -> String {
+    let agent = safe_string_field(session, "agent").unwrap_or_else(|| "(unknown)".to_string());
+    let session_id =
+        safe_string_field(session, "session_id").unwrap_or_else(|| "(unknown)".to_string());
+    let surface_id =
+        safe_string_field(session, "surface_id").unwrap_or_else(|| "(unknown)".to_string());
+    let workspace_id = safe_string_field(session, "workspace_id").unwrap_or_default();
+    let lifecycle = safe_string_field(session, "lifecycle")
+        .map(|lifecycle| format!(" lifecycle {lifecycle}"))
+        .unwrap_or_default();
+    let last_activity = session
+        .get("last_activity_ms")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .map(|value| format!(" last_activity {value}ms"))
+        .unwrap_or_default();
+    let title = safe_string_field(session, "title")
+        .map(|title| format!(" {title}"))
+        .unwrap_or_default();
+    let cwd = safe_string_field(session, "cwd")
+        .map(|cwd| format!(" {cwd}"))
+        .unwrap_or_default();
+    let resume_cwd = safe_string_field(session, "resume_cwd")
+        .map(|resume_cwd| format!(" resume_cwd {resume_cwd}"))
+        .unwrap_or_default();
+    format!(
+        "{agent} {session_id} {surface_id} [{workspace_id}]{lifecycle}{last_activity}{resume_cwd}{title}{cwd}"
+    )
+}
+
+fn handle_agent_health(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "agent-health")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name"],
+        "agent-health",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "agent.health",
+        Value::Object(build_target_params(&parsed.options, "agent-health")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    let Some(items) = result.as_array() else {
+        return Ok(());
+    };
+    if items.is_empty() {
+        write_stdout_line("No agent sessions")?;
+    } else {
+        for health in items {
+            write_stdout_line(&format_agent_health_line(health))?;
+        }
+    }
+    Ok(())
+}
+
+fn format_agent_health_line(health: &Value) -> String {
+    let agent = safe_string_field(health, "agent").unwrap_or_else(|| "(unknown)".to_string());
+    let session_id =
+        safe_string_field(health, "session_id").unwrap_or_else(|| "(unknown)".to_string());
+    let surface_id =
+        safe_string_field(health, "surface_id").unwrap_or_else(|| "(unknown)".to_string());
+    let workspace_id = safe_string_field(health, "workspace_id").unwrap_or_default();
+    let ready = health
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let reason = safe_string_field(health, "reason").unwrap_or_else(|| {
+        if ready {
+            "ready".to_string()
+        } else {
+            "unknown".to_string()
+        }
+    });
+    let mut parts = vec![
+        format!("{agent} {session_id} {surface_id} [{workspace_id}]"),
+        if ready {
+            "ready".to_string()
+        } else {
+            format!("not-ready {reason}")
+        },
+    ];
+    if let Some(program) = safe_string_field(health, "program") {
+        parts.push(format!("program {program}"));
+    }
+    if let Some(lifecycle) = safe_string_field(health, "lifecycle") {
+        parts.push(format!("lifecycle {lifecycle}"));
+    }
+    if let Some(last_activity_ms) = health.get("last_activity_ms").and_then(Value::as_u64) {
+        if last_activity_ms > 0 {
+            parts.push(format!("last_activity {last_activity_ms}ms"));
+        }
+    }
+    if let Some(resume_cwd) = safe_string_field(health, "resume_cwd") {
+        parts.push(format!("resume_cwd {resume_cwd}"));
+    }
+    if let Some(executable) = safe_string_field(health, "executable") {
+        parts.push(format!("executable {executable}"));
+    }
+    parts.join(" ")
+}
+
+fn handle_agent_reclaim_plan(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "agent-reclaim-plan")?;
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+            "min-idle-ms",
+        ],
+        "agent-reclaim-plan",
+    )?;
+    let mut params = build_target_params(&parsed.options, "agent-reclaim-plan")?;
+    if let Some(min_idle_ms) = parse_u64_option(&parsed.options, "min-idle-ms", "--min-idle-ms")? {
+        params.insert("min_idle_ms".to_string(), Value::Number(min_idle_ms.into()));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "agent.reclaim.plan",
+        Value::Object(params),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_agent_reclaim_plan_line(&result))
+}
+
+fn format_agent_reclaim_plan_line(plan: &Value) -> String {
+    let policy = plan.get("policy").unwrap_or(&Value::Null);
+    let min_idle_ms = policy
+        .get("min_idle_ms")
+        .and_then(Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let mut parts = vec![format!("min_idle_ms {min_idle_ms}")];
+
+    let candidates = plan
+        .get("candidates")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(format_agent_reclaim_candidate)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if candidates.is_empty() {
+        parts.push("candidates none".to_string());
+    } else {
+        parts.push(format!("candidates {}", candidates.join(", ")));
+    }
+
+    let protected = plan
+        .get("protected")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(format_agent_reclaim_protected)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !protected.is_empty() {
+        parts.push(format!("protected {}", protected.join(", ")));
+    }
+
+    parts.join(" | ")
+}
+
+fn format_agent_reclaim_candidate(row: &Value) -> String {
+    let mut text = format_agent_reclaim_session_ref(row);
+    if let Some(idle_ms) = row.get("idle_ms").and_then(Value::as_u64) {
+        text.push_str(&format!(" idle {idle_ms}ms"));
+    }
+    text
+}
+
+fn format_agent_reclaim_protected(row: &Value) -> String {
+    let reason =
+        safe_string_field(row, "protect_reason").unwrap_or_else(|| "protected".to_string());
+    format!("{} {reason}", format_agent_reclaim_session_ref(row))
+}
+
+fn format_agent_reclaim_session_ref(row: &Value) -> String {
+    let agent = safe_string_field(row, "agent").unwrap_or_else(|| "(agent)".to_string());
+    let session_id =
+        safe_string_field(row, "session_id").unwrap_or_else(|| "(session)".to_string());
+    let surface_id = safe_string_field(row, "surface_id").unwrap_or_default();
+    if surface_id.is_empty() {
+        format!("{agent}:{session_id}")
+    } else {
+        format!("{agent}:{session_id}@{surface_id}")
+    }
+}
+
+fn handle_resume_agent(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["surface-id"], "resume-agent")?;
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "resume-agent: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let mut params = Map::new();
+    if let Some(surface_id) = surface_id_from_args(&parsed, "resume-agent")? {
+        params.insert("surface_id".to_string(), Value::String(surface_id));
+    } else if let Some(surface_id) = resolve_focused_surface_id(context)? {
+        params.insert("surface_id".to_string(), Value::String(surface_id));
+    } else {
+        return Err(CliError::new(
+            "resume-agent requires --surface-id, a surface id, FORKTTY_SURFACE_ID, or an active workspace surface",
+        ));
+    }
+    let result = send_socket_request(&context.socket_path, "agent.resume", Value::Object(params))?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format_agent_resume_line(&result))
+    }
+}
+
+fn format_agent_resume_line(result: &Value) -> String {
+    let surface = result.get("surface").unwrap_or(&Value::Null);
+    let surface_id = safe_string_field(surface, "id").unwrap_or_else(|| "(unknown)".to_string());
+    let agent = safe_string_field(result, "agent").unwrap_or_else(|| "(agent)".to_string());
+    let session_id =
+        safe_string_field(result, "session_id").unwrap_or_else(|| "(session)".to_string());
+    format!("Resumed {agent} session {session_id} in {surface_id}")
+}
+
+fn handle_statusline(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "statusline")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name"],
+        "statusline",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "status.summary",
+        Value::Object(build_target_params(&parsed.options, "statusline")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_status_summary_line(&result))
+}
+
+fn format_status_summary_line(summary: &Value) -> String {
+    let workspace = summary.get("workspace").unwrap_or(&Value::Null);
+    let workspace_name =
+        safe_string_field(workspace, "name").unwrap_or_else(|| "(workspace)".to_string());
+    let workspace_id = safe_string_field(workspace, "id").unwrap_or_default();
+    let mut parts = vec![format!("{workspace_name} [{workspace_id}]")];
+
+    let agents = summary
+        .get("agents")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(format_status_summary_agent)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !agents.is_empty() {
+        parts.push(format!("agents {}", agents.join(", ")));
+    }
+
+    let statuses = summary
+        .get("status")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(format_status_summary_status)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !statuses.is_empty() {
+        parts.push(format!("status {}", statuses.join(", ")));
+    }
+
+    let progress = summary
+        .get("progress")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(format_status_summary_progress)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !progress.is_empty() {
+        parts.push(format!("progress {}", progress.join(", ")));
+    }
+
+    parts.join(" | ")
+}
+
+fn format_status_summary_agent(agent: &Value) -> String {
+    let provider = safe_string_field(agent, "agent").unwrap_or_else(|| "(agent)".to_string());
+    let session_id =
+        safe_string_field(agent, "session_id").unwrap_or_else(|| "(session)".to_string());
+    let surface_id = safe_string_field(agent, "surface_id").unwrap_or_default();
+    let lifecycle = safe_string_field(agent, "lifecycle")
+        .map(|lifecycle| format!("#{lifecycle}"))
+        .unwrap_or_default();
+    if surface_id.is_empty() {
+        format!("{provider}:{session_id}{lifecycle}")
+    } else {
+        format!("{provider}:{session_id}@{surface_id}{lifecycle}")
+    }
+}
+
+fn format_status_summary_status(status: &Value) -> String {
+    let label = safe_string_field(status, "label")
+        .or_else(|| safe_string_field(status, "key"))
+        .unwrap_or_else(|| "status".to_string());
+    let value = status
+        .get("value")
+        .map(format_terminal_safe_json_scalar)
+        .unwrap_or_default();
+    format!("{label}={value}")
+}
+
+fn format_status_summary_progress(progress: &Value) -> String {
+    let label = safe_string_field(progress, "label")
+        .or_else(|| safe_string_field(progress, "key"))
+        .unwrap_or_else(|| "progress".to_string());
+    let value = progress
+        .get("value")
+        .map(format_terminal_safe_json_scalar)
+        .unwrap_or_default();
+    if let Some(total) = progress.get("total") {
+        format!(
+            "{label}={value}/{}",
+            format_terminal_safe_json_scalar(total)
+        )
+    } else {
+        format!("{label}={value}")
+    }
 }
 
 fn handle_split_surface(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -3503,7 +3901,7 @@ fn handle_mcp(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Some("remove") | Some("uninstall") => handle_mcp_remove(context, args[1..].to_vec()),
         Some("help") | Some("--help") | Some("-h") => {
             write_stdout_line(
-                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [gemini] [antigravity] | forktty mcp remove [codex] [claude] [gemini] [antigravity]",
+                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [gemini] [antigravity] | forktty mcp remove [codex] [claude] [gemini] [antigravity]\nDefault setup agents: codex, claude, antigravity; gemini is legacy opt-in.",
             )
         }
         Some(other) => Err(CliError::new(format!("mcp: unknown subcommand {other}"))),
@@ -3535,7 +3933,11 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
     } else {
         HookSetupProfile::Lifecycle
     };
-    let agents = supported_agents(&parsed.positionals)?;
+    let agents = if parsed.positionals.is_empty() {
+        default_hook_setup_agents()
+    } else {
+        supported_agents(&parsed.positionals)?
+    };
     let launcher = stable_hook_launcher_path().ok_or_else(|| {
         CliError::new("hooks setup: could not resolve current forktty executable")
     })?;
@@ -3684,7 +4086,11 @@ fn handle_mcp_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let Some(dry_run) = bool_option(&parsed.options, "dry-run") else {
         return Err(CliError::new("mcp setup: --dry-run must be true or false"));
     };
-    let agents = supported_mcp_agents(&parsed.positionals)?;
+    let agents = if parsed.positionals.is_empty() {
+        default_mcp_setup_agents()
+    } else {
+        supported_mcp_agents(&parsed.positionals)?
+    };
     let launcher = stable_hook_launcher_path()
         .ok_or_else(|| CliError::new("mcp setup: could not resolve current forktty executable"))?;
     if !launcher.is_absolute() {
@@ -4229,6 +4635,13 @@ fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
     Ok(out)
 }
 
+fn default_hook_setup_agents() -> Vec<&'static AgentSpec> {
+    DEFAULT_HOOK_SETUP_AGENT_KEYS
+        .iter()
+        .map(|key| agent_spec(key).expect("default hook setup agent exists"))
+        .collect()
+}
+
 fn supported_mcp_agents(names: &[String]) -> CliResult<Vec<&'static McpAgentSpec>> {
     if names.is_empty() {
         return Ok(MCP_AGENTS.iter().collect());
@@ -4246,6 +4659,13 @@ fn supported_mcp_agents(names: &[String]) -> CliResult<Vec<&'static McpAgentSpec
         }
     }
     Ok(out)
+}
+
+fn default_mcp_setup_agents() -> Vec<&'static McpAgentSpec> {
+    DEFAULT_MCP_SETUP_AGENT_KEYS
+        .iter()
+        .map(|key| mcp_agent_spec(key).expect("default MCP setup agent exists"))
+        .collect()
 }
 
 fn agent_spec(agent: &str) -> Option<&'static AgentSpec> {
@@ -4615,16 +5035,23 @@ const ANTIGRAVITY_SCRIPT_TAG: &str = "forktty-managed-antigravity-hook";
 
 /// Antigravity executes `command` as one executable path (no argv splitting,
 /// no shell), so each event points at a generated wrapper script that runs
-/// the launcher with the usual guard line. The disabled/failed fallback echoes
-/// `{}`: Antigravity rejects unknown response fields like `continue` under
-/// strict protojson unmarshaling.
+/// the launcher with the usual guard line. PreToolUse is a gating hook, so its
+/// disabled/failed fallback explicitly approves tool use; non-gating events
+/// fall back to `{}` because Antigravity rejects unknown response fields like
+/// `continue` under strict protojson unmarshaling.
 fn build_antigravity_hook_script(launcher: &Path, spec: &AgentSpec, event: &str) -> String {
+    let fallback = if event == "pre-tool" {
+        r#"{"decision":"approve"}"#
+    } else {
+        "{}"
+    };
     format!(
-        "#!/bin/sh\n# {tag}\n# Generated by `forktty hooks setup`; local edits will be replaced.\n[ \"${{{disabled}:-}}\" != \"1\" ] && {launcher} hooks {agent} {event} || echo '{{}}'\n",
+        "#!/bin/sh\n# {tag}\n# Generated by `forktty hooks setup`; local edits will be replaced.\n[ \"${{{disabled}:-}}\" != \"1\" ] && {launcher} hooks {agent} {event} || printf '%s\\n' {fallback}\n",
         tag = ANTIGRAVITY_SCRIPT_TAG,
         disabled = spec.disabled_env,
         launcher = shell_quote(&launcher.display().to_string()),
         agent = spec.key,
+        fallback = shell_quote(fallback),
     )
 }
 
@@ -5370,7 +5797,7 @@ fn camel_to_snake_event_name(event: &str) -> String {
 #[cfg(feature = "gtk-ghostty")]
 pub(crate) fn hook_setup_reminder_message() -> Option<String> {
     let current_launcher = stable_hook_launcher_path();
-    let statuses = AGENTS
+    let statuses = default_hook_setup_agents()
         .iter()
         .map(|spec| {
             let config_path = (spec.config_path)();
@@ -5397,12 +5824,12 @@ fn hook_setup_reminder_message_for_statuses<'a>(
         .any(|status| matches!(*status, "stale" | "current_launcher_unknown"));
     if stale {
         Some(
-            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Gemini, Antigravity, and OpenCode can publish status, progress, and notifications."
+            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Antigravity, and OpenCode can publish status, progress, and notifications. Gemini CLI is legacy; use `forktty hooks setup gemini` only if you still need it."
                 .to_string(),
         )
     } else if !installed {
         Some(
-            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Gemini, Antigravity, and OpenCode to status, progress, and notifications."
+            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Antigravity, and OpenCode to status, progress, and notifications. Gemini CLI is legacy; use `forktty hooks setup gemini` only if you still need it."
                 .to_string(),
         )
     } else {
@@ -5879,6 +6306,7 @@ fn hook_target_params() -> Map<String, Value> {
 
 fn add_hook_metadata(
     mut params: Map<String, Value>,
+    spec: &AgentSpec,
     event: &str,
     payload: &Value,
     order: &str,
@@ -5901,7 +6329,70 @@ fn add_hook_metadata(
     if let Some(session_id) = extract_hook_session_id(payload) {
         params.insert("hook_session_id".to_string(), Value::String(session_id));
     }
+    if let Some(cwd) = hook_session_cwd_for_metadata(spec, payload) {
+        params.insert("hook_session_cwd".to_string(), Value::String(cwd));
+    }
     Value::Object(params)
+}
+
+fn hook_session_cwd_for_metadata(spec: &AgentSpec, payload: &Value) -> Option<String> {
+    if spec.key == "antigravity" {
+        return extract_antigravity_workspace_cwd(payload);
+    }
+    std::env::current_dir()
+        .ok()
+        .filter(|cwd| !cwd.as_os_str().is_empty())
+        .map(|cwd| cwd.to_string_lossy().into_owned())
+}
+
+fn extract_antigravity_workspace_cwd(payload: &Value) -> Option<String> {
+    extract_first_string_array_item(payload, &["workspacePaths", "workspace_paths"]).or_else(|| {
+        extract_first_string_like(
+            payload,
+            &[
+                "workspacePath",
+                "workspace_path",
+                "workspaceRoot",
+                "workspace_root",
+            ],
+        )
+        .and_then(|value| valid_hook_session_cwd(&value))
+    })
+}
+
+fn extract_first_string_array_item(payload: &Value, keys: &[&str]) -> Option<String> {
+    let mut queue = VecDeque::from([payload]);
+    while let Some(current) = queue.pop_front() {
+        let Some(object) = current.as_object() else {
+            continue;
+        };
+        for key in keys {
+            if let Some(Value::Array(values)) = object.get(*key) {
+                for value in values {
+                    if let Some(path) = value.as_str().and_then(valid_hook_session_cwd) {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        for value in object.values() {
+            if value.is_object() {
+                queue.push_back(value);
+            }
+        }
+    }
+    None
+}
+
+fn valid_hook_session_cwd(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
+        return None;
+    }
+    if !Path::new(trimmed).is_absolute() {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 /// Map documented permission modes to a status color so risky modes are
@@ -5941,7 +6432,7 @@ fn build_hook_actions(
         params.insert("color".to_string(), Value::String(color.to_string()));
         (
             "metadata.set_status".to_string(),
-            add_hook_metadata(params, event_name, payload, order),
+            add_hook_metadata(params, spec, event_name, payload, order),
         )
     };
     let permission_key = format!("agent:{}:permission", spec.key);
@@ -5959,7 +6450,7 @@ fn build_hook_actions(
         );
         (
             "metadata.set_status".to_string(),
-            add_hook_metadata(params, event_name, payload, order),
+            add_hook_metadata(params, spec, event_name, payload, order),
         )
     };
     let permission_mode = extract_hook_permission_mode(payload);
@@ -6287,7 +6778,7 @@ fn build_hook_actions(
                 status("Ready", "green", event),
                 (
                     "metadata.clear_status".to_string(),
-                    add_hook_metadata(clear_permission, event, payload, order),
+                    add_hook_metadata(clear_permission, spec, event, payload, order),
                 ),
             ]
         }
@@ -6311,11 +6802,11 @@ fn build_hook_actions(
                 log("info", format!("{} session ended", spec.label)),
                 (
                     "metadata.clear_status".to_string(),
-                    add_hook_metadata(clear, event, payload, order),
+                    add_hook_metadata(clear, spec, event, payload, order),
                 ),
                 (
                     "metadata.clear_status".to_string(),
-                    add_hook_metadata(clear_permission, event, payload, order),
+                    add_hook_metadata(clear_permission, spec, event, payload, order),
                 ),
             ]
         }
@@ -6424,7 +6915,7 @@ fn build_token_progress_action(
     );
     params.insert("value".to_string(), json!(total));
     params.insert("total".to_string(), json!(resolve_token_ceiling()));
-    Some(add_hook_metadata(params, event, &Value::Null, order))
+    Some(add_hook_metadata(params, spec, event, &Value::Null, order))
 }
 
 fn build_hook_response(
@@ -6504,9 +6995,13 @@ fn build_hook_response(
         }));
     }
     // Antigravity unmarshals hook stdout with strict protojson and rejects
-    // unknown fields ("continue" included), logging the hook as failed.
-    // An empty object is the verified no-op response.
+    // unknown fields ("continue" included), logging the hook as failed. Tool
+    // hooks are gating hooks and need an explicit allow decision; non-gating
+    // events can use an empty object as a no-op response.
     if spec.key == "antigravity" {
+        if event == "pre-tool" {
+            return Ok(json!({ "decision": "approve" }));
+        }
         return Ok(json!({}));
     }
     serde_json::from_str(HOOK_CONTINUE_JSON.trim()).map_err(Into::into)
@@ -6999,6 +7494,18 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
+        match result {
+            Ok(value) => value,
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+
+    fn with_current_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        let result = catch_unwind(AssertUnwindSafe(f));
+        std::env::set_current_dir(saved).unwrap();
         match result {
             Ok(value) => value,
             Err(payload) => resume_unwind(payload),
@@ -8044,6 +8551,43 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_pre_tool_response_explicitly_allows_tool_use() {
+        let response = build_hook_response(
+            agent_spec("antigravity").unwrap(),
+            "pre-tool",
+            &HookEnrichments {
+                token_usage: None,
+                workspace: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(response, json!({ "decision": "approve" }));
+
+        let response = build_hook_response(
+            agent_spec("antigravity").unwrap(),
+            "post-tool",
+            &HookEnrichments {
+                token_usage: None,
+                workspace: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(response, json!({}));
+    }
+
+    #[test]
+    fn antigravity_pre_tool_wrapper_fallback_explicitly_allows_tool_use() {
+        let spec = agent_spec("antigravity").unwrap();
+        let pre_tool =
+            build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "pre-tool");
+        assert!(pre_tool.contains("printf '%s\\n' '{\"decision\":\"approve\"}'"));
+
+        let post_tool =
+            build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "post-tool");
+        assert!(post_tool.contains("printf '%s\\n' '{}'"));
+    }
+
+    #[test]
     fn permission_mode_publishes_separate_status_for_codex_and_claude() {
         // Providers can emit permission state in lifecycle payloads. Keep it
         // as a sibling status so it never collides with `agent:<key>`
@@ -8086,6 +8630,93 @@ mod tests {
         assert_eq!(permission.1["label"], "Codex mode");
         assert_eq!(permission.1["value"], "on-request");
         assert_eq!(permission.1["hook_session_id"], "sess-codex-9");
+    }
+
+    #[test]
+    fn hook_status_metadata_includes_current_working_directory() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let payload = json!({
+            "session_id": "sess-codex-9",
+            "model": "gpt-5",
+        });
+
+        let actions = with_current_dir(project_dir.path(), || {
+            build_hook_actions(agent_spec("codex").unwrap(), "prompt-submit", &payload, "2")
+        });
+
+        let status = actions
+            .iter()
+            .find(|(method, params)| {
+                method == "metadata.set_status" && params["key"] == "agent:codex"
+            })
+            .expect("codex status action");
+        assert_eq!(
+            status.1["hook_session_cwd"],
+            project_dir.path().to_string_lossy().as_ref()
+        );
+    }
+
+    #[test]
+    fn antigravity_hook_status_metadata_uses_workspace_paths_instead_of_wrapper_cwd() {
+        let wrapper_dir = tempfile::tempdir().unwrap();
+        let project_dir = tempfile::tempdir().unwrap();
+        let payload = json!({
+            "common": {
+                "conversationId": "agy-session-1",
+                "workspacePaths": [project_dir.path().to_string_lossy()],
+            },
+            "preToolHookArgs": {
+                "toolCall": { "name": "shell" },
+            },
+        });
+
+        let actions = with_current_dir(wrapper_dir.path(), || {
+            build_hook_actions(
+                agent_spec("antigravity").unwrap(),
+                "pre-tool",
+                &payload,
+                "3",
+            )
+        });
+
+        let status = actions
+            .iter()
+            .find(|(method, params)| {
+                method == "metadata.set_status" && params["key"] == "agent:antigravity"
+            })
+            .expect("antigravity status action");
+        assert_eq!(status.1["hook_session_id"], "agy-session-1");
+        assert_eq!(
+            status.1["hook_session_cwd"],
+            project_dir.path().to_string_lossy().as_ref()
+        );
+    }
+
+    #[test]
+    fn antigravity_hook_status_metadata_omits_wrapper_cwd_without_workspace_paths() {
+        let wrapper_dir = tempfile::tempdir().unwrap();
+        let payload = json!({
+            "conversationId": "agy-session-2",
+            "toolName": "shell",
+        });
+
+        let actions = with_current_dir(wrapper_dir.path(), || {
+            build_hook_actions(
+                agent_spec("antigravity").unwrap(),
+                "pre-tool",
+                &payload,
+                "4",
+            )
+        });
+
+        let status = actions
+            .iter()
+            .find(|(method, params)| {
+                method == "metadata.set_status" && params["key"] == "agent:antigravity"
+            })
+            .expect("antigravity status action");
+        assert_eq!(status.1["hook_session_id"], "agy-session-2");
+        assert!(status.1.get("hook_session_cwd").is_none());
     }
 
     #[test]
@@ -8453,6 +9084,42 @@ mod tests {
     }
 
     #[test]
+    fn hook_setup_default_skips_deprecated_gemini_but_explicit_gemini_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex home");
+        let claude_dir = dir.path().join("claude config");
+        let home = dir.path().join("home dir");
+        let codex_home_s = codex_home.display().to_string();
+        let claude_dir_s = claude_dir.display().to_string();
+        let home_s = home.display().to_string();
+
+        with_env(
+            &[
+                ("CODEX_HOME", Some(&codex_home_s)),
+                ("CLAUDE_CONFIG_DIR", Some(&claude_dir_s)),
+                ("HOME", Some(&home_s)),
+            ],
+            || {
+                let context = test_context();
+                handle_hooks_setup(&context, Vec::new()).unwrap();
+
+                assert!(codex_home.join("hooks.json").exists());
+                assert!(claude_dir.join("settings.json").exists());
+                assert!(home
+                    .join(".config/opencode")
+                    .join("plugins/forktty.generated.js")
+                    .exists());
+                assert!(home.join(".gemini/config/hooks.json").exists());
+                assert!(!home.join(".gemini/settings.json").exists());
+
+                handle_hooks_setup(&context, strings(&["gemini"])).unwrap();
+                let gemini = read_json(&home.join(".gemini/settings.json"));
+                assert!(gemini["hooks"]["BeforeModel"].is_array());
+            },
+        );
+    }
+
+    #[test]
     fn claude_hook_setup_profiles_migrate_and_remove() {
         let dir = tempfile::tempdir().unwrap();
         let claude_dir = dir.path().join("claude config");
@@ -8745,6 +9412,36 @@ mod tests {
                     assert_eq!(server["args"][0], "mcp", "{agent}");
                     assert_eq!(server["env"][MCP_MANAGED_ENV], MCP_SERVER_NAME, "{agent}");
                 }
+            },
+        );
+    }
+
+    #[test]
+    fn mcp_setup_default_skips_deprecated_gemini_but_explicit_gemini_still_works() {
+        let home = tempfile::tempdir().unwrap();
+        let codex_home = tempfile::tempdir().unwrap();
+        let home = home.path().to_string_lossy().to_string();
+        let codex_home = codex_home.path().to_string_lossy().to_string();
+        with_env(
+            &[
+                ("HOME", Some(home.as_str())),
+                ("CODEX_HOME", Some(codex_home.as_str())),
+            ],
+            || {
+                let context = test_context();
+                handle_mcp_setup(&context, Vec::new()).unwrap();
+
+                assert!(codex_mcp_config_path().exists());
+                assert!(claude_mcp_config_path().exists());
+                assert!(antigravity_mcp_config_path().exists());
+                assert!(!gemini_mcp_config_path().exists());
+
+                handle_mcp_setup(&context, strings(&["gemini"])).unwrap();
+                let gemini = read_json(&gemini_mcp_config_path());
+                assert_eq!(
+                    gemini["mcpServers"]["forktty"]["env"][MCP_MANAGED_ENV],
+                    MCP_SERVER_NAME
+                );
             },
         );
     }
@@ -9738,6 +10435,258 @@ mod tests {
             },
         );
         assert_eq!(request["method"], "system.capabilities");
+    }
+
+    #[test]
+    fn agents_requests_agent_list_with_workspace_selector() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_agents(&ctx_for(socket_path), strings(&["--workspace-id", "w1"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "agent.list");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn agent_health_requests_agent_health_with_workspace_selector() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_agent_health(&ctx_for(socket_path), strings(&["--workspace-id", "w1"]))
+                    .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "agent.health");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn agent_health_formatter_escapes_control_sequences() {
+        let line = format_agent_health_line(&json!({
+            "agent": "codex\u{1b}",
+            "session_id": "session\n1",
+            "surface_id": "surface\t1",
+            "workspace_id": "workspace\r1",
+            "lifecycle": "ended",
+            "last_activity_ms": 5678,
+            "resume_cwd": "/tmp/project\u{1b}",
+            "ready": false,
+            "reason": "program_not_found\u{1b}",
+            "program": "codex",
+        }));
+
+        assert!(line.contains("codex\\x1b"));
+        assert!(line.contains("session\\n1"));
+        assert!(line.contains("surface\\t1"));
+        assert!(line.contains("workspace\\r1"));
+        assert!(line.contains("ended"));
+        assert!(line.contains("last_activity 5678ms"));
+        assert!(line.contains("resume_cwd /tmp/project\\x1b"));
+        assert!(line.contains("program_not_found\\x1b"));
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn agent_reclaim_plan_requests_plan_with_workspace_selector_and_policy() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "policy": {"now_ms": 10_000, "min_idle_ms": 5_000},
+                        "candidates": [],
+                        "protected": [],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_agent_reclaim_plan(
+                    &ctx_for(socket_path),
+                    strings(&["--workspace-id", "w1", "--min-idle-ms", "5000"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "agent.reclaim.plan");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["min_idle_ms"], 5000);
+    }
+
+    #[test]
+    fn agent_reclaim_plan_formatter_escapes_control_sequences() {
+        let line = format_agent_reclaim_plan_line(&json!({
+            "policy": {"now_ms": 10_000, "min_idle_ms": 5_000},
+            "candidates": [{
+                "agent": "codex\u{1b}",
+                "session_id": "session\n1",
+                "surface_id": "surface\t1",
+                "workspace_id": "workspace\r1",
+                "idle_ms": 9_000,
+            }],
+            "protected": [{
+                "agent": "claude_code",
+                "session_id": "session\u{1b}2",
+                "surface_id": "surface2",
+                "protect_reason": "needs_input\n",
+            }],
+        }));
+
+        assert!(line.contains("candidates codex\\x1b:session\\n1@surface\\t1 idle 9000ms"));
+        assert!(line.contains("protected claude_code:session\\x1b2@surface2 needs_input\\n"));
+        assert!(line.contains("min_idle_ms 5000"));
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn resume_agent_requests_agent_resume_with_surface_id() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "surface": {"id": "surface-new"},
+                        "agent": "codex",
+                        "session_id": "codex-session-1",
+                        "argv": ["codex", "resume", "codex-session-1"],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_resume_agent(
+                    &ctx_for(socket_path),
+                    strings(&["--surface-id", "surface-1"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "agent.resume");
+        assert_eq!(request["params"]["surface_id"], "surface-1");
+    }
+
+    #[test]
+    fn agent_resume_formatter_escapes_control_sequences() {
+        let line = format_agent_resume_line(&json!({
+            "surface": {"id": "surface\nnew"},
+            "agent": "codex\u{1b}",
+            "session_id": "session\t1",
+        }));
+
+        assert!(line.contains("surface\\nnew"));
+        assert!(line.contains("codex\\x1b"));
+        assert!(line.contains("session\\t1"));
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn agent_session_formatter_escapes_control_sequences() {
+        let line = format_agent_session_line(&json!({
+            "agent": "codex\u{1b}",
+            "session_id": "session\n1",
+            "surface_id": "surface\t1",
+            "workspace_id": "workspace\r1",
+            "lifecycle": "idle",
+            "last_activity_ms": 1234,
+            "resume_cwd": "/tmp/project\n",
+            "title": "build\u{1b}[31m",
+            "cwd": "/tmp/project",
+        }));
+
+        assert!(line.contains("codex\\x1b"));
+        assert!(line.contains("session\\n1"));
+        assert!(line.contains("surface\\t1"));
+        assert!(line.contains("workspace\\r1"));
+        assert!(line.contains("idle"));
+        assert!(line.contains("last_activity 1234ms"));
+        assert!(line.contains("resume_cwd /tmp/project\\n"));
+        assert!(line.contains("build\\x1b[31m"));
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn statusline_requests_status_summary_with_workspace_selector() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "workspace": {"id": "w1", "name": "main"},
+                        "agents": [],
+                        "status": [],
+                        "progress": [],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_statusline(
+                    &ctx_for(socket_path),
+                    strings(&["--workspace-name", "main"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "status.summary");
+        assert_eq!(request["params"]["workspace_name"], "main");
+    }
+
+    #[test]
+    fn status_summary_formatter_escapes_control_sequences() {
+        let line = format_status_summary_line(&json!({
+            "workspace": {
+                "id": "workspace\n1",
+                "name": "main\u{1b}",
+            },
+            "agents": [{
+                "agent": "codex",
+                "session_id": "session\t1",
+                "surface_id": "surface\r1",
+                "lifecycle": "needs_input",
+            }],
+            "status": [{
+                "label": "Codex",
+                "value": "Running\u{1b}",
+            }],
+            "progress": [{
+                "label": "Build",
+                "value": 2,
+                "total": 4,
+            }],
+        }));
+
+        assert!(line.contains("main\\x1b"));
+        assert!(line.contains("workspace\\n1"));
+        assert!(line.contains("session\\t1"));
+        assert!(line.contains("surface\\r1"));
+        assert!(line.contains("needs_input"));
+        assert!(line.contains("Running\\x1b"));
+        assert!(line.contains("Build=2/4"));
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains('\n'));
     }
 
     #[test]

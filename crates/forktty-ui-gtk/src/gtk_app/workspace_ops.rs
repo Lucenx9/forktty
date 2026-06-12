@@ -464,9 +464,9 @@ pub(super) fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<
         return Ok(());
     }
     // Browser surfaces return None (no PTY backend); Ssh surfaces are rewritten
-    // to launch ssh <host> so reselecting a restored remote workspace respawns.
+    // to launch ssh <host>, and agent terminals resume with their provider argv.
     let base = SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
-    let Some(request) = forktty_socket::spawn_request_for_surface_kind(base, &surface.kind) else {
+    let Some(request) = forktty_socket::spawn_request_for_surface(base, &surface) else {
         return Ok(());
     };
     state.terminal.spawn(request)

@@ -559,10 +559,10 @@ impl TerminalController {
             // shell process and emit bogus terminal status/port/close events.
             // Ssh surfaces rewrite the request to launch ssh <host>; this is
             // what respawns restored remote workspaces on session restore.
+            // Agent terminal surfaces rewrite to the provider resume argv.
             let base =
                 SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
-            let Some(request) = forktty_socket::spawn_request_for_surface_kind(base, &surface.kind)
-            else {
+            let Some(request) = forktty_socket::spawn_request_for_surface(base, &surface) else {
                 continue;
             };
             let surface_id = surface.id.clone();
@@ -1030,6 +1030,7 @@ impl TerminalController {
                         unread: false,
                         needs_attention: false,
                         kind: forktty_core::SurfaceKind::Terminal,
+                        agent_session: None,
                     },
                     false,
                 )

@@ -24,6 +24,8 @@ pub type Result<T> = std::result::Result<T, libghostty_vt::Error>;
 
 const TERMINAL_MODE_TAIL_LIMIT: usize = 64;
 const TERMINAL_THEME_RESET_TAIL_LIMIT: usize = 256;
+// libghostty-vt can abort during later reflow after a one-row resize.
+const MIN_RESIZE_ROWS: u16 = 2;
 
 /// ghostty's `max_scrollback` is a page-memory budget in BYTES, not rows
 /// (`Screen.zig`: "max_scrollback is the amount of scrollback to keep in
@@ -423,6 +425,8 @@ impl GhosttyCore {
         cell_width_px: u32,
         cell_height_px: u32,
     ) -> Result<Vec<GhosttyEvent>> {
+        let cols = cols.max(1);
+        let rows = rows.max(MIN_RESIZE_ROWS);
         // Reflow rewraps the scrollback, changing line<->row mapping.
         self.content_generation += 1;
         self.terminal
@@ -1111,6 +1115,43 @@ mod tests {
         let restored = frame_text(&core.render_frame().unwrap());
 
         assert_eq!(restored, bottom);
+    }
+
+    #[test]
+    fn core_resize_from_tiny_allocation_after_wrapped_output_does_not_abort() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz")
+            .unwrap();
+
+        core.resize(1, 1, 10, 20).unwrap();
+        core.resize(120, 32, 10, 20).unwrap();
+    }
+
+    #[test]
+    fn core_resize_wide_after_wrapped_scrollback_does_not_abort() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 86,
+            rows: 28,
+            scrollback_lines: 500,
+        })
+        .unwrap();
+
+        let wrapped_line = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for line in 0..240 {
+            core.feed(
+                format!("{line:03} {wrapped_line}{wrapped_line}{wrapped_line}\r\n").as_bytes(),
+            )
+            .unwrap();
+        }
+
+        core.resize(72, 26, 10, 20).unwrap();
+        core.resize(190, 48, 10, 20).unwrap();
     }
 
     #[test]

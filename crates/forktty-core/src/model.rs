@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::agents::AgentKind;
 use crate::session::{SessionData, SESSION_FORMAT_VERSION};
 
 pub type WorkspaceId = String;
@@ -72,6 +73,35 @@ pub struct Surface {
     pub needs_attention: bool,
     #[serde(default)]
     pub kind: SurfaceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<AgentSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSession {
+    pub agent: AgentKind,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub lifecycle: AgentSessionLifecycle,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub last_activity_ms: u64,
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSessionLifecycle {
+    Running,
+    Idle,
+    NeedsInput,
+    Ended,
+    #[default]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -255,6 +285,7 @@ impl WorkspaceModel {
             unread: false,
             needs_attention: false,
             kind: SurfaceKind::Terminal,
+            agent_session: None,
         };
         let workspace = Workspace {
             id: id.clone(),
@@ -349,6 +380,7 @@ impl WorkspaceModel {
                         unread: false,
                         needs_attention: false,
                         kind: SurfaceKind::Terminal,
+                        agent_session: None,
                     },
                 };
                 self.next_surface = self.next_surface.max(numeric_suffix(&surface.id));
@@ -380,13 +412,15 @@ impl WorkspaceModel {
             workspace.listening_ports.clear();
             workspace.pr = None;
         }
-        // Only non-terminal surfaces need to be persisted explicitly: terminal
-        // surfaces are the default and are reconstructed from the pane tree.
-        // This keeps sessions written without browser panes byte-identical.
+        // Only non-terminal surfaces and terminal surfaces with restorable
+        // agent metadata need to be persisted explicitly: plain terminals are
+        // the default and are reconstructed from the pane tree.
         let surfaces = self
             .surfaces
             .values()
-            .filter(|surface| !matches!(surface.kind, SurfaceKind::Terminal))
+            .filter(|surface| {
+                !matches!(surface.kind, SurfaceKind::Terminal) || surface.agent_session.is_some()
+            })
             .cloned()
             .collect();
         SessionData {
@@ -502,6 +536,7 @@ impl WorkspaceModel {
                                 unread: false,
                                 needs_attention: false,
                                 kind: SurfaceKind::Terminal,
+                                agent_session: None,
                             },
                         );
                         changed = true;
@@ -706,6 +741,7 @@ impl WorkspaceModel {
             unread: false,
             needs_attention: false,
             kind: SurfaceKind::Ssh { host },
+            agent_session: None,
         };
         let workspace = Workspace {
             id: id.clone(),
@@ -755,6 +791,7 @@ impl WorkspaceModel {
             unread: false,
             needs_attention: false,
             kind,
+            agent_session: None,
         };
         let workspace = self
             .workspaces
@@ -831,6 +868,7 @@ impl WorkspaceModel {
             unread: false,
             needs_attention: false,
             kind: SurfaceKind::Terminal,
+            agent_session: None,
         };
         let workspace = self
             .workspaces
@@ -934,6 +972,83 @@ impl WorkspaceModel {
         }
     }
 
+    pub fn set_surface_agent_session(
+        &mut self,
+        surface_id: &str,
+        agent: AgentKind,
+        session_id: impl Into<String>,
+    ) -> bool {
+        let session_id = session_id.into();
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        let resume_cwd = surface
+            .agent_session
+            .as_ref()
+            .filter(|session| session.agent == agent && session.session_id == session_id)
+            .and_then(|session| session.resume_cwd.clone());
+        surface.agent_session = Some(AgentSession {
+            agent,
+            session_id: session_id.to_string(),
+            resume_cwd,
+            lifecycle: AgentSessionLifecycle::Running,
+            last_activity_ms: 0,
+        });
+        true
+    }
+
+    pub fn set_surface_agent_session_resume_cwd(
+        &mut self,
+        surface_id: &str,
+        resume_cwd: PathBuf,
+    ) -> bool {
+        if resume_cwd.as_os_str().is_empty() || !resume_cwd.is_absolute() {
+            return false;
+        }
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        let Some(agent_session) = surface.agent_session.as_mut() else {
+            return false;
+        };
+        agent_session.resume_cwd = Some(resume_cwd);
+        true
+    }
+
+    pub fn set_surface_agent_session_lifecycle(
+        &mut self,
+        surface_id: &str,
+        lifecycle: AgentSessionLifecycle,
+    ) -> bool {
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        let Some(agent_session) = surface.agent_session.as_mut() else {
+            return false;
+        };
+        agent_session.lifecycle = lifecycle;
+        true
+    }
+
+    pub fn set_surface_agent_session_last_activity_ms(
+        &mut self,
+        surface_id: &str,
+        last_activity_ms: u64,
+    ) -> bool {
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        let Some(agent_session) = surface.agent_session.as_mut() else {
+            return false;
+        };
+        agent_session.last_activity_ms = last_activity_ms;
+        true
+    }
+
     pub fn prepare_root_surface_replacement(&mut self, surface_id: &str) -> Option<Surface> {
         let surface = self.surfaces.get(surface_id)?.clone();
         let (workspace_id, working_dir) = {
@@ -958,6 +1073,7 @@ impl WorkspaceModel {
             unread: false,
             needs_attention: false,
             kind: SurfaceKind::Terminal,
+            agent_session: None,
         })
     }
 
@@ -1012,6 +1128,7 @@ impl WorkspaceModel {
                     unread: false,
                     needs_attention: false,
                     kind: SurfaceKind::Terminal,
+                    agent_session: None,
                 }
             }
         };
@@ -2378,6 +2495,105 @@ mod tests {
     }
 
     #[test]
+    fn agent_session_makes_terminal_surface_persistable() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+
+        assert!(model.to_session_data().surfaces.is_empty());
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            crate::agents::AgentKind::Codex,
+            "  codex-session-1  "
+        ));
+        assert!(!model.set_surface_agent_session(
+            &surface_id,
+            crate::agents::AgentKind::Codex,
+            "  "
+        ));
+        assert!(!model.set_surface_agent_session(
+            "missing-surface",
+            crate::agents::AgentKind::Codex,
+            "codex-session-2"
+        ));
+        assert!(model.set_surface_agent_session_resume_cwd(
+            &surface_id,
+            std::path::PathBuf::from("/tmp/forktty-project")
+        ));
+
+        let data = model.to_session_data();
+        crate::session::validate_session_data(&data).unwrap();
+        assert_eq!(data.surfaces.len(), 1);
+        assert_eq!(data.surfaces[0].id, surface_id);
+        assert_eq!(
+            data.surfaces[0].agent_session.as_ref().unwrap().agent,
+            crate::agents::AgentKind::Codex
+        );
+        assert_eq!(
+            data.surfaces[0].agent_session.as_ref().unwrap().session_id,
+            "codex-session-1"
+        );
+        assert_eq!(
+            data.surfaces[0]
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .resume_cwd
+                .as_deref(),
+            Some(std::path::Path::new("/tmp/forktty-project"))
+        );
+        assert_eq!(
+            data.surfaces[0].agent_session.as_ref().unwrap().lifecycle,
+            crate::model::AgentSessionLifecycle::Running
+        );
+        assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 42_000));
+
+        let data = model.to_session_data();
+        crate::session::validate_session_data(&data).unwrap();
+        assert_eq!(
+            data.surfaces[0]
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .last_activity_ms,
+            42_000
+        );
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+        let restored_session = restored
+            .surface(&surface_id)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap();
+        assert_eq!(restored_session.agent, crate::agents::AgentKind::Codex);
+        assert_eq!(restored_session.session_id, "codex-session-1");
+        assert_eq!(
+            restored_session.resume_cwd.as_deref(),
+            Some(std::path::Path::new("/tmp/forktty-project"))
+        );
+        assert_eq!(
+            restored_session.lifecycle,
+            crate::model::AgentSessionLifecycle::Running
+        );
+        assert_eq!(restored_session.last_activity_ms, 42_000);
+        assert!(restored.set_surface_agent_session_lifecycle(
+            &surface_id,
+            crate::model::AgentSessionLifecycle::Ended
+        ));
+        assert_eq!(
+            restored
+                .surface(&surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .lifecycle,
+            crate::model::AgentSessionLifecycle::Ended
+        );
+    }
+
+    #[test]
     fn split_surface_adds_second_surface_and_focuses_it() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -3653,6 +3869,7 @@ mod tests {
                 unread: false,
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
+                agent_session: None,
             },
         );
 
@@ -3772,6 +3989,7 @@ mod tests {
                 unread: false,
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
+                agent_session: None,
             },
         );
 
@@ -3916,6 +4134,7 @@ mod tests {
                 unread: false,
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
+                agent_session: None,
             },
         );
         // Also inject a surface tied to a no-longer-present workspace.
@@ -3930,6 +4149,7 @@ mod tests {
                 unread: false,
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
+                agent_session: None,
             },
         );
 

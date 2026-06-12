@@ -1,98 +1,228 @@
 # cmux Gap Features
 
-Features present in [cmux](https://github.com/manaflow-ai/cmux) (macOS, Swift/AppKit, libghostty)
-that ForkTTY (Linux, Rust, GTK4/Ghostty) does not yet have, ordered by user impact vs. cost.
-Source: README, `docs/cli-contract.md`, and `CLI/` of the cmux repo as of 2026-05-23.
+Features present in [cmux](https://github.com/manaflow-ai/cmux) that ForkTTY
+does not yet match. This inventory is based on the cmux repository inspected on
+2026-06-12 at commit `aeb8847` (`Sources/`, `CLI/`, and docs including
+`cli-contract.md`, `agent-hooks.md`, `feed.md`, `workspace-groups.md`,
+`dock.md`, `custom-sidebars.md`, and `remote-daemon-spec.md`).
 
-This file tracks intent and scope. Implementation status lives in `ROADMAP.md`.
+Related agent-orchestration projects inspected on the same pass:
 
-## Legend
+- [oh-my-codex](https://github.com/Yeachan-Heo/oh-my-codex) at commit
+  `0332e47` (2026-06-09), focused on Codex CLI workflows, hooks, teams, HUD,
+  `.omx/` state, tmux runtime adapters, and skills.
+- [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) at
+  commit `deee3a4` (2026-06-09), focused on Claude Code plugin/runtime
+  orchestration, hooks, teams, HUD, `.omc/` state, notepad/project memory, and
+  worktree-backed workers.
+- [Zellij](https://github.com/zellij-org/zellij) at commit `b6a5ad0`,
+  focused on active/resurrectable session inventory, recency sorting, and
+  attach/resurrect UX.
+- [WezTerm](https://github.com/wez/wezterm) at commit `891bed3`, focused on
+  mux domains, pane metadata, local/Unix/SSH attach semantics, and status-safe
+  metadata exposure.
+- [agent-deck](https://github.com/asheshgoplani/agent-deck) at commit
+  `e38969c`, focused on multi-agent session state, conductor/fleet status,
+  provider session bindings, and restart/resume policy.
 
-- **Impact**: perceived user value.
-- **Cost**: implementation effort on the GTK/Ghostty + Rust stack.
-- **Status**: `backlog` (in ROADMAP), `new` (not yet tracked), `partial`.
+Browser-specific work is intentionally not the focus of this file. ForkTTY's
+browser feature remains source-only and tracked separately in `ROADMAP.md`.
 
----
+## Current Parity Snapshot
 
-## 1. Sidebar: PR status + listening ports
+- Sidebar PR and listening-port hints: done for the local GTK sidebar.
+- Socket events and capabilities: done; raw rpc/topology parity is still
+  incomplete.
+- Browser panes/import/profiles: partial and source-only; excluded here except
+  where a non-browser cmux feature depends on the same infrastructure.
+- SSH remote workspaces: partial. ForkTTY can spawn `ssh <host>` surfaces and
+  restore them, but cmux has deeper remote-daemon semantics.
+- Agent hooks/status: partial. ForkTTY has hook templates, status/progress/log
+  metadata, notifications, and now per-surface persisted agent session ids,
+  lifecycle, last activity, resume health, explicit resume, and read-only
+  reclaim planning.
 
-- **Impact**: high · **Cost**: low · **Status**: **done** (listening ports + PR status)
-- cmux sidebar rows show git branch, **linked PR status/number**, working directory,
-  **listening ports**, and latest notification text.
-- ForkTTY sidebar rows show git branch/worktree, linked PR status/number when enabled, working
-  directory, listening ports, unread state, and latest metadata/notification text.
-- Scope:
-  - Listening ports: enumerate per-pane child process listeners (e.g. parse `/proc/net/tcp*`
-    against the pane child PID tree) and render as sidebar chips.
-  - PR status: when enabled, resolve branch -> PR via `gh` CLI if present, or skip when absent.
-    Cache + bound.
-- No new heavy dependency. Pure Rust + existing sidebar model.
+## Priority Non-Browser Gaps
 
-## 2. Socket: `events` stream + `capabilities`
+### 1. Agent Resume And Hibernation
 
-- **Impact**: high · **Cost**: medium · **Status**: **done** (events stream + capabilities)
-- cmux: `cmux events` streams reconnectable newline-delimited JSON of workspace/surface/focus
-  changes; `cmux capabilities` exposes a discovery surface; `cmux rpc <method>` raw passthrough;
-  `cmux top` resource usage.
-- ForkTTY now ships `events.subscribe` (long-lived NDJSON stream of workspace/surface/focus/
-  status/progress/notification/ports/PR changes, computed by a source-agnostic snapshot diff)
-  and `system.capabilities` (version + advertised methods). CLI: `forktty events`,
-  `forktty capabilities`. `rpc` passthrough and `top` remain out of scope.
-- Unblocks external automation and editor/MCP integrations.
+- **Impact**: high. **Cost**: medium-high. **Status**: partial.
+- cmux has first-class agent session models, hibernation/reclaim paths, resume
+  controls, and provider wrappers around Claude/Codex/OpenCode workflows.
+- OMX/OMC also persist provider session ids and workflow state to make Stop
+  continuation/resume decisions across hooks, CLI, and HUD.
+- ForkTTY now persists `{agent, session_id, resume_cwd, lifecycle,
+  last_activity_ms}` on a surface when hook `metadata.set_status` carries
+  `hook_session_id` (and `resume_cwd` when the hook reports an existing cwd), exposes
+  that inventory and hook-derived lifecycle through `agent.list`,
+  `forktty agents`, and MCP `agent_list`, reports local resume readiness through
+  `agent.health`, `forktty agent-health`, and MCP `agent_health`, can explicitly
+  resume a persisted Codex/Claude/Gemini/OpenCode/Antigravity session into a
+  new tab through argv-only provider commands, auto-resumes supported persisted
+  agent terminal surfaces during session restore using the saved resume cwd as a
+  provider flag where available or as the child process cwd otherwise (Codex can
+  also infer cwd from local `session_meta` JSONL for older ForkTTY session
+  files), and exposes read-only reclaim
+  candidates through `agent.reclaim.plan`, `forktty agent-reclaim-plan`, and MCP
+  `agent_reclaim_plan`.
+- Remaining scope: actual stop/hibernate, configurable automatic reclaim,
+  provider-side stale-session checks beyond local command/PATH readiness,
+  richer UI controls, and explicit suspended-state semantics.
 
-## 3. Built-in browser pane (scriptable)
+### 2. Workflow State, Goals, And Memory
 
-- **Impact**: high · **Cost**: high · **Status**: **SP1+SP2 done**; **SP3 P1/P2 done** (persistent WebKit sessions + profiles); **SP3 P3 core/socket/CLI done** (history/bookmark stores + socket verbs + CLI mirrors); **SP3 P4 done** (browser import); P3 GTK address-bar completion/visit-recording still pending
-- cmux: browser pane with a scriptable API ported from
-  [agent-browser](https://github.com/vercel-labs/agent-browser) (Apache-2.0): accessibility-tree
-  snapshot, element refs, click, fill forms, evaluate JS. Plus cookie/history import from 20+
-  browsers and browser profiles.
-- ForkTTY SP1 has a browser pane as a new surface kind (`SurfaceKind::Browser`) embedding WebKitGTK6 behind the opt-in `browser` cargo feature. Alpha release artifacts ship GTK/Ghostty-only, so the browser remains source-only while the core agent orchestration path stabilizes. The source build exposes socket verbs `browser.open`/`browser.navigate`, an in-pane address bar (back/forward/reload), and `forktty browser open|navigate` CLI. SP2 adds the scriptable socket verbs (`browser.snapshot`/`browser.click`/`browser.fill`/`browser.eval`) plus socket-driven `back`/`forward`/`reload` via a socket->GTK command channel, with `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (element refs come from a pragmatic ARIA DOM walk; full AT-SPI is not claimed). SP3 P1/P2 adds persistent per-profile WebKit sessions plus `browser.profile.*` socket/CLI verbs; P3 adds core history/bookmark stores, socket verbs, and CLI mirrors, with GTK completion/visit-recording still pending. P4 adds browser import via the `forktty-import` crate, `browser.import.discover`/`preview`/`run` socket/CLI verbs, and a Settings "Import Browser Data" dialog.
-- Scope (Linux):
-  - Embed WebKitGTK 6 (`webkitgtk-6.0`) as a pane kind alongside Ghostty-backed terminal.
-  - Expose a socket verb set mirroring agent-browser (`open`, `navigate`, `snapshot`, `click`, `fill`, `eval`).
-  - Defer external browser import; ship read/navigate/script/profile first.
+- **Impact**: high. **Cost**: medium.
+- OMX/OMC treat project-local `.omx/` / `.omc/` directories as a control plane:
+  per-mode/per-session state, goal/spec artifacts, ledgers, session search,
+  notepads, project memory, wiki/session capture, and compaction recovery.
+- ForkTTY has process session restore and metadata logs, but no durable
+  workflow-state/artifact layer for agent modes.
+- Scope: provider-neutral state roots, per-surface/session bindings, explicit
+  workflow phases, bounded artifact files, session search/replay, and
+  compaction-resistant notes that can be surfaced through hooks/MCP.
 
-## 4. SSH remote workspaces
+### 3. Team Orchestration Runtime
 
-- **Impact**: medium · **Cost**: medium · **Status**: **done** (core); remote browser routing + scp drag-upload deferred
-- cmux: `cmux ssh user@remote` opens a workspace on a remote host; browser panes route through the
-  remote network so localhost works; drag-image uploads via scp.
-- ForkTTY ships `SurfaceKind::Ssh` panes spawned as `ssh <host>`, the `workspace.create_ssh` socket
-  method, a `forktty ssh` CLI, sidebar `ssh:<host>` hints, and respawn-on-restore for remote
-  workspaces. Remote browser routing and scp drag-image uploads remain deferred until #3's
-  remaining wiring lands.
+- **Impact**: high. **Cost**: high.
+- cmux has teammate/provider launchers; OMX/OMC go deeper with leader/worker
+  state, task DAGs, mailbox/dispatch, worker heartbeat/status, tmux-backed
+  workers, idle nudges, shutdown, and optional worktree-backed workers.
+- ForkTTY can create panes/worktrees and send text, but it does not yet own a
+  team lifecycle or worker protocol.
+- Scope: leader/worker model, task files, mailbox/inbox, dispatch
+  confirmations, worker health, state/event summaries, safe shutdown, and
+  mapping workers to ForkTTY panes/worktrees instead of tmux panes.
 
-## 5. Custom project commands (`forktty.json`)
+### 4. Feed And Approval Bridge
 
-- **Impact**: medium · **Cost**: low · **Status**: new
-- cmux: `cmux.json` defines project-specific actions that appear in the command palette.
-- Scope: read a repo-local `forktty.json` (bounded, validated argv, no `sh -c`) and inject entries
-  into the existing command palette. Reuse the notification_command argv-execution model.
+- **Impact**: high. **Cost**: medium.
+- cmux has a feed model for agent activity and approvals, not just a latest
+  status string.
+- OMC adds permission handlers, subagent tracking, persistent-mode Stop
+  enforcement, and action-oriented hook context.
+- ForkTTY has notifications, metadata logs, and a notification panel, but no
+  normalized approval/activity feed with actionable permission history.
+- Scope: durable in-process feed entries, permission-request actions, filtering
+  by workspace/surface/provider, and socket/event exposure.
 
-## 6. Deeper agent integration
+### 5. Remote Daemon And SSH Depth
 
-- **Impact**: medium · **Cost**: medium · **Status**: new
-- cmux: `claude-teams` launches Claude Code teammate mode as native splits; `omx`/`omc`/`omo`
-  wrappers integrate Codex/Claude/OpenCode with panes.
-- ForkTTY ships hook templates but no team/launcher command.
-- Scope: a `forktty teams` (or per-agent launcher) that spawns split surfaces wired to the existing
-  status/notification metadata pipeline.
+- **Impact**: high for remote users. **Cost**: high.
+- cmux remote support includes a remote daemon spec, reconnect/disconnect
+  behavior, persistent remote PTY/session ownership, and CLI relay concepts.
+- ForkTTY currently launches plain local `ssh <host>` surfaces.
+- Scope: remote helper lifecycle, auth/ownership checks, reconnection model,
+  remote command routing, remote session metadata, and failure recovery.
 
-## 7. Ghostty config compatibility
+### 6. Project Actions And Layout Config
 
-- **Impact**: low-medium · **Cost**: low · **Status**: backlog (theme import only)
-- cmux reads `~/.config/ghostty/config` for themes/fonts/colors.
-- Scope: import Ghostty theme/font/color keys into the Ghostty palette on startup; map the subset Ghostty
-  supports, ignore the rest.
+- **Impact**: medium. **Cost**: low-medium.
+- cmux reads project config for actions and layout/workspace behavior.
+- OMX/OMC also use project-local workflow files for prompts, skills, agents,
+  plans, specs, notes, and runtime configuration.
+- ForkTTY has global config and worktree layout settings, but no repo-local
+  action/skill/workflow manifest.
+- Scope: bounded `forktty.json`, argv-only commands, command-palette entries,
+  socket exposure, per-workspace layout hints, and a deliberately small project
+  guidance manifest before any plugin API.
 
----
+### 7. Right Sidebar, Dock, And Custom Sidebars
 
-## Out of scope / non-goals
+- **Impact**: medium-high. **Cost**: high.
+- cmux has a richer side-panel ecosystem: files/find/vault/sessions/feed/dock
+  style areas plus custom sidebar concepts.
+- ForkTTY has a workspace sidebar, notification panel, settings, and worktree
+  dialog, but no extensible right sidebar or dock model.
+- Scope: panel container, persisted active panel, file/find/feed panels first,
+  then extension points only after concrete built-in panels prove the API.
 
-- macOS/Windows builds (ForkTTY is Linux-only by design).
-- Cloud VM backend + account/auth + vault (cmux `vm`/`cloud`/`auth`/`vault`): conflicts with
-  ForkTTY's local-first posture and no telemetry/update-checks by default.
-- Optional user-enabled tools, such as PR resolution through `gh`, may contact external services.
-- libghostty GPU renderer (ForkTTY uses Ghostty intentionally).
-- Sparkle auto-update (ForkTTY ships no update-check by design; AppImage/.deb handle distribution).
+### 8. Workspace Organization
+
+- **Impact**: medium. **Cost**: medium.
+- cmux supports workspace grouping, pinning/collapse/reorder style workflows.
+- ForkTTY supports workspace order and selection, but not groups or pin/collapse
+  semantics.
+- Scope: model-level groups, sidebar interactions, session persistence, socket
+  verbs, and event stream changes.
+
+### 9. Multi-Window And Routing
+
+- **Impact**: medium. **Cost**: high.
+- cmux can route work across multiple windows/views.
+- ForkTTY is currently a DBus single-instance GTK app with one primary window.
+- Scope: window identity in the model, focus routing, socket target selectors,
+  session persistence, and safe single-instance behavior.
+
+### 10. CLI / Topology / tmux Parity
+
+- **Impact**: medium. **Cost**: medium-high.
+- cmux CLI has broader topology and terminal-control verbs (`read-screen`,
+  `send-key`, `top`, `tree`, move/reorder/split-off/capture/pipe/wait/swap/join
+  style operations).
+- OMX defines an adapter-neutral mux boundary around resolve-target,
+  send-input, capture-tail, inspect-liveness, attach, and detach, with tmux only
+  as the first adapter.
+- ForkTTY covers core workspace/surface/pane-tab/metadata/worktree/browser
+  verbs, but not full topology inspection or tmux-like manipulation.
+- Scope: read-only topology first (`tree`, `top`, capture/read), then mutating
+  verbs with clear model invariants and tests.
+
+### 11. Prompt Composer / TextBox
+
+- **Impact**: medium. **Cost**: medium.
+- cmux has TextBox/prompt-composition surfaces.
+- OMX/OMC add prompt/workflow skills such as deep interview, planning,
+  ultragoal, and provider/team launchers.
+- ForkTTY sends text directly to terminals and has no first-class draft prompt
+  composer.
+- Scope: reusable prompt editor, target surface selection, send/append actions,
+  and session-safe drafts if needed.
+
+### 12. Agent/Skill Catalog And Guidance Packs
+
+- **Impact**: medium. **Cost**: medium.
+- OMX/OMC ship installable agents, skills, commands, prompt templates, model
+  routing hints, and project/user-scoped reusable guidance.
+- ForkTTY installs hooks/MCP registrations, but it has no curated workflow
+  catalog or project-scoped skill manifest.
+- Scope: start with import/discovery of project guidance, then optional
+  provider-specific workflow packs. Keep execution argv-safe and avoid making
+  ForkTTY depend on one agent vendor.
+
+### 13. HUD / Statusline Export
+
+- **Impact**: medium. **Cost**: low-medium.
+- OMC has a statusline HUD for active mode, agents, token/context health, tasks,
+  and update/install diagnostics.
+- ForkTTY has native in-app status, sidebar metadata, a read-only
+  agent-session inventory, and a compact workspace/status/progress/session
+  summary through `status.summary`, `forktty statusline`, and MCP
+  `status_summary`.
+- Remaining scope: active-mode, worker, token, health, and notification fields
+  when hooks provide them, plus provider-specific statusline packaging.
+
+### 14. File And Review Panels
+
+- **Impact**: medium. **Cost**: medium-high.
+- cmux includes file explorer/preview, markdown, diff, and comment/review
+  modules.
+- ForkTTY intentionally focuses on terminal/worktree/socket today.
+- Scope: file explorer and markdown preview before diff/comment review, with
+  git/worktree safety checks reused from existing code.
+
+### 15. Polish And Configuration Depth
+
+- **Impact**: medium. **Cost**: ongoing.
+- cmux has deeper shortcut/theme/preferences/update/product plumbing.
+- ForkTTY has native settings and several validated config fields, but full
+  theme customization, richer shortcut editing, and Ghostty config import are
+  still backlog.
+
+## Non-Goals
+
+- macOS and Windows support.
+- Cloud VM backend, account/auth, hosted vault, telemetry, and product-service
+  update checks.
+- Bundling browser support into release artifacts before the source-only
+  browser feature is considered stable.
+- Treating the local user-owned socket as a hard same-user security boundary.

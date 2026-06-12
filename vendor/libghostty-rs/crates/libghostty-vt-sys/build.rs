@@ -107,7 +107,7 @@ fn build_vendored(link_mode: LinkMode) {
     let host = env::var("HOST").expect("HOST must be set");
 
     // Locate ghostty source: env override > fetch into OUT_DIR.
-    let ghostty_dir = match env::var("GHOSTTY_SOURCE_DIR") {
+    let (ghostty_dir, apply_forktty_patches) = match env::var("GHOSTTY_SOURCE_DIR") {
         Ok(dir) => {
             let p = PathBuf::from(dir);
             assert!(
@@ -115,10 +115,13 @@ fn build_vendored(link_mode: LinkMode) {
                 "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
                 p.display()
             );
-            p
+            (p, false)
         }
-        Err(_) => fetch_ghostty(&out_dir),
+        Err(_) => (fetch_ghostty(&out_dir), true),
     };
+    if apply_forktty_patches {
+        apply_forktty_ghostty_patches(&ghostty_dir);
+    }
 
     // Build libghostty-vt via zig.
     let install_prefix = out_dir.join("ghostty-install");
@@ -321,6 +324,108 @@ fn zig_optimize_mode() -> &'static str {
         Ok("s") | Ok("z") => "ReleaseSmall",
         _ => "ReleaseFast",
     }
+}
+
+fn apply_forktty_ghostty_patches(ghostty_dir: &Path) {
+    patch_pagelist_initial_cursor_wrap_count(ghostty_dir);
+    patch_pagelist_cursor_wrap_count(ghostty_dir);
+    patch_screen_resize_cursor_pin(ghostty_dir);
+}
+
+fn patch_pagelist_initial_cursor_wrap_count(ghostty_dir: &Path) {
+    const BEFORE: &str = r#"            var row_it = p.rowIterator(.left_up, active_pin);
+            while (row_it.next()) |next| {
+                const row = next.rowAndCell().row;
+                if (row.wrap_continuation) wrapped += 1;
+            }
+"#;
+    const AFTER: &str = r#"            var row_it = p.rowIterator(.left_up, active_pin);
+            // FORKTTY PATCH: cursor-pin walking can cycle past the page list
+            // and overflow `wrapped` during GTK maximize. It can never need
+            // to inspect more than total_rows.
+            var row_limit = self.total_rows;
+            while (row_limit > 0) : (row_limit -= 1) {
+                const next = row_it.next() orelse break;
+                const row = next.rowAndCell().row;
+                if (row.wrap_continuation) wrapped += 1;
+            }
+"#;
+
+    let path = ghostty_dir.join("src").join("terminal").join("PageList.zig");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    if source.contains(AFTER) {
+        return;
+    }
+    let patched = source.replacen(BEFORE, AFTER, 1);
+    assert_ne!(
+        patched, source,
+        "failed to apply ForkTTY PageList.zig initial cursor wrap-count patch to {}",
+        path.display()
+    );
+    std::fs::write(&path, patched)
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
+}
+
+fn patch_pagelist_cursor_wrap_count(ghostty_dir: &Path) {
+    const BEFORE: &str = r#"            var row_it = c.tracked_pin.rowIterator(.left_up, active_pin);
+            while (row_it.next()) |next| {
+                const row = next.rowAndCell().row;
+                if (row.wrap_continuation) wrapped += 1;
+            }
+"#;
+    const AFTER: &str = r#"            var row_it = c.tracked_pin.rowIterator(.left_up, active_pin);
+            // FORKTTY PATCH: after column reflow, cursor-pin walking can
+            // cycle past the page list and overflow `wrapped` during GTK
+            // maximize. It can never need to inspect more than total_rows.
+            var row_limit = self.total_rows;
+            while (row_limit > 0) : (row_limit -= 1) {
+                const next = row_it.next() orelse break;
+                const row = next.rowAndCell().row;
+                if (row.wrap_continuation) wrapped += 1;
+            }
+"#;
+
+    let path = ghostty_dir.join("src").join("terminal").join("PageList.zig");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    if source.contains(AFTER) {
+        return;
+    }
+    let patched = source.replacen(BEFORE, AFTER, 1);
+    assert_ne!(
+        patched, source,
+        "failed to apply ForkTTY PageList.zig cursor wrap-count patch to {}",
+        path.display()
+    );
+    std::fs::write(&path, patched)
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
+}
+
+fn patch_screen_resize_cursor_pin(ghostty_dir: &Path) {
+    const BEFORE: &str = r#"            .pin = self.cursor.page_pin,
+"#;
+    const AFTER: &str = r#"            // FORKTTY PATCH: use a temporary tracked pin for resize
+            // preservation. The live cursor pin is already tracked and is
+            // reloaded below; also using it as the preservation pin can leave
+            // the wrap counter walking stale rows during large GTK resizes.
+            .pin = null,
+"#;
+
+    let path = ghostty_dir.join("src").join("terminal").join("Screen.zig");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    if source.contains(AFTER) {
+        return;
+    }
+    let patched = source.replacen(BEFORE, AFTER, 1);
+    assert_ne!(
+        patched, source,
+        "failed to apply ForkTTY Screen.zig cursor pin patch to {}",
+        path.display()
+    );
+    std::fs::write(&path, patched)
+        .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
 }
 
 /// Clone ghostty at the pinned commit into OUT_DIR/ghostty-src.

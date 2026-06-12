@@ -159,6 +159,20 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "ping"
             | "capabilities"
             | "events"
+            | "agents"
+            | "agent-list"
+            | "agent:list"
+            | "agent-health"
+            | "agent:health"
+            | "agent-reclaim-plan"
+            | "agent:reclaim-plan"
+            | "agent.reclaim.plan"
+            | "resume-agent"
+            | "agent-resume"
+            | "agent:resume"
+            | "statusline"
+            | "status-line"
+            | "status:summary"
             | "ssh"
     )
 }
@@ -1089,6 +1103,36 @@ mod tests {
         assert!(is_socket_cli_command("select-tab"));
         assert!(is_socket_cli_command("pane-select-tab"));
         assert!(is_socket_cli_command("pane:select-tab"));
+    }
+
+    #[test]
+    fn agent_commands_are_recognized_as_socket_cli_commands() {
+        for command in [
+            "agents",
+            "agent-list",
+            "agent:list",
+            "agent-health",
+            "agent:health",
+            "agent-reclaim-plan",
+            "agent:reclaim-plan",
+            "agent.reclaim.plan",
+            "resume-agent",
+            "agent-resume",
+            "agent:resume",
+            "statusline",
+            "status-line",
+            "status:summary",
+        ] {
+            assert!(is_socket_cli_command(command), "{command}");
+        }
+        assert_eq!(
+            parse::<_, &str>(["forktty", "agent-reclaim-plan", "--min-idle-ms", "5000"]),
+            CliAction::SocketCli(vec![
+                OsString::from("agent-reclaim-plan"),
+                OsString::from("--min-idle-ms"),
+                OsString::from("5000")
+            ])
+        );
     }
 
     #[test]
