@@ -26,15 +26,7 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     if basename == "env" {
-        // Skip env's own flags and VAR=val assignments; the next token is the
-        // real program.
-        if let Some(position) = args.iter().position(|arg| {
-            let arg = arg.as_ref();
-            !arg.starts_with('-') && !arg.contains('=')
-        }) {
-            return is_shell_trampoline(args[position].as_ref(), &args[position + 1..]);
-        }
-        return false;
+        return env_invokes_shell_trampoline(args);
     }
     let is_shell = matches!(basename, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh")
         || basename.ends_with("sh");
@@ -53,6 +45,55 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
         }
     }
     false
+}
+
+fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--" {
+            return args
+                .get(index + 1)
+                .is_some_and(|program| is_shell_trampoline(program.as_ref(), &args[index + 2..]));
+        }
+        if matches!(arg, "-S" | "--split-string") {
+            return args.get(index + 1).is_some_and(|value| {
+                split_env_string_invokes_shell(value.as_ref(), &args[index + 2..])
+            });
+        }
+        if let Some(value) = arg.strip_prefix("--split-string=") {
+            return split_env_string_invokes_shell(value, &args[index + 1..]);
+        }
+        if matches!(arg, "-u" | "--unset" | "-C" | "--chdir") {
+            index += 2;
+            continue;
+        }
+        if arg.starts_with("--unset=") || arg.starts_with("--chdir=") {
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || arg.contains('=') {
+            index += 1;
+            continue;
+        }
+        return is_shell_trampoline(arg, &args[index + 1..]);
+    }
+    false
+}
+
+fn split_env_string_invokes_shell<S: AsRef<str>>(value: &str, tail: &[S]) -> bool {
+    let Ok(parts) = shell_words::split(value) else {
+        return false;
+    };
+    let Some((program, split_args)) = parts.split_first() else {
+        return false;
+    };
+    let args = split_args
+        .iter()
+        .map(String::as_str)
+        .chain(tail.iter().map(AsRef::as_ref))
+        .collect::<Vec<_>>();
+    is_shell_trampoline(program, &args)
 }
 
 /// Returns true when `path` is an absolute path to a regular executable file.
@@ -187,6 +228,53 @@ mod tests {
             &["notify-send", "-c", "x"]
         ));
         assert!(!is_shell_trampoline("/usr/bin/env", &["FOO=bar"]));
+    }
+
+    #[test]
+    fn shell_trampoline_unwraps_env_options_with_values() {
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-u", "PATH", "sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["--unset=PATH", "bash", "-lc", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &[
+                "--ignore-environment",
+                "--unset",
+                "HOME",
+                "zsh",
+                "-ic",
+                "echo hi"
+            ]
+        ));
+    }
+
+    #[test]
+    fn shell_trampoline_unwraps_env_split_string() {
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-S", "sh -c 'echo hi'"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-S", "sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["--split-string=bash -lc 'echo hi'"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["--split-string=sh", "-c", "echo hi"]
+        ));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/env",
+            &["-S", "notify-send -c x"]
+        ));
     }
 
     #[test]
