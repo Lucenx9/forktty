@@ -163,7 +163,13 @@ impl GhosttyTerminalWidget {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
                     Ok(frame) => {
-                        let viewport = runtime.borrow().viewport_position().ok();
+                        let viewport = runtime
+                            .borrow_mut()
+                            .scrollback_indicator_position()
+                            .unwrap_or_else(|err| {
+                                eprintln!("Failed to query scrollback indicator: {err}");
+                                None
+                            });
                         let range = selection.borrow().normalized_range();
                         let link_range = hover_link.borrow().as_ref().map(|l| (l.start, l.end));
                         renderer.draw_frame(
@@ -813,14 +819,18 @@ impl GhosttyTerminalWidget {
             let Some(widget) = widget.upgrade() else {
                 return;
             };
-            let state = VisualBellFlash {
+            let previous = VisualBellFlash {
                 active: widget.visual_bell_active.get(),
                 generation: widget.visual_bell_generation.get(),
             };
-            let state = expire_visual_bell_flash(state, expiry_generation);
-            widget.visual_bell_active.set(state.active);
-            widget.visual_bell_generation.set(state.generation);
-            widget.drawing_area.queue_draw();
+            let state = expire_visual_bell_flash(previous, expiry_generation);
+            // A newer flash supersedes this timer; skip the redraw so bell
+            // storms don't queue a stack of no-op full-pane draws.
+            if state != previous {
+                widget.visual_bell_active.set(state.active);
+                widget.visual_bell_generation.set(state.generation);
+                widget.drawing_area.queue_draw();
+            }
         });
     }
 

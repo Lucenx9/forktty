@@ -24,6 +24,11 @@ pub(super) struct TerminalRuntime {
     last_cell_width_px: u32,
     last_cell_height_px: u32,
     exit_reported: bool,
+    // True once a scroll call may have left the viewport above the bottom.
+    // Gates the per-draw scrollback-indicator query: libghostty's scrollbar
+    // lookup is expensive (arbitrary pins), and the draw func runs on every
+    // PTY pump and cursor blink.
+    viewport_maybe_scrolled: bool,
     #[cfg(test)]
     pty_writes: Vec<Vec<u8>>,
     #[cfg(test)]
@@ -86,6 +91,7 @@ impl TerminalRuntime {
             last_cell_width_px: DEFAULT_CELL_WIDTH_PX,
             last_cell_height_px: DEFAULT_CELL_HEIGHT_PX,
             exit_reported: false,
+            viewport_maybe_scrolled: false,
             #[cfg(test)]
             pty_writes: Vec::new(),
             #[cfg(test)]
@@ -148,7 +154,11 @@ impl TerminalRuntime {
             .core
             .scroll_viewport_lines(delta)
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
-        Ok(!events.is_empty())
+        let moved = !events.is_empty();
+        if moved {
+            self.viewport_maybe_scrolled = true;
+        }
+        Ok(moved)
     }
 
     pub(super) fn scroll_viewport_to_bottom(&mut self) -> Result<bool, TerminalError> {
@@ -156,7 +166,11 @@ impl TerminalRuntime {
             .core
             .scroll_viewport_to_bottom()
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
-        Ok(!events.is_empty())
+        let moved = !events.is_empty();
+        if moved {
+            self.viewport_maybe_scrolled = true;
+        }
+        Ok(moved)
     }
 
     pub(super) fn scroll_viewport_to_top(&mut self) -> Result<bool, TerminalError> {
@@ -164,7 +178,11 @@ impl TerminalRuntime {
             .core
             .scroll_viewport_to_top()
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
-        Ok(!events.is_empty())
+        let moved = !events.is_empty();
+        if moved {
+            self.viewport_maybe_scrolled = true;
+        }
+        Ok(moved)
     }
 
     pub(super) fn is_alternate_screen(&self) -> Result<bool, TerminalError> {
@@ -292,6 +310,27 @@ impl TerminalRuntime {
         self.core
             .viewport_position()
             .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
+    /// Viewport position for the per-draw scrollback indicator, or `None`
+    /// while the viewport sits at the bottom. Skips the backend query
+    /// entirely unless a scroll call may have moved the viewport, so the
+    /// steady state (PTY pump + cursor blink redraws) costs nothing.
+    pub(super) fn scrollback_indicator_position(
+        &mut self,
+    ) -> Result<Option<TerminalViewportPosition>, TerminalError> {
+        if !self.viewport_maybe_scrolled {
+            return Ok(None);
+        }
+        let position = self.viewport_position()?;
+        // At-bottom mirrors the renderer's hide condition in
+        // `scrollback_indicator_geometry`; once hidden, stop querying until
+        // the next scroll.
+        if position.top.saturating_add(position.rows) >= position.total {
+            self.viewport_maybe_scrolled = false;
+            return Ok(None);
+        }
+        Ok(Some(position))
     }
 
     pub(super) fn render_frame(&mut self) -> Result<TerminalFrame, TerminalError> {
@@ -634,6 +673,53 @@ mod tests {
         assert!(scrolled.contains("one"));
         assert_ne!(scrolled, bottom);
         assert!(runtime.pty_writes().is_empty());
+    }
+
+    #[test]
+    fn scrollback_indicator_position_is_none_at_bottom_even_as_output_grows() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 12, rows: 2 }).unwrap();
+
+        assert_eq!(runtime.scrollback_indicator_position().unwrap(), None);
+
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour")
+            .unwrap();
+
+        assert_eq!(runtime.scrollback_indicator_position().unwrap(), None);
+    }
+
+    #[test]
+    fn scrollback_indicator_position_tracks_output_while_scrolled_back() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 12, rows: 2 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour")
+            .unwrap();
+
+        assert!(runtime.scroll_viewport_lines(-10).unwrap());
+        assert!(runtime.scrollback_indicator_position().unwrap().is_some());
+
+        runtime.feed_pty_bytes(b"five\r\nsix\r\nseven").unwrap();
+
+        assert!(runtime.scrollback_indicator_position().unwrap().is_some());
+    }
+
+    #[test]
+    fn scrollback_indicator_position_resets_after_returning_to_bottom() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 12, rows: 2 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour")
+            .unwrap();
+        runtime.scroll_viewport_lines(-10).unwrap();
+        assert!(runtime.scrollback_indicator_position().unwrap().is_some());
+
+        assert!(runtime.scroll_viewport_to_bottom().unwrap());
+
+        assert_eq!(runtime.scrollback_indicator_position().unwrap(), None);
+        // The first at-bottom query clears the flag; later calls stay None.
+        assert_eq!(runtime.scrollback_indicator_position().unwrap(), None);
     }
 
     #[test]

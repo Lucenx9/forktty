@@ -62,6 +62,9 @@ impl RendererColor {
     };
 }
 
+// Mirrors the brand accent in style.css (`@define-color accent_color`);
+// keep the two in sync when retheming. CSS can't be shared here because
+// GTK 4.14 drops custom properties.
 const VISUAL_BELL_ACCENT: RendererColor = RendererColor {
     red: 0xe8,
     green: 0x87,

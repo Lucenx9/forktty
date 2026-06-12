@@ -20,8 +20,8 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 
 ## Motion
 
-- Use one motion grammar: 200ms ease-out.
-- Use it for revealers, transient feedback, and lightweight state changes.
+- Use the established durations, all ease-out: 90ms for CSS state transitions (hover, focus, color), 150ms for transient feedback (visual bell flash, scrollbar fade), and 110-180ms for structural motion (settings crossfade 110ms, pane header revealer 180ms).
+- New animations pick one of these durations instead of introducing another.
 - Avoid competing animation durations or attention-grabbing loops.
 - Timers and animation callbacks must hold weak refs so closed panes can die.
 
