@@ -13,7 +13,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Closed terminal panes no longer stay alive through GTK controller/search/context-menu reference cycles, so their PTY child and UI timers can be dropped.
-- Worktree merge failures after `repo.merge()` now abort the in-progress merge and clean up git state before returning an error.
+- Worktree merge failures now restore the checkout before returning an error, including failed fast-forward ref updates and failures after `repo.merge()`. If the merge commit was already created, a recovered finalization error no longer reports the merge as failed.
 - Large PTY writes now retry `poll()` interrupted by signals instead of treating `EINTR` as a fatal partial-paste error.
 - Config recovery no longer quarantines a valid config file on transient I/O errors such as permission/read failures.
 

@@ -326,8 +326,9 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
     }
 
     if analysis.contains(MergeAnalysis::ANALYSIS_FASTFORWARD) {
-        let head_ref_name = repo
-            .head()?
+        let head = repo.head()?;
+        let original_head_oid = head.peel_to_commit()?.id();
+        let head_ref_name = head
             .name()
             .map_err(|_| WorktreeError::HeadHasNoName)?
             .to_string();
@@ -338,13 +339,23 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
         let mut checkout = git2::build::CheckoutBuilder::new();
         checkout.safe();
         repo.checkout_tree(&target, Some(&mut checkout))?;
-        let mut reference = repo.find_reference(&head_ref_name)?;
-        reference.set_target(
-            source_oid,
-            &format!("Fast-forward merge of '{branch_name}'"),
-        )?;
-        repo.set_head(&head_ref_name)?;
-        return Ok(format!("Fast-forward merged '{branch_name}'"));
+        let result = (|| -> Result<String, WorktreeError> {
+            let mut reference = repo.find_reference(&head_ref_name)?;
+            reference.set_target(
+                source_oid,
+                &format!("Fast-forward merge of '{branch_name}'"),
+            )?;
+            repo.set_head(&head_ref_name)?;
+            Ok(format!("Fast-forward merged '{branch_name}'"))
+        })();
+        if result.is_err() {
+            if let Err(restore_err) =
+                restore_failed_fast_forward(&repo, &head_ref_name, original_head_oid)
+            {
+                eprintln!("Failed to restore failed fast-forward checkout: {restore_err}");
+            }
+        }
+        return result;
     }
 
     if analysis.contains(MergeAnalysis::ANALYSIS_NORMAL) {
@@ -370,13 +381,10 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
                 &tree,
                 &[&head_commit, &source_commit],
             )?;
-            let mut checkout = git2::build::CheckoutBuilder::new();
-            checkout.safe();
-            repo.checkout_head(Some(&mut checkout))?;
-            repo.cleanup_state()?;
-            Ok(format!("Merged '{branch_name}' into HEAD"))
+            let finalize_result = checkout_head_safe_and_cleanup(&repo);
+            finish_successful_merge(&repo, &branch_name, finalize_result)
         })();
-        if result.is_err() {
+        if result.is_err() && repo.state() != git2::RepositoryState::Clean {
             if let Err(abort_err) = abort_pending_merge(&repo) {
                 eprintln!("Failed to abort incomplete worktree merge: {abort_err}");
             }
@@ -720,14 +728,52 @@ fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {
 }
 
 fn abort_pending_merge(repo: &Repository) -> Result<(), WorktreeError> {
-    let mut checkout = git2::build::CheckoutBuilder::new();
-    checkout.force();
-    let checkout_result = repo.checkout_head(Some(&mut checkout));
+    let checkout_result = force_checkout_head(repo);
     let cleanup_result = repo.cleanup_state();
     match (checkout_result, cleanup_result) {
         (Ok(_), Ok(_)) => Ok(()),
-        (Err(err), _) | (_, Err(err)) => Err(err.into()),
+        (Err(err), _) => Err(err),
+        (_, Err(err)) => Err(err.into()),
     }
+}
+
+fn force_checkout_head(repo: &Repository) -> Result<(), WorktreeError> {
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.force();
+    repo.checkout_head(Some(&mut checkout))?;
+    Ok(())
+}
+
+fn checkout_head_safe_and_cleanup(repo: &Repository) -> Result<(), WorktreeError> {
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.safe();
+    repo.checkout_head(Some(&mut checkout))?;
+    repo.cleanup_state()?;
+    Ok(())
+}
+
+fn finish_successful_merge(
+    repo: &Repository,
+    branch_name: &str,
+    finalize_result: Result<(), WorktreeError>,
+) -> Result<String, WorktreeError> {
+    if let Err(err) = finalize_result {
+        abort_pending_merge(repo)?;
+        eprintln!("Recovered after completed worktree merge finalization failed: {err}");
+    }
+    Ok(format!("Merged '{branch_name}' into HEAD"))
+}
+
+fn restore_failed_fast_forward(
+    repo: &Repository,
+    head_ref_name: &str,
+    original_head_oid: git2::Oid,
+) -> Result<(), WorktreeError> {
+    if let Ok(mut reference) = repo.find_reference(head_ref_name) {
+        let _ = reference.set_target(original_head_oid, "Rollback failed fast-forward merge");
+    }
+    let _ = repo.set_head(head_ref_name);
+    force_checkout_head(repo)
 }
 
 fn ensure_clean_source_worktree(repo: &Repository, selector: &str) -> Result<(), WorktreeError> {
@@ -1415,6 +1461,86 @@ mod tests {
             !dir.path().join("feature.txt").exists(),
             "checkout should be restored to HEAD"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fast_forward_merge_restores_checkout_when_ref_update_fails() {
+        let dir = make_repo();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "merge-ff-ref-failure",
+            "nested",
+        )
+        .unwrap();
+        commit_file(Path::new(&info.path), "feature.txt", "from branch\n");
+
+        let refs_heads = dir.path().join(".git/refs/heads");
+        let original_permissions = fs::metadata(&refs_heads).unwrap().permissions();
+        let mut locked_permissions = original_permissions.clone();
+        locked_permissions.set_mode(0o555);
+        fs::set_permissions(&refs_heads, locked_permissions).unwrap();
+        if fs::write(refs_heads.join("forktty-permission-check"), "check\n").is_ok() {
+            let _ = fs::remove_file(refs_heads.join("forktty-permission-check"));
+            fs::set_permissions(&refs_heads, original_permissions).unwrap();
+            return;
+        }
+
+        let result = merge(dir.path().to_str().unwrap(), &info.worktree_name);
+
+        fs::set_permissions(&refs_heads, original_permissions).unwrap();
+        assert!(result.is_err());
+        assert_eq!(status(dir.path().to_str().unwrap()).unwrap(), "clean");
+        assert!(
+            !dir.path().join("feature.txt").exists(),
+            "failed fast-forward must restore the checkout to HEAD"
+        );
+    }
+
+    #[test]
+    fn completed_merge_reports_success_after_recovered_finalization_failure() {
+        let dir = make_repo();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "merge-finalize-recovery",
+            "nested",
+        )
+        .unwrap();
+        commit_file(Path::new(&info.path), "feature.txt", "from branch\n");
+        commit_file(dir.path(), "main.txt", "from main\n");
+
+        let repo = Repository::open(dir.path()).unwrap();
+        let branch = repo.find_branch(&info.branch, BranchType::Local).unwrap();
+        let source_oid = branch.get().target().unwrap();
+        let annotated = repo.find_annotated_commit(source_oid).unwrap();
+        repo.merge(&[&annotated], None, None).unwrap();
+        let mut index = repo.index().unwrap();
+        assert!(!index.has_conflicts());
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        let source_commit = repo.find_commit(source_oid).unwrap();
+        let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "Merge branch 'merge-finalize-recovery'",
+            &tree,
+            &[&head_commit, &source_commit],
+        )
+        .unwrap();
+        let err = WorktreeError::Git(git2::Error::from_str("synthetic finalization failure"));
+
+        let result = finish_successful_merge(&repo, &info.branch, Err(err));
+
+        assert_eq!(
+            result.unwrap(),
+            format!("Merged '{}' into HEAD", info.branch)
+        );
+        assert_eq!(repo.state(), git2::RepositoryState::Clean);
+        assert_eq!(status(dir.path().to_str().unwrap()).unwrap(), "clean");
     }
 
     #[test]
