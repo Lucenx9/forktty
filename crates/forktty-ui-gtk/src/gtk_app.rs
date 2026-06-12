@@ -92,6 +92,7 @@ mod sidebar;
 mod socket_server;
 mod terminal_appearance;
 mod terminal_clipboard;
+mod terminal_geometry;
 mod terminal_input;
 mod terminal_links;
 mod terminal_renderer;

@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Terminal content now has balanced 8px inner padding so text does not touch pane edges.
 - Split terminal panes now dim unfocused panes slightly so the focused pane is easier to pick out.
 - Ctrl+click opens links: OSC 8 hyperlinks and plain `http(s)://`/`file://` URLs in the output (also when wrapped across lines). Hovering with Ctrl held shows a pointer cursor and underlines the target.
 - Middle-click pastes the PRIMARY selection (select text, middle-click to paste — the standard Linux flow); Shift+middle-click pastes even inside mouse-tracking apps.

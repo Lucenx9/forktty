@@ -1,3 +1,7 @@
+use super::terminal_geometry::{
+    padded_cell_for_position, padded_mouse_position, terminal_content_pixels,
+    terminal_grid_cells_for_allocation, terminal_grid_geometry, TerminalGridGeometry,
+};
 use super::terminal_links::url_at_point;
 use super::*;
 use forktty_terminal::ghostty::core::{
@@ -604,11 +608,12 @@ impl GhosttyTerminalWidget {
             let renderer = renderer.clone();
             drawing_area.connect_resize(move |area, width, height| {
                 let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-                if let Err(err) =
-                    runtime
-                        .borrow_mut()
-                        .resize_pixels(width, height, cell_width, cell_height)
-                {
+                if let Err(err) = runtime.borrow_mut().resize_pixels(
+                    terminal_content_pixels(width),
+                    terminal_content_pixels(height),
+                    cell_width,
+                    cell_height,
+                ) {
                     eprintln!("Failed to resize terminal runtime: {err}");
                 }
                 area.queue_draw();
@@ -895,8 +900,7 @@ struct TerminalMouseEventInput {
 
 #[derive(Debug, Clone, Copy)]
 struct TerminalMouseWidgetMetrics {
-    screen_width: i32,
-    screen_height: i32,
+    grid: TerminalGridGeometry,
     cell_width: i32,
     cell_height: i32,
 }
@@ -907,11 +911,23 @@ fn terminal_mouse_input_for_area(
     event: TerminalMouseEventInput,
 ) -> TerminalMouseInput {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+    let (cols, rows) = terminal_grid_cells_for_allocation(
+        area.allocated_width(),
+        area.allocated_height(),
+        cell_width,
+        cell_height,
+    );
     terminal_mouse_input(
         event,
         TerminalMouseWidgetMetrics {
-            screen_width: area.allocated_width(),
-            screen_height: area.allocated_height(),
+            grid: terminal_grid_geometry(
+                area.allocated_width(),
+                area.allocated_height(),
+                cols,
+                rows,
+                cell_width,
+                cell_height,
+            ),
             cell_width,
             cell_height,
         },
@@ -922,17 +938,18 @@ fn terminal_mouse_input(
     event: TerminalMouseEventInput,
     metrics: TerminalMouseWidgetMetrics,
 ) -> TerminalMouseInput {
+    let (x, y) = padded_mouse_position(&metrics.grid, event.x, event.y);
     TerminalMouseInput {
         action: event.action,
         button: event.button,
         modifiers: terminal_key_modifiers(event.modifiers),
         position: TerminalMousePosition {
-            x: event.x.max(0.0) as f32,
-            y: event.y.max(0.0) as f32,
+            x: x as f32,
+            y: y as f32,
         },
         size: TerminalMouseSize {
-            screen_width: positive_u32(metrics.screen_width),
-            screen_height: positive_u32(metrics.screen_height),
+            screen_width: positive_u32(metrics.grid.grid_width),
+            screen_height: positive_u32(metrics.grid.grid_height),
             cell_width: positive_u32(metrics.cell_width),
             cell_height: positive_u32(metrics.cell_height),
         },
@@ -970,10 +987,22 @@ fn selection_cell_for_position(
     y: f64,
 ) -> SelectionPoint {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-    SelectionPoint {
-        row: (y.max(0.0) / f64::from(cell_height.max(1))) as usize,
-        col: (x.max(0.0) / f64::from(cell_width.max(1))) as usize,
-    }
+    let (cols, rows) = terminal_grid_cells_for_allocation(
+        area.allocated_width(),
+        area.allocated_height(),
+        cell_width,
+        cell_height,
+    );
+    let geometry = terminal_grid_geometry(
+        area.allocated_width(),
+        area.allocated_height(),
+        cols,
+        rows,
+        cell_width,
+        cell_height,
+    );
+    let (col, row) = padded_cell_for_position(&geometry, x, y, cell_width, cell_height);
+    SelectionPoint { row, col }
 }
 
 fn finish_selection_drag(
@@ -2078,8 +2107,7 @@ mod mouse_tests {
                 any_button_pressed: true,
             },
             TerminalMouseWidgetMetrics {
-                screen_width: 800,
-                screen_height: 480,
+                grid: terminal_grid_geometry(800, 480, 78, 23, 10, 20),
                 cell_width: 10,
                 cell_height: 20,
             },
@@ -2095,12 +2123,12 @@ mod mouse_tests {
                 ctrl: false,
             }
         );
-        assert_eq!(input.position, TerminalMousePosition { x: 12.5, y: 24.0 });
+        assert_eq!(input.position, TerminalMousePosition { x: 2.5, y: 14.0 });
         assert_eq!(
             input.size,
             TerminalMouseSize {
-                screen_width: 800,
-                screen_height: 480,
+                screen_width: 780,
+                screen_height: 460,
                 cell_width: 10,
                 cell_height: 20,
             }

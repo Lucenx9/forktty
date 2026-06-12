@@ -1,3 +1,4 @@
+use super::terminal_geometry::{terminal_grid_geometry, TerminalGridGeometry};
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalCell, TerminalCellWidth, TerminalCursorStyle, TerminalFrame, TerminalRgb, TerminalRow,
@@ -228,16 +229,26 @@ impl TerminalRenderer {
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
         let metrics = self.cell_metrics(cr);
+        let grid = terminal_grid_geometry(
+            width,
+            height,
+            frame.cols,
+            frame.row_count,
+            metrics.width as i32,
+            metrics.height as i32,
+        );
+        let origin_x = f64::from(grid.origin_x);
+        let origin_y = f64::from(grid.origin_y);
 
         for (row_idx, row) in frame.rows.iter().enumerate() {
-            let y = row_idx as f64 * metrics.height;
+            let y = origin_y + row_idx as f64 * metrics.height;
             let selected_span = selection
                 .and_then(|(start, end)| {
                     selection_cols_for_row(start, end, row_idx, row.cells.len())
                 })
                 .map(|(from, to)| {
                     (
-                        from as f64 * metrics.width,
+                        origin_x + from as f64 * metrics.width,
                         (to - from) as f64 * metrics.width,
                     )
                 });
@@ -247,7 +258,7 @@ impl TerminalRenderer {
             for background in self.background_runs_for_frame_row(frame, row) {
                 background.background.set_cairo_source(cr);
                 cr.rectangle(
-                    background.start_col as f64 * metrics.width,
+                    origin_x + background.start_col as f64 * metrics.width,
                     y,
                     background.cell_span as f64 * metrics.width,
                     metrics.height,
@@ -266,7 +277,7 @@ impl TerminalRenderer {
                 let _ = cr.fill();
             }
 
-            self.draw_row_text(cr, frame, row, metrics, y, None, link_cols);
+            self.draw_row_text(cr, frame, row, metrics, origin_x, y, None, link_cols);
 
             if let Some((x, width)) = selected_span {
                 let _ = cr.save();
@@ -277,6 +288,7 @@ impl TerminalRenderer {
                     frame,
                     row,
                     metrics,
+                    origin_x,
                     y,
                     Some(self.palette.highlight_foreground),
                     link_cols,
@@ -297,7 +309,7 @@ impl TerminalRenderer {
                 }
                 return;
             }
-            self.draw_cursor_overlay(cr, &cursor, metrics);
+            self.draw_cursor_overlay(cr, &cursor, metrics, grid);
         }
         if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
             paint_unfocused_split_dim(cr, width, height);
@@ -522,6 +534,7 @@ impl TerminalRenderer {
         frame: &TerminalFrame,
         row: &TerminalRow,
         metrics: RendererCellMetrics,
+        origin_x: f64,
         y: f64,
         color: Option<RendererColor>,
         link_cols: Option<(usize, usize)>,
@@ -538,9 +551,9 @@ impl TerminalRenderer {
             }
             layout.set_font_description(Some(&font));
             layout.set_text(&run.text);
-            cr.move_to(run.start_col as f64 * metrics.width, y);
+            cr.move_to(origin_x + run.start_col as f64 * metrics.width, y);
             pangocairo::functions::show_layout(cr, &layout);
-            self.draw_text_decorations(cr, &run, metrics, y);
+            self.draw_text_decorations(cr, &run, metrics, origin_x, y);
         }
     }
 
@@ -549,9 +562,10 @@ impl TerminalRenderer {
         cr: &gtk::cairo::Context,
         run: &RendererTextRun,
         metrics: RendererCellMetrics,
+        origin_x: f64,
         y: f64,
     ) {
-        let x = run.start_col as f64 * metrics.width;
+        let x = origin_x + run.start_col as f64 * metrics.width;
         let width = run.cell_span as f64 * metrics.width;
         if run.underline {
             cr.move_to(x, y + metrics.height - 2.0);
@@ -570,9 +584,10 @@ impl TerminalRenderer {
         cr: &gtk::cairo::Context,
         cursor: &RendererCursorOverlay,
         metrics: RendererCellMetrics,
+        grid: TerminalGridGeometry,
     ) {
-        let x = cursor.col as f64 * metrics.width;
-        let y = cursor.row as f64 * metrics.height;
+        let x = f64::from(grid.origin_x) + cursor.col as f64 * metrics.width;
+        let y = f64::from(grid.origin_y) + cursor.row as f64 * metrics.height;
         cursor.background.set_cairo_source(cr);
         let width = cursor.cell_span as f64 * metrics.width;
         match cursor.style {
