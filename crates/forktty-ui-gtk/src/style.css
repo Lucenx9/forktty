@@ -2313,6 +2313,120 @@ entry.search.command-search:focus-within,
 }
 
 /* --------------------------------------------------------------------------
+ * Agent panel
+ * -------------------------------------------------------------------------- */
+
+.agent-badge {
+  background: #e88745;
+}
+
+.agent-panel .ft-dialog-header {
+  padding: 10px 14px 4px 14px;
+}
+
+.agent-panel .ft-dialog-body {
+  padding: 8px 14px 14px 14px;
+}
+
+.agent-list {
+  background: transparent;
+}
+
+.agent-list row {
+  background: transparent;
+  border-radius: 7px;
+  margin: 0 0 6px 0;
+  padding: 0;
+}
+
+.agent-row {
+  padding: 10px 10px;
+  border: 1px solid #292929;
+  border-radius: 7px;
+  background: #1b1b1b;
+}
+
+.agent-row.needs-input {
+  border-color: #3b2a1f;
+  background: #1f1b18;
+  box-shadow: inset 3px 0 0 #e88745;
+}
+
+.agent-row-top {
+  min-height: 22px;
+}
+
+.agent-name {
+  color: #d7d7d7;
+  font-weight: 700;
+  font-size: 0.96em;
+}
+
+.agent-title {
+  color: #b6b6b6;
+  font-size: 0.88em;
+}
+
+.agent-meta {
+  color: #777777;
+  font-size: 0.8em;
+}
+
+.agent-tail {
+  color: #8f8f8f;
+  font-family: monospace;
+  font-size: 0.78em;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #141414;
+}
+
+/* Needs-input rows show what the agent is waiting on, not raw output. */
+.agent-tail.attention {
+  color: #e8a87c;
+  background: #1f1813;
+}
+
+entry.agent-reply {
+  font-size: 0.85em;
+  min-height: 26px;
+  margin-top: 2px;
+}
+
+.agent-lifecycle {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-lifecycle.needs-input {
+  color: #17110c;
+  background: #e88745;
+}
+
+.agent-lifecycle.running {
+  color: #81a1c1;
+  background: #1c2732;
+}
+
+.agent-lifecycle.idle {
+  color: #7ca982;
+  background: #1f2a22;
+}
+
+.agent-lifecycle.unknown {
+  color: #9a9a9a;
+  background: #252525;
+}
+
+.agent-lifecycle.ended {
+  color: #8a8a8a;
+  background: #232323;
+}
+
+/* --------------------------------------------------------------------------
  * Empty state (used by sidebar, notifications, command palette)
  * -------------------------------------------------------------------------- */
 

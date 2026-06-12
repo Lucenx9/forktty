@@ -198,9 +198,9 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - OMC has a statusline HUD for active mode, agents, token/context health, tasks,
   and update/install diagnostics.
 - ForkTTY has native in-app status, sidebar metadata, a read-only
-  agent-session inventory, and a compact workspace/status/progress/session
-  summary through `status.summary`, `forktty statusline`, and MCP
-  `status_summary`.
+  agent-session inventory, a GTK Agent HUD, and a compact
+  workspace/status/progress/session summary through `status.summary`,
+  `forktty statusline`, and MCP `status_summary`.
 - Remaining scope: active-mode, worker, token, health, and notification fields
   when hooks provide them, plus provider-specific statusline packaging.
 

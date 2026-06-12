@@ -772,6 +772,144 @@ fn restored_agent_surface_respawns_with_resume_command() {
 }
 
 #[test]
+fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
+    let mut model = WorkspaceModel::new();
+    let main = model.create_workspace("main", "/tmp/project");
+    let codex_surface = main.focused_surface_id.clone();
+    assert!(model.set_surface_title(&codex_surface, "Codex session".to_string()));
+    assert!(model.set_surface_agent_session(
+        &codex_surface,
+        forktty_core::AgentKind::Codex,
+        "019ebd1f-870e-7053-9765-11facbd295d2",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &codex_surface,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+    assert!(model.set_surface_agent_session_last_activity_ms(&codex_surface, 1_700_000_000_000,));
+
+    let review = model.create_workspace("review", "/tmp/review");
+    let claude_surface = review.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &claude_surface,
+        forktty_core::AgentKind::ClaudeCode,
+        "a5643754-0a80-45bd-b591-c402dfdf16e1",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &claude_surface,
+        forktty_core::AgentSessionLifecycle::NeedsInput,
+    ));
+    assert!(model.set_surface_agent_session_permission_mode(&claude_surface, "bypassPermissions"));
+    assert!(model.set_surface_agent_session_last_activity_ms(&claude_surface, 1_700_000_120_000,));
+    // The waiting agent's latest prompt notification becomes its attention
+    // hint; prompt notifications on non-waiting agents must not surface.
+    model.create_notification(
+        "Claude needs input",
+        "An older request",
+        NotificationKind::Prompt,
+        Some(review.id.clone()),
+        Some(claude_surface.clone()),
+    );
+    model.create_notification(
+        "Claude needs input",
+        "Claude needs your permission to use Bash",
+        NotificationKind::Prompt,
+        Some(review.id.clone()),
+        Some(claude_surface.clone()),
+    );
+    model.create_notification(
+        "Codex prompt",
+        "Stale codex prompt",
+        NotificationKind::Prompt,
+        None,
+        Some(codex_surface.clone()),
+    );
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].agent_label, "Claude");
+    assert_eq!(rows[0].workspace_name, "review");
+    assert_eq!(rows[0].lifecycle_label, "Needs input");
+    assert!(rows[0].needs_input);
+    assert_eq!(
+        rows[0].permission_mode.as_deref(),
+        Some("bypassPermissions")
+    );
+    assert_eq!(rows[0].session_short, "a5643754");
+    assert_eq!(rows[0].last_activity_label, "3m ago");
+    assert!(rows[0].can_resume);
+    assert_eq!(
+        rows[0].attention_hint.as_deref(),
+        Some("Claude needs your permission to use Bash")
+    );
+
+    assert_eq!(rows[1].agent_label, "Codex");
+    assert_eq!(rows[1].surface_title, "Codex session");
+    assert_eq!(rows[1].lifecycle_label, "Idle");
+    assert_eq!(rows[1].last_activity_label, "5m ago");
+    // Idle: the stale prompt notification must not become a hint.
+    assert_eq!(rows[1].attention_hint, None);
+}
+
+#[test]
+fn agent_hud_tail_picks_last_nonempty_line() {
+    assert_eq!(
+        last_nonempty_line("running tests\n3 passed   \n\n  \n").as_deref(),
+        Some("3 passed")
+    );
+    // Leading whitespace is kept (indentation is meaningful in output),
+    // trailing whitespace is trimmed.
+    assert_eq!(
+        last_nonempty_line("a\n  indented tail  \n").as_deref(),
+        Some("  indented tail")
+    );
+    assert_eq!(last_nonempty_line(""), None);
+    assert_eq!(last_nonempty_line("\n   \n\t\n"), None);
+}
+
+#[test]
+fn agent_hud_focuses_existing_agent_surface() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (first_surface, second_surface) = {
+        let mut model = model.lock().unwrap();
+        let first = model.create_workspace("main", "/tmp/main");
+        let first_surface = first.focused_surface_id.clone();
+        let second = model.create_workspace("review", "/tmp/review");
+        let second_surface = second.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &second_surface,
+            forktty_core::AgentKind::ClaudeCode,
+            "claude-session",
+        ));
+        model
+            .select_workspace(WorkspaceSelector::Id(&first.id))
+            .unwrap();
+        (first_surface, second_surface)
+    };
+
+    assert!(open_agent_surface(&state, &second_surface, None));
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace().unwrap().focused_surface_id,
+        second_surface
+    );
+    assert_ne!(
+        model.active_workspace().unwrap().focused_surface_id,
+        first_surface
+    );
+}
+
+#[test]
 fn collect_panes_counts_panes_not_tabs() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

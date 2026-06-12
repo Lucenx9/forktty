@@ -51,6 +51,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Restore-time provider resume for persisted supported agent terminal surfaces.
 - [x] Agent last-activity tracking and read-only reclaim candidate planning through `agent.reclaim.plan`, `forktty agent-reclaim-plan`, and MCP `agent_reclaim_plan`.
 - [x] Compact status/HUD export through `status.summary`, `forktty statusline`, and MCP `status_summary`.
+- [x] GTK Agent HUD for persisted agent lifecycle, last activity, needs-input attention, focus, and resume.
 - [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
 - [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream.
 - [x] Ghostty bell and child-exit notifications.
@@ -86,7 +87,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Workflow control plane: per-session/per-mode state files, durable goal/plan/evidence artifacts, session search/replay, and compaction-resistant project memory.
 - [ ] Team orchestration runtime: leader/worker state, task DAGs, mailbox/dispatch, worker heartbeats, status/summary, and optional worktree-backed workers.
 - [ ] Feed/approval bridge: normalized agent activity/approval stream with actionable permission events and history.
-- [ ] Agent HUD/statusline export: active-mode, worker, token, health, and notification fields for provider statusline integrations; workspace/status/progress/session summary is available through `status.summary`/`forktty statusline`/MCP.
+- [ ] Expanded HUD/statusline export: active-mode, worker, token, health, and notification fields for provider statusline integrations; workspace/status/progress/session summary is available through `status.summary`/`forktty statusline`/MCP and GTK now includes the persisted-agent HUD.
 - [ ] Remote daemon/SSH depth: persistent remote ForkTTY helper, reconnect/disconnect semantics, CLI relay, and remote PTY/session ownership beyond plain `ssh <host>`.
 - [ ] Project actions: repo-local validated `forktty.json` actions exposed in the command palette and socket.
 - [ ] Right-sidebar/Dock ecosystem: files/find/vault/session/feed style panels, panel persistence, and optional custom sidebar contributors.

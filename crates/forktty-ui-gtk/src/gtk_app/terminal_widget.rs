@@ -994,6 +994,12 @@ impl GhosttyTerminalWidget {
         self.drawing_area.queue_draw();
     }
 
+    /// Changes whenever terminal content may have changed; the agent HUD uses
+    /// it to skip re-reading the (full scrollback dump) tail while idle.
+    pub(super) fn content_generation(&self) -> u64 {
+        self.runtime.borrow().content_generation()
+    }
+
     pub(super) fn read_text(
         &self,
         surface_id: &str,

@@ -80,6 +80,7 @@ const GH_PR_VIEW_TIMEOUT: Duration = Duration::from_secs(8);
 const GH_PR_VIEW_MAX_STDOUT_BYTES: u64 = 64 * 1024;
 
 mod actions;
+mod agents_panel;
 mod app;
 mod backend;
 #[cfg(feature = "browser")]
@@ -111,6 +112,7 @@ mod workspace_popover;
 mod worktree_dialog;
 
 use actions::*;
+use agents_panel::*;
 use app::*;
 use backend::*;
 #[cfg(feature = "browser")]

@@ -186,6 +186,7 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+T`: new tab in the focused pane
 - `Ctrl+Shift+W`: close pane
 - `Ctrl+B` or `F9`: toggle workspace sidebar
+- Agents: titlebar button or command palette
 - `Ctrl+Shift+M`: notifications
 - `F1`: keyboard shortcuts
 - `Ctrl+,`: settings
@@ -231,7 +232,9 @@ forktty capabilities
 forktty events
 ```
 
-`forktty agents`, `forktty agent-health`, and `forktty statusline` include the
+The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
+sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
+`forktty agent-health`, and `forktty statusline` include the
 hook-derived agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or
 `unknown`) when a provider session id has been persisted. `forktty agents` and
 `forktty agent-health` also expose hook-derived `resume_cwd` and
@@ -374,6 +377,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
 - Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
+- Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events.

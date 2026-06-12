@@ -67,6 +67,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("New Workspace", "Ctrl+Shift+N"),
             ("Open Workspace", "Ctrl+Shift+O"),
             ("Command Palette", "Ctrl+Shift+P"),
+            ("Agents", "Command Palette"),
             ("Notifications", "Ctrl+Shift+M"),
             ("Keyboard Shortcuts", "F1"),
             ("Toggle Sidebar", "Ctrl+B / F9"),
@@ -382,6 +383,16 @@ pub(super) fn show_command_palette_with_query(
         move || {
             dialog.close();
             show_notification_panel(&parent, &state, controller.clone());
+        }
+    });
+    command!("Show Agents", None, {
+        let state = state.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        let controller = controller.clone();
+        move || {
+            dialog.close();
+            show_agent_panel(&parent, &state, controller.clone());
         }
     });
     command!("Settings", Some("Ctrl+,"), {
