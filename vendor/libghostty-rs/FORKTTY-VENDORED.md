@@ -16,6 +16,11 @@ Local changes, marked `FORKTTY PATCH`:
   executable and overrides the libc symbol; built on an AVX-512 CI runner it
   emitted EVEX instructions and every non-AVX-512 machine crashed with
   SIGILL at startup (v0.2.0-alpha.10 first cut).
+- `crates/libghostty-vt-sys/build.rs`: after fetching Ghostty into `OUT_DIR`,
+  apply `FORKTTY PATCH` edits to `Screen.zig`/`PageList.zig` so resize cursor
+  preservation uses a temporary tracked pin and bounded wrap-count walks.
+  Without this, large column reflows after wrapped scrollback can abort in
+  `PageList.resizeCols` during GTK window maximize.
 - Both `Cargo.toml` manifests: workspace-inherited fields
   (`version`/`edition`/`license`/`repository`/`rust-version` and the
   `libghostty-vt-sys` dependency) replaced with the literal values from the

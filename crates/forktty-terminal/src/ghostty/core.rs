@@ -1127,6 +1127,27 @@ mod tests {
     }
 
     #[test]
+    fn core_resize_wide_after_wrapped_scrollback_does_not_abort() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 86,
+            rows: 28,
+            scrollback_lines: 500,
+        })
+        .unwrap();
+
+        let wrapped_line = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for line in 0..240 {
+            core.feed(
+                format!("{line:03} {wrapped_line}{wrapped_line}{wrapped_line}\r\n").as_bytes(),
+            )
+            .unwrap();
+        }
+
+        core.resize(72, 26, 10, 20).unwrap();
+        core.resize(190, 48, 10, 20).unwrap();
+    }
+
+    #[test]
     fn core_detects_the_alternate_screen() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 12,
