@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.12] - 2026-06-13
+
 ### Added
 - Terminal panes now show terse toasts for copy/paste failures and flash an accent border for visual bell events.
 - Terminal panes now show a minimal overlay scrollback indicator while viewing history.
