@@ -118,6 +118,7 @@ impl GhosttyTerminalWidget {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
                     Ok(frame) => {
+                        let viewport = runtime.borrow().viewport_position().ok();
                         let range = selection.borrow().normalized_range();
                         let link_range = hover_link.borrow().as_ref().map(|l| (l.start, l.end));
                         renderer.draw_frame(
@@ -132,6 +133,7 @@ impl GhosttyTerminalWidget {
                                 blink_visible: cursor_blink_visible.get(),
                                 has_siblings: has_siblings.get(),
                             },
+                            viewport,
                         );
                     }
                     Err(err) => eprintln!("Failed to render terminal frame: {err}"),

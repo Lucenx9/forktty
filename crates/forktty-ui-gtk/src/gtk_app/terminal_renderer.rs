@@ -1,13 +1,16 @@
-use super::terminal_geometry::{terminal_grid_geometry, TerminalGridGeometry};
+use super::terminal_geometry::{terminal_grid_geometry, TerminalGridGeometry, TERMINAL_PADDING_PX};
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalCell, TerminalCellWidth, TerminalCursorStyle, TerminalFrame, TerminalRgb, TerminalRow,
+    TerminalViewportPosition,
 };
-use std::fmt;
+use std::{f64::consts::PI, fmt};
 
 /// Ghostty-style inactive split dim: enough to clarify focus without making
 /// background panes unreadable.
 const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.13;
+const SCROLLBACK_INDICATOR_WIDTH_PX: f64 = 4.0;
+const SCROLLBACK_INDICATOR_ALPHA: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererColor {
@@ -169,6 +172,12 @@ struct RendererFrameDefaults {
     background: RendererColor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScrollbackIndicatorGeometry {
+    y: i32,
+    height: i32,
+}
+
 /// How the cursor overlay should be drawn for the current frame: unfocused
 /// panes get a steady hollow cursor, focused panes blink with `blink_visible`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +231,7 @@ impl TerminalRenderer {
         selection: Option<(SelectionPoint, SelectionPoint)>,
         hover_link: Option<(SelectionPoint, SelectionPoint)>,
         cursor_state: RendererCursorState,
+        viewport: Option<TerminalViewportPosition>,
     ) {
         let defaults = self.frame_defaults(frame);
         let default_background = defaults.background;
@@ -313,6 +323,13 @@ impl TerminalRenderer {
         }
         if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
             paint_unfocused_split_dim(cr, width, height);
+        }
+        if let Some(viewport) = viewport {
+            if let Some(indicator) =
+                scrollback_indicator_geometry(viewport.top, viewport.rows, viewport.total, height)
+            {
+                paint_scrollback_indicator(cr, width, indicator);
+            }
         }
     }
 
@@ -690,6 +707,47 @@ fn should_dim_pane(focused: bool, has_siblings: bool) -> bool {
 fn paint_unfocused_split_dim(cr: &gtk::cairo::Context, width: i32, height: i32) {
     cr.set_source_rgba(0.0, 0.0, 0.0, UNFOCUSED_SPLIT_DIM_ALPHA);
     cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+    let _ = cr.fill();
+}
+
+fn scrollback_indicator_geometry(
+    top: usize,
+    rows: usize,
+    total: usize,
+    widget_height: i32,
+) -> Option<ScrollbackIndicatorGeometry> {
+    if total == 0 || rows >= total || top.saturating_add(rows) >= total {
+        return None;
+    }
+    let track_height = widget_height.saturating_sub(TERMINAL_PADDING_PX * 2).max(1);
+    let height = ((track_height as f64 * rows as f64 / total as f64).round() as i32)
+        .clamp(SCROLLBACK_INDICATOR_WIDTH_PX as i32, track_height);
+    let max_offset = track_height.saturating_sub(height);
+    let offset =
+        ((track_height as f64 * top as f64 / total as f64).round() as i32).clamp(0, max_offset);
+    Some(ScrollbackIndicatorGeometry {
+        y: TERMINAL_PADDING_PX + offset,
+        height,
+    })
+}
+
+fn paint_scrollback_indicator(
+    cr: &gtk::cairo::Context,
+    width: i32,
+    indicator: ScrollbackIndicatorGeometry,
+) {
+    let x = f64::from(width - TERMINAL_PADDING_PX) - SCROLLBACK_INDICATOR_WIDTH_PX;
+    if x < 0.0 {
+        return;
+    }
+    let y = f64::from(indicator.y);
+    let height = f64::from(indicator.height);
+    let radius = SCROLLBACK_INDICATOR_WIDTH_PX / 2.0;
+    cr.set_source_rgba(1.0, 1.0, 1.0, SCROLLBACK_INDICATOR_ALPHA);
+    cr.new_sub_path();
+    cr.arc(x + radius, y + radius, radius, PI, PI * 2.0);
+    cr.arc(x + radius, y + height - radius, radius, 0.0, PI);
+    cr.close_path();
     let _ = cr.fill();
 }
 
@@ -1081,6 +1139,28 @@ mod tests {
         assert!(!should_dim_pane(false, false));
         assert!(!should_dim_pane(true, true));
         assert!(should_dim_pane(false, true));
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_hides_at_bottom_or_without_scrollback() {
+        assert_eq!(scrollback_indicator_geometry(90, 10, 100, 116), None);
+        assert_eq!(scrollback_indicator_geometry(0, 10, 10, 116), None);
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_scales_with_viewport() {
+        assert_eq!(
+            scrollback_indicator_geometry(20, 10, 100, 116),
+            Some(ScrollbackIndicatorGeometry { y: 28, height: 10 })
+        );
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_rounds_thumb_edges() {
+        assert_eq!(
+            scrollback_indicator_geometry(7, 33, 100, 115),
+            Some(ScrollbackIndicatorGeometry { y: 15, height: 33 })
+        );
     }
 
     #[test]
