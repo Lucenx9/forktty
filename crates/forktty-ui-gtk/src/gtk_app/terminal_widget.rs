@@ -575,6 +575,31 @@ impl GhosttyTerminalWidget {
                     write_terminal_mouse(&runtime, &drawing_area, input);
                 });
             }
+            {
+                // A broken pointer grab (split/resize/focus change mid-drag)
+                // cancels the gesture without a matching release. Reset the
+                // press-tracking state and finalize any in-progress selection
+                // so it stays copyable and stops following the pointer.
+                let runtime = runtime.clone();
+                let drawing_area = drawing_area.downgrade();
+                let any_button_pressed = any_button_pressed.clone();
+                let suppress_release = suppress_release.clone();
+                let pending_left_press = pending_left_press.clone();
+                let autoscroll = autoscroll.clone();
+                let selection = selection.clone();
+                click.connect_cancel(move |_gesture, _sequence| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
+                    any_button_pressed.set(false);
+                    suppress_release.set(false);
+                    pending_left_press.borrow_mut().take();
+                    autoscroll.lines.set(0);
+                    if selection.borrow().is_selecting() {
+                        finalize_selection_drag(&runtime, &selection, &drawing_area);
+                    }
+                });
+            }
             drawing_area.add_controller(click);
 
             let motion = gtk::EventControllerMotion::new();
@@ -593,6 +618,19 @@ impl GhosttyTerminalWidget {
                         return;
                     };
                     if selection.borrow().is_selecting() {
+                        // A broken pointer grab can swallow the button release
+                        // (e.g. the focus gesture claiming a click on an
+                        // unfocused pane cancels this one). If button 1 is no
+                        // longer physically down, finalize the selection rather
+                        // than let it trail the pointer with nothing driving it.
+                        if !controller
+                            .current_event_state()
+                            .contains(gtk::gdk::ModifierType::BUTTON1_MASK)
+                        {
+                            autoscroll.lines.set(0);
+                            finalize_selection_drag(&runtime, &selection, &drawing_area);
+                            return;
+                        }
                         selection
                             .borrow_mut()
                             .extend_drag(selection_cell_for_position(
@@ -629,6 +667,16 @@ impl GhosttyTerminalWidget {
                     // borrowed) and abort in the GTK trampoline.
                     let pending = *pending_left_press.borrow();
                     if let Some(pending) = pending {
+                        // Same lost-release guard: if button 1 is no longer
+                        // down, drop the deferred press so a later buttonless
+                        // motion cannot start a phantom drag from stale coords.
+                        if !controller
+                            .current_event_state()
+                            .contains(gtk::gdk::ModifierType::BUTTON1_MASK)
+                        {
+                            pending_left_press.borrow_mut().take();
+                            return;
+                        }
                         if deferred_local_drag_exceeded_threshold(pending.x, pending.y, x, y) {
                             pending_left_press.borrow_mut().take();
                             autoscroll.lines.set(0);
@@ -1362,8 +1410,25 @@ fn finish_selection_drag(
     x: f64,
     y: f64,
 ) {
+    selection
+        .borrow_mut()
+        .extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+    finalize_selection_drag(runtime, selection, drawing_area);
+}
+
+/// Ends the in-progress drag and stores its text (or clears it for a no-op
+/// click), without extending to a new pointer position first. Shared by the
+/// normal release path and the gesture-cancel path (a broken pointer grab from
+/// a split/resize/focus change emits `cancel`, not `released`); finalizing
+/// there keeps the highlighted text copyable and, crucially, drops the
+/// `selecting` flag so motion events stop extending a selection no button is
+/// driving anymore.
+fn finalize_selection_drag(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    drawing_area: &gtk::DrawingArea,
+) {
     let mut selection = selection.borrow_mut();
-    selection.extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
     selection.end_drag();
     match selection.normalized_range() {
         Some((start, end)) if start != end => match runtime.borrow_mut().render_frame() {
@@ -1533,22 +1598,36 @@ fn autoscroll_selection_tick(
     Ok(())
 }
 
-/// The text currently on screen, one line per viewport row, right-trimmed.
+/// Joins `(row_text, wrapped)` pairs into copy text honoring soft wraps: a row
+/// flagged `wrapped` continues into the next with no line break and keeps its
+/// trailing cells (the line wrapped because it was full), while a hard line
+/// break is right-trimmed and separated by `\n`. The last row never trails a
+/// separator. This is why copying a wrapped command yields one pasteable line
+/// instead of one broken at every screen edge.
+fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String {
+    let mut out = String::new();
+    let mut rows = rows.peekable();
+    while let Some((text, wrapped)) = rows.next() {
+        let has_next = rows.peek().is_some();
+        if wrapped && has_next {
+            out.push_str(&text);
+        } else {
+            out.push_str(text.trim_end());
+            if has_next {
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+/// The text currently on screen, joined across soft wraps and right-trimmed.
 fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFrame) -> String {
-    let text = frame
-        .rows
-        .iter()
-        .map(|row| {
-            row.cells
-                .iter()
-                .map(|cell| cell.text.as_str())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    text.trim_end().to_string()
+    let rows = frame.rows.iter().map(|row| {
+        let text: String = row.cells.iter().map(|cell| cell.text.as_str()).collect();
+        (text, row.wrapped)
+    });
+    join_rows_honoring_wrap(rows).trim_end().to_string()
 }
 
 /// What a copy puts on the clipboard: the stored selection text when present
@@ -1571,18 +1650,15 @@ fn selection_text_from_frame(
     start: SelectionPoint,
     end: SelectionPoint,
 ) -> String {
-    let mut lines = Vec::new();
-    for (row_idx, row) in frame.rows.iter().enumerate() {
-        let Some((from, to)) = selection_cols_for_row(start, end, row_idx, row.cells.len()) else {
-            continue;
-        };
-        let line: String = row.cells[from..to]
+    let rows = frame.rows.iter().enumerate().filter_map(|(row_idx, row)| {
+        let (from, to) = selection_cols_for_row(start, end, row_idx, row.cells.len())?;
+        let text: String = row.cells[from..to]
             .iter()
             .map(|cell| cell.text.as_str())
             .collect();
-        lines.push(line.trim_end().to_string());
-    }
-    lines.join("\n")
+        Some((text, row.wrapped))
+    });
+    join_rows_honoring_wrap(rows)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2052,8 +2128,9 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
         {
             let mut selection = self.selection.borrow_mut();
             selection.clear();
-            // Select-all covers the whole scrollback, like other terminals.
-            selection.select_text(self.runtime.borrow().full_text());
+            // Select-all covers the whole scrollback, like other terminals,
+            // joining soft-wrapped rows so a wrapped command pastes as one line.
+            selection.select_text(self.runtime.borrow().full_text_unwrapped());
         }
         self.copy_text();
     }
@@ -2165,6 +2242,34 @@ mod selection_tests {
         );
 
         assert_eq!(text, "beta\ngamma delta\nepsi");
+    }
+
+    #[test]
+    fn selection_text_joins_soft_wrapped_rows_without_a_newline() {
+        // 26 chars into a 20-column grid: the first row soft-wraps into the
+        // second (one logical line), then a real newline starts "short".
+        let frame = frame_for_lines(b"abcdefghijklmnopqrstuvwxyz\r\nshort");
+        // The frame must actually carry the wrap flag, else the fix is moot.
+        assert!(frame.rows[0].wrapped, "first row should be soft-wrapped");
+        assert!(!frame.rows[1].wrapped, "wrap ends on the second row");
+
+        let text = selection_text_from_frame(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 2, col: 4 },
+        );
+
+        assert_eq!(text, "abcdefghijklmnopqrstuvwxyz\nshort");
+    }
+
+    #[test]
+    fn viewport_text_joins_soft_wrapped_rows_without_a_newline() {
+        let frame = frame_for_lines(b"abcdefghijklmnopqrstuvwxyz\r\nshort");
+
+        assert_eq!(
+            viewport_text_from_frame(&frame),
+            "abcdefghijklmnopqrstuvwxyz\nshort"
+        );
     }
 
     // Regression for the Fedora SIGABRT: wheel scroll over a pane with mouse

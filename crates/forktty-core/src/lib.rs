@@ -15,7 +15,8 @@ pub mod session;
 pub mod worktree;
 
 pub use agents::{
-    agent_resume_command, agent_resume_command_with_cwd, codex_session_cwd,
+    agent_resume_command, agent_resume_command_with_cwd,
+    agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
     codex_session_cwd_from_home, normalize_agent_status, AgentKind, AgentResumeCommand,
     AgentResumeError, AgentStatus,
 };

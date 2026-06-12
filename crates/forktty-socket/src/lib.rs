@@ -1,6 +1,6 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
-    agent_resume_command_with_cwd, codex_session_cwd,
+    agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
     command_safety::{is_executable_file, is_valid_ssh_host},
     config, dispatch_notification, normalize_agent_status, validate_worktree_name, worktree,
     AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError,
@@ -1593,7 +1593,10 @@ pub async fn dispatch(
             }
             let hook_session_cwd = optional_hook_session_cwd(&params)?;
             let surface_id = optional_surface_id_param(&params)?;
-            let agent = agent_kind_from_status_key(key);
+            let agent = agent_kind_from_status_key(key)
+                .or_else(|| agent_kind_from_permission_status_key(key));
+            let permission_mode =
+                agent_kind_from_permission_status_key(key).map(|_| value.to_string());
             let last_activity_ms = current_unix_epoch_ms();
             let status = {
                 let mut model = state
@@ -1611,6 +1614,12 @@ pub async fn dispatch(
                         if let Some(hook_session_cwd) = hook_session_cwd {
                             model
                                 .set_surface_agent_session_resume_cwd(surface_id, hook_session_cwd);
+                        }
+                        if let Some(permission_mode) = permission_mode.as_deref() {
+                            model.set_surface_agent_session_permission_mode(
+                                surface_id,
+                                permission_mode,
+                            );
                         }
                         model.set_surface_agent_session_lifecycle(
                             surface_id,
@@ -1778,6 +1787,7 @@ fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec
                 "agent": agent_session.agent,
                 "session_id": agent_session.session_id,
                 "resume_cwd": agent_session.resume_cwd,
+                "permission_mode": agent_session.permission_mode,
                 "lifecycle": agent_session.lifecycle,
                 "last_activity_ms": agent_session.last_activity_ms,
             }))
@@ -1815,6 +1825,7 @@ fn agent_health_rows_with_path(
                 agent_session.agent,
                 &agent_session.session_id,
                 resume_cwd.as_deref(),
+                agent_session.permission_mode.as_deref(),
                 path,
             );
             Some(json!({
@@ -1826,6 +1837,7 @@ fn agent_health_rows_with_path(
                 "agent": agent_session.agent,
                 "session_id": agent_session.session_id,
                 "resume_cwd": resume_cwd,
+                "permission_mode": agent_session.permission_mode,
                 "lifecycle": agent_session.lifecycle,
                 "last_activity_ms": agent_session.last_activity_ms,
                 "ready": ready,
@@ -2004,9 +2016,15 @@ fn agent_resume_readiness(
     agent: AgentKind,
     session_id: &str,
     resume_cwd: Option<&Path>,
+    permission_mode: Option<&str>,
     path: Option<&OsStr>,
 ) -> (bool, &'static str, Value, Value, Vec<String>) {
-    let command = match agent_resume_command_with_cwd(agent, session_id, resume_cwd) {
+    let command = match agent_resume_command_with_cwd_and_permission_mode(
+        agent,
+        session_id,
+        resume_cwd,
+        permission_mode,
+    ) {
         Ok(command) => command,
         Err(AgentResumeError::UnsupportedAgent(_)) => {
             return (
@@ -2081,10 +2099,11 @@ fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value,
             )
         })?;
         let resume_cwd = effective_agent_resume_cwd(&agent_session);
-        let command = agent_resume_command_with_cwd(
+        let command = agent_resume_command_with_cwd_and_permission_mode(
             agent_session.agent,
             &agent_session.session_id,
             resume_cwd.as_deref(),
+            agent_session.permission_mode.as_deref(),
         )
         .map_err(|err| DispatchError::PreconditionFailed(err.to_string()))?;
         let new_surface = model
@@ -2097,6 +2116,9 @@ fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value,
         );
         if let Some(resume_cwd) = resume_cwd.clone() {
             model.set_surface_agent_session_resume_cwd(&new_surface.id, resume_cwd);
+        }
+        if let Some(permission_mode) = agent_session.permission_mode.as_deref() {
+            model.set_surface_agent_session_permission_mode(&new_surface.id, permission_mode);
         }
         let surface = model
             .surface(&new_surface.id)
@@ -2378,10 +2400,11 @@ pub fn spawn_request_for_surface(
         return Some(request);
     };
     let resume_cwd = effective_agent_resume_cwd(agent_session);
-    let Ok(command) = agent_resume_command_with_cwd(
+    let Ok(command) = agent_resume_command_with_cwd_and_permission_mode(
         agent_session.agent,
         &agent_session.session_id,
         resume_cwd.as_deref(),
+        agent_session.permission_mode.as_deref(),
     ) else {
         return Some(request);
     };
@@ -3670,6 +3693,26 @@ fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
     }
 }
 
+fn agent_kind_from_permission_status_key(key: &str) -> Option<AgentKind> {
+    let mut parts = key.split(':');
+    if parts.next()? != "agent" {
+        return None;
+    }
+    let provider = parts.next()?;
+    if parts.next()? != "permission" || parts.next().is_some() {
+        return None;
+    }
+    match provider {
+        "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
+        "codex" => Some(AgentKind::Codex),
+        "antigravity" | "agy" => Some(AgentKind::Antigravity),
+        "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
+        "gemini" => Some(AgentKind::Gemini),
+        "custom" => Some(AgentKind::Custom),
+        _ => None,
+    }
+}
+
 fn is_supported_status_color(color: &str) -> bool {
     matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || is_hex_status_color(color)
 }
@@ -4673,6 +4716,7 @@ mod tests {
                 agent: AgentKind::Codex,
                 session_id: "codex-session-1".to_string(),
                 resume_cwd: Some(PathBuf::from("/tmp/forktty-project")),
+                permission_mode: None,
                 lifecycle: AgentSessionLifecycle::Running,
                 last_activity_ms: 12_345,
             }),
@@ -4710,6 +4754,7 @@ mod tests {
                 agent: AgentKind::ClaudeCode,
                 session_id: "claude-session-1".to_string(),
                 resume_cwd: Some(PathBuf::from("/tmp/forktty-project")),
+                permission_mode: Some("bypassPermissions".to_string()),
                 lifecycle: AgentSessionLifecycle::Running,
                 last_activity_ms: 12_345,
             }),
@@ -4722,7 +4767,14 @@ mod tests {
         .expect("agent terminal surface should spawn");
 
         assert_eq!(request.shell, "claude");
-        assert_eq!(request.args, vec!["--resume", "claude-session-1"]);
+        assert_eq!(
+            request.args,
+            vec![
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1",
+            ]
+        );
         assert_eq!(request.cwd, PathBuf::from("/tmp/forktty-project"));
     }
 
@@ -4762,6 +4814,7 @@ mod tests {
                 agent: AgentKind::Codex,
                 session_id: "codex-session-fallback".to_string(),
                 resume_cwd: None,
+                permission_mode: None,
                 lifecycle: AgentSessionLifecycle::Running,
                 last_activity_ms: 12_345,
             }),
@@ -7555,6 +7608,152 @@ mod tests {
             .as_ref()
             .unwrap();
         assert_eq!(persisted.resume_cwd.as_deref(), Some(resume_cwd.path()));
+    }
+
+    #[tokio::test]
+    async fn hook_permission_mode_is_preserved_for_claude_resume() {
+        let (state, backend) = test_state();
+        let (workspace_id, source_surface_id) = {
+            let model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            (workspace.id.clone(), workspace.focused_surface_id.clone())
+        };
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": source_surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Ready",
+                "color": "green",
+                "hook_session_id": "claude-session-1",
+                "hook_session_cwd": "/tmp",
+                "hook_event_name": "session-start",
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": source_surface_id,
+                "key": "agent:claude:permission",
+                "label": "Claude mode",
+                "value": "bypassPermissions",
+                "color": "red",
+                "hook_session_id": "claude-session-1",
+                "hook_event_name": "session-start",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
+        assert_eq!(
+            health[0]["argv"],
+            json!([
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1"
+            ])
+        );
+
+        let resumed = dispatch(
+            &state,
+            "agent.resume",
+            json!({"surface_id": source_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        let resumed_surface_id = resumed["surface"]["id"].as_str().unwrap();
+        assert_eq!(
+            resumed["argv"],
+            json!([
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1"
+            ])
+        );
+        assert_eq!(
+            backend.spawn_args(resumed_surface_id).unwrap(),
+            vec![
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn hook_permission_mode_is_preserved_for_codex_resume() {
+        let (state, _backend) = test_state();
+        let (workspace_id, source_surface_id) = {
+            let model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            (workspace.id.clone(), workspace.focused_surface_id.clone())
+        };
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": source_surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Ready",
+                "color": "green",
+                "hook_session_id": "codex-session-1",
+                "hook_session_cwd": "/tmp",
+                "hook_event_name": "session-start",
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": source_surface_id,
+                "key": "agent:codex:permission",
+                "label": "Codex mode",
+                "value": "bypassPermissions",
+                "color": "red",
+                "hook_session_id": "codex-session-1",
+                "hook_event_name": "session-start",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let resumed = dispatch(
+            &state,
+            "agent.resume",
+            json!({"surface_id": source_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resumed["argv"],
+            json!([
+                "codex",
+                "resume",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "-C",
+                "/tmp",
+                "codex-session-1"
+            ])
+        );
     }
 
     #[tokio::test]

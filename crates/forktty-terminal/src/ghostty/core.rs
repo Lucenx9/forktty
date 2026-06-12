@@ -512,7 +512,15 @@ impl GhosttyCore {
     /// line `i` of the dump corresponds to grid row `i` counted from the top
     /// of the scrollback; only trailing blank rows may be omitted.
     pub fn full_text(&self) -> Result<String> {
-        self.format_plain_text(false)
+        self.format_plain_text(false, false)
+    }
+
+    /// Like [`Self::full_text`], but soft-wrapped rows are joined back into
+    /// their logical line (`unwrap: true`), with no line break at the wrap
+    /// point. This is what a select-all copy wants: pasting the result back
+    /// into a shell must not split a wrapped command across lines.
+    pub fn full_text_unwrapped(&self) -> Result<String> {
+        self.format_plain_text(false, true)
     }
 
     pub fn viewport_position(&self) -> Result<TerminalViewportPosition> {
@@ -746,13 +754,13 @@ impl GhosttyCore {
         };
     }
 
-    fn format_plain_text(&self, trim: bool) -> Result<String> {
+    fn format_plain_text(&self, trim: bool, unwrap: bool) -> Result<String> {
         let mut formatter = Formatter::new(
             &self.terminal,
             FormatterOptions::new()
                 .with_format(Format::Plain)
                 .with_trim(trim)
-                .with_unwrap(false),
+                .with_unwrap(unwrap),
         )?;
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
@@ -1723,6 +1731,33 @@ mod tests {
 
         assert!(text.contains("one"));
         assert!(text.contains("three"));
+    }
+
+    #[test]
+    fn full_text_unwrapped_joins_soft_wrapped_rows() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 4,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        // 15 chars soft-wrap across two rows, then a hard newline.
+        core.feed(b"abcdefghijklmno\r\ntail").unwrap();
+
+        // The plain dump keeps the wrap as a line break...
+        assert_eq!(
+            core.full_text().unwrap().lines().collect::<Vec<_>>(),
+            ["abcdefghij", "klmno", "tail"]
+        );
+        // ...the unwrapped dump rejoins the logical line.
+        assert_eq!(
+            core.full_text_unwrapped()
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["abcdefghijklmno", "tail"]
+        );
     }
 
     #[test]

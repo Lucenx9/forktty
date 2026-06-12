@@ -83,6 +83,8 @@ pub struct AgentSession {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
     #[serde(default)]
     pub lifecycle: AgentSessionLifecycle,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
@@ -991,10 +993,16 @@ impl WorkspaceModel {
             .as_ref()
             .filter(|session| session.agent == agent && session.session_id == session_id)
             .and_then(|session| session.resume_cwd.clone());
+        let permission_mode = surface
+            .agent_session
+            .as_ref()
+            .filter(|session| session.agent == agent && session.session_id == session_id)
+            .and_then(|session| session.permission_mode.clone());
         surface.agent_session = Some(AgentSession {
             agent,
             session_id: session_id.to_string(),
             resume_cwd,
+            permission_mode,
             lifecycle: AgentSessionLifecycle::Running,
             last_activity_ms: 0,
         });
@@ -1016,6 +1024,29 @@ impl WorkspaceModel {
             return false;
         };
         agent_session.resume_cwd = Some(resume_cwd);
+        true
+    }
+
+    pub fn set_surface_agent_session_permission_mode(
+        &mut self,
+        surface_id: &str,
+        permission_mode: impl Into<String>,
+    ) -> bool {
+        let permission_mode = permission_mode.into();
+        let permission_mode = permission_mode.trim();
+        if permission_mode.is_empty()
+            || permission_mode.len() > 64
+            || permission_mode.chars().any(char::is_control)
+        {
+            return false;
+        }
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        let Some(agent_session) = surface.agent_session.as_mut() else {
+            return false;
+        };
+        agent_session.permission_mode = Some(permission_mode.to_string());
         true
     }
 
@@ -2520,6 +2551,7 @@ mod tests {
             &surface_id,
             std::path::PathBuf::from("/tmp/forktty-project")
         ));
+        assert!(model.set_surface_agent_session_permission_mode(&surface_id, "bypassPermissions"));
 
         let data = model.to_session_data();
         crate::session::validate_session_data(&data).unwrap();
@@ -2541,6 +2573,15 @@ mod tests {
                 .resume_cwd
                 .as_deref(),
             Some(std::path::Path::new("/tmp/forktty-project"))
+        );
+        assert_eq!(
+            data.surfaces[0]
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .permission_mode
+                .as_deref(),
+            Some("bypassPermissions")
         );
         assert_eq!(
             data.surfaces[0].agent_session.as_ref().unwrap().lifecycle,
@@ -2571,6 +2612,10 @@ mod tests {
         assert_eq!(
             restored_session.resume_cwd.as_deref(),
             Some(std::path::Path::new("/tmp/forktty-project"))
+        );
+        assert_eq!(
+            restored_session.permission_mode.as_deref(),
+            Some("bypassPermissions")
         );
         assert_eq!(
             restored_session.lifecycle,

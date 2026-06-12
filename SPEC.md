@@ -303,10 +303,11 @@ Residual risks:
 
 - User-authored hooks and notification commands run with user privileges.
 - A same-user process can interact with user-owned runtime resources.
-- Persisted agent session ids and resume cwd values do not preserve PTY
-  processes. Restore-time auto-resume and `agent.resume` can only ask the
-  installed provider CLI to resume; provider-side expiry, deletion, incompatible
-  ids, or missing project directories still fail inside that CLI.
+- Persisted agent session ids, resume cwd values, and known hook permission
+  modes do not preserve PTY processes. Restore-time auto-resume and
+  `agent.resume` can only ask the installed provider CLI to resume;
+  provider-side expiry, deletion, incompatible ids, or missing project
+  directories still fail inside that CLI.
 - `agent.reclaim.plan` is advisory only; actual suspend/kill/reopen behavior is
   not implemented yet.
 - Advanced OSC 99 compatibility remains partial; base64 payloads, notification update/close controls, activation reports, buttons, and full chunk aggregation are not yet implemented.

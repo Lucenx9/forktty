@@ -742,6 +742,14 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
                     surface.id
                 )));
             }
+            if session.permission_mode.as_ref().is_some_and(|mode| {
+                mode.trim().is_empty() || mode.len() > 64 || mode.chars().any(char::is_control)
+            }) {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface agent permission mode must be non-empty, short, and control-free: {}",
+                    surface.id
+                )));
+            }
         }
     }
     Ok(())
