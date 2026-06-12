@@ -29,6 +29,7 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Terminal resize no longer aborts inside libghostty when GTK briefly reports a one-row allocation after wrapped output.
 - Terminal resize no longer aborts inside libghostty when maximizing a window with wrapped scrollback; the vendored Ghostty build now uses a temporary cursor-preservation pin and bounded wrap-count walks during column reflow.
+- Terminal mouse selection, Ctrl+click link detection, and mouse-tracking coordinates now account for the terminal widget's CSS padding, so highlighted/copied text lines up with the visible character grid.
 - Antigravity `PreToolUse` hooks now return an explicit `{"decision":"approve"}` response, and generated wrapper fallback scripts do the same, so ForkTTY status hooks no longer make `agy` deny every tool call when the hook response is parsed strictly.
 - Antigravity agent resume metadata now uses the hook payload's `workspacePaths` instead of the generated wrapper script cwd (`~/.gemini/config`), so `agent-health` reports the real project directory after `agy` publishes a new hook event.
 - Session restore path repair now uses the pane tree, not stale persisted surface metadata, to choose the owning workspace directory for browser/SSH surfaces whose saved cwd no longer exists.

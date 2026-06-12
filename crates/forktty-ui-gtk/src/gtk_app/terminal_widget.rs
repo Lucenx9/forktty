@@ -885,17 +885,35 @@ struct TerminalMouseWidgetMetrics {
     cell_height: i32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TerminalContentPadding {
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
+}
+
 fn terminal_mouse_input_for_area(
     area: &gtk::DrawingArea,
     renderer: &TerminalRenderer,
     event: TerminalMouseEventInput,
 ) -> TerminalMouseInput {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+    let padding = terminal_content_padding(area);
+    let (x, y) = terminal_content_position(event.x, event.y, padding);
     terminal_mouse_input(
-        event,
+        TerminalMouseEventInput { x, y, ..event },
         TerminalMouseWidgetMetrics {
-            screen_width: area.allocated_width(),
-            screen_height: area.allocated_height(),
+            screen_width: terminal_content_size(
+                area.allocated_width(),
+                padding.left,
+                padding.right,
+            ),
+            screen_height: terminal_content_size(
+                area.allocated_height(),
+                padding.top,
+                padding.bottom,
+            ),
             cell_width,
             cell_height,
         },
@@ -928,6 +946,30 @@ fn positive_u32(value: i32) -> u32 {
     value.max(1) as u32
 }
 
+#[allow(deprecated)]
+fn terminal_content_padding(widget: &impl IsA<gtk::Widget>) -> TerminalContentPadding {
+    let padding = widget.as_ref().style_context().padding();
+    TerminalContentPadding {
+        left: i32::from(padding.left()),
+        right: i32::from(padding.right()),
+        top: i32::from(padding.top()),
+        bottom: i32::from(padding.bottom()),
+    }
+}
+
+fn terminal_content_size(size: i32, leading_padding: i32, trailing_padding: i32) -> i32 {
+    size.saturating_sub(leading_padding)
+        .saturating_sub(trailing_padding)
+        .max(1)
+}
+
+fn terminal_content_position(x: f64, y: f64, padding: TerminalContentPadding) -> (f64, f64) {
+    (
+        (x - f64::from(padding.left)).max(0.0),
+        (y - f64::from(padding.top)).max(0.0),
+    )
+}
+
 fn write_terminal_mouse(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     drawing_area: &gtk::DrawingArea,
@@ -954,6 +996,16 @@ fn selection_cell_for_position(
     y: f64,
 ) -> SelectionPoint {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
+    let (x, y) = terminal_content_position(x, y, terminal_content_padding(area));
+    selection_cell_for_content_position(x, y, cell_width, cell_height)
+}
+
+fn selection_cell_for_content_position(
+    x: f64,
+    y: f64,
+    cell_width: i32,
+    cell_height: i32,
+) -> SelectionPoint {
     SelectionPoint {
         row: (y.max(0.0) / f64::from(cell_height.max(1))) as usize,
         col: (x.max(0.0) / f64::from(cell_width.max(1))) as usize,
@@ -1845,6 +1897,26 @@ mod selection_tests {
     }
 
     #[test]
+    fn selection_cell_mapping_uses_terminal_content_origin_after_padding() {
+        let padding = TerminalContentPadding {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        };
+        let (x, y) = terminal_content_position(32.0, 50.0, padding);
+
+        assert_eq!(
+            selection_cell_for_content_position(x, y, 10, 20),
+            SelectionPoint { row: 2, col: 2 }
+        );
+        assert_eq!(
+            selection_cell_for_content_position(32.0, 50.0, 10, 20),
+            SelectionPoint { row: 2, col: 3 }
+        );
+    }
+
+    #[test]
     fn scrollback_navigation_pages_and_jumps_outside_the_alternate_screen() {
         let request = SpawnRequest {
             surface_id: "surface-1".to_string(),
@@ -2090,5 +2162,11 @@ mod mouse_tests {
             }
         );
         assert!(input.any_button_pressed);
+    }
+
+    #[test]
+    fn terminal_content_size_excludes_css_padding_for_mouse_coordinates() {
+        assert_eq!(terminal_content_size(100, 12, 12), 76);
+        assert_eq!(terminal_content_size(10, 12, 12), 1);
     }
 }
