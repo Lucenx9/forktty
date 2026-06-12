@@ -11,16 +11,14 @@ on:
 permissions:
   contents: read
 
-# Dry-run of GitHub's forced Node 24 migration (2026-06-16): verify the
-# pinned setup-zig (still node20 upstream) works when forced onto node24.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Dry-run of GitHub's forced Node 24 migration (2026-06-16): verify the
+  # pinned setup-zig (still node20 upstream) works when forced onto node24.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   CARGO_TERM_COLOR: always
   APPIMAGETOOL_VERSION: "1.9.0"
   APPIMAGE_RUNTIME_VERSION: "20251108"
