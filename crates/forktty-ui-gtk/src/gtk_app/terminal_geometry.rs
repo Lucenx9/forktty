@@ -1,4 +1,4 @@
-pub(super) const TERMINAL_PADDING_PX: i32 = 8;
+pub(super) const TERMINAL_PADDING_PX: i32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TerminalGridGeometry {
@@ -36,11 +36,16 @@ pub(super) fn terminal_grid_geometry(
     let cell_height_px = cell_height_px.max(1);
     let grid_width = i32::from(cols.max(1)) * cell_width_px;
     let grid_height = i32::from(rows.max(1)) * cell_height_px;
-    let extra_width = terminal_content_pixels(width_px).saturating_sub(grid_width);
-    let extra_height = terminal_content_pixels(height_px).saturating_sub(grid_height);
+    let extra_width =
+        balanced_remainder(terminal_content_pixels(width_px), grid_width, cell_width_px);
+    let extra_height = balanced_remainder(
+        terminal_content_pixels(height_px),
+        grid_height,
+        cell_height_px,
+    );
     TerminalGridGeometry {
-        origin_x: TERMINAL_PADDING_PX + extra_width.max(0) / 2,
-        origin_y: TERMINAL_PADDING_PX + extra_height.max(0) / 2,
+        origin_x: TERMINAL_PADDING_PX + extra_width / 2,
+        origin_y: TERMINAL_PADDING_PX + extra_height / 2,
         grid_width,
         grid_height,
     }
@@ -75,6 +80,12 @@ fn pixel_cells(pixels: i32, cell_pixels: i32) -> u16 {
     ((pixels.max(1) / cell_pixels).max(1)).min(i32::from(u16::MAX)) as u16
 }
 
+fn balanced_remainder(content_pixels: i32, grid_pixels: i32, cell_pixels: i32) -> i32 {
+    content_pixels
+        .saturating_sub(grid_pixels)
+        .rem_euclid(cell_pixels.max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +112,14 @@ mod tests {
             (78, 23)
         );
         assert_eq!(terminal_grid_cells_for_allocation(10, 10, 10, 20), (1, 1));
+    }
+
+    #[test]
+    fn grid_geometry_does_not_center_stale_terminal_size() {
+        let geometry = terminal_grid_geometry(700, 480, 80, 24, 7, 18);
+
+        assert_eq!(geometry.origin_x, 7);
+        assert_eq!(geometry.origin_y, 6);
     }
 
     #[test]

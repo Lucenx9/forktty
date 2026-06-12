@@ -34,11 +34,11 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 
 ## Terminal Pane Polish
 
-- Terminal content padding is `TERMINAL_PADDING_PX = 8` in `terminal_geometry.rs`.
+- Terminal content padding is `TERMINAL_PADDING_PX = 6` in `terminal_geometry.rs`.
 - Padding is a GTK-layer concern: the renderer fills the whole widget background, then offsets the grid.
 - Input mapping, selection, mouse forwarding, and drawing must use the same renderer cell metrics.
 - Balance padding remainder on both axes so the grid is centered when pixels do not divide evenly.
-- Unfocused split dimming is `UNFOCUSED_SPLIT_DIM_ALPHA = 0.13` in `terminal_renderer.rs`.
+- Unfocused split dimming is `UNFOCUSED_SPLIT_DIM_ALPHA = 0.08` in `terminal_renderer.rs`.
 - Dim only unfocused panes when the visible workspace has more than one terminal pane.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.

@@ -8,7 +8,7 @@ use std::{f64::consts::PI, fmt};
 
 /// Ghostty-style inactive split dim: enough to clarify focus without making
 /// background panes unreadable.
-const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.13;
+const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.08;
 const SCROLLBACK_INDICATOR_WIDTH_PX: f64 = 4.0;
 const SCROLLBACK_INDICATOR_ALPHA: f64 = 0.25;
 const VISUAL_BELL_BORDER_PX: f64 = 2.0;
@@ -1176,7 +1176,7 @@ mod tests {
     fn scrollback_indicator_geometry_scales_with_viewport() {
         assert_eq!(
             scrollback_indicator_geometry(20, 10, 100, 116),
-            Some(ScrollbackIndicatorGeometry { y: 28, height: 10 })
+            Some(ScrollbackIndicatorGeometry { y: 27, height: 10 })
         );
     }
 
@@ -1184,7 +1184,7 @@ mod tests {
     fn scrollback_indicator_geometry_rounds_thumb_edges() {
         assert_eq!(
             scrollback_indicator_geometry(7, 33, 100, 115),
-            Some(ScrollbackIndicatorGeometry { y: 15, height: 33 })
+            Some(ScrollbackIndicatorGeometry { y: 13, height: 34 })
         );
     }
 
