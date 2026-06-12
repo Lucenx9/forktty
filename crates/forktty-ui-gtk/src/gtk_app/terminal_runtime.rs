@@ -172,6 +172,12 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
+    pub(super) fn is_mouse_tracking(&self) -> Result<bool, TerminalError> {
+        self.core
+            .is_mouse_tracking()
+            .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
     pub(super) fn resize_pixels(
         &mut self,
         width_px: i32,
@@ -533,6 +539,19 @@ mod tests {
         runtime.resize_cells(40, 10).unwrap();
 
         assert_eq!(runtime.core_resize_pixels().last(), Some(&(11, 22)));
+    }
+
+    #[test]
+    fn mouse_tracking_is_off_on_spawn_and_follows_the_application_mode() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
+
+        assert!(!runtime.is_mouse_tracking().unwrap());
+
+        // Enable SGR mouse tracking, as tmux/vim/htop do.
+        runtime.feed_pty_bytes(b"\x1b[?1000h\x1b[?1006h").unwrap();
+
+        assert!(runtime.is_mouse_tracking().unwrap());
     }
 
     #[test]

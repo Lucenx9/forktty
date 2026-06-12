@@ -292,18 +292,6 @@ pub(super) fn terminal_scroll_button(delta_y: f64) -> Option<TerminalMouseButton
     }
 }
 
-pub(super) fn terminal_scroll_viewport_delta(delta_y: f64) -> Option<isize> {
-    const LINES_PER_WHEEL_TICK: isize = 3;
-
-    if delta_y < 0.0 {
-        Some(-LINES_PER_WHEEL_TICK)
-    } else if delta_y > 0.0 {
-        Some(LINES_PER_WHEEL_TICK)
-    } else {
-        None
-    }
-}
-
 fn control_code(ch: char) -> Option<u8> {
     let lower = ch.to_ascii_lowercase();
     if lower.is_ascii_lowercase() {
@@ -614,13 +602,6 @@ mod tests {
             Some(TerminalMouseButton::WheelDown)
         );
         assert_eq!(terminal_scroll_button(0.0), None);
-    }
-
-    #[test]
-    fn local_scrollback_delta_maps_vertical_wheel_to_viewport_lines() {
-        assert_eq!(terminal_scroll_viewport_delta(-1.0), Some(-3));
-        assert_eq!(terminal_scroll_viewport_delta(1.0), Some(3));
-        assert_eq!(terminal_scroll_viewport_delta(0.0), None);
     }
 
     #[test]

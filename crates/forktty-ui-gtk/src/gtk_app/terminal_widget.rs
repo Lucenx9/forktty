@@ -52,9 +52,10 @@ pub(super) struct GhosttyTerminalWidget {
     // True when the current workspace layout shows this pane alongside another
     // pane. Single-pane workspaces never dim terminals when focus sits outside.
     has_siblings: Rc<Cell<bool>>,
-    // Fractional smooth-scroll line remainder. Wheel events stay discrete and
-    // clear this so switching devices never inherits stale partial lines.
-    smooth_scroll_remainder: Rc<Cell<f64>>,
+    // Fractional scroll-line remainder shared by smooth and discrete events
+    // (hi-res wheels report fractional ticks). A direction flip or gesture
+    // end resets it so reversals never inherit stale partial lines.
+    scroll_remainder: Rc<Cell<f64>>,
     // Index of the active scrollback search match; matches themselves are
     // recomputed on every step so new output never leaves stale positions.
     search_index: Rc<Cell<Option<usize>>>,
@@ -138,7 +139,7 @@ impl GhosttyTerminalWidget {
         let visual_bell_active = Rc::new(Cell::new(false));
         let visual_bell_generation = Rc::new(Cell::new(0));
         let has_siblings = Rc::new(Cell::new(false));
-        let smooth_scroll_remainder = Rc::new(Cell::new(reset_smooth_scroll_accumulator()));
+        let scroll_remainder = Rc::new(Cell::new(reset_scroll_accumulator()));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
         let im_context = gtk::IMMulticontext::new();
@@ -602,8 +603,9 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.downgrade();
                 let selection = selection.clone();
-                let smooth_scroll_remainder = smooth_scroll_remainder.clone();
-                let smooth_scroll_remainder_for_scroll = smooth_scroll_remainder.clone();
+                let scroll_remainder = scroll_remainder.clone();
+                let scroll_remainder_for_scroll = scroll_remainder.clone();
+                let wayland_display = display_is_wayland();
                 scroll.connect_scroll(move |controller, _dx, dy| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return glib::Propagation::Proceed;
@@ -614,86 +616,63 @@ impl GhosttyTerminalWidget {
                         .as_ref()
                         .and_then(|event| event.position())
                         .unwrap_or((0.0, 0.0));
-                    if smooth_scroll {
-                        let accumulated =
-                            accumulate_smooth_scroll(smooth_scroll_remainder_for_scroll.get(), dy);
-                        smooth_scroll_remainder_for_scroll.set(accumulated.remainder);
-                        let Some(button) = terminal_scroll_button(accumulated.lines as f64) else {
-                            return glib::Propagation::Stop;
+                    let (_, cell_height) = renderer.cell_pixel_size_for_widget(&drawing_area);
+                    let line_delta =
+                        scroll_line_delta(smooth_scroll, wayland_display, dy, cell_height);
+                    let Some(button) = terminal_scroll_button(line_delta) else {
+                        // A true zero-delta event carries nothing to route;
+                        // smooth streams stay claimed (their fractions are
+                        // being accumulated across events).
+                        return if smooth_scroll {
+                            glib::Propagation::Stop
+                        } else {
+                            glib::Propagation::Proceed
                         };
-                        let input = terminal_mouse_input_for_area(
-                            &drawing_area,
-                            &renderer,
-                            TerminalMouseEventInput {
-                                action: TerminalMouseAction::Press,
-                                button: Some(button),
-                                modifiers: controller.current_event_state(),
-                                x,
-                                y,
-                                any_button_pressed: false,
-                            },
-                        );
-                        match route_terminal_scroll_lines(&runtime, input, accumulated.lines) {
-                            Ok(ScrollRouting::Forwarded) => {
-                                drawing_area.queue_draw();
-                                glib::Propagation::Stop
-                            }
-                            Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
-                                if scrolled {
-                                    selection.borrow_mut().clear();
-                                    drawing_area.queue_draw();
-                                }
-                                glib::Propagation::Stop
-                            }
-                            Ok(ScrollRouting::NotHandled) => glib::Propagation::Stop,
-                            Err(err) => {
-                                eprintln!("Failed to route terminal smooth scroll input: {err}");
-                                glib::Propagation::Proceed
-                            }
+                    };
+                    let input = terminal_mouse_input_for_area(
+                        &drawing_area,
+                        &renderer,
+                        TerminalMouseEventInput {
+                            action: TerminalMouseAction::Press,
+                            button: Some(button),
+                            modifiers: controller.current_event_state(),
+                            x,
+                            y,
+                            any_button_pressed: false,
+                        },
+                    );
+                    match route_terminal_scroll(
+                        &runtime,
+                        input,
+                        &scroll_remainder_for_scroll,
+                        line_delta,
+                    ) {
+                        Ok(ScrollRouting::Forwarded) => {
+                            drawing_area.queue_draw();
+                            glib::Propagation::Stop
                         }
-                    } else {
-                        smooth_scroll_remainder_for_scroll.set(reset_smooth_scroll_accumulator());
-                        let Some(button) = terminal_scroll_button(dy) else {
-                            return glib::Propagation::Proceed;
-                        };
-                        let input = terminal_mouse_input_for_area(
-                            &drawing_area,
-                            &renderer,
-                            TerminalMouseEventInput {
-                                action: TerminalMouseAction::Press,
-                                button: Some(button),
-                                modifiers: controller.current_event_state(),
-                                x,
-                                y,
-                                any_button_pressed: false,
-                            },
-                        );
-                        match route_terminal_scroll(&runtime, input, dy) {
-                            Ok(ScrollRouting::Forwarded) => {
+                        Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
+                            if scrolled {
+                                // Selection coordinates are viewport-relative;
+                                // scrolling would leave the highlight on the
+                                // wrong text.
+                                selection.borrow_mut().clear();
                                 drawing_area.queue_draw();
-                                glib::Propagation::Stop
                             }
-                            Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
-                                if scrolled {
-                                    // Selection coordinates are viewport-relative;
-                                    // scrolling would leave the highlight on the
-                                    // wrong text.
-                                    selection.borrow_mut().clear();
-                                    drawing_area.queue_draw();
-                                }
-                                glib::Propagation::Stop
-                            }
-                            Ok(ScrollRouting::NotHandled) => glib::Propagation::Proceed,
-                            Err(err) => {
-                                eprintln!("Failed to route terminal scroll input: {err}");
-                                glib::Propagation::Proceed
-                            }
+                            glib::Propagation::Stop
+                        }
+                        // Sub-threshold: the delta went into the accumulator,
+                        // so the event is consumed.
+                        Ok(ScrollRouting::NotHandled) => glib::Propagation::Stop,
+                        Err(err) => {
+                            eprintln!("Failed to route terminal scroll input: {err}");
+                            glib::Propagation::Proceed
                         }
                     }
                 });
-                let smooth_scroll_remainder = smooth_scroll_remainder.clone();
+                let scroll_remainder = scroll_remainder.clone();
                 scroll.connect_scroll_end(move |_| {
-                    smooth_scroll_remainder.set(reset_smooth_scroll_accumulator());
+                    scroll_remainder.set(reset_scroll_accumulator());
                 });
             }
             drawing_area.add_controller(scroll);
@@ -724,7 +703,7 @@ impl GhosttyTerminalWidget {
             visual_bell_active,
             visual_bell_generation,
             has_siblings,
-            smooth_scroll_remainder,
+            scroll_remainder,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
@@ -769,7 +748,7 @@ impl GhosttyTerminalWidget {
             visual_bell_active: Rc::downgrade(&self.visual_bell_active),
             visual_bell_generation: Rc::downgrade(&self.visual_bell_generation),
             has_siblings: Rc::downgrade(&self.has_siblings),
-            smooth_scroll_remainder: Rc::downgrade(&self.smooth_scroll_remainder),
+            scroll_remainder: Rc::downgrade(&self.scroll_remainder),
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
@@ -999,7 +978,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     visual_bell_active: std::rc::Weak<Cell<bool>>,
     visual_bell_generation: std::rc::Weak<Cell<u64>>,
     has_siblings: std::rc::Weak<Cell<bool>>,
-    smooth_scroll_remainder: std::rc::Weak<Cell<f64>>,
+    scroll_remainder: std::rc::Weak<Cell<f64>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
@@ -1017,7 +996,7 @@ impl WeakGhosttyTerminalWidget {
             visual_bell_active: self.visual_bell_active.upgrade()?,
             visual_bell_generation: self.visual_bell_generation.upgrade()?,
             has_siblings: self.has_siblings.upgrade()?,
-            smooth_scroll_remainder: self.smooth_scroll_remainder.upgrade()?,
+            scroll_remainder: self.scroll_remainder.upgrade()?,
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,
@@ -1369,35 +1348,80 @@ enum ScrollRouting {
     NotHandled,
 }
 
+/// Viewport lines per wheel unit: discrete wheel deltas (GDK fills ±1.0 per
+/// classic tick, fractions for hi-res value120 wheels) and X11 smooth deltas
+/// are in wheel-detent units, and one detent conventionally scrolls 3 lines.
+const LINES_PER_WHEEL_UNIT: f64 = 3.0;
+
+/// Lines consumed per wheel press forwarded to a mouse-tracking application:
+/// such applications scroll a detent's worth (vim: 3 lines) per press, so a
+/// press is owed every 3 accumulated lines — forwarding one press per line
+/// made touchpads scroll tracking apps 3x faster than physical wheels.
+const WHEEL_PRESS_LINES: isize = 3;
+
+/// One scroll event's worth of consumption from the line accumulator.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct SmoothScrollAccumulation {
+struct ScrollEmission {
+    /// Wheel presses owed to a mouse-tracking application (signed).
+    presses: isize,
+    /// Whole lines consumed (`presses * WHEEL_PRESS_LINES` when tracking).
     lines: isize,
+    /// Sub-threshold lines carried over to the next event.
     remainder: f64,
 }
 
-const SMOOTH_SCROLL_LINES_PER_UNIT: f64 = 3.0;
-
-fn accumulate_smooth_scroll(remainder: f64, delta_y: f64) -> SmoothScrollAccumulation {
-    let line_delta = delta_y * SMOOTH_SCROLL_LINES_PER_UNIT;
+/// Folds a line delta into the fractional accumulator and takes out whole
+/// emissions: per line when scrolling the local viewport, per wheel detent
+/// (3 lines) when forwarding presses to a mouse-tracking application. A
+/// direction flip drops the leftover so reversals respond immediately.
+fn accumulate_scroll_emission(remainder: f64, line_delta: f64, tracking: bool) -> ScrollEmission {
     if line_delta == 0.0 {
-        return SmoothScrollAccumulation {
+        return ScrollEmission {
+            presses: 0,
             lines: 0,
             remainder,
         };
     }
     let same_direction =
         remainder == 0.0 || remainder.is_sign_positive() == line_delta.is_sign_positive();
-    let mut accumulated = if same_direction { remainder } else { 0.0 };
-    accumulated += line_delta;
-    let lines = accumulated.trunc() as isize;
-    SmoothScrollAccumulation {
+    let accumulated = if same_direction { remainder } else { 0.0 } + line_delta;
+    let (presses, lines) = if tracking {
+        let presses = (accumulated / WHEEL_PRESS_LINES as f64).trunc() as isize;
+        (presses, presses * WHEEL_PRESS_LINES)
+    } else {
+        (0, accumulated.trunc() as isize)
+    };
+    ScrollEmission {
+        presses,
         lines,
         remainder: accumulated - lines as f64,
     }
 }
 
-fn reset_smooth_scroll_accumulator() -> f64 {
+fn reset_scroll_accumulator() -> f64 {
     0.0
+}
+
+/// Converts a scroll event's vertical delta into viewport lines. Wayland
+/// smooth events (touchpads and other continuous devices) report SURFACE
+/// units — logical pixels — so one cell height of finger travel maps to one
+/// line; treating those as wheel units overscrolled ~30x. X11 smooth deltas
+/// and discrete UP/DOWN deltas are wheel units (one detent = 3 lines).
+fn scroll_line_delta(smooth: bool, wayland: bool, delta_y: f64, cell_height_px: i32) -> f64 {
+    if smooth && wayland {
+        delta_y / f64::from(cell_height_px.max(1))
+    } else {
+        delta_y * LINES_PER_WHEEL_UNIT
+    }
+}
+
+/// Whether the default display is Wayland, which determines the unit of
+/// smooth-scroll deltas (surface pixels there, wheel units on X11). The
+/// proper getter (`ScrollEvent::unit`) needs the gtk4 `v4_8` feature, which
+/// would raise the minimum GTK beyond what shipped hosts have.
+fn display_is_wayland() -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
 }
 
 fn scroll_event_is_smooth(event: &gtk::gdk::Event) -> bool {
@@ -1478,45 +1502,45 @@ fn open_terminal_link(drawing_area: &gtk::DrawingArea, uri: &str) {
     gtk::show_uri(window.as_ref(), uri, gtk::gdk::CURRENT_TIME);
 }
 
-/// Routes a wheel event: forwarded to a mouse-tracking application, otherwise
-/// scrolled through the local viewport. Each runtime borrow is released
-/// before the next one — matching directly on `borrow_mut().write_mouse(..)`
-/// used to keep the `RefMut` alive across the arms, so the viewport-scroll
-/// re-borrow panicked, and that panic aborted the whole app because it cannot
-/// unwind across the GTK signal trampoline (wheel scroll over any pane with
-/// mouse tracking off, e.g. a plain shell prompt).
+/// Routes a scroll event's line delta: accumulated, then forwarded to a
+/// mouse-tracking application as whole wheel presses, or scrolled through
+/// the local viewport as whole lines; the fraction stays in `remainder`.
+/// Each runtime borrow is released before the next one — matching directly
+/// on `borrow_mut().write_mouse(..)` used to keep the `RefMut` alive across
+/// the arms, so the viewport-scroll re-borrow panicked, and that panic
+/// aborted the whole app because it cannot unwind across the GTK signal
+/// trampoline (wheel scroll over any pane with mouse tracking off, e.g. a
+/// plain shell prompt).
 fn route_terminal_scroll(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     input: TerminalMouseInput,
-    dy: f64,
+    remainder: &Cell<f64>,
+    line_delta: f64,
 ) -> Result<ScrollRouting, TerminalError> {
-    let wrote = runtime.borrow_mut().write_mouse(input);
-    if wrote? {
-        return Ok(ScrollRouting::Forwarded);
-    }
-    let Some(delta) = terminal_scroll_viewport_delta(dy) else {
-        return Ok(ScrollRouting::NotHandled);
-    };
-    let scrolled = runtime.borrow_mut().scroll_viewport_lines(delta);
-    Ok(ScrollRouting::ViewportScrolled(scrolled?))
-}
-
-fn route_terminal_scroll_lines(
-    runtime: &Rc<RefCell<TerminalRuntime>>,
-    input: TerminalMouseInput,
-    lines: isize,
-) -> Result<ScrollRouting, TerminalError> {
-    if lines == 0 {
-        return Ok(ScrollRouting::NotHandled);
-    }
-    let wrote = runtime.borrow_mut().write_mouse(input);
-    if wrote? {
-        for _ in 1..lines.unsigned_abs() {
-            runtime.borrow_mut().write_mouse(input)?;
+    let tracking = runtime.borrow().is_mouse_tracking()?;
+    let emission = accumulate_scroll_emission(remainder.get(), line_delta, tracking);
+    remainder.set(emission.remainder);
+    if emission.presses != 0 {
+        for forwarded in 0..emission.presses.unsigned_abs() {
+            let wrote = runtime.borrow_mut().write_mouse(input);
+            if wrote? {
+                continue;
+            }
+            // Tracking flipped off between the mode check and the write:
+            // scroll the viewport by the consumed-but-unforwarded lines.
+            let forwarded_lines =
+                forwarded as isize * WHEEL_PRESS_LINES * emission.presses.signum();
+            let scrolled = runtime
+                .borrow_mut()
+                .scroll_viewport_lines(emission.lines - forwarded_lines);
+            return Ok(ScrollRouting::ViewportScrolled(scrolled?));
         }
         return Ok(ScrollRouting::Forwarded);
     }
-    let scrolled = runtime.borrow_mut().scroll_viewport_lines(lines);
+    if emission.lines == 0 {
+        return Ok(ScrollRouting::NotHandled);
+    }
+    let scrolled = runtime.borrow_mut().scroll_viewport_lines(emission.lines);
     Ok(ScrollRouting::ViewportScrolled(scrolled?))
 }
 
@@ -1924,9 +1948,18 @@ mod selection_tests {
             any_button_pressed: false,
         };
 
-        let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
+        let remainder = Cell::new(0.0);
+        let routing =
+            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
 
         assert_eq!(routing, ScrollRouting::ViewportScrolled(true));
+        assert_eq!(remainder.get(), 0.0);
+
+        // A sub-line touchpad delta is accumulated, not routed anywhere yet.
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -0.5).unwrap();
+
+        assert_eq!(routing, ScrollRouting::NotHandled);
+        assert_eq!(remainder.get(), -0.5);
     }
 
     #[test]
@@ -1962,9 +1995,22 @@ mod selection_tests {
             any_button_pressed: false,
         };
 
-        let routing = route_terminal_scroll(&runtime, wheel, -1.0).unwrap();
+        let remainder = Cell::new(0.0);
+        let routing =
+            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
 
         assert_eq!(routing, ScrollRouting::Forwarded);
+        assert_eq!(remainder.get(), 0.0);
+
+        // Touchpad lines accumulate until a full wheel tick (3 lines) is owed;
+        // forwarding per line used to make tracking apps scroll 3x too fast.
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0).unwrap();
+        assert_eq!(routing, ScrollRouting::NotHandled);
+        assert_eq!(remainder.get(), -2.0);
+
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0).unwrap();
+        assert_eq!(routing, ScrollRouting::Forwarded);
+        assert_eq!(remainder.get(), -1.0);
     }
 
     #[test]
@@ -2397,34 +2443,106 @@ mod mouse_tests {
     }
 
     #[test]
-    fn smooth_scroll_accumulator_emits_integer_lines_and_keeps_remainder() {
-        let first = accumulate_smooth_scroll(0.0, 0.2);
-        assert_eq!(first.lines, 0);
-        assert_f64_eq(first.remainder, 0.6);
-
-        let second = accumulate_smooth_scroll(first.remainder, 0.2);
-        assert_eq!(second.lines, 1);
-        assert!((second.remainder - 0.2).abs() < f64::EPSILON);
-
-        let third = accumulate_smooth_scroll(second.remainder, -0.2);
-        assert_eq!(third.lines, 0);
-        assert_f64_eq(third.remainder, -0.6);
+    fn scroll_line_delta_converts_wayland_smooth_pixels_through_cell_height() {
+        // One cell height of finger travel scrolls exactly one line.
+        assert_f64_eq(scroll_line_delta(true, true, 20.0, 20), 1.0);
+        assert_f64_eq(scroll_line_delta(true, true, -10.0, 20), -0.5);
     }
 
     #[test]
-    fn smooth_scroll_accumulator_handles_negative_steps() {
-        let first = accumulate_smooth_scroll(0.0, -0.5);
-        assert_eq!(first.lines, -1);
+    fn scroll_line_delta_treats_x11_smooth_deltas_as_wheel_units() {
+        assert_f64_eq(scroll_line_delta(true, false, 1.0, 20), 3.0);
+    }
+
+    #[test]
+    fn scroll_line_delta_maps_a_classic_wheel_tick_to_three_lines() {
+        assert_f64_eq(scroll_line_delta(false, true, 1.0, 20), 3.0);
+        assert_f64_eq(scroll_line_delta(false, false, -1.0, 20), -3.0);
+    }
+
+    #[test]
+    fn scroll_line_delta_scales_value120_fractional_ticks() {
+        // Hi-res wheels (Logitech free-spin) report fractional wheel units.
+        assert_f64_eq(scroll_line_delta(false, true, 0.25, 20), 0.75);
+    }
+
+    #[test]
+    fn scroll_emission_without_tracking_emits_whole_lines_and_keeps_remainder() {
+        let first = accumulate_scroll_emission(0.0, 0.6, false);
+        assert_eq!((first.presses, first.lines), (0, 0));
+        assert_f64_eq(first.remainder, 0.6);
+
+        let second = accumulate_scroll_emission(first.remainder, 0.6, false);
+        assert_eq!((second.presses, second.lines), (0, 1));
+        assert_f64_eq(second.remainder, 0.2);
+    }
+
+    #[test]
+    fn scroll_emission_resets_the_remainder_on_direction_flip() {
+        let flipped = accumulate_scroll_emission(0.6, -0.6, false);
+        assert_eq!((flipped.presses, flipped.lines), (0, 0));
+        assert_f64_eq(flipped.remainder, -0.6);
+
+        let tracked_flip = accumulate_scroll_emission(2.0, -3.0, true);
+        assert_eq!((tracked_flip.presses, tracked_flip.lines), (-1, -3));
+        assert_f64_eq(tracked_flip.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_handles_negative_steps() {
+        let first = accumulate_scroll_emission(0.0, -1.5, false);
+        assert_eq!((first.presses, first.lines), (0, -1));
         assert_f64_eq(first.remainder, -0.5);
 
-        let second = accumulate_smooth_scroll(first.remainder, -0.5);
-        assert_eq!(second.lines, -2);
+        let second = accumulate_scroll_emission(first.remainder, -1.5, false);
+        assert_eq!((second.presses, second.lines), (0, -2));
         assert_f64_eq(second.remainder, 0.0);
     }
 
     #[test]
-    fn smooth_scroll_reset_clears_fractional_remainder() {
-        assert_eq!(reset_smooth_scroll_accumulator(), 0.0);
+    fn scroll_emission_with_tracking_forwards_one_press_per_three_lines() {
+        // A classic wheel tick (3 lines) forwards exactly one press, like the
+        // old discrete path did.
+        let tick = accumulate_scroll_emission(0.0, 3.0, true);
+        assert_eq!((tick.presses, tick.lines), (1, 3));
+        assert_f64_eq(tick.remainder, 0.0);
+
+        // Touchpad lines accumulate; only every third line becomes a press.
+        let partial = accumulate_scroll_emission(0.0, 2.0, true);
+        assert_eq!((partial.presses, partial.lines), (0, 0));
+        assert_f64_eq(partial.remainder, 2.0);
+
+        let press = accumulate_scroll_emission(partial.remainder, 2.0, true);
+        assert_eq!((press.presses, press.lines), (1, 3));
+        assert_f64_eq(press.remainder, 1.0);
+    }
+
+    #[test]
+    fn scroll_emission_accumulates_value120_notches_into_one_press() {
+        // Four 0.25-tick events = one notch = exactly one press / three lines.
+        let mut remainder = 0.0;
+        let mut presses = 0;
+        let mut lines = 0;
+        for _ in 0..4 {
+            let emission = accumulate_scroll_emission(remainder, 0.75, true);
+            presses += emission.presses;
+            lines += emission.lines;
+            remainder = emission.remainder;
+        }
+        assert_eq!((presses, lines), (1, 3));
+        assert_f64_eq(remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_ignores_zero_deltas() {
+        let emission = accumulate_scroll_emission(0.4, 0.0, false);
+        assert_eq!((emission.presses, emission.lines), (0, 0));
+        assert_f64_eq(emission.remainder, 0.4);
+    }
+
+    #[test]
+    fn scroll_reset_clears_fractional_remainder() {
+        assert_eq!(reset_scroll_accumulator(), 0.0);
     }
 
     #[test]

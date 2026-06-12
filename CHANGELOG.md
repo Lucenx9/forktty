@@ -21,6 +21,8 @@ All notable changes to ForkTTY are documented here.
 - The declared Rust MSRV is now 1.96, matching the current `rusqlite`/`libsqlite3-sys` dependency chain required by the workspace lockfile.
 
 ### Fixed
+- Wayland touchpad scrolling in terminal panes no longer overscrolls roughly 30x: smooth-scroll deltas arrive in surface (logical pixel) units on Wayland and are now converted through the pane's cell height, while X11 smooth deltas and wheel ticks keep the 3-lines-per-tick mapping.
+- Scrolling inside mouse-tracking applications (vim, htop, tmux) now forwards one wheel press per three accumulated lines — matching physical-wheel speed — instead of one press per line, and hi-resolution wheels' fractional ticks accumulate into whole presses/lines instead of overscrolling on every fraction of a notch.
 - Mouse events in terminal padding now clamp to the nearest grid edge instead of reporting past the last cell to mouse-tracking applications.
 - Terminal copy failures no longer clear the existing clipboard contents, and the scrollback indicator no longer risks a panic during very small transient GTK allocations.
 - Session restore path repair now uses the pane tree, not stale persisted surface metadata, to choose the owning workspace directory for browser/SSH surfaces whose saved cwd no longer exists.
