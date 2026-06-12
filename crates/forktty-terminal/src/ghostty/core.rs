@@ -15,7 +15,7 @@ use libghostty_vt::{
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::{CellWide, Screen},
     style::RgbColor,
-    terminal::ScrollViewport,
+    terminal::{Point, PointCoordinate, ScrollViewport},
     RenderState, Terminal, TerminalOptions,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -277,6 +277,8 @@ pub struct TerminalFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalRow {
     pub cells: Vec<TerminalCell>,
+    /// Whether this row soft-wraps into the next one (one logical line).
+    pub wrapped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -549,6 +551,7 @@ impl GhosttyCore {
         let mut rows = row_iterator.update(&snapshot)?;
 
         while let Some(row) = rows.next() {
+            let wrapped = row.raw_row()?.is_wrapped()?;
             let mut cells = cell_iterator.update(row)?;
             let mut row_cells = Vec::new();
             while let Some(cell) = cells.next() {
@@ -571,10 +574,41 @@ impl GhosttyCore {
                     hyperlink: raw_cell.has_hyperlink()?,
                 });
             }
-            frame.rows.push(TerminalRow { cells: row_cells });
+            frame.rows.push(TerminalRow {
+                cells: row_cells,
+                wrapped,
+            });
         }
 
         Ok(frame)
+    }
+
+    /// The OSC 8 hyperlink URI under the given viewport cell, if any.
+    /// Out-of-range coordinates resolve to `None`.
+    pub fn hyperlink_uri_at(&self, col: u16, row: u16) -> Result<Option<String>> {
+        let grid_ref = match self.terminal.grid_ref(Point::Viewport(PointCoordinate {
+            x: col,
+            y: u32::from(row),
+        })) {
+            Ok(grid_ref) => grid_ref,
+            // Out-of-range points are a lookup miss, not a failure.
+            Err(_) => return Ok(None),
+        };
+        let mut buf = vec![0u8; 1024];
+        let len = match grid_ref.hyperlink_uri(&mut buf) {
+            Ok(len) => len,
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                buf = vec![0u8; required];
+                grid_ref.hyperlink_uri(&mut buf)?
+            }
+            Err(err) => return Err(err),
+        };
+        if len == 0 {
+            return Ok(None);
+        }
+        Ok(std::str::from_utf8(&buf[..len])
+            .ok()
+            .map(ToString::to_string))
     }
 
     pub fn paste_bytes(&self, text: &str) -> Result<Vec<u8>> {
@@ -1672,5 +1706,42 @@ mod tests {
             },
             any_button_pressed: false,
         }
+    }
+
+    #[test]
+    fn core_hyperlink_uri_at_returns_the_osc8_target() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.feed(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ plain")
+            .unwrap();
+
+        assert_eq!(
+            core.hyperlink_uri_at(0, 0).unwrap().as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(core.hyperlink_uri_at(6, 0).unwrap(), None);
+        // Out-of-range coordinates are a graceful None, not an error.
+        assert_eq!(core.hyperlink_uri_at(0, 50).unwrap(), None);
+    }
+
+    #[test]
+    fn core_render_frame_reports_soft_wrapped_rows() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        // 25 chars on 10 cols: rows 0 and 1 wrap, row 2 ends the logical line.
+        core.feed(b"abcdefghijklmnopqrstuvwxy").unwrap();
+        let frame = core.render_frame().unwrap();
+
+        assert!(frame.rows[0].wrapped);
+        assert!(frame.rows[1].wrapped);
+        assert!(!frame.rows[2].wrapped);
     }
 }

@@ -93,6 +93,7 @@ mod socket_server;
 mod terminal_appearance;
 mod terminal_clipboard;
 mod terminal_input;
+mod terminal_links;
 mod terminal_renderer;
 mod terminal_runtime;
 mod terminal_search;

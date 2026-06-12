@@ -291,6 +291,16 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
+    pub(super) fn hyperlink_uri_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Result<Option<String>, TerminalError> {
+        self.core
+            .hyperlink_uri_at(col, row)
+            .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
     pub(super) fn size(&self) -> PtySize {
         self.size
     }

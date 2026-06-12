@@ -1,3 +1,4 @@
+use super::terminal_links::url_at_point;
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
@@ -25,6 +26,8 @@ pub(super) struct GhosttyTerminalWidget {
     // Notifies the search bar when new output drops the match highlight, so
     // its count label resets instead of showing a stale "current/total".
     search_invalidated: Rc<SearchInvalidatedSlot>,
+    // The link currently being highlighted by a Ctrl+hover, if any.
+    hover_link: Rc<RefCell<Option<HoverLink>>>,
 }
 
 #[derive(Default)]
@@ -86,6 +89,7 @@ impl GhosttyTerminalWidget {
         drawing_area.add_css_class("ghostty-terminal");
         let runtime = Rc::new(RefCell::new(runtime));
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
+        let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
         let cursor_blink_visible = Rc::new(Cell::new(true));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
@@ -95,18 +99,21 @@ impl GhosttyTerminalWidget {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             let selection = selection.clone();
+            let hover_link = hover_link.clone();
             let cursor_blink_visible = cursor_blink_visible.clone();
             drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
                     Ok(frame) => {
                         let range = selection.borrow().normalized_range();
+                        let link_range = hover_link.borrow().as_ref().map(|l| (l.start, l.end));
                         renderer.draw_frame(
                             cr,
                             width,
                             height,
                             &frame,
                             range,
+                            link_range,
                             RendererCursorState {
                                 focused: area.has_focus(),
                                 blink_visible: cursor_blink_visible.get(),
@@ -177,6 +184,21 @@ impl GhosttyTerminalWidget {
                 write_terminal_input(&runtime, &selection_for_key, &drawing_area, input);
                 glib::Propagation::Stop
             });
+            key_controller.connect_key_released({
+                let hover_link = hover_link.clone();
+                let drawing_area = drawing_area.downgrade();
+                move |_, key, _keycode, _modifiers| {
+                    if !matches!(key, gtk::gdk::Key::Control_L | gtk::gdk::Key::Control_R) {
+                        return;
+                    }
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
+                    // Hover is Ctrl-gated; releasing Ctrl without moving the pointer
+                    // must not leave the pointer cursor and underline stuck.
+                    clear_hover_link(&hover_link, &drawing_area);
+                }
+            });
             drawing_area.add_controller(key_controller);
         }
         {
@@ -232,6 +254,7 @@ impl GhosttyTerminalWidget {
                 let suppress_release = suppress_release.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
+                let hover_link_for_click = hover_link.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
@@ -241,6 +264,26 @@ impl GhosttyTerminalWidget {
                     };
                     any_button_pressed.set(true);
                     let modifiers = gesture.current_event_state();
+                    let is_left = matches!(button, TerminalMouseButton::Left);
+                    let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                    if is_left && ctrl && n_press == 1 {
+                        let point =
+                            selection_cell_for_position(&drawing_area, &renderer, x, y);
+                        match link_at_point(&runtime, point) {
+                            Ok(Some(link)) => {
+                                suppress_release.set(true);
+                                // The press consumed the gesture; drop the hover artifacts now —
+                                // Ctrl-release can't (clear_hover_link no-ops once this is None).
+                                *hover_link_for_click.borrow_mut() = None;
+                                drawing_area.set_cursor_from_name(None);
+                                drawing_area.queue_draw();
+                                open_terminal_link(&drawing_area, &link.uri);
+                                return;
+                            }
+                            Ok(None) => {}
+                            Err(err) => eprintln!("Failed to resolve terminal link: {err}"),
+                        }
+                    }
                     if matches!(button, TerminalMouseButton::Middle) {
                         let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
                         let input = terminal_mouse_input_for_area(
@@ -266,7 +309,6 @@ impl GhosttyTerminalWidget {
                         }
                         return;
                     }
-                    let is_left = matches!(button, TerminalMouseButton::Left);
                     // Shift bypasses application mouse tracking so text can be
                     // selected even inside mouse-aware apps (vim, htop, ...).
                     let shift_select =
@@ -299,6 +341,7 @@ impl GhosttyTerminalWidget {
                             let point =
                                 selection_cell_for_position(&drawing_area, &renderer, x, y);
                             if n_press == 1 {
+                                clear_hover_link(&hover_link_for_click, &drawing_area);
                                 selection.begin_drag(point);
                             } else {
                                 // Double click selects the word, triple click
@@ -402,6 +445,7 @@ impl GhosttyTerminalWidget {
                 let any_button_pressed = any_button_pressed.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
+                let hover_link = hover_link.clone();
                 motion.connect_motion(move |controller, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
@@ -437,6 +481,31 @@ impl GhosttyTerminalWidget {
                         drawing_area.queue_draw();
                         return;
                     }
+                    let ctrl = controller
+                        .current_event_state()
+                        .contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                    let resolved = if ctrl {
+                        link_at_point(
+                            &runtime,
+                            selection_cell_for_position(&drawing_area, &renderer, x, y),
+                        )
+                        .unwrap_or_else(|err| {
+                            eprintln!("Failed to resolve terminal link: {err}");
+                            None
+                        })
+                    } else {
+                        None
+                    };
+                    let changed = *hover_link.borrow() != resolved;
+                    if changed {
+                        drawing_area.set_cursor_from_name(if resolved.is_some() {
+                            Some("pointer")
+                        } else {
+                            None
+                        });
+                        *hover_link.borrow_mut() = resolved;
+                        drawing_area.queue_draw();
+                    }
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
                         &renderer,
@@ -452,6 +521,18 @@ impl GhosttyTerminalWidget {
                     write_terminal_mouse(&runtime, &drawing_area, input);
                 });
             }
+            motion.connect_leave({
+                let hover_link = hover_link.clone();
+                let drawing_area = drawing_area.downgrade();
+                move |_| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
+                    // Pointer can exit the widget without a final motion event
+                    // inside it; clear the hover underline and cursor.
+                    clear_hover_link(&hover_link, &drawing_area);
+                }
+            });
             drawing_area.add_controller(motion);
 
             let scroll = gtk::EventControllerScroll::new(
@@ -531,6 +612,7 @@ impl GhosttyTerminalWidget {
             drawing_area,
             runtime,
             selection,
+            hover_link,
             cursor_blink_visible,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
@@ -575,6 +657,7 @@ impl GhosttyTerminalWidget {
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
+            hover_link: Rc::downgrade(&self.hover_link),
         }
     }
 
@@ -730,6 +813,16 @@ impl GhosttyTerminalWidget {
                     selection_cleared = true;
                 }
             }
+            // New output may have shifted what cell is under the pointer;
+            // clear the hover-link underline to avoid stale highlights.
+            if events
+                .iter()
+                .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged))
+                && self.hover_link.borrow().is_some()
+            {
+                *self.hover_link.borrow_mut() = None;
+                self.drawing_area.set_cursor_from_name(None);
+            }
             // The dropped selection may have been the search-match highlight;
             // reset the match state and tell the search bar so its count
             // label follows. Outside the selection borrow: the callback runs
@@ -756,6 +849,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
+    hover_link: std::rc::Weak<RefCell<Option<HoverLink>>>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -768,6 +862,7 @@ impl WeakGhosttyTerminalWidget {
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,
+            hover_link: self.hover_link.upgrade()?,
         })
     }
 }
@@ -1089,6 +1184,78 @@ enum ScrollRouting {
     ViewportScrolled(bool),
     /// Nothing to do (no line delta for this event).
     NotHandled,
+}
+
+/// The link currently under a Ctrl-hover: viewport cell bounds plus target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HoverLink {
+    start: SelectionPoint,
+    end: SelectionPoint,
+    uri: String,
+}
+
+/// Clears the hover-link state and removes the pointer cursor if a link was
+/// highlighted. Called when Ctrl is released or the pointer leaves the widget,
+/// so the underline and hand cursor never get stuck.
+fn clear_hover_link(hover_link: &Rc<RefCell<Option<HoverLink>>>, drawing_area: &gtk::DrawingArea) {
+    if hover_link.borrow().is_some() {
+        *hover_link.borrow_mut() = None;
+        drawing_area.set_cursor_from_name(None);
+        drawing_area.queue_draw();
+    }
+}
+
+/// Resolves the link under a viewport cell: OSC 8 hyperlink cells first
+/// (bounds = the contiguous hyperlink run on that row), then bare URLs in
+/// the rendered text (joined across soft wraps).
+fn link_at_point(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    point: SelectionPoint,
+) -> Result<Option<HoverLink>, TerminalError> {
+    let frame = runtime.borrow_mut().render_frame()?;
+    let Some(row) = frame.rows.get(point.row) else {
+        return Ok(None);
+    };
+    let Some(cell) = row.cells.get(point.col) else {
+        return Ok(None);
+    };
+    if cell.hyperlink {
+        let uri = runtime
+            .borrow()
+            .hyperlink_uri_at(point.col as u16, point.row as u16)?;
+        if let Some(uri) = uri {
+            let mut from = point.col;
+            while from > 0 && row.cells[from - 1].hyperlink {
+                from -= 1;
+            }
+            let mut to = point.col;
+            while to + 1 < row.cells.len() && row.cells[to + 1].hyperlink {
+                to += 1;
+            }
+            return Ok(Some(HoverLink {
+                start: SelectionPoint {
+                    row: point.row,
+                    col: from,
+                },
+                end: SelectionPoint {
+                    row: point.row,
+                    col: to,
+                },
+                uri,
+            }));
+        }
+    }
+    Ok(url_at_point(&frame, point).map(|(start, end, uri)| HoverLink { start, end, uri }))
+}
+
+/// Opens a link with the desktop's default handler. `gtk::show_uri` is
+/// fire-and-forget (kept over `UriLauncher` to avoid raising the minimum
+/// GTK past what shipped hosts have): a failed launch reports nothing.
+fn open_terminal_link(drawing_area: &gtk::DrawingArea, uri: &str) {
+    let window = drawing_area
+        .root()
+        .and_then(|root| root.downcast::<gtk::Window>().ok());
+    gtk::show_uri(window.as_ref(), uri, gtk::gdk::CURRENT_TIME);
 }
 
 /// Routes a wheel event: forwarded to a mouse-tracking application, otherwise
@@ -1831,6 +1998,45 @@ mod selection_tests {
         selection.borrow_mut().end_drag();
         kick_viewport_to_bottom(&runtime, &selection).unwrap();
         assert!(selection.borrow().normalized_range().is_some());
+    }
+
+    #[test]
+    fn link_at_point_resolves_osc8_then_bare_urls() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 40, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(
+                b"\x1b]8;;https://osc8.example\x1b\\click\x1b]8;;\x1b\\ http://bare.example x",
+            )
+            .unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+
+        // "click" at cols 0-4 is OSC 8 hyperlinked
+        let osc8 = link_at_point(&runtime, SelectionPoint { row: 0, col: 1 })
+            .unwrap()
+            .unwrap();
+        assert_eq!(osc8.uri, "https://osc8.example");
+        assert_eq!(osc8.start, SelectionPoint { row: 0, col: 0 });
+        assert_eq!(osc8.end, SelectionPoint { row: 0, col: 4 });
+
+        // "http://bare.example" starts after space at col 5, so col 6
+        let bare = link_at_point(&runtime, SelectionPoint { row: 0, col: 8 })
+            .unwrap()
+            .unwrap();
+        assert_eq!(bare.uri, "http://bare.example");
+
+        // Empty rows have no link
+        assert!(link_at_point(&runtime, SelectionPoint { row: 2, col: 0 })
+            .unwrap()
+            .is_none());
     }
 }
 

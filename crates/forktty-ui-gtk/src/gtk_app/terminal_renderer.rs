@@ -206,6 +206,7 @@ impl TerminalRenderer {
         (logical.width().max(1), logical.height().max(1))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_frame(
         &self,
         cr: &gtk::cairo::Context,
@@ -213,6 +214,7 @@ impl TerminalRenderer {
         height: i32,
         frame: &TerminalFrame,
         selection: Option<(SelectionPoint, SelectionPoint)>,
+        hover_link: Option<(SelectionPoint, SelectionPoint)>,
         cursor_state: RendererCursorState,
     ) {
         let defaults = self.frame_defaults(frame);
@@ -234,6 +236,9 @@ impl TerminalRenderer {
                         (to - from) as f64 * metrics.width,
                     )
                 });
+            let link_cols = hover_link.and_then(|(start, end)| {
+                selection_cols_for_row(start, end, row_idx, row.cells.len())
+            });
             for background in self.background_runs_for_frame_row(frame, row) {
                 background.background.set_cairo_source(cr);
                 cr.rectangle(
@@ -256,7 +261,7 @@ impl TerminalRenderer {
                 let _ = cr.fill();
             }
 
-            self.draw_row_text(cr, frame, row, metrics, y, None);
+            self.draw_row_text(cr, frame, row, metrics, y, None, link_cols);
 
             if let Some((x, width)) = selected_span {
                 let _ = cr.save();
@@ -269,6 +274,7 @@ impl TerminalRenderer {
                     metrics,
                     y,
                     Some(self.palette.highlight_foreground),
+                    link_cols,
                 );
                 let _ = cr.restore();
             }
@@ -289,7 +295,7 @@ impl TerminalRenderer {
 
     #[cfg(test)]
     fn text_runs_for_row(&self, row: &TerminalRow) -> Vec<RendererTextRun> {
-        self.text_runs_for_row_with_defaults(row, self.palette_defaults())
+        self.text_runs_for_row_with_defaults(row, self.palette_defaults(), None)
     }
 
     fn background_runs_for_frame_row(
@@ -325,14 +331,16 @@ impl TerminalRenderer {
         &self,
         frame: &TerminalFrame,
         row: &TerminalRow,
+        link_cols: Option<(usize, usize)>,
     ) -> Vec<RendererTextRun> {
-        self.text_runs_for_row_with_defaults(row, self.frame_defaults(frame))
+        self.text_runs_for_row_with_defaults(row, self.frame_defaults(frame), link_cols)
     }
 
     fn text_runs_for_row_with_defaults(
         &self,
         row: &TerminalRow,
         defaults: RendererFrameDefaults,
+        link_cols: Option<(usize, usize)>,
     ) -> Vec<RendererTextRun> {
         let mut runs = Vec::new();
         let mut current: Option<RendererTextRun> = None;
@@ -348,7 +356,9 @@ impl TerminalRenderer {
                 background: self.cell_background_with_defaults(cell, defaults),
                 bold: cell.bold,
                 italic: cell.italic,
-                underline: cell.underline || cell.hyperlink,
+                underline: cell.underline
+                    || cell.hyperlink
+                    || link_cols.is_some_and(|(from, to)| col >= from && col < to),
                 strikethrough: cell.strikethrough,
             };
             let cell_span = cell_grid_span(cell);
@@ -494,6 +504,7 @@ impl TerminalRenderer {
     /// override every run paints in that color instead of its own foreground —
     /// used clipped to the selection span to repaint selected glyphs in the
     /// theme's highlight foreground.
+    #[allow(clippy::too_many_arguments)]
     fn draw_row_text(
         &self,
         cr: &gtk::cairo::Context,
@@ -502,8 +513,9 @@ impl TerminalRenderer {
         metrics: RendererCellMetrics,
         y: f64,
         color: Option<RendererColor>,
+        link_cols: Option<(usize, usize)>,
     ) {
-        for run in self.text_runs_for_frame_row(frame, row) {
+        for run in self.text_runs_for_frame_row(frame, row, link_cols) {
             color.unwrap_or(run.foreground).set_cairo_source(cr);
             let layout = pangocairo::functions::create_layout(cr);
             let mut font = self.font.clone();
@@ -699,6 +711,7 @@ mod tests {
                 test_cell("o", None, None),
                 test_cell("k", None, None),
             ],
+            wrapped: false,
         };
 
         let runs = renderer.text_runs_for_row(&row);
@@ -761,10 +774,11 @@ mod tests {
             background,
             TerminalRow {
                 cells: vec![test_cell("x", None, None)],
+                wrapped: false,
             },
         );
 
-        let runs = renderer.text_runs_for_frame_row(&frame, &frame.rows[0]);
+        let runs = renderer.text_runs_for_frame_row(&frame, &frame.rows[0], None);
 
         assert_eq!(
             runs[0].foreground,
@@ -809,6 +823,7 @@ mod tests {
         link_cell.hyperlink = true;
         let row = TerminalRow {
             cells: vec![link_cell, test_cell("y", None, None)],
+            wrapped: false,
         };
 
         let runs = renderer.text_runs_for_row(&row);
@@ -816,6 +831,39 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert!(runs[0].underline);
         assert!(!runs[1].underline);
+    }
+
+    #[test]
+    fn terminal_renderer_underlines_hover_link_cols() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let row = TerminalRow {
+            cells: vec![
+                test_cell("a", None, None),
+                test_cell("b", None, None),
+                test_cell("c", None, None),
+                test_cell("d", None, None),
+            ],
+            wrapped: false,
+        };
+        // link_cols = Some((1, 3)): exclusive end, so cols 1-2 are underlined
+        let runs = renderer.text_runs_for_row_with_defaults(
+            &row,
+            renderer.palette_defaults(),
+            Some((1, 3)),
+        );
+        // col 0: no underline; cols 1-2: underline; col 3: no underline
+        let underlined: Vec<bool> = runs
+            .iter()
+            .flat_map(|run| {
+                let n = run.text.chars().count();
+                std::iter::repeat_n(run.underline, n)
+            })
+            .collect();
+        assert_eq!(underlined, vec![false, true, true, false]);
     }
 
     #[test]
@@ -847,6 +895,7 @@ mod tests {
             },
             TerminalRow {
                 cells: vec![wide, spacer],
+                wrapped: false,
             },
         );
 
@@ -872,6 +921,7 @@ mod tests {
         invisible_cell.invisible = true;
         let row = TerminalRow {
             cells: vec![invisible_cell],
+            wrapped: false,
         };
 
         assert!(renderer.text_runs_for_row(&row).is_empty());
@@ -888,6 +938,7 @@ mod tests {
         spacer.width = TerminalCellWidth::SpacerTail;
         let row = TerminalRow {
             cells: vec![spacer],
+            wrapped: false,
         };
 
         assert!(renderer.text_runs_for_row(&row).is_empty());
@@ -907,6 +958,7 @@ mod tests {
         let combining = test_cell("e\u{301}", None, None);
         let row = TerminalRow {
             cells: vec![wide, spacer, combining],
+            wrapped: false,
         };
 
         let runs = renderer.text_runs_for_row(&row);
@@ -938,6 +990,7 @@ mod tests {
             },
             TerminalRow {
                 cells: vec![test_cell("a", None, None), test_cell("b", None, None)],
+                wrapped: false,
             },
         )
         .with_cursor(1, 0);
@@ -971,6 +1024,7 @@ mod tests {
             },
             TerminalRow {
                 cells: vec![test_cell("a", None, None)],
+                wrapped: false,
             },
         )
         .with_cursor_style(
@@ -1009,6 +1063,7 @@ mod tests {
             },
             TerminalRow {
                 cells: vec![wide, spacer],
+                wrapped: false,
             },
         )
         .with_wide_tail_cursor(1, 0);
