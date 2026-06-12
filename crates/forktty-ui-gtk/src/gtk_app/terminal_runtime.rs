@@ -11,6 +11,7 @@ use std::os::unix::process::ExitStatusExt;
 
 const DEFAULT_CELL_WIDTH_PX: u32 = 10;
 const DEFAULT_CELL_HEIGHT_PX: u32 = 20;
+const MIN_TERMINAL_ROWS: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TerminalSpawnPid(pub i32);
@@ -187,6 +188,8 @@ impl TerminalRuntime {
     }
 
     pub(super) fn resize_cells(&mut self, cols: u16, rows: u16) -> Result<(), TerminalError> {
+        let cols = cols.max(1);
+        let rows = rows.max(MIN_TERMINAL_ROWS);
         let size = PtySize { cols, rows };
         self.pty
             .resize(size)
@@ -512,6 +515,26 @@ mod tests {
         harness.resize_pixels("surface-1", 800, 480, 10, 20);
 
         assert_eq!(harness.runtime_size("surface-1"), Some((80, 24)));
+    }
+
+    #[test]
+    fn resize_cells_clamps_single_row_before_ghostty_reflow() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
+        runtime.feed_pty_bytes(b"0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz")
+            .unwrap();
+
+        runtime.resize_cells(1, 1).unwrap();
+
+        assert_eq!(runtime.size(), PtySize { cols: 1, rows: 2 });
+        runtime.resize_cells(120, 32).unwrap();
+        assert_eq!(
+            runtime.size(),
+            PtySize {
+                cols: 120,
+                rows: 32
+            }
+        );
     }
 
     #[test]
