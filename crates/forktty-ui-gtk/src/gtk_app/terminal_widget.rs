@@ -1718,7 +1718,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
                 Err(err) => {
                     eprintln!("Failed to render terminal frame for copy: {err}");
                     show_user_action_toast(&self.toast_handle, "Copy failed");
-                    String::new()
+                    return;
                 }
             };
             let text = copy_source_text(&self.selection.borrow(), &fallback);

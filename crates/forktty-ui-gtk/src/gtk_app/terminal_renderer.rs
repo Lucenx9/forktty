@@ -730,8 +730,9 @@ fn scrollback_indicator_geometry(
         return None;
     }
     let track_height = widget_height.saturating_sub(TERMINAL_PADDING_PX * 2).max(1);
+    let min_height = (SCROLLBACK_INDICATOR_WIDTH_PX as i32).min(track_height);
     let height = ((track_height as f64 * rows as f64 / total as f64).round() as i32)
-        .clamp(SCROLLBACK_INDICATOR_WIDTH_PX as i32, track_height);
+        .clamp(min_height, track_height);
     let max_offset = track_height.saturating_sub(height);
     let offset =
         ((track_height as f64 * top as f64 / total as f64).round() as i32).clamp(0, max_offset);
@@ -1185,6 +1186,14 @@ mod tests {
         assert_eq!(
             scrollback_indicator_geometry(7, 33, 100, 115),
             Some(ScrollbackIndicatorGeometry { y: 13, height: 34 })
+        );
+    }
+
+    #[test]
+    fn scrollback_indicator_geometry_handles_tiny_widget_height() {
+        assert_eq!(
+            scrollback_indicator_geometry(0, 1, 10, 2),
+            Some(ScrollbackIndicatorGeometry { y: 6, height: 1 })
         );
     }
 
