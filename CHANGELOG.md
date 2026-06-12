@@ -12,6 +12,7 @@ All notable changes to ForkTTY are documented here.
 - The declared Rust MSRV is now 1.96, matching the current `rusqlite`/`libsqlite3-sys` dependency chain required by the workspace lockfile.
 
 ### Fixed
+- Session restore path repair now uses the pane tree, not stale persisted surface metadata, to choose the owning workspace directory for browser/SSH surfaces whose saved cwd no longer exists.
 - Shell-trampoline detection for `notification_command` now catches `env -u VAR sh -c ...`, `env --unset=VAR sh -c ...`, and `env -S "sh -c ..."` wrappers instead of only plain `env sh -c ...`.
 - Closed terminal panes no longer stay alive through GTK controller/search/context-menu reference cycles, so their PTY child and UI timers can be dropped.
 - Worktree merge failures now restore the checkout before returning an error, including failed fast-forward ref updates and failures after `repo.merge()`. If the merge commit was already created, a recovered finalization error no longer reports the merge as failed.

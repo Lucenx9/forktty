@@ -832,25 +832,52 @@ pub(super) fn repair_restored_workspace_paths(
 ) -> usize {
     let fallback_dir = restore_session_fallback_dir(fallback_dir);
     let mut repaired = 0;
-    let mut workspace_dirs = BTreeMap::new();
     for workspace in &mut data.workspaces {
         if !workspace.working_dir.is_dir() {
             workspace.working_dir = fallback_dir.clone();
             repaired += 1;
         }
-        workspace_dirs.insert(workspace.id.clone(), workspace.working_dir.clone());
     }
+    let surface_dirs = restored_surface_dirs(data);
     for surface in &mut data.surfaces {
         if surface.cwd.is_dir() {
             continue;
         }
-        surface.cwd = workspace_dirs
-            .get(&surface.workspace_id)
+        surface.cwd = surface_dirs
+            .get(&surface.id)
             .cloned()
             .unwrap_or_else(|| fallback_dir.clone());
         repaired += 1;
     }
     repaired
+}
+
+fn restored_surface_dirs(data: &session::SessionData) -> BTreeMap<String, PathBuf> {
+    let mut dirs = BTreeMap::new();
+    for workspace in &data.workspaces {
+        collect_restored_surface_dirs(&workspace.pane_tree, &workspace.working_dir, &mut dirs);
+    }
+    dirs
+}
+
+fn collect_restored_surface_dirs(
+    node: &PaneNode,
+    workspace_dir: &Path,
+    dirs: &mut BTreeMap<String, PathBuf>,
+) {
+    match node {
+        PaneNode::Leaf { tabs, .. } => {
+            for surface_id in tabs {
+                dirs.entry(surface_id.clone())
+                    .or_insert_with(|| workspace_dir.to_path_buf());
+            }
+        }
+        PaneNode::Split { children, .. } => {
+            for child in children {
+                collect_restored_surface_dirs(child, workspace_dir, dirs);
+            }
+        }
+    }
 }
 
 fn restore_session_fallback_dir(candidate: &Path) -> PathBuf {

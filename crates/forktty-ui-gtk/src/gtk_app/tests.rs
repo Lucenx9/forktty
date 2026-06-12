@@ -1852,6 +1852,52 @@ fn restored_missing_workspace_dirs_fall_back_to_valid_startup_dir() {
 }
 
 #[test]
+fn restored_surface_path_repair_uses_pane_tree_owner_for_stale_workspace_id() {
+    let alpha_dir = tempfile::tempdir().unwrap();
+    let beta_dir = tempfile::tempdir().unwrap();
+    let fallback = tempfile::tempdir().unwrap();
+    let missing_surface_cwd = fallback.path().join("deleted-surface-cwd");
+
+    let mut source = WorkspaceModel::new();
+    let alpha = source.create_workspace("alpha", alpha_dir.path());
+    let browser = source
+        .open_browser(
+            &alpha.id,
+            "https://example.com",
+            forktty_core::ProfileId::default(),
+            SplitAxis::Horizontal,
+        )
+        .unwrap();
+    let beta = source.create_workspace("beta", beta_dir.path());
+    let mut data = source.to_session_data();
+
+    let surface = data
+        .surfaces
+        .iter_mut()
+        .find(|surface| surface.id == browser.id)
+        .unwrap();
+    surface.workspace_id = beta.id.clone();
+    surface.cwd = missing_surface_cwd;
+    forktty_core::session::validate_session_data(&data).unwrap();
+
+    let repaired = repair_restored_workspace_paths(&mut data, fallback.path());
+
+    assert_eq!(repaired, 1);
+    let surface = data
+        .surfaces
+        .iter()
+        .find(|surface| surface.id == browser.id)
+        .unwrap();
+    assert_eq!(surface.cwd, alpha_dir.path());
+
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(data);
+    let restored_surface = restored.surface(&browser.id).unwrap();
+    assert_eq!(restored_surface.workspace_id, alpha.id);
+    assert_eq!(restored_surface.cwd, alpha_dir.path());
+}
+
+#[test]
 fn uses_configured_shell_for_gtk_spawn() {
     let mut config = config::AppConfig::default();
     config.general.shell = "/bin/sh".to_string();
