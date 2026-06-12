@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Typing or pasting in a scrolled-up terminal now snaps the viewport back to the bottom, like other terminals; output arriving while you read scrollback still leaves the viewport where it is.
 - `forktty --json hooks doctor <agent>` and `forktty --json hooks test <agent>` are now a stable machine-readable API (documented in SPEC.md): versioned report with an overall `ok`, per-method `{method, ok, error?}` results for `hooks test` (which keeps running after a failed method instead of aborting, so cleanup still happens and the report is complete), and exit code 0/1 reflecting overall health for CI gating. The Codex trust state stays a first-class field of the doctor report.
 - The worktree open-workspace boundary rejection now carries the structured error code `precondition_failed` (documented in SPEC.md), and MCP tool errors with a known recovery carry machine-readable `remedy` and `suggested_tool` fields in `structuredContent` — the boundary error points at `workspace_create`, so an agent can recover without parsing prose.
 

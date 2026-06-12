@@ -125,6 +125,7 @@ impl GhosttyTerminalWidget {
             key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
             im_context.connect_commit({
                 let runtime = runtime.clone();
+                let selection = selection.clone();
                 let drawing_area = drawing_area.downgrade();
                 let cursor_blink_visible = cursor_blink_visible.clone();
                 move |_context, text| {
@@ -137,10 +138,11 @@ impl GhosttyTerminalWidget {
                     // Typing snaps the blink phase to visible so the cursor
                     // never disappears mid-keystroke.
                     cursor_blink_visible.set(true);
-                    write_terminal_input(&runtime, &drawing_area, input);
+                    write_terminal_input(&runtime, &selection, &drawing_area, input);
                 }
             });
             let cursor_blink_visible_for_key = cursor_blink_visible.clone();
+            let selection_for_key = selection.clone();
             key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
                 // With an IM context installed, EventControllerKey runs
                 // IMContext::filter_keypress before ::key-pressed; consumed
@@ -153,7 +155,7 @@ impl GhosttyTerminalWidget {
                     return glib::Propagation::Proceed;
                 };
                 cursor_blink_visible_for_key.set(true);
-                write_terminal_input(&runtime, &drawing_area, input);
+                write_terminal_input(&runtime, &selection_for_key, &drawing_area, input);
                 glib::Propagation::Stop
             });
             drawing_area.add_controller(key_controller);
@@ -1060,11 +1062,29 @@ fn route_terminal_scroll(
     Ok(ScrollRouting::ViewportScrolled(scrolled?))
 }
 
+/// Snaps the viewport to the bottom before user input reaches the PTY
+/// ("scroll on keystroke"). A finished selection is viewport-relative, so a
+/// jump that actually moved drops it like a wheel scroll does.
+fn kick_viewport_to_bottom(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+) -> Result<bool, TerminalError> {
+    let scrolled = runtime.borrow_mut().scroll_viewport_to_bottom()?;
+    if scrolled {
+        selection.borrow_mut().clear();
+    }
+    Ok(scrolled)
+}
+
 fn write_terminal_input(
     runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
     input: TerminalInput,
 ) {
+    if let Err(err) = kick_viewport_to_bottom(runtime, selection) {
+        eprintln!("Failed to scroll terminal to bottom: {err}");
+    }
     let result = match input {
         TerminalInput::Bytes(bytes) => runtime.borrow_mut().write_bytes(&bytes),
         TerminalInput::Key(key) => runtime.borrow_mut().write_key(key),
@@ -1117,7 +1137,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
     }
 
     fn write_input(&self, input: TerminalInput) {
-        write_terminal_input(&self.runtime, &self.drawing_area, input);
+        write_terminal_input(&self.runtime, &self.selection, &self.drawing_area, input);
     }
 
     fn grab_terminal_focus(&self) {
@@ -1143,6 +1163,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 
     fn paste_from_clipboard(&self) {
         let runtime = self.runtime.clone();
+        let selection = self.selection.clone();
         let drawing_area = self.drawing_area.clone();
         if let Some(display) = gtk::gdk::Display::default() {
             display
@@ -1151,6 +1172,9 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
                     let Ok(Some(text)) = result else {
                         return;
                     };
+                    if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
+                        eprintln!("Failed to scroll terminal to bottom: {err}");
+                    }
                     if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
                         eprintln!("Failed to paste into terminal: {err}");
                     }
@@ -1515,6 +1539,53 @@ mod selection_tests {
         );
 
         assert_eq!(text, "alpha");
+    }
+
+    #[test]
+    fn kick_viewport_scrolls_to_bottom_and_clears_the_selection() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        runtime.scroll_viewport_lines(-2).unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let selection = Rc::new(RefCell::new(TerminalSelection::default()));
+        selection.borrow_mut().select_text("stale");
+        selection
+            .borrow_mut()
+            .begin_drag(SelectionPoint { row: 0, col: 0 });
+        selection
+            .borrow_mut()
+            .extend_drag(SelectionPoint { row: 0, col: 3 });
+        selection.borrow_mut().end_drag();
+
+        kick_viewport_to_bottom(&runtime, &selection).unwrap();
+
+        let viewport = runtime.borrow().viewport_position().unwrap();
+        assert_eq!(viewport.top + viewport.rows, viewport.total);
+        // The selection was viewport-relative; after the jump it would highlight
+        // the wrong text.
+        assert_eq!(selection.borrow().normalized_range(), None);
+
+        // At the bottom already: a second kick must not clear a fresh selection.
+        selection
+            .borrow_mut()
+            .begin_drag(SelectionPoint { row: 0, col: 0 });
+        selection
+            .borrow_mut()
+            .extend_drag(SelectionPoint { row: 0, col: 3 });
+        selection.borrow_mut().end_drag();
+        kick_viewport_to_bottom(&runtime, &selection).unwrap();
+        assert!(selection.borrow().normalized_range().is_some());
     }
 }
 

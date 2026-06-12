@@ -461,6 +461,20 @@ impl GhosttyCore {
         Ok(std::mem::take(&mut *events))
     }
 
+    /// Snaps the viewport back to the bottom (the active screen). Returns the
+    /// usual redraw event only when the viewport actually moved.
+    pub fn scroll_viewport_to_bottom(&mut self) -> Result<Vec<GhosttyEvent>> {
+        let position = self.viewport_position()?;
+        if position.top + position.rows >= position.total {
+            return Ok(Vec::new());
+        }
+        self.terminal.scroll_viewport(ScrollViewport::Bottom);
+        let _snapshot = self.render_state.update(&self.terminal)?;
+        let mut events = self.events.borrow_mut();
+        events.push(GhosttyEvent::VisibleContentChanged);
+        Ok(std::mem::take(&mut *events))
+    }
+
     /// Plain-text dump of the entire scrollable area (scrollback history plus
     /// the active screen). Soft-wrapped rows stay split (`unwrap: false`), so
     /// line `i` of the dump corresponds to grid row `i` counted from the top
@@ -1037,6 +1051,50 @@ mod tests {
         let restored = frame_text(&core.render_frame().unwrap());
 
         assert_eq!(restored, bottom);
+    }
+
+    #[test]
+    fn core_scroll_viewport_to_bottom_snaps_back_and_reports_movement() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight")
+            .unwrap();
+        core.scroll_viewport_lines(-10).unwrap();
+        let scrolled = core.viewport_position().unwrap();
+        // 8 lines fed on a 4-row screen → 4 rows of scrollback; -10 clamps to the top.
+        assert_eq!(scrolled.top, 0);
+
+        let events = core.scroll_viewport_to_bottom().unwrap();
+        assert!(!events.is_empty());
+        let bottom = core.viewport_position().unwrap();
+        assert_eq!(bottom.top + bottom.rows, bottom.total);
+
+        // Already at the bottom: nothing to do, no redraw event.
+        let events = core.scroll_viewport_to_bottom().unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn core_output_does_not_move_a_scrolled_up_viewport() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        core.scroll_viewport_lines(-2).unwrap();
+        let before = core.viewport_position().unwrap().top;
+
+        core.feed(b"\r\nseven\r\neight").unwrap();
+
+        // The viewport stays anchored to the content it was showing.
+        assert_eq!(core.viewport_position().unwrap().top, before);
     }
 
     #[test]

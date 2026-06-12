@@ -150,6 +150,14 @@ impl TerminalRuntime {
         Ok(!events.is_empty())
     }
 
+    pub(super) fn scroll_viewport_to_bottom(&mut self) -> Result<bool, TerminalError> {
+        let events = self
+            .core
+            .scroll_viewport_to_bottom()
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        Ok(!events.is_empty())
+    }
+
     pub(super) fn resize_pixels(
         &mut self,
         width_px: i32,
@@ -525,6 +533,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(runtime.pty_writes().last().unwrap(), b"\x1bOA");
+    }
+
+    #[test]
+    fn scroll_viewport_to_bottom_returns_whether_it_moved() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 12, rows: 2 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour")
+            .unwrap();
+        runtime.scroll_viewport_lines(-10).unwrap();
+
+        assert!(runtime.scroll_viewport_to_bottom().unwrap());
+        assert!(!runtime.scroll_viewport_to_bottom().unwrap());
+        assert!(runtime.pty_writes().is_empty());
     }
 
     #[test]
