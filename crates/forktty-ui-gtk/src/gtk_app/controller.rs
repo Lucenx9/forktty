@@ -19,6 +19,7 @@ pub(super) struct TerminalController {
     parent_window: adw::ApplicationWindow,
     pub(super) model: Arc<Mutex<WorkspaceModel>>,
     state: Option<SocketAppState>,
+    toast_handle: Option<ToastHandle>,
     pub(super) widgets: BTreeMap<String, GhosttyTerminalWidget>,
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeSet<String>,
@@ -83,6 +84,7 @@ impl TerminalController {
             parent_window,
             model,
             state: None,
+            toast_handle: None,
             widgets: BTreeMap::new(),
             chromes: BTreeMap::new(),
             pending_spawns: BTreeSet::new(),
@@ -98,6 +100,10 @@ impl TerminalController {
 
     pub(super) fn attach_state(&mut self, state: SocketAppState) {
         self.state = Some(state);
+    }
+
+    pub(super) fn attach_toast_handle(&mut self, toast_handle: ToastHandle) {
+        self.toast_handle = Some(toast_handle);
     }
 
     pub(super) fn handle(&mut self, command: GtkTerminalCommand) {
@@ -149,36 +155,38 @@ impl TerminalController {
         let spawn_pid_surface_id = request.surface_id.clone();
         self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
         let spawn_token = self.next_spawn_token;
-        match spawn_terminal_with_callback(&request, move |result| match result {
-            Ok(pid) => {
-                spawn_pids.borrow_mut().insert(
-                    spawn_pid_surface_id.clone(),
-                    SurfacePid {
-                        pid: pid.0,
-                        spawn_token,
-                    },
-                );
-                if let Some(state) = &spawn_state_for_ready {
-                    if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
-                        eprintln!(
-                            "Failed to mark terminal surface ready {}: {err}",
-                            spawn_surface_id
-                        );
+        match spawn_terminal_with_callback(&request, self.toast_handle.clone(), move |result| {
+            match result {
+                Ok(pid) => {
+                    spawn_pids.borrow_mut().insert(
+                        spawn_pid_surface_id.clone(),
+                        SurfacePid {
+                            pid: pid.0,
+                            spawn_token,
+                        },
+                    );
+                    if let Some(state) = &spawn_state_for_ready {
+                        if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
+                            eprintln!(
+                                "Failed to mark terminal surface ready {}: {err}",
+                                spawn_surface_id
+                            );
+                        }
                     }
                 }
-            }
-            Err(err) => {
-                record_terminal_spawn_failure(
-                    &spawn_model,
-                    &spawn_workspace_id,
-                    &spawn_surface_id,
-                    &err.to_string(),
-                    spawn_state_for_error
-                        .as_ref()
-                        .is_none_or(|state| state.notification_dispatch),
-                );
-                if let Some(state) = &spawn_state_for_error {
-                    let _ = state.terminal.close(&spawn_surface_id);
+                Err(err) => {
+                    record_terminal_spawn_failure(
+                        &spawn_model,
+                        &spawn_workspace_id,
+                        &spawn_surface_id,
+                        &err.to_string(),
+                        spawn_state_for_error
+                            .as_ref()
+                            .is_none_or(|state| state.notification_dispatch),
+                    );
+                    if let Some(state) = &spawn_state_for_error {
+                        let _ = state.terminal.close(&spawn_surface_id);
+                    }
                 }
             }
         }) {

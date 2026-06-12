@@ -13,14 +13,42 @@ use forktty_terminal::ghostty::events::GhosttyEvent;
 /// Blink half-period for the focused cursor: visible for one interval, hidden
 /// for the next. Matches the conventional terminal cadence.
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
+const VISUAL_BELL_DURATION: Duration = Duration::from_millis(150);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisualBellFlash {
+    active: bool,
+    generation: u64,
+}
+
+fn trigger_visual_bell_flash(state: VisualBellFlash) -> VisualBellFlash {
+    VisualBellFlash {
+        active: true,
+        generation: state.generation.checked_add(1).unwrap_or(1),
+    }
+}
+
+fn expire_visual_bell_flash(state: VisualBellFlash, generation: u64) -> VisualBellFlash {
+    if state.generation == generation {
+        VisualBellFlash {
+            active: false,
+            generation: state.generation,
+        }
+    } else {
+        state
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct GhosttyTerminalWidget {
     drawing_area: gtk::DrawingArea,
     runtime: Rc<RefCell<TerminalRuntime>>,
     selection: Rc<RefCell<TerminalSelection>>,
+    toast_handle: Option<ToastHandle>,
     // Blink phase for the focused cursor; `true` means the cursor is drawn.
     cursor_blink_visible: Rc<Cell<bool>>,
+    visual_bell_active: Rc<Cell<bool>>,
+    visual_bell_generation: Rc<Cell<u64>>,
     // True when the current workspace layout shows this pane alongside another
     // pane. Single-pane workspaces never dim terminals when focus sits outside.
     has_siblings: Rc<Cell<bool>>,
@@ -63,16 +91,18 @@ impl SearchInvalidatedSlot {
 
 pub(super) fn spawn_terminal_with_callback<F>(
     request: &SpawnRequest,
+    toast_handle: Option<ToastHandle>,
     on_spawn_result: F,
 ) -> Result<GhosttyTerminalWidget, TerminalError>
 where
     F: FnOnce(Result<TerminalSpawnPid, TerminalError>) + 'static,
 {
-    spawn_terminal_with_callback_impl(request, on_spawn_result)
+    spawn_terminal_with_callback_impl(request, toast_handle, on_spawn_result)
 }
 
 fn spawn_terminal_with_callback_impl<F>(
     request: &SpawnRequest,
+    toast_handle: Option<ToastHandle>,
     on_spawn_result: F,
 ) -> Result<GhosttyTerminalWidget, TerminalError>
 where
@@ -85,13 +115,17 @@ where
         config.appearance.scrollback_lines as usize,
     )?;
     let pid = runtime.child_pid();
-    let widget = GhosttyTerminalWidget::new_with_config(runtime, &config);
+    let widget = GhosttyTerminalWidget::new_with_config(runtime, &config, toast_handle);
     on_spawn_result(Ok(pid));
     Ok(widget)
 }
 
 impl GhosttyTerminalWidget {
-    fn new_with_config(runtime: TerminalRuntime, config: &config::AppConfig) -> Self {
+    fn new_with_config(
+        runtime: TerminalRuntime,
+        config: &config::AppConfig,
+        toast_handle: Option<ToastHandle>,
+    ) -> Self {
         let drawing_area = gtk::DrawingArea::new();
         drawing_area.set_hexpand(true);
         drawing_area.set_vexpand(true);
@@ -101,6 +135,8 @@ impl GhosttyTerminalWidget {
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
         let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
         let cursor_blink_visible = Rc::new(Cell::new(true));
+        let visual_bell_active = Rc::new(Cell::new(false));
+        let visual_bell_generation = Rc::new(Cell::new(0));
         let has_siblings = Rc::new(Cell::new(false));
         let smooth_scroll_remainder = Rc::new(Cell::new(reset_smooth_scroll_accumulator()));
         let font = terminal_font_description(&drawing_area, config);
@@ -113,6 +149,7 @@ impl GhosttyTerminalWidget {
             let selection = selection.clone();
             let hover_link = hover_link.clone();
             let cursor_blink_visible = cursor_blink_visible.clone();
+            let visual_bell_active = visual_bell_active.clone();
             let has_siblings = has_siblings.clone();
             drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
@@ -132,6 +169,7 @@ impl GhosttyTerminalWidget {
                                 focused: area.has_focus(),
                                 blink_visible: cursor_blink_visible.get(),
                                 has_siblings: has_siblings.get(),
+                                visual_bell_active: visual_bell_active.get(),
                             },
                             viewport,
                         );
@@ -270,6 +308,7 @@ impl GhosttyTerminalWidget {
                 let suppress_release = suppress_release.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
+                let toast_handle = toast_handle.clone();
                 let hover_link_for_click = hover_link.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
@@ -319,7 +358,12 @@ impl GhosttyTerminalWidget {
                             Ok(MiddleClickRouting::PastePrimary) => {
                                 // The press was not forwarded; its release must not be either.
                                 suppress_release.set(true);
-                                paste_primary_selection(&runtime, &selection, &drawing_area);
+                                paste_primary_selection(
+                                    &runtime,
+                                    &selection,
+                                    &drawing_area,
+                                    toast_handle.clone(),
+                                );
                             }
                             Err(err) => eprintln!("Failed to route middle click: {err}"),
                         }
@@ -675,7 +719,10 @@ impl GhosttyTerminalWidget {
             runtime,
             selection,
             hover_link,
+            toast_handle,
             cursor_blink_visible,
+            visual_bell_active,
+            visual_bell_generation,
             has_siblings,
             smooth_scroll_remainder,
             search_index: Rc::new(Cell::new(None)),
@@ -717,7 +764,10 @@ impl GhosttyTerminalWidget {
             drawing_area: self.drawing_area.downgrade(),
             runtime: Rc::downgrade(&self.runtime),
             selection: Rc::downgrade(&self.selection),
+            toast_handle: self.toast_handle.clone(),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
+            visual_bell_active: Rc::downgrade(&self.visual_bell_active),
+            visual_bell_generation: Rc::downgrade(&self.visual_bell_generation),
             has_siblings: Rc::downgrade(&self.has_siblings),
             smooth_scroll_remainder: Rc::downgrade(&self.smooth_scroll_remainder),
             search_index: Rc::downgrade(&self.search_index),
@@ -738,6 +788,33 @@ impl GhosttyTerminalWidget {
         if self.has_siblings.replace(has_siblings) != has_siblings {
             self.drawing_area.queue_draw();
         }
+    }
+
+    pub(super) fn flash_visual_bell(&self) {
+        let state = VisualBellFlash {
+            active: self.visual_bell_active.get(),
+            generation: self.visual_bell_generation.get(),
+        };
+        let state = trigger_visual_bell_flash(state);
+        self.visual_bell_active.set(state.active);
+        self.visual_bell_generation.set(state.generation);
+        self.drawing_area.queue_draw();
+
+        let widget = self.downgrade_widget();
+        let expiry_generation = state.generation;
+        glib::timeout_add_local_once(VISUAL_BELL_DURATION, move || {
+            let Some(widget) = widget.upgrade() else {
+                return;
+            };
+            let state = VisualBellFlash {
+                active: widget.visual_bell_active.get(),
+                generation: widget.visual_bell_generation.get(),
+            };
+            let state = expire_visual_bell_flash(state, expiry_generation);
+            widget.visual_bell_active.set(state.active);
+            widget.visual_bell_generation.set(state.generation);
+            widget.drawing_area.queue_draw();
+        });
     }
 
     pub(super) fn attach_navigation_key_fallback<W>(&self, target: &W)
@@ -917,7 +994,10 @@ pub(super) struct WeakGhosttyTerminalWidget {
     drawing_area: glib::WeakRef<gtk::DrawingArea>,
     runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
+    toast_handle: Option<ToastHandle>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
+    visual_bell_active: std::rc::Weak<Cell<bool>>,
+    visual_bell_generation: std::rc::Weak<Cell<u64>>,
     has_siblings: std::rc::Weak<Cell<bool>>,
     smooth_scroll_remainder: std::rc::Weak<Cell<f64>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
@@ -932,7 +1012,10 @@ impl WeakGhosttyTerminalWidget {
             drawing_area: self.drawing_area.upgrade()?,
             runtime: self.runtime.upgrade()?,
             selection: self.selection.upgrade()?,
+            toast_handle: self.toast_handle.clone(),
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
+            visual_bell_active: self.visual_bell_active.upgrade()?,
+            visual_bell_generation: self.visual_bell_generation.upgrade()?,
             has_siblings: self.has_siblings.upgrade()?,
             smooth_scroll_remainder: self.smooth_scroll_remainder.upgrade()?,
             search_index: self.search_index.upgrade()?,
@@ -1483,25 +1566,47 @@ fn paste_primary_selection(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
+    toast_handle: Option<ToastHandle>,
 ) {
     let runtime = runtime.clone();
     let selection = selection.clone();
     let drawing_area = drawing_area.clone();
     if let Some(display) = gtk::gdk::Display::default() {
+        let toast_handle = toast_handle.clone();
         display
             .primary_clipboard()
             .read_text_async(None::<&gio::Cancellable>, move |result| {
-                let Ok(Some(text)) = result else {
-                    return;
+                let text = match result {
+                    Ok(Some(text)) => text,
+                    Ok(None) => {
+                        eprintln!("Failed to paste PRIMARY selection: clipboard contains no text");
+                        show_user_action_toast(&toast_handle, "Paste failed");
+                        return;
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to read PRIMARY selection: {err}");
+                        show_user_action_toast(&toast_handle, "Paste failed");
+                        return;
+                    }
                 };
                 if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
                     eprintln!("Failed to scroll terminal to bottom: {err}");
                 }
                 if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
                     eprintln!("Failed to paste into terminal: {err}");
+                    show_user_action_toast(&toast_handle, "Paste failed");
                 }
                 drawing_area.queue_draw();
             });
+    } else {
+        eprintln!("Failed to paste PRIMARY selection: no display available");
+        show_user_action_toast(&toast_handle, "Paste failed");
+    }
+}
+
+fn show_user_action_toast(toast_handle: &Option<ToastHandle>, message: &str) {
+    if let Some(toast_handle) = toast_handle {
+        toast_handle.show(message);
     }
 }
 
@@ -1612,11 +1717,15 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
                 Ok(frame) => viewport_text_from_frame(&frame),
                 Err(err) => {
                     eprintln!("Failed to render terminal frame for copy: {err}");
+                    show_user_action_toast(&self.toast_handle, "Copy failed");
                     String::new()
                 }
             };
             let text = copy_source_text(&self.selection.borrow(), &fallback);
             display.clipboard().set_text(&text);
+        } else {
+            eprintln!("Failed to copy terminal text: no display available");
+            show_user_action_toast(&self.toast_handle, "Copy failed");
         }
     }
 
@@ -1624,21 +1733,36 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
         let runtime = self.runtime.clone();
         let selection = self.selection.clone();
         let drawing_area = self.drawing_area.clone();
+        let toast_handle = self.toast_handle.clone();
         if let Some(display) = gtk::gdk::Display::default() {
             display
                 .clipboard()
                 .read_text_async(None::<&gio::Cancellable>, move |result| {
-                    let Ok(Some(text)) = result else {
-                        return;
+                    let text = match result {
+                        Ok(Some(text)) => text,
+                        Ok(None) => {
+                            eprintln!("Failed to paste clipboard text: clipboard contains no text");
+                            show_user_action_toast(&toast_handle, "Paste failed");
+                            return;
+                        }
+                        Err(err) => {
+                            eprintln!("Failed to read clipboard text: {err}");
+                            show_user_action_toast(&toast_handle, "Paste failed");
+                            return;
+                        }
                     };
                     if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
                         eprintln!("Failed to scroll terminal to bottom: {err}");
                     }
                     if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
                         eprintln!("Failed to paste into terminal: {err}");
+                        show_user_action_toast(&toast_handle, "Paste failed");
                     }
                     drawing_area.queue_draw();
                 });
+        } else {
+            eprintln!("Failed to paste clipboard text: no display available");
+            show_user_action_toast(&toast_handle, "Paste failed");
         }
     }
 
@@ -2280,5 +2404,36 @@ mod mouse_tests {
     #[test]
     fn smooth_scroll_reset_clears_fractional_remainder() {
         assert_eq!(reset_smooth_scroll_accumulator(), 0.0);
+    }
+
+    #[test]
+    fn visual_bell_flash_sets_active_and_advances_generation() {
+        let initial = VisualBellFlash {
+            active: false,
+            generation: 41,
+        };
+
+        let flashed = trigger_visual_bell_flash(initial);
+
+        assert!(flashed.active);
+        assert_eq!(flashed.generation, 42);
+    }
+
+    #[test]
+    fn visual_bell_flash_expiry_only_clears_matching_generation() {
+        let first = trigger_visual_bell_flash(VisualBellFlash {
+            active: false,
+            generation: 0,
+        });
+        let second = trigger_visual_bell_flash(first);
+
+        assert_eq!(expire_visual_bell_flash(second, first.generation), second);
+        assert_eq!(
+            expire_visual_bell_flash(second, second.generation),
+            VisualBellFlash {
+                active: false,
+                generation: second.generation
+            }
+        );
     }
 }

@@ -79,6 +79,9 @@ pub(super) fn attach_terminal_signal_handlers(
             Ok(events) if events.is_empty() => {}
             Ok(events) => {
                 let mut child_exited = false;
+                let visual_bell = events
+                    .iter()
+                    .any(|event| matches!(event, GhosttyEvent::Bell));
                 for event in &events {
                     if matches!(event, GhosttyEvent::ChildExit { .. }) {
                         child_exited = true;
@@ -96,6 +99,9 @@ pub(super) fn attach_terminal_signal_handlers(
                             spawn_token,
                         );
                     }
+                }
+                if visual_bell {
+                    pump_widget.flash_visual_bell();
                 }
                 apply_ghostty_events_to_model(
                     &pump_model,

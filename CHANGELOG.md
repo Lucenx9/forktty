@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Terminal panes now show terse toasts for copy/paste failures and flash an accent border for visual bell events.
 - Terminal panes now show a minimal overlay scrollback indicator while viewing history.
 - Terminal content now has balanced 8px inner padding so text does not touch pane edges.
 - Split terminal panes now dim unfocused panes slightly so the focused pane is easier to pick out.

@@ -11,6 +11,7 @@ use std::{f64::consts::PI, fmt};
 const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.13;
 const SCROLLBACK_INDICATOR_WIDTH_PX: f64 = 4.0;
 const SCROLLBACK_INDICATOR_ALPHA: f64 = 0.25;
+const VISUAL_BELL_BORDER_PX: f64 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererColor {
@@ -60,6 +61,12 @@ impl RendererColor {
         blue: 0,
     };
 }
+
+const VISUAL_BELL_ACCENT: RendererColor = RendererColor {
+    red: 0xe8,
+    green: 0x87,
+    blue: 0x45,
+};
 
 impl fmt::Display for RendererColor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -185,6 +192,7 @@ pub(super) struct RendererCursorState {
     pub(super) focused: bool,
     pub(super) blink_visible: bool,
     pub(super) has_siblings: bool,
+    pub(super) visual_bell_active: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -314,12 +322,11 @@ impl TerminalRenderer {
                 cursor.style = RendererCursorStyle::BlockHollow;
             } else if !cursor_state.blink_visible {
                 // Hidden half of the focused cursor's blink cycle.
-                if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
-                    paint_unfocused_split_dim(cr, width, height);
-                }
-                return;
+                cursor.cell_span = 0;
             }
-            self.draw_cursor_overlay(cr, &cursor, metrics, grid);
+            if cursor.cell_span > 0 {
+                self.draw_cursor_overlay(cr, &cursor, metrics, grid);
+            }
         }
         if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
             paint_unfocused_split_dim(cr, width, height);
@@ -330,6 +337,9 @@ impl TerminalRenderer {
             {
                 paint_scrollback_indicator(cr, width, indicator);
             }
+        }
+        if cursor_state.visual_bell_active {
+            paint_visual_bell_border(cr, width, height);
         }
     }
 
@@ -749,6 +759,21 @@ fn paint_scrollback_indicator(
     cr.arc(x + radius, y + height - radius, radius, 0.0, PI);
     cr.close_path();
     let _ = cr.fill();
+}
+
+fn paint_visual_bell_border(cr: &gtk::cairo::Context, width: i32, height: i32) {
+    if width <= VISUAL_BELL_BORDER_PX as i32 || height <= VISUAL_BELL_BORDER_PX as i32 {
+        return;
+    }
+    let inset = VISUAL_BELL_BORDER_PX / 2.0;
+    let border_width = f64::from(width) - VISUAL_BELL_BORDER_PX;
+    let border_height = f64::from(height) - VISUAL_BELL_BORDER_PX;
+    let _ = cr.save();
+    cr.set_line_width(VISUAL_BELL_BORDER_PX);
+    VISUAL_BELL_ACCENT.set_cairo_source(cr);
+    cr.rectangle(inset, inset, border_width, border_height);
+    let _ = cr.stroke();
+    let _ = cr.restore();
 }
 
 #[cfg(test)]
