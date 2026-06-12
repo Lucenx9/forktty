@@ -8,7 +8,7 @@ use nix::{
 use std::{
     fs::File,
     io::{self, Read, Write},
-    os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
     os::unix::process::CommandExt,
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -121,14 +121,7 @@ impl PtySession {
                 }
                 Ok(n) => written += n,
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "terminal child did not drain pty input before timeout",
-                        ));
-                    }
-                    let mut fds = [PollFd::new(self.master.as_fd(), PollFlags::POLLOUT)];
-                    poll(&mut fds, PollTimeout::from(100u16)).map_err(io_error)?;
+                    poll_master_write_ready(self.master.as_fd(), deadline)?;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
                 Err(err) => return Err(err),
@@ -254,6 +247,27 @@ fn duplicate_fd(fd: &OwnedFd) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
+fn poll_master_write_ready(fd: BorrowedFd<'_>, deadline: Instant) -> io::Result<()> {
+    loop {
+        if Instant::now() >= deadline {
+            return Err(write_all_timeout_error());
+        }
+        let mut fds = [PollFd::new(fd, PollFlags::POLLOUT)];
+        match poll(&mut fds, PollTimeout::from(100u16)) {
+            Ok(_) => return Ok(()),
+            Err(nix::Error::EINTR) => {}
+            Err(err) => return Err(io_error(err)),
+        }
+    }
+}
+
+fn write_all_timeout_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        "terminal child did not drain pty input before timeout",
+    )
+}
+
 fn parse_env(env: Vec<String>) -> impl Iterator<Item = (String, String)> {
     env.into_iter().filter_map(|entry| {
         let (key, value) = entry.split_once('=')?;
@@ -268,7 +282,14 @@ fn io_error(err: nix::Error) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::PathBuf, time::Duration};
+    use std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
 
     fn test_spawn_request_for_shell(shell: &str) -> SpawnRequest {
         SpawnRequest {
@@ -393,6 +414,76 @@ mod tests {
         assert!(
             output.contains(&expected),
             "child saw a truncated paste: wc reported {output:?}, expected {expected} bytes"
+        );
+    }
+
+    #[test]
+    fn pty_write_all_retries_poll_interrupted_by_signal() {
+        extern "C" fn ignore_signal(_: libc::c_int) {}
+
+        let action = nix::sys::signal::SigAction::new(
+            nix::sys::signal::SigHandler::Handler(ignore_signal),
+            nix::sys::signal::SaFlags::empty(),
+            nix::sys::signal::SigSet::empty(),
+        );
+        let old_action =
+            unsafe { nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGUSR1, &action) }
+                .unwrap();
+        struct RestoreSignal(nix::sys::signal::SigAction);
+        impl Drop for RestoreSignal {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGUSR1, &self.0);
+                }
+            }
+        }
+        let _restore_signal = RestoreSignal(old_action);
+
+        let request = test_spawn_request_for_shell("/bin/sh").with_args(["-c", "sleep 0.5; wc -c"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        let mut termios = nix::sys::termios::tcgetattr(&session.master).unwrap();
+        termios
+            .local_flags
+            .remove(nix::sys::termios::LocalFlags::ECHO);
+        nix::sys::termios::tcsetattr(
+            &session.master,
+            nix::sys::termios::SetArg::TCSANOW,
+            &termios,
+        )
+        .unwrap();
+
+        let target_thread = unsafe { libc::pthread_self() as usize };
+        let done = Arc::new(AtomicBool::new(false));
+        let done_for_signaler = done.clone();
+        let signaler = thread::spawn(move || {
+            while !done_for_signaler.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(10));
+                unsafe {
+                    libc::pthread_kill(target_thread as libc::pthread_t, libc::SIGUSR1);
+                }
+            }
+        });
+
+        let line = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd\n";
+        let mut payload = Vec::new();
+        while payload.len() < 256 * 1024 {
+            payload.extend_from_slice(line);
+        }
+
+        let write_result = session.write_all(&payload);
+        done.store(true, Ordering::SeqCst);
+        signaler.join().unwrap();
+        write_result.unwrap();
+        session.write_all(b"\x04").unwrap();
+
+        let expected = payload.len().to_string();
+        let output = session
+            .read_until(expected.as_bytes(), Duration::from_secs(10))
+            .unwrap();
+        let output = String::from_utf8_lossy(&output);
+        assert!(
+            output.contains(&expected),
+            "child saw a truncated paste after EINTR: wc reported {output:?}, expected {expected} bytes"
         );
     }
 

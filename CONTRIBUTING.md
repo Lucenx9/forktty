@@ -21,7 +21,7 @@ ForkTTY hook is the primary implementation.
 You will need:
 
 - Linux
-- Rust 1.93+ (install via [rustup](https://rustup.rs/))
+- Rust 1.96+ (install via [rustup](https://rustup.rs/))
 - GTK4, libadwaita, git, Zig, and libghostty-vt GTK4 development libraries
 - `git` and Zig for the vendored `libghostty-vt-sys` build path used during
   the libghostty-vt terminal migration

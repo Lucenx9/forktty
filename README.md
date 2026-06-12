@@ -11,7 +11,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
 [![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.11)
-[![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://rustup.rs/)
+[![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
 [Website](https://forktty-site.vercel.app/) ·
@@ -92,7 +92,7 @@ icon. Removing it (`sudo apt remove forktty`) cleans up
 Requirements:
 
 - Linux
-- [Rust 1.93+](https://rustup.rs/)
+- [Rust 1.96+](https://rustup.rs/)
 - GTK4, libadwaita, git and Zig for the vendored libghostty-vt build
 - `git` and Zig for the vendored `libghostty-vt-sys` build path used during
   the libghostty-vt terminal migration

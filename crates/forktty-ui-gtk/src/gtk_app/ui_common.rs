@@ -654,10 +654,12 @@ pub(super) fn add_context_menu_item<F>(
         button.add_css_class("destructive-action");
     }
     button.set_halign(gtk::Align::Fill);
-    let popover = popover.clone();
+    let popover = popover.downgrade();
     button.connect_clicked(move |_| {
         action();
-        popover.popdown();
+        if let Some(popover) = popover.upgrade() {
+            popover.popdown();
+        }
     });
     menu.append(&button);
 }

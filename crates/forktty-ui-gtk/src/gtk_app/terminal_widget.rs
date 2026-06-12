@@ -119,15 +119,18 @@ impl GhosttyTerminalWidget {
         }
         {
             let runtime = runtime.clone();
-            let drawing_area_for_key = drawing_area.clone();
+            let drawing_area_for_key = drawing_area.downgrade();
             let key_controller = gtk::EventControllerKey::new();
             key_controller.set_im_context(Some(&im_context));
             key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
             im_context.connect_commit({
                 let runtime = runtime.clone();
-                let drawing_area = drawing_area.clone();
+                let drawing_area = drawing_area.downgrade();
                 let cursor_blink_visible = cursor_blink_visible.clone();
                 move |_context, text| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
                     let Some(input) = terminal_text_input(text) else {
                         return;
                     };
@@ -146,8 +149,11 @@ impl GhosttyTerminalWidget {
                 let Some(input) = translate_gtk_key(key, modifiers, None) else {
                     return glib::Propagation::Proceed;
                 };
+                let Some(drawing_area) = drawing_area_for_key.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
                 cursor_blink_visible_for_key.set(true);
-                write_terminal_input(&runtime, &drawing_area_for_key, input);
+                write_terminal_input(&runtime, &drawing_area, input);
                 glib::Propagation::Stop
             });
             drawing_area.add_controller(key_controller);
@@ -155,26 +161,32 @@ impl GhosttyTerminalWidget {
         {
             let runtime_for_enter = runtime.clone();
             let runtime_for_leave = runtime.clone();
-            let drawing_area_for_enter = drawing_area.clone();
-            let drawing_area_for_leave = drawing_area.clone();
+            let drawing_area_for_enter = drawing_area.downgrade();
+            let drawing_area_for_leave = drawing_area.downgrade();
             let im_context_for_enter = im_context.clone();
             let im_context_for_leave = im_context.clone();
             let cursor_blink_visible_for_enter = cursor_blink_visible.clone();
             let focus_controller = gtk::EventControllerFocus::new();
             focus_controller.connect_enter(move |_| {
+                let Some(drawing_area) = drawing_area_for_enter.upgrade() else {
+                    return;
+                };
                 im_context_for_enter.focus_in();
                 cursor_blink_visible_for_enter.set(true);
                 if let Err(err) = runtime_for_enter.borrow_mut().write_focus(true) {
                     eprintln!("Failed to write terminal focus input: {err}");
                 }
-                drawing_area_for_enter.queue_draw();
+                drawing_area.queue_draw();
             });
             focus_controller.connect_leave(move |_| {
+                let Some(drawing_area) = drawing_area_for_leave.upgrade() else {
+                    return;
+                };
                 im_context_for_leave.focus_out();
                 if let Err(err) = runtime_for_leave.borrow_mut().write_focus(false) {
                     eprintln!("Failed to write terminal focus input: {err}");
                 }
-                drawing_area_for_leave.queue_draw();
+                drawing_area.queue_draw();
             });
             drawing_area.add_controller(focus_controller);
         }
@@ -191,12 +203,15 @@ impl GhosttyTerminalWidget {
             {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
-                let drawing_area = drawing_area.clone();
+                let drawing_area = drawing_area.downgrade();
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
@@ -275,11 +290,14 @@ impl GhosttyTerminalWidget {
             {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
-                let drawing_area = drawing_area.clone();
+                let drawing_area = drawing_area.downgrade();
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
                 let selection = selection.clone();
                 click.connect_released(move |gesture, _n_press, x, y| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
@@ -326,11 +344,14 @@ impl GhosttyTerminalWidget {
             {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
-                let drawing_area = drawing_area.clone();
+                let drawing_area = drawing_area.downgrade();
                 let any_button_pressed = any_button_pressed.clone();
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 motion.connect_motion(move |controller, x, y| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return;
+                    };
                     if selection.borrow().is_selecting() {
                         selection
                             .borrow_mut()
@@ -387,9 +408,12 @@ impl GhosttyTerminalWidget {
             {
                 let runtime = runtime.clone();
                 let renderer = renderer.clone();
-                let drawing_area = drawing_area.clone();
+                let drawing_area = drawing_area.downgrade();
                 let selection = selection.clone();
                 scroll.connect_scroll(move |controller, _dx, dy| {
+                    let Some(drawing_area) = drawing_area.upgrade() else {
+                        return glib::Propagation::Proceed;
+                    };
                     let Some(button) = terminal_scroll_button(dy) else {
                         return glib::Propagation::Proceed;
                     };
@@ -511,11 +535,14 @@ impl GhosttyTerminalWidget {
     where
         W: IsA<gtk::Widget>,
     {
-        let widget = self.clone();
+        let widget = self.downgrade_widget();
         let key_controller = gtk::EventControllerKey::new();
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
             let Some(input) = translate_gtk_navigation_key(key, modifiers) else {
+                return glib::Propagation::Proceed;
+            };
+            let Some(widget) = widget.upgrade() else {
                 return glib::Propagation::Proceed;
             };
             forward_terminal_navigation_input(&widget, input);

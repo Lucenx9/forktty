@@ -346,44 +346,60 @@ pub(super) fn build_terminal_context_menu(
         add_context_menu_separator(&menu);
     }
 
-    let terminal_for_copy = terminal.clone();
+    let terminal_for_copy = terminal.downgrade_widget();
     add_context_menu_item(
         &menu,
         &popover,
         "forktty-copy-symbolic",
         "Copy",
         false,
-        move || terminal_for_copy.copy_text(),
+        move || {
+            if let Some(terminal) = terminal_for_copy.upgrade() {
+                terminal.copy_text();
+            }
+        },
     );
 
-    let terminal_for_paste = terminal.clone();
+    let terminal_for_paste = terminal.downgrade_widget();
     add_context_menu_item(
         &menu,
         &popover,
         "forktty-paste-symbolic",
         "Paste",
         false,
-        move || terminal_for_paste.paste_from_clipboard(),
+        move || {
+            if let Some(terminal) = terminal_for_paste.upgrade() {
+                terminal.paste_from_clipboard();
+            }
+        },
     );
 
-    let terminal_for_select = terminal.clone();
+    let terminal_for_select = terminal.downgrade_widget();
     add_context_menu_item(
         &menu,
         &popover,
         "forktty-select-all-symbolic",
         "Select All",
         false,
-        move || terminal_for_select.select_all_text(),
+        move || {
+            if let Some(terminal) = terminal_for_select.upgrade() {
+                terminal.select_all_text();
+            }
+        },
     );
 
-    let terminal_for_reset = terminal.clone();
+    let terminal_for_reset = terminal.downgrade_widget();
     add_context_menu_item(
         &menu,
         &popover,
         "forktty-clear-symbolic",
         "Reset and Clear",
         false,
-        move || terminal_for_reset.reset_and_clear(),
+        move || {
+            if let Some(terminal) = terminal_for_reset.upgrade() {
+                terminal.reset_and_clear();
+            }
+        },
     );
 
     add_context_menu_separator(&menu);
@@ -511,7 +527,7 @@ pub(super) fn install_terminal_context_menu(
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
     let gtk_widget = widget.widget();
     let widget_for_menu = gtk_widget.downgrade();
-    let terminal_for_menu = widget.clone();
+    let terminal_for_menu = widget.downgrade_widget();
     let state_for_menu = state.clone();
     let parent_for_menu = parent.clone();
     let surface_id_for_menu = surface_id.to_string();
@@ -519,6 +535,9 @@ pub(super) fn install_terminal_context_menu(
     let current_popover_for_menu = current_popover.clone();
     gesture.connect_pressed(move |gesture, _n_press, x, y| {
         let Some(widget_for_menu) = widget_for_menu.upgrade() else {
+            return;
+        };
+        let Some(terminal_for_menu) = terminal_for_menu.upgrade() else {
             return;
         };
         gesture.set_state(gtk::EventSequenceState::Claimed);

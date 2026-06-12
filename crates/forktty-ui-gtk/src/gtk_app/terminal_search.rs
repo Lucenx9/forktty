@@ -181,10 +181,13 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
     container.append(&close);
 
     let run_search = Rc::new({
-        let widget = widget.clone();
+        let widget = widget.downgrade_widget();
         let entry = entry.clone();
         let count = count.clone();
         move |forward: bool| {
+            let Some(widget) = widget.upgrade() else {
+                return;
+            };
             let query = entry.text();
             // Positions are not tracked against new output or manual
             // scrolling; every step re-runs the search on the current
@@ -217,9 +220,12 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
     });
 
     entry.connect_search_changed({
-        let widget = widget.clone();
+        let widget = widget.downgrade_widget();
         let run_search = run_search.clone();
         move |_| {
+            let Some(widget) = widget.upgrade() else {
+                return;
+            };
             // The query changed, so the previous match index is meaningless.
             widget.search_reset();
             run_search(true);
@@ -262,9 +268,12 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
     });
 
     let hide_search = Rc::new({
-        let widget = widget.clone();
+        let widget = widget.downgrade_widget();
         let container = container.clone();
         move || {
+            let Some(widget) = widget.upgrade() else {
+                return;
+            };
             container.set_visible(false);
             widget.search_close();
             widget.grab_terminal_focus();

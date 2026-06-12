@@ -349,38 +349,39 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
 
     if analysis.contains(MergeAnalysis::ANALYSIS_NORMAL) {
         repo.merge(&[&annotated_commit], None, None)?;
-        let mut index = repo.index()?;
-        if index.has_conflicts() {
-            // `repo.merge` has written conflict markers into the current
-            // checkout and set MERGE_HEAD. Abort it so the checkout is left
-            // clean instead of stranding the user in a half-merged state.
+        let result = (|| -> Result<String, WorktreeError> {
+            let mut index = repo.index()?;
+            if index.has_conflicts() {
+                return Err(WorktreeError::MergeConflicts);
+            }
+            index.write()?;
+            let tree_oid = index.write_tree()?;
+            let tree = repo.find_tree(tree_oid)?;
+            let head_commit = repo.head()?.peel_to_commit()?;
+            let source_commit = repo.find_commit(source_oid)?;
+            let sig = repo
+                .signature()
+                .or_else(|_| git2::Signature::now("ForkTTY", "forktty@localhost"))?;
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                &format!("Merge branch '{branch_name}'"),
+                &tree,
+                &[&head_commit, &source_commit],
+            )?;
             let mut checkout = git2::build::CheckoutBuilder::new();
-            checkout.force();
+            checkout.safe();
             repo.checkout_head(Some(&mut checkout))?;
             repo.cleanup_state()?;
-            return Err(WorktreeError::MergeConflicts);
+            Ok(format!("Merged '{branch_name}' into HEAD"))
+        })();
+        if result.is_err() {
+            if let Err(abort_err) = abort_pending_merge(&repo) {
+                eprintln!("Failed to abort incomplete worktree merge: {abort_err}");
+            }
         }
-        index.write()?;
-        let tree_oid = index.write_tree()?;
-        let tree = repo.find_tree(tree_oid)?;
-        let head_commit = repo.head()?.peel_to_commit()?;
-        let source_commit = repo.find_commit(source_oid)?;
-        let sig = repo
-            .signature()
-            .or_else(|_| git2::Signature::now("ForkTTY", "forktty@localhost"))?;
-        repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            &format!("Merge branch '{branch_name}'"),
-            &tree,
-            &[&head_commit, &source_commit],
-        )?;
-        let mut checkout = git2::build::CheckoutBuilder::new();
-        checkout.safe();
-        repo.checkout_head(Some(&mut checkout))?;
-        repo.cleanup_state()?;
-        return Ok(format!("Merged '{branch_name}' into HEAD"));
+        return result;
     }
 
     Err(WorktreeError::MergeAnalysisInconclusive)
@@ -716,6 +717,17 @@ fn ensure_clean_checkout(repo: &Repository) -> Result<(), WorktreeError> {
         return Err(WorktreeError::TargetDirty);
     }
     Ok(())
+}
+
+fn abort_pending_merge(repo: &Repository) -> Result<(), WorktreeError> {
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.force();
+    let checkout_result = repo.checkout_head(Some(&mut checkout));
+    let cleanup_result = repo.cleanup_state();
+    match (checkout_result, cleanup_result) {
+        (Ok(_), Ok(_)) => Ok(()),
+        (Err(err), _) | (_, Err(err)) => Err(err.into()),
+    }
 }
 
 fn ensure_clean_source_worktree(repo: &Repository, selector: &str) -> Result<(), WorktreeError> {
@@ -1375,6 +1387,34 @@ mod tests {
         // The failed merge must leave the checkout clean, not half-merged.
         assert_eq!(status(dir.path().to_str().unwrap()).unwrap(), "clean");
         assert!(!dir.path().join(".git/MERGE_HEAD").exists());
+    }
+
+    #[test]
+    fn abort_pending_merge_restores_clean_checkout() {
+        let dir = make_repo();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "merge-abort-cleanup",
+            "nested",
+        )
+        .unwrap();
+        commit_file(Path::new(&info.path), "feature.txt", "from branch\n");
+
+        let repo = Repository::open(dir.path()).unwrap();
+        let branch = repo.find_branch(&info.branch, BranchType::Local).unwrap();
+        let source_oid = branch.get().target().unwrap();
+        let annotated = repo.find_annotated_commit(source_oid).unwrap();
+        repo.merge(&[&annotated], None, None).unwrap();
+        assert!(dir.path().join(".git/MERGE_HEAD").exists());
+
+        abort_pending_merge(&repo).unwrap();
+
+        assert_eq!(status(dir.path().to_str().unwrap()).unwrap(), "clean");
+        assert!(!dir.path().join(".git/MERGE_HEAD").exists());
+        assert!(
+            !dir.path().join("feature.txt").exists(),
+            "checkout should be restored to HEAD"
+        );
     }
 
     #[test]

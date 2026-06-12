@@ -129,7 +129,7 @@ desktop = true
 sound = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 ## Socket API
 
@@ -244,7 +244,7 @@ Implemented operations:
 - create worktree and branch;
 - attach existing branch/worktree;
 - remove worktree after dirty-state and metadata validation;
-- merge worktree branch with dirty-target/conflict checks;
+- merge worktree branch with dirty-target/conflict checks and abort incomplete merges before returning failure;
 - run `.forktty/setup` after open/create as advisory setup; failures are reported but do not hide an already-created worktree;
 - run `.forktty/teardown` before removal; failures block removal, and dirty state is rechecked after the hook before deleting files.
 

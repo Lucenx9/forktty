@@ -159,7 +159,7 @@ pub fn load_config_from_path_with_recovery(
 ) -> Result<(AppConfig, Option<ConfigRecovery>), ConfigError> {
     match load_config_from_path(path) {
         Ok(config) => Ok((config, None)),
-        Err(err) => {
+        Err(err) if should_quarantine_config_load_error(&err) => {
             let reason = err.to_string();
             let quarantined_path = quarantine_bad_config(path)?;
             Ok((
@@ -170,6 +170,7 @@ pub fn load_config_from_path_with_recovery(
                 }),
             ))
         }
+        Err(err) => Err(err),
     }
 }
 
@@ -517,6 +518,14 @@ fn quarantine_bad_config_with_timestamp(
     fs::rename(path, &quarantine_path)?;
     sync_parent_dir(&quarantine_path)?;
     Ok(Some(quarantine_path))
+}
+
+fn should_quarantine_config_load_error(err: &ConfigError) -> bool {
+    match err {
+        ConfigError::TomlParse(_) | ConfigError::Invalid(_) => true,
+        ConfigError::Io(err) if err.kind() == std::io::ErrorKind::InvalidData => true,
+        ConfigError::Io(_) | ConfigError::TomlSerialize(_) | ConfigError::NoConfigDir => false,
+    }
 }
 
 fn available_bad_config_path(path: &Path, timestamp: &str) -> PathBuf {
@@ -1052,6 +1061,28 @@ mod tests {
             fs::read_to_string(quarantined_path.join("note.txt")).unwrap(),
             "not a config"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_propagates_unreadable_config_without_quarantine() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[general]\nshell = \"/bin/sh\"\n").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o000);
+        fs::set_permissions(&path, permissions).unwrap();
+        if fs::File::open(&path).is_ok() {
+            return;
+        }
+
+        let result = load_config_from_path_with_recovery(&path);
+
+        let err = result.expect_err("unreadable config must surface the I/O error");
+        assert!(matches!(err, ConfigError::Io(_)));
+        assert!(path.exists(), "I/O errors must not quarantine valid config");
     }
 
     #[test]
