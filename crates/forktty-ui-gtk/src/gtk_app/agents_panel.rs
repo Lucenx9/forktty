@@ -1,5 +1,5 @@
 use super::*;
-use forktty_core::{agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd};
+use forktty_core::agent_resume_command_with_cwd_and_permission_mode;
 use forktty_socket::dispatch;
 use serde_json::json;
 
@@ -38,11 +38,16 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
         .filter_map(|surface| {
             let agent_session = surface.agent_session.clone()?;
             let workspace = workspaces.get(&surface.workspace_id)?;
-            let resume_cwd = effective_agent_resume_cwd(&agent_session);
+            // Only the persisted cwd, never the disk-walking Codex fallback:
+            // this runs for every row on the panel's one-second refresh, and
+            // `codex_session_cwd` scans `~/.codex/sessions` from disk — too
+            // costly to repeat on the GTK thread each tick. The button is
+            // advisory; `agent.resume` resolves the real cwd server-side, and
+            // a missing cwd never makes the command unconstructible anyway.
             let can_resume = agent_resume_command_with_cwd_and_permission_mode(
                 agent_session.agent,
                 &agent_session.session_id,
-                resume_cwd.as_deref(),
+                agent_session.resume_cwd.as_deref(),
                 agent_session.permission_mode.as_deref(),
             )
             .is_ok();
@@ -624,14 +629,6 @@ fn agent_meta_line(row: &AgentHudRow) -> String {
         parts.push(format!("mode {permission_mode}"));
     }
     parts.join(" · ")
-}
-
-fn effective_agent_resume_cwd(agent_session: &forktty_core::AgentSession) -> Option<PathBuf> {
-    agent_session.resume_cwd.clone().or_else(|| {
-        (agent_session.agent == forktty_core::AgentKind::Codex)
-            .then(|| codex_session_cwd(&agent_session.session_id))
-            .flatten()
-    })
 }
 
 fn agent_kind_label(agent: forktty_core::AgentKind) -> &'static str {
