@@ -994,6 +994,36 @@ impl GhosttyTerminalWidget {
         self.drawing_area.queue_draw();
     }
 
+    pub(super) fn read_text(
+        &self,
+        surface_id: &str,
+        capture: TerminalTextCapture,
+        max_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalError> {
+        let runtime = self.runtime.borrow();
+        let size = runtime.size();
+        let full_text = runtime.full_text();
+        if capture == TerminalTextCapture::Visible {
+            let viewport = runtime.viewport_position()?;
+            let visible_text = visible_text_from_full_text(&full_text, viewport.top, viewport.rows);
+            return Ok(TerminalTextSnapshot::from_captured_text(
+                TerminalTextSnapshotParts {
+                    surface_id: surface_id.to_string(),
+                    scope: "visible".to_string(),
+                    text: visible_text,
+                    cols: size.cols,
+                    rows: size.rows,
+                    total_lines: full_text.lines().count(),
+                    max_bytes,
+                    truncate_from_end: false,
+                },
+            ));
+        }
+        Ok(TerminalTextSnapshot::from_text(
+            surface_id, full_text, size.cols, size.rows, capture, max_bytes,
+        ))
+    }
+
     /// Steps the scrollback search to the next (or previous) match of
     /// `query`, scrolls it into view, and highlights it via the selection so
     /// the renderer paints it and Ctrl+Shift+C copies it. Matches are
@@ -1628,6 +1658,16 @@ fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFra
         (text, row.wrapped)
     });
     join_rows_honoring_wrap(rows).trim_end().to_string()
+}
+
+fn visible_text_from_full_text(text: &str, top: usize, rows: usize) -> String {
+    if rows == 0 || text.is_empty() {
+        return String::new();
+    }
+    text.split_inclusive('\n')
+        .skip(top)
+        .take(rows)
+        .collect::<String>()
 }
 
 /// What a copy puts on the clipboard: the stored selection text when present

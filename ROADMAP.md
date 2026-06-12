@@ -91,7 +91,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Project actions: repo-local validated `forktty.json` actions exposed in the command palette and socket.
 - [ ] Right-sidebar/Dock ecosystem: files/find/vault/session/feed style panels, panel persistence, and optional custom sidebar contributors.
 - [ ] Workspace organization: groups, pin/collapse/reorder, and saved layout intent.
-- [ ] Expanded socket topology and tmux-compatible verbs: read/capture pane, send key, move/reorder/join/swap/split-off, buffers, pipe/wait primitives, and `top`/`tree` inspection.
+- [ ] Expanded socket topology and tmux-compatible verbs: `top` inspection, send key, move/reorder/join/swap/split-off, buffers, and pipe/wait primitives. Initial read-only `tree`, `read-screen`, and `capture-tail` primitives are available through socket/CLI/MCP.
 - [ ] Prompt composer/TextBox surface for reusable prompt drafting and dispatch.
 - [ ] Agent/skill catalog: installable prompt packs, provider-specific workflow skills, and project-scoped reusable guidance.
 - [ ] File/project panels: file explorer, markdown preview, diff/comment review flows.

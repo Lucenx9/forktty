@@ -214,6 +214,9 @@ forktty agents --workspace-name main
 forktty agent-health --workspace-name main
 forktty resume-agent --surface-id <surface-id>
 forktty agent-reclaim-plan --workspace-name main --min-idle-ms 600000
+forktty read-screen --surface-id <surface-id>
+forktty capture-tail --surface-id <surface-id> --lines 80
+forktty tree --workspace-name main
 forktty split-surface --axis vertical
 forktty new-tab
 forktty send-text "cargo test\n"
@@ -284,9 +287,10 @@ forktty mcp remove gemini
 
 The MCP server is local-only: it opens no network listener and bridges validated
 tool calls to the owner-only ForkTTY Unix socket. It exposes workspace/surface
-inspection, persisted agent-session inspection and explicit resume into a new
-tab, compact status summaries, pane split/focus/send-text, worktree
-create/attach/remove/merge, notifications, and `status_set`.
+inspection, topology tree, terminal read/capture, persisted agent-session
+inspection and explicit resume into a new tab, compact status summaries, pane
+split/focus/send-text, worktree create/attach/remove/merge, notifications, and
+`status_set`.
 `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane.
@@ -369,7 +373,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events.
@@ -439,7 +443,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream; advanced OSC 99 features such as base64 payloads, update/close controls, activation reports, buttons, and full chunk aggregation remain partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
+- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback across restarts, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
 
 ## Troubleshooting

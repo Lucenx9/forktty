@@ -120,6 +120,18 @@ impl TerminalController {
                     eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
                 }
             }
+            GtkTerminalCommand::ReadText {
+                surface_id,
+                capture,
+                max_bytes,
+                reply,
+            } => {
+                let result = self.widgets.get(&surface_id).map_or_else(
+                    || Err(TerminalError::NotReady(surface_id.clone())),
+                    |widget| widget.read_text(&surface_id, capture, max_bytes),
+                );
+                let _ = reply.send(result);
+            }
             GtkTerminalCommand::Resize {
                 surface_id,
                 cols,

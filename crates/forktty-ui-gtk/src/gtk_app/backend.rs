@@ -6,6 +6,12 @@ pub(super) enum GtkTerminalCommand {
         surface_id: String,
         text: String,
     },
+    ReadText {
+        surface_id: String,
+        capture: TerminalTextCapture,
+        max_bytes: usize,
+        reply: mpsc::Sender<Result<TerminalTextSnapshot, TerminalError>>,
+    },
     Resize {
         surface_id: String,
         cols: u16,
@@ -113,6 +119,41 @@ impl TerminalBackend for GtkTerminalBackend {
             surface_id: surface_id.to_string(),
             text: text.to_string(),
         })
+    }
+
+    fn read_text(
+        &self,
+        surface_id: &str,
+        capture: TerminalTextCapture,
+        max_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalError> {
+        {
+            let surfaces = self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?;
+            if !surfaces.contains_key(surface_id) {
+                return Err(TerminalError::NotFound(surface_id.to_string()));
+            }
+        }
+        if !self
+            .ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .contains(surface_id)
+        {
+            return Err(TerminalError::NotReady(surface_id.to_string()));
+        }
+        let (reply, receiver) = mpsc::channel();
+        self.send_command(GtkTerminalCommand::ReadText {
+            surface_id: surface_id.to_string(),
+            capture,
+            max_bytes,
+            reply,
+        })?;
+        receiver
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|err| TerminalError::Backend(format!("read-text reply failed: {err}")))?
     }
 
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {

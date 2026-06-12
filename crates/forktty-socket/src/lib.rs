@@ -8,7 +8,7 @@ use forktty_core::{
     NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
     MAX_BROWSER_SCRIPT_BYTES,
 };
-use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
+use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
@@ -27,6 +27,9 @@ use tokio::sync::{broadcast, Semaphore};
 
 const MAX_REQUEST_SIZE: usize = 1_048_576;
 const MAX_SEND_TEXT_BYTES: usize = 262_144;
+const MAX_TERMINAL_TEXT_BYTES: usize = 512 * 1024;
+const DEFAULT_CAPTURE_TAIL_LINES: usize = 80;
+const MAX_CAPTURE_TAIL_LINES: usize = 5_000;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const MAX_BROWSER_URL_BYTES: usize = 8_192;
 const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -107,12 +110,15 @@ pub const METHODS: &[&str] = &[
     "pane.select_tab",
     "surface.close",
     "surface.focus",
+    "surface.capture_tail",
     "surface.list",
+    "surface.read_text",
     "surface.send_text",
     "surface.split",
     "status.summary",
     "system.capabilities",
     "system.ping",
+    "topology.tree",
     "workspace.close",
     "workspace.create",
     "workspace.create_ssh",
@@ -149,12 +155,15 @@ pub const METHODS: &[&str] = &[
     "pane.select_tab",
     "surface.close",
     "surface.focus",
+    "surface.capture_tail",
     "surface.list",
+    "surface.read_text",
     "surface.send_text",
     "surface.split",
     "status.summary",
     "system.capabilities",
     "system.ping",
+    "topology.tree",
     "workspace.close",
     "workspace.create",
     "workspace.create_ssh",
@@ -1156,6 +1165,28 @@ pub async fn dispatch(
             };
             Ok(json!(model.list_surfaces(workspace_id.as_deref())))
         }
+        "surface.read_text" => {
+            let surface_id = required_surface_id(&params)?;
+            let capture = terminal_text_capture_from_params(&params)?;
+            let max_bytes = terminal_text_max_bytes_from_params(&params)?;
+            ensure_model_surface_exists(state, surface_id)?;
+            let snapshot = state
+                .terminal
+                .read_text(surface_id, capture, max_bytes)
+                .map_err(DispatchError::from)?;
+            Ok(json!(snapshot))
+        }
+        "surface.capture_tail" => {
+            let surface_id = required_surface_id(&params)?;
+            let lines = terminal_tail_lines_from_params(&params)?;
+            let max_bytes = terminal_text_max_bytes_from_params(&params)?;
+            ensure_model_surface_exists(state, surface_id)?;
+            let snapshot = state
+                .terminal
+                .read_text(surface_id, TerminalTextCapture::Tail { lines }, max_bytes)
+                .map_err(DispatchError::from)?;
+            Ok(json!(snapshot))
+        }
         "surface.send_text" => {
             let surface_id = required_surface_id(&params)?;
             let text = required_string_param(&params, "text")?;
@@ -1175,6 +1206,22 @@ pub async fn dispatch(
                 .send_text(surface_id, text)
                 .map_err(DispatchError::from)?;
             Ok(json!({"sent": true}))
+        }
+        "topology.tree" => {
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    model
+                        .workspace_id_for(selector)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                ),
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
+            };
+            Ok(topology_tree(&model, workspace_id.as_deref()))
         }
         "surface.split" => {
             let surface_id = required_surface_id(&params)?;
@@ -2176,6 +2223,31 @@ fn status_summary(model: &WorkspaceModel, workspace_id: &str) -> Option<Value> {
         "status": model.list_status(workspace_id),
         "progress": model.list_progress(workspace_id),
     }))
+}
+
+fn topology_tree(model: &WorkspaceModel, workspace_id: Option<&str>) -> Value {
+    let workspaces = model
+        .list_workspaces()
+        .into_iter()
+        .filter(|workspace| workspace_id.is_none_or(|id| workspace.id == id))
+        .map(|workspace| {
+            let surfaces = model.list_surfaces(Some(&workspace.id));
+            json!({
+                "id": workspace.id,
+                "name": workspace.name,
+                "active": workspace.active,
+                "working_dir": workspace.working_dir,
+                "git_branch": workspace.git_branch,
+                "worktree_name": workspace.worktree_name,
+                "focused_surface_id": workspace.focused_surface_id,
+                "needs_attention": workspace.needs_attention,
+                "pane_tree": workspace.pane_tree,
+                "surface_count": surfaces.len(),
+                "surfaces": surfaces,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({ "workspaces": workspaces })
 }
 
 fn current_unix_epoch_ms() -> u64 {
@@ -3603,6 +3675,44 @@ fn optional_u64_param(params: &Value, key: &'static str) -> Result<Option<u64>, 
             "Invalid parameter {key}: expected unsigned integer"
         ))),
     }
+}
+
+fn terminal_text_capture_from_params(params: &Value) -> Result<TerminalTextCapture, DispatchError> {
+    match params.get("scope") {
+        None | Some(Value::Null) => Ok(TerminalTextCapture::Visible),
+        Some(Value::String(scope)) => match scope.trim() {
+            "" | "visible" => Ok(TerminalTextCapture::Visible),
+            "all" | "full" => Ok(TerminalTextCapture::All),
+            other => Err(DispatchError::InvalidParam(format!(
+                "Invalid parameter scope: expected visible or all, got {other:?}"
+            ))),
+        },
+        Some(_) => Err(DispatchError::InvalidParam(
+            "Invalid parameter scope: expected string".to_string(),
+        )),
+    }
+}
+
+fn terminal_text_max_bytes_from_params(params: &Value) -> Result<usize, DispatchError> {
+    let Some(value) = optional_u64_param(params, "max_bytes")? else {
+        return Ok(MAX_TERMINAL_TEXT_BYTES);
+    };
+    if value == 0 || value > MAX_TERMINAL_TEXT_BYTES as u64 {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter max_bytes: expected 1..={MAX_TERMINAL_TEXT_BYTES}"
+        )));
+    }
+    Ok(value as usize)
+}
+
+fn terminal_tail_lines_from_params(params: &Value) -> Result<usize, DispatchError> {
+    let lines = optional_u64_param(params, "lines")?.unwrap_or(DEFAULT_CAPTURE_TAIL_LINES as u64);
+    if lines == 0 || lines > MAX_CAPTURE_TAIL_LINES as u64 {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter lines: expected 1..={MAX_CAPTURE_TAIL_LINES}"
+        )));
+    }
+    Ok(lines as usize)
 }
 
 fn optional_bookmark_title(params: &Value) -> Result<String, DispatchError> {
@@ -5384,6 +5494,64 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(backend.sent_text(surface_id).unwrap(), vec!["echo ok\n"]);
+    }
+
+    #[tokio::test]
+    async fn dispatches_surface_read_text() {
+        let (state, backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        backend.send_text(surface_id, "alpha\nbeta\n").unwrap();
+
+        let result = dispatch(
+            &state,
+            "surface.read_text",
+            json!({"surface_id": surface_id}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["surface_id"], surface_id);
+        assert_eq!(result["scope"], "visible");
+        assert_eq!(result["text"], "alpha\nbeta\n");
+        assert_eq!(result["truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn dispatches_surface_capture_tail() {
+        let (state, backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        backend.send_text(surface_id, "one\ntwo\nthree\n").unwrap();
+
+        let result = dispatch(
+            &state,
+            "surface.capture_tail",
+            json!({"surface_id": surface_id, "lines": 2}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["surface_id"], surface_id);
+        assert_eq!(result["scope"], "tail");
+        assert_eq!(result["lines"], 2);
+        assert_eq!(result["text"], "two\nthree\n");
+        assert_eq!(result["truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn dispatches_topology_tree() {
+        let (state, _) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let result = dispatch(&state, "topology.tree", json!({})).await.unwrap();
+
+        assert_eq!(result["workspaces"][0]["id"], workspace_id);
+        assert_eq!(result["workspaces"][0]["focused_surface_id"], surface_id);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["id"], surface_id);
+        assert_eq!(result["workspaces"][0]["pane_tree"]["type"], "leaf");
     }
 
     #[tokio::test]

@@ -384,6 +384,17 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params: workspace_target_params(args, true)?,
             }
         }
+        "topology_tree" => {
+            reject_unexpected(
+                args,
+                &["workspace_id", "workspace_name", "worktree_name"],
+                name,
+            )?;
+            SocketCall {
+                method: "topology.tree",
+                params: workspace_target_params(args, true)?,
+            }
+        }
         "agent_list" => {
             reject_unexpected(
                 args,
@@ -481,6 +492,48 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             SocketCall {
                 method: "surface.send_text",
                 params: map_from_pairs([("surface_id", surface_id), ("text", text)]),
+            }
+        }
+        "surface_read_text" => {
+            reject_unexpected(args, &["surface_id", "scope", "max_bytes"], name)?;
+            let surface_id = optional_non_blank(args, "surface_id")?
+                .or_else(|| trimmed_env("FORKTTY_SURFACE_ID"))
+                .ok_or_else(|| {
+                    ToolCallError::validation(
+                        "surface_read_text requires surface_id or FORKTTY_SURFACE_ID",
+                    )
+                })?;
+            let mut params = map_from_pairs([("surface_id", surface_id)]);
+            if let Some(scope) = optional_enum(args, "scope", &["visible", "all"])? {
+                params.insert("scope".to_string(), Value::String(scope));
+            }
+            if let Some(max_bytes) = optional_u64(args, "max_bytes")? {
+                params.insert("max_bytes".to_string(), Value::Number(max_bytes.into()));
+            }
+            SocketCall {
+                method: "surface.read_text",
+                params,
+            }
+        }
+        "surface_capture_tail" => {
+            reject_unexpected(args, &["surface_id", "lines", "max_bytes"], name)?;
+            let surface_id = optional_non_blank(args, "surface_id")?
+                .or_else(|| trimmed_env("FORKTTY_SURFACE_ID"))
+                .ok_or_else(|| {
+                    ToolCallError::validation(
+                        "surface_capture_tail requires surface_id or FORKTTY_SURFACE_ID",
+                    )
+                })?;
+            let mut params = map_from_pairs([("surface_id", surface_id)]);
+            if let Some(lines) = optional_u64(args, "lines")? {
+                params.insert("lines".to_string(), Value::Number(lines.into()));
+            }
+            if let Some(max_bytes) = optional_u64(args, "max_bytes")? {
+                params.insert("max_bytes".to_string(), Value::Number(max_bytes.into()));
+            }
+            SocketCall {
+                method: "surface.capture_tail",
+                params,
             }
         }
         "surface_focus" => {
@@ -832,6 +885,7 @@ fn success_text(name: &str, result: &Value) -> String {
     match name {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
+        "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "agent_list" => "Listed ForkTTY agent sessions.".to_string(),
         "agent_health" => "Checked ForkTTY agent session readiness.".to_string(),
         "agent_reclaim_plan" => "Planned ForkTTY agent session reclaim candidates.".to_string(),
@@ -845,6 +899,8 @@ fn success_text(name: &str, result: &Value) -> String {
                 .unwrap_or("(unknown)")
         ),
         "surface_send_text" => "Sent text to the ForkTTY surface.".to_string(),
+        "surface_read_text" => "Read text from the ForkTTY surface.".to_string(),
+        "surface_capture_tail" => "Captured text tail from the ForkTTY surface.".to_string(),
         "surface_focus" => "Focused the ForkTTY surface.".to_string(),
         "worktree_list" => "Listed git worktrees.".to_string(),
         "worktree_status" => format!(
@@ -924,6 +980,19 @@ fn tool_specs() -> Vec<ToolSpec> {
             name: "surface_list",
             annotations: read_only_annotations(),
             description: "List panes/surfaces in a workspace. Defaults to FORKTTY_WORKSPACE_ID when launched from a ForkTTY pane; omit targeting to inspect that pane's workspace.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "topology_tree",
+            annotations: read_only_annotations(),
+            description: "Return a read-only ForkTTY workspace/pane/surface tree with surfaces nested under each workspace. Use before targeting a different pane.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -1018,6 +1087,32 @@ fn tool_specs() -> Vec<ToolSpec> {
                 json!({
                     "surface_id": string_prop("Target terminal surface id; defaults from FORKTTY_SURFACE_ID."),
                     "text": string_prop("Literal text to send to the terminal."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "surface_read_text",
+            annotations: read_only_annotations(),
+            description: "Read text from a ForkTTY terminal surface. Defaults to visible screen text and FORKTTY_SURFACE_ID; use scope=all only when a bounded full scrollback read is needed.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "surface_id": string_prop("Target terminal surface id; defaults from FORKTTY_SURFACE_ID."),
+                    "scope": enum_prop("Text range to read.", &["visible", "all"]),
+                    "max_bytes": integer_prop("Maximum UTF-8 bytes to return; socket enforces its upper bound."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "surface_capture_tail",
+            annotations: read_only_annotations(),
+            description: "Capture the last N lines of a ForkTTY terminal surface, including scrollback. Defaults surface_id from FORKTTY_SURFACE_ID.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "surface_id": string_prop("Target terminal surface id; defaults from FORKTTY_SURFACE_ID."),
+                    "lines": integer_prop("Number of trailing lines to capture; defaults to 80."),
+                    "max_bytes": integer_prop("Maximum UTF-8 bytes to return; socket enforces its upper bound."),
                 }),
             ),
         },
@@ -1210,6 +1305,9 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert!(names.contains(&"workspace_list"));
+        assert!(names.contains(&"topology_tree"));
+        assert!(names.contains(&"surface_read_text"));
+        assert!(names.contains(&"surface_capture_tail"));
         assert!(names.contains(&"worktree_create"));
         assert!(names.contains(&"status_set"));
         assert!(tools.iter().any(|tool| {
@@ -1230,6 +1328,8 @@ mod tests {
         };
         assert!(tools.iter().all(|tool| tool["annotations"].is_object()));
         assert_eq!(annotation("workspace_list")["readOnlyHint"], true);
+        assert_eq!(annotation("surface_read_text")["readOnlyHint"], true);
+        assert_eq!(annotation("surface_capture_tail")["readOnlyHint"], true);
         assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
         assert_eq!(annotation("status_set")["idempotentHint"], true);
         assert_eq!(annotation("surface_send_text")["openWorldHint"], false);
@@ -1271,7 +1371,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(resource_text.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, or sending text to another surface."
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, terminal read/capture, or sending text to another surface."
         ));
         assert!(resource_text.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
@@ -1285,6 +1385,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(prompt_text.contains("Read-only first"));
+        assert!(prompt_text.contains("surface_read_text"));
         assert!(prompt_text.contains("surface_send_text"));
     }
 
@@ -1387,6 +1488,37 @@ mod tests {
 
         assert_eq!(method, "status.summary");
         assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn topology_tree_tool_maps_to_socket_topology_tree() {
+        let (method, params) =
+            build_socket_call_for_test("topology_tree", json!({"workspace_id": "w1"})).unwrap();
+
+        assert_eq!(method, "topology.tree");
+        assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn surface_read_tools_map_to_socket_capture_methods() {
+        let (method, params) = build_socket_call_for_test(
+            "surface_read_text",
+            json!({"surface_id": "surface-1", "scope": "all", "max_bytes": 4096}),
+        )
+        .unwrap();
+        assert_eq!(method, "surface.read_text");
+        assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["scope"], "all");
+        assert_eq!(params["max_bytes"], 4096);
+
+        let (method, params) = build_socket_call_for_test(
+            "surface_capture_tail",
+            json!({"surface_id": "surface-1", "lines": 40}),
+        )
+        .unwrap();
+        assert_eq!(method, "surface.capture_tail");
+        assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["lines"], 40);
     }
 
     #[test]

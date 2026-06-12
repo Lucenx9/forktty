@@ -10,7 +10,10 @@ use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, serve, socket_path_from_env, SocketAppState,
 };
-use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
+use forktty_terminal::{
+    SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState, TerminalTextCapture,
+    TerminalTextSnapshot, TerminalTextSnapshotParts,
+};
 use global_hotkey::{
     hotkey::{Code, HotKey},
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
