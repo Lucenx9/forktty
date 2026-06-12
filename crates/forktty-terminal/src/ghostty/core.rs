@@ -13,7 +13,7 @@ use libghostty_vt::{
     },
     paste,
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
-    screen::CellWide,
+    screen::{CellWide, Screen},
     style::RgbColor,
     terminal::ScrollViewport,
     RenderState, Terminal, TerminalOptions,
@@ -473,6 +473,25 @@ impl GhosttyCore {
         let mut events = self.events.borrow_mut();
         events.push(GhosttyEvent::VisibleContentChanged);
         Ok(std::mem::take(&mut *events))
+    }
+
+    /// Scrolls the viewport to the very top of the scrollback. Returns the
+    /// usual redraw event only when the viewport actually moved.
+    pub fn scroll_viewport_to_top(&mut self) -> Result<Vec<GhosttyEvent>> {
+        if self.viewport_position()?.top == 0 {
+            return Ok(Vec::new());
+        }
+        self.terminal.scroll_viewport(ScrollViewport::Top);
+        let _snapshot = self.render_state.update(&self.terminal)?;
+        let mut events = self.events.borrow_mut();
+        events.push(GhosttyEvent::VisibleContentChanged);
+        Ok(std::mem::take(&mut *events))
+    }
+
+    /// Whether the application has switched to the alternate screen (vim, htop,
+    /// ...), where there is no scrollback to navigate.
+    pub fn is_alternate_screen(&self) -> Result<bool> {
+        Ok(self.terminal.active_screen()? == Screen::Alternate)
     }
 
     /// Plain-text dump of the entire scrollable area (scrollback history plus
@@ -1051,6 +1070,40 @@ mod tests {
         let restored = frame_text(&core.render_frame().unwrap());
 
         assert_eq!(restored, bottom);
+    }
+
+    #[test]
+    fn core_detects_the_alternate_screen() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        assert!(!core.is_alternate_screen().unwrap());
+        core.feed(b"\x1b[?1049h").unwrap();
+        assert!(core.is_alternate_screen().unwrap());
+        core.feed(b"\x1b[?1049l").unwrap();
+        assert!(!core.is_alternate_screen().unwrap());
+    }
+
+    #[test]
+    fn core_scroll_viewport_to_top_reaches_the_scrollback_start() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 12,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight")
+            .unwrap();
+
+        let events = core.scroll_viewport_to_top().unwrap();
+        assert!(!events.is_empty());
+        assert_eq!(core.viewport_position().unwrap().top, 0);
+
+        let events = core.scroll_viewport_to_top().unwrap();
+        assert!(events.is_empty());
     }
 
     #[test]

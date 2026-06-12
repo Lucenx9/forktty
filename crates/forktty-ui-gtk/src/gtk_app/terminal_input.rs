@@ -149,6 +149,38 @@ pub(super) fn translate_gtk_key(
     encode_key(spec).map(TerminalInput::Bytes)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScrollbackNavigation {
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+}
+
+/// Maps Shift+PageUp/PageDown/Home/End to local scrollback navigation.
+/// Exactly Shift: with Ctrl or Alt the combination stays an application key
+/// or an existing forktty accelerator.
+pub(super) fn scrollback_navigation_for_key(
+    key: gtk::gdk::Key,
+    modifiers: gtk::gdk::ModifierType,
+) -> Option<ScrollbackNavigation> {
+    let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+    let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+    let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
+    if !shift || ctrl || alt {
+        return None;
+    }
+    match key {
+        gtk::gdk::Key::Page_Up | gtk::gdk::Key::KP_Page_Up => Some(ScrollbackNavigation::PageUp),
+        gtk::gdk::Key::Page_Down | gtk::gdk::Key::KP_Page_Down => {
+            Some(ScrollbackNavigation::PageDown)
+        }
+        gtk::gdk::Key::Home | gtk::gdk::Key::KP_Home => Some(ScrollbackNavigation::Top),
+        gtk::gdk::Key::End | gtk::gdk::Key::KP_End => Some(ScrollbackNavigation::Bottom),
+        _ => None,
+    }
+}
+
 pub(super) fn translate_gtk_navigation_key(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
@@ -651,6 +683,53 @@ mod tests {
             translate_gtk_key(gtk::gdk::Key::BackSpace, none, None).unwrap(),
             TerminalInput::Bytes(vec![0x7f])
         );
+    }
+
+    #[test]
+    fn shift_navigation_keys_map_to_scrollback_navigation() {
+        let shift = gtk::gdk::ModifierType::SHIFT_MASK;
+        let none = gtk::gdk::ModifierType::empty();
+        let ctrl_shift = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK;
+
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::Page_Up, shift),
+            Some(ScrollbackNavigation::PageUp)
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::KP_Page_Down, shift),
+            Some(ScrollbackNavigation::PageDown)
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::Home, shift),
+            Some(ScrollbackNavigation::Top)
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::End, shift),
+            Some(ScrollbackNavigation::Bottom)
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::KP_Page_Up, shift),
+            Some(ScrollbackNavigation::PageUp)
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::KP_Home, shift),
+            Some(ScrollbackNavigation::Top)
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::KP_End, shift),
+            Some(ScrollbackNavigation::Bottom)
+        );
+        // Without Shift (or with extra modifiers) the keys still belong to the
+        // application / existing accelerators.
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::Page_Up, none),
+            None
+        );
+        assert_eq!(
+            scrollback_navigation_for_key(gtk::gdk::Key::Page_Up, ctrl_shift),
+            None
+        );
+        assert_eq!(scrollback_navigation_for_key(gtk::gdk::Key::a, shift), None);
     }
 
     #[test]

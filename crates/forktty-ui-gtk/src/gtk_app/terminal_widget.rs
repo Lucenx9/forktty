@@ -148,6 +148,25 @@ impl GhosttyTerminalWidget {
                 // IMContext::filter_keypress before ::key-pressed; consumed
                 // dead-key/compose events emit ::im-update and never reach
                 // this handler, while completed text arrives via ::commit.
+                if let Some(navigation) = scrollback_navigation_for_key(key, modifiers) {
+                    let Some(drawing_area) = drawing_area_for_key.upgrade() else {
+                        return glib::Propagation::Proceed;
+                    };
+                    match handle_scrollback_navigation(&runtime, &selection_for_key, navigation) {
+                        Ok(true) => {
+                            drawing_area.queue_draw();
+                            return glib::Propagation::Stop;
+                        }
+                        // Alternate screen: the key belongs to the application below.
+                        Ok(false) => {}
+                        Err(err) => {
+                            eprintln!("Failed to navigate terminal scrollback: {err}");
+                            // The key was claimed by scrollback navigation; never leak it into
+                            // the shell on a backend error.
+                            return glib::Propagation::Stop;
+                        }
+                    }
+                }
                 let Some(input) = translate_gtk_key(key, modifiers, None) else {
                     return glib::Propagation::Proceed;
                 };
@@ -1076,6 +1095,36 @@ fn kick_viewport_to_bottom(
     Ok(scrolled)
 }
 
+/// Applies a Shift+PageUp/PageDown/Home/End scrollback navigation. Returns
+/// `false` on the alternate screen, where there is no scrollback and the key
+/// must keep going to the application; otherwise the key is consumed even at
+/// the scrollback edges (it must not leak into the shell). A jump that moved
+/// drops the viewport-relative selection, like a wheel scroll.
+fn handle_scrollback_navigation(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    navigation: ScrollbackNavigation,
+) -> Result<bool, TerminalError> {
+    if runtime.borrow().is_alternate_screen()? {
+        return Ok(false);
+    }
+    let scrolled = {
+        let mut runtime = runtime.borrow_mut();
+        // One overlap row of context, the conventional terminal page step.
+        let page = (runtime.size().rows.saturating_sub(1) as isize).max(1);
+        match navigation {
+            ScrollbackNavigation::PageUp => runtime.scroll_viewport_lines(-page)?,
+            ScrollbackNavigation::PageDown => runtime.scroll_viewport_lines(page)?,
+            ScrollbackNavigation::Top => runtime.scroll_viewport_to_top()?,
+            ScrollbackNavigation::Bottom => runtime.scroll_viewport_to_bottom()?,
+        }
+    };
+    if scrolled {
+        selection.borrow_mut().clear();
+    }
+    Ok(true)
+}
+
 fn write_terminal_input(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
@@ -1539,6 +1588,58 @@ mod selection_tests {
         );
 
         assert_eq!(text, "alpha");
+    }
+
+    #[test]
+    fn scrollback_navigation_pages_and_jumps_outside_the_alternate_screen() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        let lines: String = (1..=20).map(|i| format!("line{i}\r\n")).collect();
+        runtime.feed_pty_bytes(lines.as_bytes()).unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let selection = Rc::new(RefCell::new(TerminalSelection::default()));
+
+        let bottom = runtime.borrow().viewport_position().unwrap().top;
+        // PageUp scrolls one page minus one overlap row and consumes the key.
+        assert!(
+            handle_scrollback_navigation(&runtime, &selection, ScrollbackNavigation::PageUp)
+                .unwrap()
+        );
+        assert_eq!(
+            runtime.borrow().viewport_position().unwrap().top,
+            bottom - 3
+        );
+        assert!(
+            handle_scrollback_navigation(&runtime, &selection, ScrollbackNavigation::Top).unwrap()
+        );
+        assert_eq!(runtime.borrow().viewport_position().unwrap().top, 0);
+        // At the top, PageUp still consumes the key (it must not type into the
+        // shell) even though nothing moves.
+        assert!(
+            handle_scrollback_navigation(&runtime, &selection, ScrollbackNavigation::PageUp)
+                .unwrap()
+        );
+        assert!(
+            handle_scrollback_navigation(&runtime, &selection, ScrollbackNavigation::Bottom)
+                .unwrap()
+        );
+        let viewport = runtime.borrow().viewport_position().unwrap();
+        assert_eq!(viewport.top + viewport.rows, viewport.total);
+
+        // On the alternate screen the key is NOT consumed: it belongs to the app.
+        runtime.borrow_mut().feed_pty_bytes(b"\x1b[?1049h").unwrap();
+        assert!(
+            !handle_scrollback_navigation(&runtime, &selection, ScrollbackNavigation::PageUp)
+                .unwrap()
+        );
     }
 
     #[test]

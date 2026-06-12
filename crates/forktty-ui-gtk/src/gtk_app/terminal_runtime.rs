@@ -158,6 +158,20 @@ impl TerminalRuntime {
         Ok(!events.is_empty())
     }
 
+    pub(super) fn scroll_viewport_to_top(&mut self) -> Result<bool, TerminalError> {
+        let events = self
+            .core
+            .scroll_viewport_to_top()
+            .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        Ok(!events.is_empty())
+    }
+
+    pub(super) fn is_alternate_screen(&self) -> Result<bool, TerminalError> {
+        self.core
+            .is_alternate_screen()
+            .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
     pub(super) fn resize_pixels(
         &mut self,
         width_px: i32,
