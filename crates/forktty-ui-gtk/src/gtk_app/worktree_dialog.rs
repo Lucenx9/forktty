@@ -959,8 +959,7 @@ pub(super) fn spawn_terminal_surfaces_gtk(
     for surface in surfaces {
         let base =
             SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone());
-        let Some(request) = forktty_socket::spawn_request_for_surface_kind(base, &surface.kind)
-        else {
+        let Some(request) = forktty_socket::spawn_request_for_surface(base, surface) else {
             continue;
         };
         state.terminal.spawn(request)?;

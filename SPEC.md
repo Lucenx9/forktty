@@ -166,16 +166,18 @@ Implemented categories:
 | Category | Methods |
 | -------- | ------- |
 | System | `system.ping`, `system.capabilities` |
+| Agent | `agent.list`, `agent.health`, `agent.reclaim.plan`, `agent.resume` |
 | Workspace | `workspace.list`, `workspace.create`, `workspace.create_ssh`, `workspace.select`, `workspace.close` |
 | Surface | `surface.list`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
 | Pane | `pane.new_tab`, `pane.select_tab` |
 | Notification | `notification.create`, `notification.list`, `notification.clear` |
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
+| Status | `status.summary` |
 | Events | `events.subscribe` |
 | Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`, `browser.import.discover`, `browser.import.preview`, `browser.import.run` |
 
-Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. All `worktree.*` methods validate their target path against the git repositories of currently open workspaces: this is a deliberate security boundary — a socket client (hook, MCP server, CLI) cannot drive git worktree operations on a repository the user never opened in ForkTTY, and a shell's mutable cwd is never treated as authorization. The rejection names the open workspace roots and the `forktty create-workspace` remedy. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Hook-originated metadata/notification requests that carry `hook_session_id` can use a bounded server-side session-to-surface cache when later hook requests lose their explicit `workspace_id`/`surface_id`; explicit targets always win, and stale cached surfaces are discarded instead of reviving closed panes. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. All `worktree.*` methods validate their target path against the git repositories of currently open workspaces: this is a deliberate security boundary — a socket client (hook, MCP server, CLI) cannot drive git worktree operations on a repository the user never opened in ForkTTY, and a shell's mutable cwd is never treated as authorization. The rejection names the open workspace roots and the `forktty create-workspace` remedy. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Hook-originated metadata/notification requests that carry `hook_session_id` can use a bounded server-side session-to-surface cache when later hook requests lose their explicit `workspace_id`/`surface_id`; explicit targets always win, and stale cached surfaces are discarded instead of reviving closed panes. When a hook status targets a primary `agent:<provider>` key and carries `hook_session_id`, ForkTTY also persists `{agent, session_id, resume_cwd, lifecycle, last_activity_ms}` on that surface in `session-v2.json`; `resume_cwd` is the provider session cwd when `hook_session_cwd` names an existing absolute directory, with Antigravity deriving that value from the hook payload's `workspacePaths` because its wrapper scripts run from `~/.gemini/config`. Lifecycle is derived conservatively from hook events and normalized status values as `running`, `idle`, `needs_input`, `ended`, or `unknown`, and `last_activity_ms` is the Unix epoch millisecond when ForkTTY accepted the hook status. `agent.list` exposes those persisted bindings with workspace/surface/title/cwd context and accepts the same workspace selectors as `surface.list`. `agent.health` returns those bindings plus local resume readiness fields (`ready`, `reason`, `program`, `executable`, `argv`): it validates the provider/session pair with the same argv-only command builder used by resume and checks whether the provider executable is discoverable on the ForkTTY process PATH, without launching the provider or proving the remote/session id still exists. When a Codex binding has no persisted `resume_cwd`, health/resume/restore may infer one from Codex's local `$CODEX_HOME/sessions` or `~/.codex/sessions` `session_meta` JSONL if the matching session file and cwd still exist. `agent.reclaim.plan` is read-only and accepts the same workspace selectors plus optional `min_idle_ms` (default 600000). It returns `{policy, candidates, protected}`: candidates are persisted sessions whose lifecycle is `idle`, last activity is known and older than `min_idle_ms`, and local resume readiness is `ready`; protected rows include `protect_reason` such as `running`, `needs_input`, `ended`, `unknown_lifecycle`, `unknown_activity`, `recent_activity`, or `not_ready:<reason>`. The plan does not close panes, kill processes, or mark sessions suspended. `agent.resume` is an explicit operation that takes a source `surface_id` with a persisted agent session, creates a new tab, and spawns the provider through argv only (`codex resume -C <resume_cwd> <id>` when Codex has a persisted or inferred `resume_cwd`, otherwise `codex resume <id>`, `claude --resume <id>`, `gemini --resume <id>`, `opencode --session <id>`, or `agy --conversation <id>`). When `resume_cwd` is available, ForkTTY also uses it as the provider process cwd, which keeps providers without a cwd flag such as Claude Code in the recorded session directory. Restored terminal surfaces with a supported persisted agent session use the same argv-only resume command during session restore instead of spawning a plain shell. Session ids used for resume are trimmed and rejected if empty, too long, flag-like, or control-character bearing; unsupported custom agents return `precondition_failed` from resume and `unsupported_agent` health rows. `status.summary` returns a derived read-only workspace summary containing workspace identity, persisted agent sessions, current status entries, and progress entries for statusline/HUD consumers. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 
@@ -199,7 +201,7 @@ Error responses include a structured `code` field so clients can branch on outco
 `forktty mcp` runs a local Model Context Protocol server over stdio. It does
 not listen on a network port; each MCP tool call is validated and then bridged
 to the same owner-only Unix socket described above. The server exposes
-`workspace_list`, `surface_list`, `surface_split`, `surface_send_text`,
+`workspace_list`, `surface_list`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_resume`, `status_summary`, `surface_split`, `surface_send_text`,
 `surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
 `worktree_attach`, `worktree_remove`, `worktree_merge`,
 `notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the
@@ -208,11 +210,13 @@ targets when a tool omits an explicit target.
 
 `forktty mcp setup` registers this stdio server in verified user-scope MCP
 config locations for Codex (`$CODEX_HOME/config.toml` or
-`~/.codex/config.toml`), Claude Code (`~/.claude.json`), Gemini CLI
-(`~/.gemini/settings.json`), and Antigravity (`~/.gemini/config/mcp_config.json`).
-Registration writes a ForkTTY-managed server named `forktty`, preserves
-foreign MCP servers, writes atomically, and creates a `.bak-*` backup when
-content changes. `forktty mcp remove` removes only that managed server entry.
+`~/.codex/config.toml`), Claude Code (`~/.claude.json`), and Antigravity
+(`~/.gemini/config/mcp_config.json`). Gemini CLI is legacy opt-in:
+`forktty mcp setup gemini` still registers the same managed server in
+`~/.gemini/settings.json` for existing Gemini users. Registration writes a
+ForkTTY-managed server named `forktty`, preserves foreign MCP servers, writes
+atomically, and creates a `.bak-*` backup when content changes.
+`forktty mcp remove` removes only that managed server entry.
 
 ## Browser Pane Feature
 
@@ -273,8 +277,12 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 - `forktty mcp` is a local stdio bridge only; it opens no network listener and
   enforces the same Unix socket ownership boundary as the CLI.
 - 1 MiB bounds for socket requests, config, and session files.
-- Hook session-to-surface correlation is local process memory only, capped at
-  256 entries, and evicted on session-end or surface close.
+- Hook session-to-surface routing cache is local process memory only, capped at
+  256 entries, and evicted on session-end or surface close. Per-surface agent
+  session ids and hook cwd values learned from hooks are persisted as resume
+  metadata for explicit and restore-time provider resume. Codex cwd fallback
+  reads only local `session_meta` JSONL records under `$CODEX_HOME/sessions` or
+  `~/.codex/sessions` and requires the referenced cwd to still be a directory.
 - Shell and notification executables must be absolute executable files.
 - Hooks are limited to verified worktree-local paths.
 - Worktree removal rejects dirty/tampered targets.
@@ -286,6 +294,12 @@ Residual risks:
 
 - User-authored hooks and notification commands run with user privileges.
 - A same-user process can interact with user-owned runtime resources.
+- Persisted agent session ids and resume cwd values do not preserve PTY
+  processes. Restore-time auto-resume and `agent.resume` can only ask the
+  installed provider CLI to resume; provider-side expiry, deletion, incompatible
+  ids, or missing project directories still fail inside that CLI.
+- `agent.reclaim.plan` is advisory only; actual suspend/kill/reopen behavior is
+  not implemented yet.
 - Advanced OSC 99 compatibility remains partial; base64 payloads, notification update/close controls, activation reports, buttons, and full chunk aggregation are not yet implemented.
 
 ## Test Strategy

@@ -44,6 +44,13 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Desktop notifications through `notify-rust`.
 - [x] Custom `notification_command` with argv execution and title/body environment variables.
 - [x] Agent status, progress, and log metadata through socket API.
+- [x] Agent hook session ids, resume cwd, and lifecycle persisted per surface as resume metadata.
+- [x] Agent session inventory through `agent.list`, `forktty agents`, and MCP `agent_list`.
+- [x] Agent resume readiness checks through `agent.health`, `forktty agent-health`, and MCP `agent_health`.
+- [x] Explicit provider resume into a new tab through `agent.resume`, `forktty resume-agent`, and MCP `agent_resume`.
+- [x] Restore-time provider resume for persisted supported agent terminal surfaces.
+- [x] Agent last-activity tracking and read-only reclaim candidate planning through `agent.reclaim.plan`, `forktty agent-reclaim-plan`, and MCP `agent_reclaim_plan`.
+- [x] Compact status/HUD export through `status.summary`, `forktty statusline`, and MCP `status_summary`.
 - [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
 - [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream.
 - [x] Ghostty bell and child-exit notifications.
@@ -75,6 +82,19 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 ## Backlog
 
+- [ ] Agent hibernation/session lifecycle: suspend/restore UI, provider-side stale-session validation beyond local command readiness, process reclaim, configurable reclaim policy, and explicit suspended-state handling.
+- [ ] Workflow control plane: per-session/per-mode state files, durable goal/plan/evidence artifacts, session search/replay, and compaction-resistant project memory.
+- [ ] Team orchestration runtime: leader/worker state, task DAGs, mailbox/dispatch, worker heartbeats, status/summary, and optional worktree-backed workers.
+- [ ] Feed/approval bridge: normalized agent activity/approval stream with actionable permission events and history.
+- [ ] Agent HUD/statusline export: active-mode, worker, token, health, and notification fields for provider statusline integrations; workspace/status/progress/session summary is available through `status.summary`/`forktty statusline`/MCP.
+- [ ] Remote daemon/SSH depth: persistent remote ForkTTY helper, reconnect/disconnect semantics, CLI relay, and remote PTY/session ownership beyond plain `ssh <host>`.
+- [ ] Project actions: repo-local validated `forktty.json` actions exposed in the command palette and socket.
+- [ ] Right-sidebar/Dock ecosystem: files/find/vault/session/feed style panels, panel persistence, and optional custom sidebar contributors.
+- [ ] Workspace organization: groups, pin/collapse/reorder, and saved layout intent.
+- [ ] Expanded socket topology and tmux-compatible verbs: read/capture pane, send key, move/reorder/join/swap/split-off, buffers, pipe/wait primitives, and `top`/`tree` inspection.
+- [ ] Prompt composer/TextBox surface for reusable prompt drafting and dispatch.
+- [ ] Agent/skill catalog: installable prompt packs, provider-specific workflow skills, and project-scoped reusable guidance.
+- [ ] File/project panels: file explorer, markdown preview, diff/comment review flows.
 - [ ] Complete advanced OSC 99 support: base64 payloads, notification updates/close, activation reports, buttons, and full chunk aggregation.
 - [ ] Runtime GTK/Ghostty smoke tests for keyboard, split, notification, and socket workflows.
 - [ ] Manual QA matrix for `.deb` across Debian/Ubuntu, Fedora-family, Arch/CachyOS.
@@ -86,7 +106,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Ghostty theme import for the native Ghostty color palette.
 - [ ] Multi-window support.
 - [ ] Browser visit recording and history/bookmark address-bar completion.
-- [ ] MCP/server integration.
+- [ ] Remote-aware MCP/server integration.
 - [ ] Plugin system.
 - [ ] Auto-update mechanism.
 

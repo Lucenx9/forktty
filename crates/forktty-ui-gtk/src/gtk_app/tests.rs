@@ -740,6 +740,38 @@ fn restored_ssh_surface_respawns_with_ssh_shell() {
 }
 
 #[test]
+fn restored_agent_surface_respawns_with_resume_command() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_id = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id;
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            forktty_core::AgentKind::Codex,
+            "codex-session-1",
+        ));
+        surface_id
+    };
+
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    assert_eq!(terminal.spawn_shell(&surface_id).unwrap(), "codex");
+    assert_eq!(
+        terminal.spawn_args(&surface_id).unwrap(),
+        vec!["resume".to_string(), "codex-session-1".to_string()]
+    );
+}
+
+#[test]
 fn collect_panes_counts_panes_not_tabs() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

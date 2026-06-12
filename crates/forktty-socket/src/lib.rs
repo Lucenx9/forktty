@@ -1,13 +1,17 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
-    command_safety::is_valid_ssh_host, config, dispatch_notification, validate_worktree_name,
-    worktree, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest,
-    JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel,
-    WorkspaceSelector, MAX_BROWSER_SCRIPT_BYTES,
+    agent_resume_command_with_cwd, codex_session_cwd,
+    command_safety::{is_executable_file, is_valid_ssh_host},
+    config, dispatch_notification, normalize_agent_status, validate_worktree_name, worktree,
+    AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError,
+    BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
+    NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
+    MAX_BROWSER_SCRIPT_BYTES,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
+use std::ffi::OsStr;
 use std::fs::{self, DirBuilder};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
@@ -15,7 +19,7 @@ use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixS
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -50,6 +54,7 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// response to a slow reader still gets through.
 const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
+const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -82,6 +87,10 @@ pub const METHODS: &[&str] = &[
     "browser.reload",
     "browser.snapshot",
     "events.subscribe",
+    "agent.health",
+    "agent.list",
+    "agent.reclaim.plan",
+    "agent.resume",
     "metadata.clear_logs",
     "metadata.clear_progress",
     "metadata.clear_status",
@@ -101,6 +110,7 @@ pub const METHODS: &[&str] = &[
     "surface.list",
     "surface.send_text",
     "surface.split",
+    "status.summary",
     "system.capabilities",
     "system.ping",
     "workspace.close",
@@ -119,6 +129,10 @@ pub const METHODS: &[&str] = &[
 #[cfg(not(feature = "browser"))]
 pub const METHODS: &[&str] = &[
     "events.subscribe",
+    "agent.health",
+    "agent.list",
+    "agent.reclaim.plan",
+    "agent.resume",
     "metadata.clear_logs",
     "metadata.clear_progress",
     "metadata.clear_status",
@@ -138,6 +152,7 @@ pub const METHODS: &[&str] = &[
     "surface.list",
     "surface.send_text",
     "surface.split",
+    "status.summary",
     "system.capabilities",
     "system.ping",
     "workspace.close",
@@ -651,6 +666,70 @@ pub async fn dispatch(
             "version": env!("CARGO_PKG_VERSION"),
             "methods": METHODS,
         })),
+        "agent.health" => {
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    model
+                        .workspace_id_for(selector)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                ),
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
+            };
+            Ok(json!(agent_health_rows(&model, workspace_id.as_deref())))
+        }
+        "agent.list" => {
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    model
+                        .workspace_id_for(selector)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                ),
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
+            };
+            Ok(json!(agent_session_rows(&model, workspace_id.as_deref())))
+        }
+        "agent.reclaim.plan" => {
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    model
+                        .workspace_id_for(selector)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                ),
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
+            };
+            let min_idle_ms = optional_u64_param(&params, "min_idle_ms")?
+                .unwrap_or(DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS);
+            Ok(agent_reclaim_plan(
+                &model,
+                workspace_id.as_deref(),
+                min_idle_ms,
+            ))
+        }
+        "agent.resume" => resume_agent_session(state, &params),
+        "status.summary" => {
+            let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            status_summary(&model, &workspace_id)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))
+        }
         "workspace.list" => {
             let model = state
                 .model
@@ -1504,11 +1583,45 @@ pub async fn dispatch(
             ensure_max_text_size("value", value)?;
             let color = status_color_from_params(&params)?;
             let hook = optional_hook_status_metadata(&params)?;
+            let agent_session_lifecycle = agent_session_lifecycle_from_hook(
+                value,
+                hook.as_ref().map(|hook| hook.event.as_str()),
+            );
+            let hook_session_id = optional_non_blank_string_param(&params, "hook_session_id")?;
+            if let Some(hook_session_id) = hook_session_id {
+                ensure_max_text_size("hook_session_id", hook_session_id)?;
+            }
+            let hook_session_cwd = optional_hook_session_cwd(&params)?;
+            let surface_id = optional_surface_id_param(&params)?;
+            let agent = agent_kind_from_status_key(key);
+            let last_activity_ms = current_unix_epoch_ms();
             let status = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
+                if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
+                    (agent, surface_id, hook_session_id)
+                {
+                    if model
+                        .surface(surface_id)
+                        .is_some_and(|surface| surface.workspace_id == workspace_id)
+                    {
+                        model.set_surface_agent_session(surface_id, agent, hook_session_id);
+                        if let Some(hook_session_cwd) = hook_session_cwd {
+                            model
+                                .set_surface_agent_session_resume_cwd(surface_id, hook_session_cwd);
+                        }
+                        model.set_surface_agent_session_lifecycle(
+                            surface_id,
+                            agent_session_lifecycle,
+                        );
+                        model.set_surface_agent_session_last_activity_ms(
+                            surface_id,
+                            last_activity_ms,
+                        );
+                    }
+                }
                 model
                     .set_status_with_hook_metadata(&workspace_id, key, label, value, color, hook)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?
@@ -1638,6 +1751,417 @@ pub async fn dispatch(
         }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
+}
+
+fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec<Value> {
+    let workspaces = model
+        .list_workspaces()
+        .into_iter()
+        .map(|workspace| (workspace.id.clone(), workspace))
+        .collect::<HashMap<_, _>>();
+
+    model
+        .list_surfaces(workspace_id)
+        .into_iter()
+        .filter_map(|surface| {
+            let agent_session = surface.agent_session?;
+            let workspace_name = workspaces
+                .get(&surface.workspace_id)
+                .map(|workspace| workspace.name.clone())
+                .unwrap_or_default();
+            Some(json!({
+                "workspace_id": surface.workspace_id,
+                "workspace_name": workspace_name,
+                "surface_id": surface.id,
+                "title": surface.title,
+                "cwd": surface.cwd,
+                "agent": agent_session.agent,
+                "session_id": agent_session.session_id,
+                "resume_cwd": agent_session.resume_cwd,
+                "lifecycle": agent_session.lifecycle,
+                "last_activity_ms": agent_session.last_activity_ms,
+            }))
+        })
+        .collect()
+}
+
+fn agent_health_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec<Value> {
+    let path = std::env::var_os("PATH");
+    agent_health_rows_with_path(model, workspace_id, path.as_deref())
+}
+
+fn agent_health_rows_with_path(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    path: Option<&OsStr>,
+) -> Vec<Value> {
+    let workspaces = model
+        .list_workspaces()
+        .into_iter()
+        .map(|workspace| (workspace.id.clone(), workspace))
+        .collect::<HashMap<_, _>>();
+
+    model
+        .list_surfaces(workspace_id)
+        .into_iter()
+        .filter_map(|surface| {
+            let agent_session = surface.agent_session?;
+            let workspace_name = workspaces
+                .get(&surface.workspace_id)
+                .map(|workspace| workspace.name.clone())
+                .unwrap_or_default();
+            let resume_cwd = effective_agent_resume_cwd(&agent_session);
+            let (ready, reason, program, executable, argv) = agent_resume_readiness(
+                agent_session.agent,
+                &agent_session.session_id,
+                resume_cwd.as_deref(),
+                path,
+            );
+            Some(json!({
+                "workspace_id": surface.workspace_id,
+                "workspace_name": workspace_name,
+                "surface_id": surface.id,
+                "title": surface.title,
+                "cwd": surface.cwd,
+                "agent": agent_session.agent,
+                "session_id": agent_session.session_id,
+                "resume_cwd": resume_cwd,
+                "lifecycle": agent_session.lifecycle,
+                "last_activity_ms": agent_session.last_activity_ms,
+                "ready": ready,
+                "reason": reason,
+                "program": program,
+                "executable": executable,
+                "argv": argv,
+            }))
+        })
+        .collect()
+}
+
+fn agent_reclaim_plan(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    min_idle_ms: u64,
+) -> Value {
+    let path = std::env::var_os("PATH");
+    agent_reclaim_plan_with_path(
+        model,
+        workspace_id,
+        path.as_deref(),
+        current_unix_epoch_ms(),
+        min_idle_ms,
+    )
+}
+
+fn agent_reclaim_plan_with_path(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    path: Option<&OsStr>,
+    now_ms: u64,
+    min_idle_ms: u64,
+) -> Value {
+    let mut candidates = Vec::new();
+    let mut protected = Vec::new();
+    for mut row in agent_health_rows_with_path(model, workspace_id, path) {
+        let last_activity_ms = row
+            .get("last_activity_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let idle_ms = (last_activity_ms > 0).then(|| now_ms.saturating_sub(last_activity_ms));
+        if let Some(object) = row.as_object_mut() {
+            object.insert(
+                "idle_ms".to_string(),
+                idle_ms.map(Value::from).unwrap_or(Value::Null),
+            );
+        }
+        if let Some(reason) = agent_reclaim_protect_reason(&row, idle_ms, min_idle_ms) {
+            if let Some(object) = row.as_object_mut() {
+                object.insert("protect_reason".to_string(), Value::String(reason));
+            }
+            protected.push(row);
+        } else {
+            candidates.push(row);
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        b.get("idle_ms")
+            .and_then(Value::as_u64)
+            .cmp(&a.get("idle_ms").and_then(Value::as_u64))
+            .then_with(|| {
+                a.get("surface_id")
+                    .and_then(Value::as_str)
+                    .cmp(&b.get("surface_id").and_then(Value::as_str))
+            })
+    });
+
+    json!({
+        "policy": {
+            "now_ms": now_ms,
+            "min_idle_ms": min_idle_ms,
+        },
+        "candidates": candidates,
+        "protected": protected,
+    })
+}
+
+fn agent_reclaim_protect_reason(
+    row: &Value,
+    idle_ms: Option<u64>,
+    min_idle_ms: u64,
+) -> Option<String> {
+    match row
+        .get("lifecycle")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+    {
+        "idle" => {}
+        "needs_input" => return Some("needs_input".to_string()),
+        "running" => return Some("running".to_string()),
+        "ended" => return Some("ended".to_string()),
+        _ => return Some("unknown_lifecycle".to_string()),
+    }
+    let Some(idle_ms) = idle_ms else {
+        return Some("unknown_activity".to_string());
+    };
+    if !row.get("ready").and_then(Value::as_bool).unwrap_or(false) {
+        let reason = row
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("not_ready");
+        return Some(format!("not_ready:{reason}"));
+    }
+    if idle_ms < min_idle_ms {
+        return Some("recent_activity".to_string());
+    }
+    None
+}
+
+fn agent_session_lifecycle_from_hook(
+    status_value: &str,
+    hook_event_name: Option<&str>,
+) -> AgentSessionLifecycle {
+    let hook_event = hook_event_name
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match hook_event.as_str() {
+        "session-end" => AgentSessionLifecycle::Ended,
+        "stop" | "subagent-stop" | "teammate-idle" => AgentSessionLifecycle::Idle,
+        "notification" | "permission-request" | "elicitation" | "ask-user-question" => {
+            AgentSessionLifecycle::NeedsInput
+        }
+        "session-start"
+        | "prompt-submit"
+        | "prompt-expansion"
+        | "setup"
+        | "pre-tool"
+        | "post-tool"
+        | "post-tool-failure"
+        | "post-tool-batch"
+        | "before-tool-selection"
+        | "before-model"
+        | "after-model"
+        | "permission-denied"
+        | "permission-replied"
+        | "pre-compact"
+        | "post-compact"
+        | "config-change"
+        | "instructions-loaded"
+        | "cwd-changed"
+        | "file-changed"
+        | "worktree-create"
+        | "worktree-remove"
+        | "stop-failure" => AgentSessionLifecycle::Running,
+        _ => agent_session_lifecycle_from_status(status_value),
+    }
+}
+
+fn agent_session_lifecycle_from_status(status_value: &str) -> AgentSessionLifecycle {
+    match normalize_agent_status(status_value) {
+        AgentStatus::Idle | AgentStatus::Done | AgentStatus::Cancelled | AgentStatus::Failed => {
+            AgentSessionLifecycle::Idle
+        }
+        AgentStatus::NeedsInput | AgentStatus::PermissionRequest => {
+            AgentSessionLifecycle::NeedsInput
+        }
+        AgentStatus::Running | AgentStatus::ToolRunning | AgentStatus::TestsRunning => {
+            AgentSessionLifecycle::Running
+        }
+        AgentStatus::Unknown => AgentSessionLifecycle::Unknown,
+    }
+}
+
+fn effective_agent_resume_cwd(agent_session: &AgentSession) -> Option<PathBuf> {
+    agent_session.resume_cwd.clone().or_else(|| {
+        (agent_session.agent == AgentKind::Codex)
+            .then(|| codex_session_cwd(&agent_session.session_id))
+            .flatten()
+    })
+}
+
+fn agent_resume_readiness(
+    agent: AgentKind,
+    session_id: &str,
+    resume_cwd: Option<&Path>,
+    path: Option<&OsStr>,
+) -> (bool, &'static str, Value, Value, Vec<String>) {
+    let command = match agent_resume_command_with_cwd(agent, session_id, resume_cwd) {
+        Ok(command) => command,
+        Err(AgentResumeError::UnsupportedAgent(_)) => {
+            return (
+                false,
+                "unsupported_agent",
+                Value::Null,
+                Value::Null,
+                Vec::new(),
+            );
+        }
+        Err(AgentResumeError::InvalidSessionId) => {
+            return (
+                false,
+                "invalid_session_id",
+                Value::Null,
+                Value::Null,
+                Vec::new(),
+            );
+        }
+        Err(AgentResumeError::InvalidResumeCwd) => {
+            return (
+                false,
+                "invalid_resume_cwd",
+                Value::Null,
+                Value::Null,
+                Vec::new(),
+            );
+        }
+    };
+    let argv = std::iter::once(command.program.clone())
+        .chain(command.args.iter().cloned())
+        .collect::<Vec<_>>();
+    let executable = resolve_program_on_path(&command.program, path);
+    let executable_value = executable
+        .as_ref()
+        .map(|path| Value::String(path.to_string_lossy().into_owned()))
+        .unwrap_or(Value::Null);
+    let ready = executable.is_some();
+    (
+        ready,
+        if ready { "ready" } else { "program_not_found" },
+        Value::String(command.program),
+        executable_value,
+        argv,
+    )
+}
+
+fn resolve_program_on_path(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
+    let program_path = Path::new(program);
+    if program_path.components().count() > 1 || program_path.is_absolute() {
+        return is_executable_file(program_path).then(|| program_path.to_path_buf());
+    }
+    std::env::split_paths(path?)
+        .map(|dir| dir.join(program))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let source_surface_id = required_surface_id(params)?;
+    let (surface, agent, session_id, program, args, resume_cwd) = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
+        let source = model
+            .surface(source_surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?
+            .clone();
+        let agent_session = source.agent_session.ok_or_else(|| {
+            DispatchError::PreconditionFailed(
+                "Surface has no persisted agent session to resume".to_string(),
+            )
+        })?;
+        let resume_cwd = effective_agent_resume_cwd(&agent_session);
+        let command = agent_resume_command_with_cwd(
+            agent_session.agent,
+            &agent_session.session_id,
+            resume_cwd.as_deref(),
+        )
+        .map_err(|err| DispatchError::PreconditionFailed(err.to_string()))?;
+        let new_surface = model
+            .add_tab(source_surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        model.set_surface_agent_session(
+            &new_surface.id,
+            agent_session.agent,
+            agent_session.session_id.clone(),
+        );
+        if let Some(resume_cwd) = resume_cwd.clone() {
+            model.set_surface_agent_session_resume_cwd(&new_surface.id, resume_cwd);
+        }
+        let surface = model
+            .surface(&new_surface.id)
+            .cloned()
+            .unwrap_or(new_surface);
+        (
+            surface,
+            agent_session.agent,
+            agent_session.session_id,
+            command.program,
+            command.args,
+            resume_cwd,
+        )
+    };
+
+    let mut request =
+        SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone());
+    if let Some(resume_cwd) = resume_cwd {
+        request.cwd = resume_cwd;
+    }
+    let request = request.with_args(args.clone());
+    if let Err(err) = state.terminal.spawn(request) {
+        rollback_surface_creation(state, &surface.id)?;
+        return Err(err.into());
+    }
+
+    let argv = std::iter::once(program.clone())
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "surface": surface,
+        "agent": agent,
+        "session_id": session_id,
+        "argv": argv,
+    }))
+}
+
+fn status_summary(model: &WorkspaceModel, workspace_id: &str) -> Option<Value> {
+    let workspace = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)?;
+    let surface_count = model.list_surfaces(Some(workspace_id)).len();
+    Some(json!({
+        "workspace": {
+            "id": workspace.id,
+            "name": workspace.name,
+            "working_dir": workspace.working_dir,
+            "git_branch": workspace.git_branch,
+            "worktree_name": workspace.worktree_name,
+            "focused_surface_id": workspace.focused_surface_id,
+            "surfaces": surface_count,
+        },
+        "agents": agent_session_rows(model, Some(workspace_id)),
+        "status": model.list_status(workspace_id),
+        "progress": model.list_progress(workspace_id),
+    }))
+}
+
+fn current_unix_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 fn ensure_max_text_size(field: &'static str, value: &str) -> Result<(), DispatchError> {
@@ -1790,7 +2314,7 @@ fn spawn_surface_terminal(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Result<(), String> {
-    let Some(request) = spawn_request_for_surface(state, surface) else {
+    let Some(request) = spawn_request_for_socket_surface(state, surface) else {
         return Ok(());
     };
     state.terminal.spawn(request).map_err(|err| err.to_string())
@@ -1820,20 +2344,53 @@ fn spawn_request_for_workspace(
             .cloned()
             .ok_or_else(|| "Surface not found".to_string())?
     };
-    Ok(spawn_request_for_surface_kind(
+    Ok(spawn_request_for_surface(
         SpawnRequest::for_workspace(workspace, state.shell.clone(), state.socket_path.clone()),
-        &surface.kind,
+        &surface,
     ))
 }
 
-fn spawn_request_for_surface(
+fn spawn_request_for_socket_surface(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Option<SpawnRequest> {
-    spawn_request_for_surface_kind(
+    spawn_request_for_surface(
         SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone()),
-        &surface.kind,
+        surface,
     )
+}
+
+/// Adapt a base [`SpawnRequest`] for the complete persisted surface metadata.
+///
+/// This first applies the [`SurfaceKind`] rules (Browser never spawns a PTY,
+/// Ssh launches `ssh <host>`, and Terminal keeps the normal shell). Restored
+/// terminal surfaces that carry an agent session then resume through the
+/// provider's safe argv-only resume command, e.g. `codex resume <SESSION_ID>`.
+pub fn spawn_request_for_surface(
+    request: SpawnRequest,
+    surface: &forktty_core::Surface,
+) -> Option<SpawnRequest> {
+    let request = spawn_request_for_surface_kind(request, &surface.kind)?;
+    if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
+        return Some(request);
+    }
+    let Some(agent_session) = &surface.agent_session else {
+        return Some(request);
+    };
+    let resume_cwd = effective_agent_resume_cwd(agent_session);
+    let Ok(command) = agent_resume_command_with_cwd(
+        agent_session.agent,
+        &agent_session.session_id,
+        resume_cwd.as_deref(),
+    ) else {
+        return Some(request);
+    };
+    let mut request = request;
+    request.shell = command.program;
+    if let Some(resume_cwd) = resume_cwd {
+        request.cwd = resume_cwd;
+    }
+    Some(request.with_args(command.args))
 }
 
 /// Adapt a base [`SpawnRequest`] for a surface's [`SurfaceKind`].
@@ -3011,6 +3568,20 @@ fn history_limit_from_params(params: &Value) -> Result<usize, DispatchError> {
     }
 }
 
+fn optional_u64_param(params: &Value, key: &'static str) -> Result<Option<u64>, DispatchError> {
+    match params.get(key) {
+        Some(Value::Number(number)) => number.as_u64().map(Some).ok_or_else(|| {
+            DispatchError::InvalidParam(format!(
+                "Invalid parameter {key}: expected unsigned integer"
+            ))
+        }),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {key}: expected unsigned integer"
+        ))),
+    }
+}
+
 fn optional_bookmark_title(params: &Value) -> Result<String, DispatchError> {
     match params.get("title") {
         None | Some(Value::Null) => Ok(String::new()),
@@ -3076,6 +3647,26 @@ fn status_color_from_params(params: &Value) -> Result<Option<String>, DispatchEr
         Ok(Some(color.to_string()))
     } else {
         Err("Invalid parameter color: expected green, yellow, red, blue, muted, or #hex".into())
+    }
+}
+
+fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
+    let mut parts = key.split(':');
+    if parts.next()? != "agent" {
+        return None;
+    }
+    let provider = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    match provider {
+        "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
+        "codex" => Some(AgentKind::Codex),
+        "antigravity" | "agy" => Some(AgentKind::Antigravity),
+        "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
+        "gemini" => Some(AgentKind::Gemini),
+        "custom" => Some(AgentKind::Custom),
+        _ => None,
     }
 }
 
@@ -3207,6 +3798,21 @@ impl Drop for HookSessionEndGuard {
             targets.remove_session(session_id);
         }
     }
+}
+
+fn optional_hook_session_cwd(params: &Value) -> Result<Option<PathBuf>, DispatchError> {
+    let Some(raw) = optional_non_blank_string_param(params, "hook_session_cwd")? else {
+        return Ok(None);
+    };
+    ensure_max_text_size("hook_session_cwd", raw)?;
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        match canonical_existing_dir(path, "hook_session_cwd") {
+            Ok(canonical) => return Ok(Some(canonical)),
+            Err(_) => return Ok(None),
+        }
+    }
+    Ok(None)
 }
 
 fn prepare_hook_session_targets(
@@ -3936,13 +4542,11 @@ mod tests {
     ///
     /// Use together with `#[serial_test::serial]` so that tests touching
     /// process-global env vars do not race with each other.
-    #[cfg(feature = "browser")]
     struct EnvGuard {
         key: &'static str,
         prev: Option<String>,
     }
 
-    #[cfg(feature = "browser")]
     impl EnvGuard {
         fn set(key: &'static str, val: &str) -> Self {
             let prev = std::env::var(key).ok();
@@ -3952,7 +4556,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "browser")]
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.prev {
@@ -3997,6 +4600,7 @@ mod tests {
             kind: forktty_core::SurfaceKind::Ssh {
                 host: "user@example.test".to_string(),
             },
+            agent_session: None,
         };
 
         spawn_terminal_surfaces(&state, &[surface]).unwrap();
@@ -4019,6 +4623,7 @@ mod tests {
                 unread: false,
                 needs_attention: false,
                 kind: forktty_core::SurfaceKind::Terminal,
+                agent_session: None,
             },
             "/bin/sh",
             "/tmp/forktty.sock",
@@ -4052,6 +4657,132 @@ mod tests {
                 "malicious ssh host {malicious:?} must be rejected on respawn"
             );
         }
+    }
+
+    #[test]
+    fn spawn_request_resumes_restored_agent_terminal_surface() {
+        let surface = forktty_core::Surface {
+            id: "surface-agent".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "agent".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Terminal,
+            agent_session: Some(forktty_core::AgentSession {
+                agent: AgentKind::Codex,
+                session_id: "codex-session-1".to_string(),
+                resume_cwd: Some(PathBuf::from("/tmp/forktty-project")),
+                lifecycle: AgentSessionLifecycle::Running,
+                last_activity_ms: 12_345,
+            }),
+        };
+
+        let request = spawn_request_for_surface(
+            SpawnRequest::for_surface(&surface, "/bin/sh", "/tmp/forktty.sock"),
+            &surface,
+        )
+        .expect("agent terminal surface should spawn");
+
+        assert_eq!(request.shell, "codex");
+        assert_eq!(
+            request.args,
+            vec![
+                "resume".to_string(),
+                "-C".to_string(),
+                "/tmp/forktty-project".to_string(),
+                "codex-session-1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn spawn_request_resumes_claude_from_persisted_session_cwd() {
+        let surface = forktty_core::Surface {
+            id: "surface-agent".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "agent".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Terminal,
+            agent_session: Some(forktty_core::AgentSession {
+                agent: AgentKind::ClaudeCode,
+                session_id: "claude-session-1".to_string(),
+                resume_cwd: Some(PathBuf::from("/tmp/forktty-project")),
+                lifecycle: AgentSessionLifecycle::Running,
+                last_activity_ms: 12_345,
+            }),
+        };
+
+        let request = spawn_request_for_surface(
+            SpawnRequest::for_surface(&surface, "/bin/sh", "/tmp/forktty.sock"),
+            &surface,
+        )
+        .expect("agent terminal surface should spawn");
+
+        assert_eq!(request.shell, "claude");
+        assert_eq!(request.args, vec!["--resume", "claude-session-1"]);
+        assert_eq!(request.cwd, PathBuf::from("/tmp/forktty-project"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn spawn_request_uses_codex_session_cwd_fallback_when_not_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let codex_home = dir.path().join("codex");
+        let sessions_dir = codex_home.join("sessions/2026/06/12");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        fs::write(
+            sessions_dir.join("rollout-2026-06-12T15-21-07-codex-session-fallback.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "codex-session-fallback",
+                        "cwd": project.to_string_lossy(),
+                    }
+                })
+            ),
+        )
+        .unwrap();
+        let _env = EnvGuard::set("CODEX_HOME", codex_home.to_str().unwrap());
+        let surface = forktty_core::Surface {
+            id: "surface-agent".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "agent".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Terminal,
+            agent_session: Some(forktty_core::AgentSession {
+                agent: AgentKind::Codex,
+                session_id: "codex-session-fallback".to_string(),
+                resume_cwd: None,
+                lifecycle: AgentSessionLifecycle::Running,
+                last_activity_ms: 12_345,
+            }),
+        };
+
+        let request = spawn_request_for_surface(
+            SpawnRequest::for_surface(&surface, "/bin/sh", "/tmp/forktty.sock"),
+            &surface,
+        )
+        .expect("agent terminal surface should spawn");
+
+        assert_eq!(request.shell, "codex");
+        assert_eq!(
+            request.args,
+            vec![
+                "resume".to_string(),
+                "-C".to_string(),
+                project.to_string_lossy().into_owned(),
+                "codex-session-fallback".to_string(),
+            ]
+        );
     }
 
     #[derive(Debug, Default)]
@@ -5075,6 +5806,120 @@ mod tests {
         .unwrap();
         assert_eq!(original_statuses[0]["value"], "Running");
         assert!(other_statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn hook_status_persists_surface_agent_session_binding() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        let resume_cwd = tempfile::tempdir().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Ready",
+                "hook_session_id": "codex-session-9",
+                "hook_session_cwd": resume_cwd.path(),
+                "hook_event_name": "session-start",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+
+        {
+            let model = state.model.lock().unwrap();
+            let session = model
+                .surface(surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap();
+            assert_eq!(session.agent, AgentKind::Codex);
+            assert_eq!(session.session_id, "codex-session-9");
+            assert_eq!(
+                session.lifecycle,
+                forktty_core::AgentSessionLifecycle::Running
+            );
+        }
+
+        let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+        assert_eq!(
+            agents[0]["resume_cwd"],
+            resume_cwd.path().to_string_lossy().as_ref()
+        );
+        let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
+        assert_eq!(
+            health[0]["resume_cwd"],
+            resume_cwd.path().to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            health[0]["argv"],
+            json!([
+                "codex",
+                "resume",
+                "-C",
+                resume_cwd.path().to_string_lossy().as_ref(),
+                "codex-session-9"
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn hook_status_updates_persisted_agent_session_lifecycle() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Done",
+                "hook_session_id": "codex-session-9",
+                "hook_event_name": "stop",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+
+        let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+        assert_eq!(agents[0]["lifecycle"], "idle");
+        assert!(agents[0]["last_activity_ms"].as_u64().unwrap() > 0);
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Ended",
+                "hook_session_id": "codex-session-9",
+                "hook_event_name": "session-end",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
+        assert_eq!(health[0]["lifecycle"], "ended");
+        assert!(health[0]["last_activity_ms"].as_u64().unwrap() > 0);
     }
 
     #[tokio::test]
@@ -6321,6 +7166,395 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), "not_found");
+    }
+
+    #[tokio::test]
+    async fn agent_list_returns_only_surfaces_with_agent_sessions() {
+        let (state, _backend) = test_state();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            (workspace.id, surface_id)
+        };
+        let _plain = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "plain", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+
+        let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+
+        assert_eq!(agents.as_array().unwrap().len(), 1);
+        assert_eq!(agents[0]["workspace_id"], workspace_id);
+        assert_eq!(agents[0]["surface_id"], surface_id);
+        assert_eq!(agents[0]["agent"], "codex");
+        assert_eq!(agents[0]["session_id"], "codex-session-1");
+
+        let scoped = dispatch(&state, "agent.list", json!({"workspace_id": workspace_id}))
+            .await
+            .unwrap();
+        assert_eq!(scoped.as_array().unwrap().len(), 1);
+
+        let missing = dispatch(&state, "agent.list", json!({"workspace_name": "missing"}))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.code(), "not_found");
+    }
+
+    #[tokio::test]
+    async fn agent_health_dispatches_rows_for_persisted_sessions() {
+        let (state, _backend) = test_state();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Custom,
+                "custom-session-1",
+            ));
+            (workspace.id, surface_id)
+        };
+
+        let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
+
+        assert_eq!(health.as_array().unwrap().len(), 1);
+        assert_eq!(health[0]["workspace_id"], workspace_id);
+        assert_eq!(health[0]["surface_id"], surface_id);
+        assert_eq!(health[0]["agent"], "custom");
+        assert_eq!(health[0]["session_id"], "custom-session-1");
+        assert_eq!(health[0]["ready"], false);
+        assert_eq!(health[0]["reason"], "unsupported_agent");
+        assert_eq!(health[0]["argv"], json!([]));
+    }
+
+    #[test]
+    fn agent_health_marks_resume_command_ready_when_provider_is_on_path() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        {
+            let mut file = fs::File::create(&codex).unwrap();
+            writeln!(file, "#!/bin/sh").unwrap();
+        }
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1",));
+
+        let health = agent_health_rows_with_path(&model, None, Some(dir.path().as_os_str()));
+
+        assert_eq!(health.len(), 1);
+        assert_eq!(health[0]["ready"], true);
+        assert_eq!(health[0]["reason"], "ready");
+        assert_eq!(health[0]["program"], "codex");
+        assert_eq!(health[0]["executable"], codex.to_string_lossy().as_ref());
+        assert_eq!(
+            health[0]["argv"],
+            json!(["codex", "resume", "codex-session-1"])
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agent_health_uses_codex_session_cwd_fallback_when_not_persisted() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let codex_home = dir.path().join("codex");
+        let sessions_dir = codex_home.join("sessions/2026/06/12");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        fs::write(
+            sessions_dir.join("rollout-2026-06-12T15-21-07-codex-session-health-fallback.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "codex-session-health-fallback",
+                        "cwd": project.to_string_lossy(),
+                    }
+                })
+            ),
+        )
+        .unwrap();
+        let _env = EnvGuard::set("CODEX_HOME", codex_home.to_str().unwrap());
+        let path_dir = tempfile::tempdir().unwrap();
+        let codex = path_dir.path().join("codex");
+        {
+            let mut file = fs::File::create(&codex).unwrap();
+            writeln!(file, "#!/bin/sh").unwrap();
+        }
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            AgentKind::Codex,
+            "codex-session-health-fallback",
+        ));
+
+        let health = agent_health_rows_with_path(&model, None, Some(path_dir.path().as_os_str()));
+
+        assert_eq!(health.len(), 1);
+        assert_eq!(health[0]["ready"], true);
+        assert_eq!(health[0]["resume_cwd"], project.to_string_lossy().as_ref());
+        assert_eq!(
+            health[0]["argv"],
+            json!([
+                "codex",
+                "resume",
+                "-C",
+                project.to_string_lossy().as_ref(),
+                "codex-session-health-fallback"
+            ])
+        );
+    }
+
+    #[test]
+    fn agent_health_marks_supported_agent_not_ready_when_provider_is_missing() {
+        let empty_path = tempfile::tempdir().unwrap();
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1",));
+
+        let health = agent_health_rows_with_path(&model, None, Some(empty_path.path().as_os_str()));
+
+        assert_eq!(health.len(), 1);
+        assert_eq!(health[0]["ready"], false);
+        assert_eq!(health[0]["reason"], "program_not_found");
+        assert_eq!(health[0]["program"], "codex");
+        assert_eq!(health[0]["executable"], Value::Null);
+        assert_eq!(
+            health[0]["argv"],
+            json!(["codex", "resume", "codex-session-1"])
+        );
+    }
+
+    #[test]
+    fn agent_reclaim_plan_marks_only_old_idle_ready_sessions_as_candidates() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        {
+            let mut file = fs::File::create(&codex).unwrap();
+            writeln!(file, "#!/bin/sh").unwrap();
+        }
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let candidate_surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &candidate_surface_id,
+            AgentKind::Codex,
+            "codex-session-1",
+        ));
+        assert!(model.set_surface_agent_session_lifecycle(
+            &candidate_surface_id,
+            AgentSessionLifecycle::Idle,
+        ));
+        assert!(model.set_surface_agent_session_last_activity_ms(&candidate_surface_id, 1_000));
+
+        let protected_surface_id = model.add_tab(&candidate_surface_id).unwrap().id;
+        assert!(model.set_surface_agent_session(
+            &protected_surface_id,
+            AgentKind::Codex,
+            "codex-session-2",
+        ));
+        assert!(model.set_surface_agent_session_lifecycle(
+            &protected_surface_id,
+            AgentSessionLifecycle::NeedsInput,
+        ));
+        assert!(model.set_surface_agent_session_last_activity_ms(&protected_surface_id, 500));
+
+        let plan =
+            agent_reclaim_plan_with_path(&model, None, Some(dir.path().as_os_str()), 10_000, 5_000);
+
+        assert_eq!(plan["policy"]["now_ms"], 10_000);
+        assert_eq!(plan["policy"]["min_idle_ms"], 5_000);
+        assert_eq!(plan["candidates"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["candidates"][0]["surface_id"], candidate_surface_id);
+        assert_eq!(plan["candidates"][0]["idle_ms"], 9_000);
+        assert_eq!(plan["candidates"][0]["ready"], true);
+        assert_eq!(plan["protected"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["protected"][0]["surface_id"], protected_surface_id);
+        assert_eq!(plan["protected"][0]["protect_reason"], "needs_input");
+    }
+
+    #[tokio::test]
+    async fn status_summary_includes_workspace_agents_status_and_progress() {
+        let (state, _backend) = test_state();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            model
+                .set_status(
+                    &workspace.id,
+                    "agent:codex",
+                    "Codex",
+                    "Running",
+                    Some("blue".into()),
+                )
+                .unwrap();
+            model
+                .set_progress(&workspace.id, "build", "Build", 2.0, Some(4.0))
+                .unwrap();
+            (workspace.id, surface_id)
+        };
+
+        let summary = dispatch(&state, "status.summary", json!({})).await.unwrap();
+
+        assert_eq!(summary["workspace"]["id"], workspace_id);
+        assert_eq!(summary["workspace"]["focused_surface_id"], surface_id);
+        assert_eq!(summary["agents"][0]["agent"], "codex");
+        assert_eq!(summary["agents"][0]["session_id"], "codex-session-1");
+        assert_eq!(summary["status"][0]["key"], "agent:codex");
+        assert_eq!(summary["status"][0]["value"], "Running");
+        assert_eq!(summary["progress"][0]["key"], "build");
+        assert_eq!(summary["progress"][0]["value"], 2.0);
+
+        let scoped = dispatch(
+            &state,
+            "status.summary",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(scoped["workspace"]["id"], summary["workspace"]["id"]);
+    }
+
+    #[tokio::test]
+    async fn agent_resume_opens_new_tab_with_provider_resume_argv() {
+        let (state, backend) = test_state();
+        let source_surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let source_surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &source_surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            source_surface_id
+        };
+
+        let resumed = dispatch(
+            &state,
+            "agent.resume",
+            json!({"surface_id": source_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        let resumed_surface_id = resumed["surface"]["id"].as_str().unwrap();
+        assert_ne!(resumed_surface_id, source_surface_id);
+        assert_eq!(resumed["agent"], "codex");
+        assert_eq!(resumed["session_id"], "codex-session-1");
+        assert_eq!(
+            resumed["argv"],
+            json!(["codex", "resume", "codex-session-1"])
+        );
+        assert_eq!(backend.spawn_shell(resumed_surface_id).unwrap(), "codex");
+        assert_eq!(
+            backend.spawn_args(resumed_surface_id).unwrap(),
+            vec!["resume", "codex-session-1"]
+        );
+
+        let model = state.model.lock().unwrap();
+        let persisted = model
+            .surface(resumed_surface_id)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap();
+        assert_eq!(persisted.agent, AgentKind::Codex);
+        assert_eq!(persisted.session_id, "codex-session-1");
+    }
+
+    #[tokio::test]
+    async fn agent_resume_opens_claude_tab_from_persisted_session_cwd() {
+        let (state, backend) = test_state();
+        let resume_cwd = tempfile::tempdir().unwrap();
+        let source_surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let source_surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &source_surface_id,
+                AgentKind::ClaudeCode,
+                "claude-session-1",
+            ));
+            assert!(model.set_surface_agent_session_resume_cwd(
+                &source_surface_id,
+                resume_cwd.path().to_path_buf()
+            ));
+            source_surface_id
+        };
+
+        let resumed = dispatch(
+            &state,
+            "agent.resume",
+            json!({"surface_id": source_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        let resumed_surface_id = resumed["surface"]["id"].as_str().unwrap();
+        assert_ne!(resumed_surface_id, source_surface_id);
+        assert_eq!(resumed["agent"], "claude_code");
+        assert_eq!(resumed["session_id"], "claude-session-1");
+        assert_eq!(
+            resumed["argv"],
+            json!(["claude", "--resume", "claude-session-1"])
+        );
+        assert_eq!(backend.spawn_shell(resumed_surface_id).unwrap(), "claude");
+        assert_eq!(
+            backend.spawn_args(resumed_surface_id).unwrap(),
+            vec!["--resume", "claude-session-1"]
+        );
+        let spawned = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.surface_id == resumed_surface_id)
+            .unwrap();
+        assert_eq!(spawned.cwd, resume_cwd.path());
+
+        let model = state.model.lock().unwrap();
+        let persisted = model
+            .surface(resumed_surface_id)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap();
+        assert_eq!(persisted.resume_cwd.as_deref(), Some(resume_cwd.path()));
     }
 
     #[tokio::test]

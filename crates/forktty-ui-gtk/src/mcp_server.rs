@@ -120,7 +120,7 @@ fn initialize_result(params: &Value) -> Result<Value, ProtocolError> {
             "name": "forktty",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "ForkTTY tools bridge this local stdio MCP process to the owner-only ForkTTY Unix socket. No network listener is opened. Use workspace_list and surface_list to inspect state before sending text or changing focus; workspace/surface ids from the ForkTTY pane environment are used as targeting defaults when present.",
+        "instructions": "ForkTTY tools bridge this local stdio MCP process to the owner-only ForkTTY Unix socket. No network listener is opened. Use workspace_list, surface_list, agent_list, agent_health, agent_reclaim_plan, and status_summary to inspect state before sending text or changing focus; use agent_resume only after agent_health shows a ready persisted session. Workspace/surface ids from the ForkTTY pane environment are used as targeting defaults when present.",
     }))
 }
 
@@ -290,6 +290,71 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             )?;
             SocketCall {
                 method: "surface.list",
+                params: workspace_target_params(args, true)?,
+            }
+        }
+        "agent_list" => {
+            reject_unexpected(
+                args,
+                &["workspace_id", "workspace_name", "worktree_name"],
+                name,
+            )?;
+            SocketCall {
+                method: "agent.list",
+                params: workspace_target_params(args, true)?,
+            }
+        }
+        "agent_health" => {
+            reject_unexpected(
+                args,
+                &["workspace_id", "workspace_name", "worktree_name"],
+                name,
+            )?;
+            SocketCall {
+                method: "agent.health",
+                params: workspace_target_params(args, true)?,
+            }
+        }
+        "agent_reclaim_plan" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "min_idle_ms",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            if let Some(min_idle_ms) = optional_u64(args, "min_idle_ms")? {
+                params.insert("min_idle_ms".to_string(), Value::Number(min_idle_ms.into()));
+            }
+            SocketCall {
+                method: "agent.reclaim.plan",
+                params,
+            }
+        }
+        "agent_resume" => {
+            reject_unexpected(args, &["surface_id"], name)?;
+            let mut params = Map::new();
+            params.insert(
+                "surface_id".to_string(),
+                Value::String(required_non_empty_string(args, "surface_id")?),
+            );
+            SocketCall {
+                method: "agent.resume",
+                params,
+            }
+        }
+        "status_summary" => {
+            reject_unexpected(
+                args,
+                &["workspace_id", "workspace_name", "worktree_name"],
+                name,
+            )?;
+            SocketCall {
+                method: "status.summary",
                 params: workspace_target_params(args, true)?,
             }
         }
@@ -620,6 +685,22 @@ fn optional_string(
     }
 }
 
+fn optional_u64(
+    args: &Map<String, Value>,
+    key: &'static str,
+) -> Result<Option<u64>, ToolCallError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| ToolCallError::validation(format!("{key} must be an unsigned integer"))),
+        Some(_) => Err(ToolCallError::validation(format!(
+            "{key} must be an unsigned integer"
+        ))),
+    }
+}
+
 fn optional_enum(
     args: &Map<String, Value>,
     key: &'static str,
@@ -660,6 +741,11 @@ fn success_text(name: &str, result: &Value) -> String {
     match name {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
+        "agent_list" => "Listed ForkTTY agent sessions.".to_string(),
+        "agent_health" => "Checked ForkTTY agent session readiness.".to_string(),
+        "agent_reclaim_plan" => "Planned ForkTTY agent session reclaim candidates.".to_string(),
+        "agent_resume" => "Resumed ForkTTY agent session in a new tab.".to_string(),
+        "status_summary" => "Built ForkTTY status summary.".to_string(),
         "surface_split" => format!(
             "Created ForkTTY surface {}.",
             result
@@ -753,6 +839,70 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "workspace_id": string_prop("Workspace id to inspect."),
                     "workspace_name": string_prop("Workspace name to inspect."),
                     "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "agent_list",
+            annotations: read_only_annotations(),
+            description: "List ForkTTY surfaces with persisted agent session ids. Use before planning manual resume or status/HUD work.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "agent_health",
+            annotations: read_only_annotations(),
+            description: "Check whether persisted ForkTTY agent sessions have a safe provider resume command and provider executable on PATH.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "agent_reclaim_plan",
+            annotations: read_only_annotations(),
+            description: "Plan which persisted idle agent sessions are safe reclaim candidates without suspending or closing anything.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                    "min_idle_ms": integer_prop("Minimum idle age in milliseconds before a session can be a reclaim candidate."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "agent_resume",
+            annotations: mutating_annotations(false, false),
+            description: "Resume a persisted agent session from a source surface into a new tab using ForkTTY's argv-only provider command builder. Prefer agent_health first and continue only when the row is ready.",
+            input_schema: object_schema(
+                &["surface_id"],
+                json!({
+                    "surface_id": string_prop("Source surface id with a persisted agent session from agent_list or status_summary."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "status_summary",
+            annotations: read_only_annotations(),
+            description: "Return a compact workspace summary with persisted agent sessions, status entries, and progress entries for statusline/HUD integrations.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to summarize."),
+                    "workspace_name": string_prop("Workspace name to summarize."),
+                    "worktree_name": string_prop("Worktree name to summarize."),
                 }),
             ),
         },
@@ -902,6 +1052,14 @@ fn string_prop(description: &str) -> Value {
     })
 }
 
+fn integer_prop(description: &str) -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": description,
+    })
+}
+
 fn enum_prop(description: &str, values: &[&str]) -> Value {
     json!({
         "type": "string",
@@ -1036,6 +1194,55 @@ mod tests {
             names.contains(&suggested_tool),
             "suggested_tool {suggested_tool} is not a real tool"
         );
+    }
+
+    #[test]
+    fn agent_list_tool_maps_to_socket_agent_list() {
+        let (method, params) =
+            build_socket_call_for_test("agent_list", json!({"workspace_name": "main"})).unwrap();
+
+        assert_eq!(method, "agent.list");
+        assert_eq!(params["workspace_name"], "main");
+    }
+
+    #[test]
+    fn agent_health_tool_maps_to_socket_agent_health() {
+        let (method, params) =
+            build_socket_call_for_test("agent_health", json!({"workspace_id": "w1"})).unwrap();
+
+        assert_eq!(method, "agent.health");
+        assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn agent_reclaim_plan_tool_maps_to_socket_agent_reclaim_plan() {
+        let (method, params) = build_socket_call_for_test(
+            "agent_reclaim_plan",
+            json!({"workspace_id": "w1", "min_idle_ms": 5000}),
+        )
+        .unwrap();
+
+        assert_eq!(method, "agent.reclaim.plan");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["min_idle_ms"], 5000);
+    }
+
+    #[test]
+    fn agent_resume_tool_maps_to_socket_agent_resume() {
+        let (method, params) =
+            build_socket_call_for_test("agent_resume", json!({"surface_id": "surface-1"})).unwrap();
+
+        assert_eq!(method, "agent.resume");
+        assert_eq!(params["surface_id"], "surface-1");
+    }
+
+    #[test]
+    fn status_summary_tool_maps_to_socket_status_summary() {
+        let (method, params) =
+            build_socket_call_for_test("status_summary", json!({"workspace_id": "w1"})).unwrap();
+
+        assert_eq!(method, "status.summary");
+        assert_eq!(params["workspace_id"], "w1");
     }
 
     #[test]

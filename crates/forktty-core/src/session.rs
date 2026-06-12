@@ -40,9 +40,9 @@ pub struct SessionData {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
-    /// Persisted per-surface state (currently the surface `kind`/url) keyed by
-    /// surface id. Empty on sessions written before browser panes existed, in
-    /// which case restore falls back to `SurfaceKind::Terminal` for every leaf.
+    /// Persisted per-surface state keyed by surface id: non-terminal kind data
+    /// and optional restorable agent session metadata. Empty on older sessions,
+    /// in which case restore falls back to a plain terminal for every leaf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<Surface>,
 }
@@ -721,6 +721,24 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
             if !is_valid_ssh_host(host) {
                 return Err(SessionError::InvalidData(format!(
                     "persisted ssh surface has invalid host: {}",
+                    surface.id
+                )));
+            }
+        }
+        if let Some(session) = &surface.agent_session {
+            if session.session_id.trim().is_empty() {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface agent session id must not be empty: {}",
+                    surface.id
+                )));
+            }
+            if session
+                .resume_cwd
+                .as_ref()
+                .is_some_and(|path| path.as_os_str().is_empty() || !path.is_absolute())
+            {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface agent resume cwd must be absolute and non-empty: {}",
                     surface.id
                 )));
             }
@@ -1684,6 +1702,46 @@ mod tests {
         assert_eq!(tabs.len(), 2);
         assert!(tabs.contains(&ws.focused_surface_id));
         assert!(tabs.contains(&tab2_id));
+    }
+
+    #[test]
+    fn round_trip_persists_terminal_agent_session_binding() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v3-agent.json");
+
+        let mut model = WorkspaceModel::new();
+        let ws = model.create_workspace("main", "/tmp");
+        let surface_id = ws.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            crate::agents::AgentKind::ClaudeCode,
+            "claude-session-7"
+        ));
+        assert!(model.set_surface_agent_session_resume_cwd(
+            &surface_id,
+            PathBuf::from("/tmp/forktty-session-project")
+        ));
+        assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 123_456));
+
+        let data = model.to_session_data();
+        assert_eq!(data.surfaces.len(), 1);
+        assert_eq!(data.surfaces[0].id, surface_id);
+        save_session_to_path(&path, &data).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap().unwrap();
+        assert_eq!(loaded, data);
+        let session = loaded.surfaces[0].agent_session.as_ref().unwrap();
+        assert_eq!(session.agent, crate::agents::AgentKind::ClaudeCode);
+        assert_eq!(session.session_id, "claude-session-7");
+        assert_eq!(
+            session.resume_cwd.as_deref(),
+            Some(Path::new("/tmp/forktty-session-project"))
+        );
+        assert_eq!(
+            session.lifecycle,
+            crate::model::AgentSessionLifecycle::Running
+        );
+        assert_eq!(session.last_activity_ms, 123_456);
     }
 
     #[test]

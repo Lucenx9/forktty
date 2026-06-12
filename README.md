@@ -27,7 +27,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 ## Why ForkTTY
 
-- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Gemini CLI, OpenCode, shell scripts, and custom tools.
+- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, legacy Gemini CLI, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
@@ -210,6 +210,10 @@ forktty list
 forktty focus "Workspace 2"
 forktty ssh user@example.com
 forktty surfaces --workspace-name main
+forktty agents --workspace-name main
+forktty agent-health --workspace-name main
+forktty resume-agent --surface-id <surface-id>
+forktty agent-reclaim-plan --workspace-name main --min-idle-ms 600000
 forktty split-surface --axis vertical
 forktty new-tab
 forktty send-text "cargo test\n"
@@ -217,11 +221,31 @@ forktty worktree-status
 forktty notify --title "Input needed" --kind prompt "Blocked on test fixture"
 forktty set-status --key agent:codex --label Codex --value Running --color blue
 forktty set-progress --key build --label Build --value 42 --total 100
+forktty statusline
 forktty log --level warn "Waiting for reviewer input"
 forktty notifications
 forktty capabilities
 forktty events
 ```
+
+`forktty agents`, `forktty agent-health`, and `forktty statusline` include the
+hook-derived agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or
+`unknown`) when a provider session id has been persisted. `forktty agents` and
+`forktty agent-health` also expose hook-derived `resume_cwd` and
+`last_activity_ms`. For Antigravity CLI, `resume_cwd` comes from the hook
+payload's `workspacePaths`, because `agy` executes the generated wrapper scripts
+from `~/.gemini/config` rather than from the project directory.
+After a ForkTTY restart, restored terminal panes with a supported persisted
+agent session respawn through the provider's argv-only resume command, such as
+`codex resume -C <resume_cwd> <session-id>` when Codex hook metadata recorded
+the session working directory. Providers without a cwd flag, such as Claude
+Code, are spawned with `resume_cwd` as the child process directory. If a legacy
+ForkTTY session has no persisted `resume_cwd` yet, Codex resumes can still infer
+it from Codex's local `session_meta` JSONL when that project directory still
+exists.
+`forktty agent-reclaim-plan` is read-only: it identifies old idle sessions that
+are locally resumable and explains why other sessions are protected, but it does
+not suspend or close panes.
 
 Source-only builds with the `browser` feature expose experimental browser-pane
 automation over the same socket. This is intentionally not included in the
@@ -252,15 +276,18 @@ agents that support stdio MCP servers:
 
 ```bash
 forktty mcp                              # run the MCP server on stdio
-forktty mcp setup                        # register Codex, Claude, Gemini, Antigravity
+forktty mcp setup                        # register Codex, Claude, Antigravity
 forktty mcp setup codex claude --dry-run
+forktty mcp setup gemini                 # legacy Gemini CLI opt-in
 forktty mcp remove gemini
 ```
 
 The MCP server is local-only: it opens no network listener and bridges validated
 tool calls to the owner-only ForkTTY Unix socket. It exposes workspace/surface
-inspection, pane split/focus/send-text, worktree create/attach/remove/merge,
-notifications, and `status_set`. `FORKTTY_SOCKET_PATH`,
+inspection, persisted agent-session inspection and explicit resume into a new
+tab, compact status summaries, pane split/focus/send-text, worktree
+create/attach/remove/merge, notifications, and `status_set`.
+`FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane.
 
@@ -281,12 +308,12 @@ default socket location.
 
 ## Agent Hooks
 
-Install hook templates for Codex, Claude Code, Gemini CLI, Antigravity CLI,
-and OpenCode:
+Install hook templates for Codex, Claude Code, Antigravity CLI, and OpenCode:
 
 ```bash
-forktty hooks setup                       # install all supported agents
+forktty hooks setup                       # install default agents
 forktty hooks setup codex                 # install just one
+forktty hooks setup gemini                # legacy Gemini CLI opt-in
 forktty hooks setup codex claude --dry-run
 forktty hooks setup --full claude         # include Claude per-tool hooks
 forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
@@ -298,6 +325,8 @@ tool call; pass `--full` to include `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, and `PostToolBatch`. Re-running setup migrates Claude to
 the lifecycle profile unless `--full` is passed. `hooks remove` removes only
 ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
+Gemini CLI remains supported as a legacy explicit target for existing installs,
+but default setup skips it and prefers Antigravity.
 
 The installer merges commands into the agent's own config file:
 
@@ -305,9 +334,9 @@ The installer merges commands into the agent's own config file:
 | ----------- | ----------------------------------------------------------------- |
 | Codex       | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json`                 |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`   |
-| Gemini CLI  | `~/.gemini/settings.json`                                         |
 | Antigravity CLI | `~/.gemini/config/hooks.json` plus wrapper scripts in `~/.gemini/config/forktty-hooks.generated/` |
 | OpenCode    | `$OPENCODE_CONFIG_DIR/plugins/forktty.generated.js` or `~/.config/opencode/plugins/forktty.generated.js` |
+| Gemini CLI  | `~/.gemini/settings.json` (legacy opt-in: `forktty hooks setup gemini`) |
 
 When `HOME` is overridden, the `~` defaults are resolved under that home
 directory. Existing configs are written atomically (tmp + rename) and a
@@ -340,7 +369,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, event-stream, and capabilities.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events.
@@ -410,7 +439,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream; advanced OSC 99 features such as base64 payloads, update/close controls, activation reports, buttons, and full chunk aggregation remain partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
+- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
 
 ## Troubleshooting
