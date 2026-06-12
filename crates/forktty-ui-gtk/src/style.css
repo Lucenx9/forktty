@@ -2362,6 +2362,13 @@ entry.search.command-search:focus-within,
   font-size: 0.96em;
 }
 
+/* Unseen-output dot: leads with the accent so an idle-but-unread agent reads
+   at a glance. Literal color — no CSS custom properties (GTK 4.14). */
+.agent-unread {
+  color: #e88745;
+  font-size: 0.66em;
+}
+
 .agent-title {
   color: #b6b6b6;
   font-size: 0.88em;

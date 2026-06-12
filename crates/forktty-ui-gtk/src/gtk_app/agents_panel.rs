@@ -18,6 +18,11 @@ pub(super) struct AgentHudRow {
     pub(super) permission_mode: Option<String>,
     pub(super) last_activity_label: String,
     pub(super) can_resume: bool,
+    /// The surface has produced output the user has not looked at since last
+    /// focusing it. Distinct from lifecycle: an *idle* agent with unread output
+    /// has finished and its result is still unseen — the case the HUD exists to
+    /// surface. Drives a per-row dot and floats the row up within its group.
+    pub(super) unread: bool,
     /// What the agent is waiting on, for needs-input rows: the body of the
     /// surface's most recent prompt notification (the hook message, e.g.
     /// "Claude needs your permission to use Bash"). Shown instead of the raw
@@ -86,6 +91,7 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
                         now_ms,
                     ),
                     can_resume,
+                    unread: surface.unread,
                     attention_hint,
                 },
             ))
@@ -96,6 +102,8 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
     // `lifecycle_presentation` so it can never drift from the labels.
     rows.sort_by(|a, b| {
         a.0.cmp(&b.0)
+            // Within a lifecycle group, unseen output floats up (true first).
+            .then_with(|| b.1.unread.cmp(&a.1.unread))
             .then_with(|| a.1.workspace_name.cmp(&b.1.workspace_name))
             .then_with(|| a.1.agent_label.cmp(b.1.agent_label))
             .then_with(|| a.1.surface_id.cmp(&b.1.surface_id))
@@ -459,6 +467,13 @@ fn append_agent_row(
     lifecycle.add_css_class(row.lifecycle_class);
     top.append(&agent);
     top.append(&lifecycle);
+    if row.unread {
+        let unread = gtk::Label::builder().label("●").build();
+        unread.add_css_class("agent-unread");
+        unread.set_tooltip_text(Some("Unseen output since you last viewed this agent"));
+        unread.update_property(&[gtk::accessible::Property::Label("Unseen output")]);
+        top.append(&unread);
+    }
 
     let title = gtk::Label::builder()
         .label(format!("{} · {}", row.workspace_name, row.surface_title))

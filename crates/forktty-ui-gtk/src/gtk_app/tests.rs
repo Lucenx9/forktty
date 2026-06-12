@@ -787,6 +787,8 @@ fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
         forktty_core::AgentSessionLifecycle::Idle,
     ));
     assert!(model.set_surface_agent_session_last_activity_ms(&codex_surface, 1_700_000_000_000,));
+    // Idle Codex has produced output the user has not looked at yet.
+    assert!(model.mark_surface_unread(&codex_surface, true));
 
     let review = model.create_workspace("review", "/tmp/review");
     let claude_surface = review.focused_surface_id.clone();
@@ -850,6 +852,46 @@ fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
     assert_eq!(rows[1].last_activity_label, "5m ago");
     // Idle: the stale prompt notification must not become a hint.
     assert_eq!(rows[1].attention_hint, None);
+    // The unread output flag rides through to the row.
+    assert!(rows[1].unread);
+}
+
+#[test]
+fn agent_hud_floats_unread_within_lifecycle_group() {
+    let mut model = WorkspaceModel::new();
+    // Two idle agents in the same lifecycle group; only the second is unread,
+    // yet "alpha" would sort first by workspace name. Unread must win.
+    let seen = model.create_workspace("alpha", "/tmp/alpha");
+    let seen_surface = seen.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &seen_surface,
+        forktty_core::AgentKind::Codex,
+        "11111111-0000-0000-0000-000000000000",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &seen_surface,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+
+    let unseen = model.create_workspace("zeta", "/tmp/zeta");
+    let unseen_surface = unseen.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &unseen_surface,
+        forktty_core::AgentKind::Codex,
+        "22222222-0000-0000-0000-000000000000",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &unseen_surface,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+    assert!(model.mark_surface_unread(&unseen_surface, true));
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].workspace_name, "zeta");
+    assert!(rows[0].unread);
+    assert_eq!(rows[1].workspace_name, "alpha");
+    assert!(!rows[1].unread);
 }
 
 #[test]
