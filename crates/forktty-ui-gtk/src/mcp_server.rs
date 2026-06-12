@@ -1,3 +1,4 @@
+use crate::agent_guide;
 use crate::socket_cli::{send_socket_request_with_timeout, CliResult};
 use serde_json::{json, Map, Value};
 use std::io::{self, BufRead, Write};
@@ -87,6 +88,10 @@ fn handle_message(message: Value, socket_path: &Path) -> Option<Value> {
     let params = object.get("params").cloned().unwrap_or_else(|| json!({}));
     let result = match method {
         "initialize" => initialize_result(&params),
+        "resources/list" => Ok(resources_list_result()),
+        "resources/read" => resources_read_result(&params),
+        "prompts/list" => Ok(prompts_list_result()),
+        "prompts/get" => prompts_get_result(&params),
         "tools/list" => Ok(tools_list_result()),
         "tools/call" => tools_call_result(&params, socket_path),
         _ => Err(ProtocolError {
@@ -114,13 +119,99 @@ fn initialize_result(params: &Value) -> Result<Value, ProtocolError> {
     Ok(json!({
         "protocolVersion": protocol_version,
         "capabilities": {
+            "resources": {},
+            "prompts": {},
             "tools": {},
         },
         "serverInfo": {
             "name": "forktty",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": "ForkTTY tools bridge this local stdio MCP process to the owner-only ForkTTY Unix socket. No network listener is opened. Use workspace_list, surface_list, agent_list, agent_health, agent_reclaim_plan, and status_summary to inspect state before sending text or changing focus; use agent_resume only after agent_health shows a ready persisted session. Workspace/surface ids from the ForkTTY pane environment are used as targeting defaults when present.",
+        "instructions": agent_guide::mcp_server_instructions(),
+    }))
+}
+
+fn resources_list_result() -> Value {
+    json!({
+        "resources": [{
+            "uri": agent_guide::OPERATING_GUIDE_URI,
+            "name": "forktty_operating_guide",
+            "title": "ForkTTY Operating Guide",
+            "description": "When coding agents should use ForkTTY panes, workspaces, session resume, worktree, status, and notification tools.",
+            "mimeType": "text/plain",
+            "annotations": {
+                "audience": ["assistant"],
+                "priority": 0.8,
+            },
+        }]
+    })
+}
+
+fn resources_read_result(params: &Value) -> Result<Value, ProtocolError> {
+    let object = params.as_object().ok_or_else(|| ProtocolError {
+        code: -32602,
+        message: "resources/read params must be an object".to_string(),
+    })?;
+    let uri = object
+        .get("uri")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProtocolError {
+            code: -32602,
+            message: "resources/read requires string field uri".to_string(),
+        })?;
+    if uri != agent_guide::OPERATING_GUIDE_URI {
+        return Err(ProtocolError {
+            code: -32602,
+            message: format!("Unknown resource: {uri}"),
+        });
+    }
+    Ok(json!({
+        "contents": [{
+            "uri": agent_guide::OPERATING_GUIDE_URI,
+            "mimeType": "text/plain",
+            "text": agent_guide::operating_guide_text(),
+        }]
+    }))
+}
+
+fn prompts_list_result() -> Value {
+    json!({
+        "prompts": [{
+            "name": agent_guide::OPERATING_GUIDE_PROMPT,
+            "title": "ForkTTY Operating Guide",
+            "description": "Adds concise ForkTTY tool-use policy to the conversation when coordinating panes, agents, worktrees, or status.",
+            "arguments": [],
+        }]
+    })
+}
+
+fn prompts_get_result(params: &Value) -> Result<Value, ProtocolError> {
+    let object = params.as_object().ok_or_else(|| ProtocolError {
+        code: -32602,
+        message: "prompts/get params must be an object".to_string(),
+    })?;
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ProtocolError {
+            code: -32602,
+            message: "prompts/get requires string field name".to_string(),
+        })?;
+    if name != agent_guide::OPERATING_GUIDE_PROMPT {
+        return Err(ProtocolError {
+            code: -32602,
+            message: format!("Unknown prompt: {name}"),
+        });
+    }
+    Ok(json!({
+        "description": "ForkTTY operating guide for coding agents",
+        "messages": [{
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": agent_guide::operating_guide_text(),
+            },
+        }],
     }))
 }
 
@@ -1142,6 +1233,59 @@ mod tests {
         assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
         assert_eq!(annotation("status_set")["idempotentHint"], true);
         assert_eq!(annotation("surface_send_text")["openWorldHint"], false);
+    }
+
+    #[test]
+    fn operating_guide_is_exposed_as_mcp_context() {
+        let input = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"forktty://agent/operating-guide"}}
+{"jsonrpc":"2.0","id":4,"method":"prompts/list","params":{}}
+{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"forktty_operating_guide"}}
+"#;
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+        let responses = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 5);
+        assert!(responses[0]["result"]["capabilities"]["resources"].is_object());
+        assert!(responses[0]["result"]["capabilities"]["prompts"].is_object());
+        assert!(responses[0]["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("For ordinary edits in the current repo, work normally"));
+
+        let resources = responses[1]["result"]["resources"].as_array().unwrap();
+        assert!(resources
+            .iter()
+            .any(|resource| resource["uri"] == "forktty://agent/operating-guide"));
+        let resource_text = responses[2]["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(resource_text.contains(
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, or sending text to another surface."
+        ));
+        assert!(resource_text.contains(
+            "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
+        ));
+
+        let prompts = responses[3]["result"]["prompts"].as_array().unwrap();
+        assert!(prompts
+            .iter()
+            .any(|prompt| prompt["name"] == "forktty_operating_guide"));
+        let prompt_text = responses[4]["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap();
+        assert!(prompt_text.contains("Read-only first"));
+        assert!(prompt_text.contains("surface_send_text"));
     }
 
     #[test]

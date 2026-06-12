@@ -1,3 +1,4 @@
+mod agent_guide;
 mod cli;
 mod mcp_server;
 mod panic_log;
