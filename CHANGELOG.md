@@ -34,6 +34,7 @@ All notable changes to ForkTTY are documented here.
 - Claude Code session-start context now includes the same concise ForkTTY tool-use policy as the MCP operating guide: use ForkTTY for panes, agents, worktrees, status, or cross-surface text, but avoid tool calls for ordinary single-repo edits.
 
 ### Fixed
+- Dragging a left-click selection in an agent pane (deferred local drag) no longer aborts the app with a `RefCell already borrowed` panic in the motion handler.
 - Terminal pane edge polish: double/triple-clicks and Ctrl+click/Ctrl+hover a few pixels into a pane's trailing gutter now select the last row/word and resolve last-row links instead of doing nothing; the pane being searched no longer dims while its search entry holds focus; middle-click or paste with an empty clipboard no longer shows a spurious "Paste failed" toast; and copying with an active selection still works when the terminal backend fails to render a frame.
 - Wayland touchpad scrolling in terminal panes no longer overscrolls roughly 30x: smooth-scroll deltas arrive in surface (logical pixel) units on Wayland and are now converted through the pane's cell height, while X11 smooth deltas and wheel ticks keep the 3-lines-per-tick mapping.
 - Scrolling inside mouse-tracking applications (vim, htop, tmux) now forwards one wheel press per three accumulated lines — matching physical-wheel speed — instead of one press per line, and hi-resolution wheels' fractional ticks accumulate into whole presses/lines instead of overscrolling on every fraction of a notch.

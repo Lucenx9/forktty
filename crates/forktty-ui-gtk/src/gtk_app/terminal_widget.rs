@@ -623,7 +623,12 @@ impl GhosttyTerminalWidget {
                         drawing_area.queue_draw();
                         return;
                     }
-                    if let Some(pending) = *pending_left_press.borrow() {
+                    // Copy the pending press out before matching: an `if let`
+                    // scrutinee's `Ref` temporary lives for the whole block,
+                    // so borrowing inside would panic (RefCell already
+                    // borrowed) and abort in the GTK trampoline.
+                    let pending = *pending_left_press.borrow();
+                    if let Some(pending) = pending {
                         if deferred_local_drag_exceeded_threshold(pending.x, pending.y, x, y) {
                             pending_left_press.borrow_mut().take();
                             autoscroll.lines.set(0);
