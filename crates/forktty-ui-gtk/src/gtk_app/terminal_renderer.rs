@@ -192,6 +192,10 @@ pub(super) struct RendererCursorState {
     pub(super) focused: bool,
     pub(super) blink_visible: bool,
     pub(super) has_siblings: bool,
+    /// Whether the model considers this pane focused. GTK focus leaves every
+    /// drawing area when a search entry, the command palette, or a dialog is
+    /// active; the model focus keeps the logically active pane undimmed.
+    pub(super) model_focused: bool,
     pub(super) visual_bell_active: bool,
 }
 
@@ -328,7 +332,11 @@ impl TerminalRenderer {
                 self.draw_cursor_overlay(cr, &cursor, metrics, grid);
             }
         }
-        if should_dim_pane(cursor_state.focused, cursor_state.has_siblings) {
+        if should_dim_pane(
+            cursor_state.focused,
+            cursor_state.has_siblings,
+            cursor_state.model_focused,
+        ) {
             paint_unfocused_split_dim(cr, width, height);
         }
         if let Some(viewport) = viewport {
@@ -710,8 +718,8 @@ fn cell_grid_span(cell: &TerminalCell) -> usize {
     }
 }
 
-fn should_dim_pane(focused: bool, has_siblings: bool) -> bool {
-    has_siblings && !focused
+fn should_dim_pane(focused: bool, has_siblings: bool, model_focused: bool) -> bool {
+    has_siblings && !focused && !model_focused
 }
 
 fn paint_unfocused_split_dim(cr: &gtk::cairo::Context, width: i32, height: i32) {
@@ -1161,10 +1169,20 @@ mod tests {
 
     #[test]
     fn terminal_renderer_dims_only_unfocused_panes_with_siblings() {
-        assert!(!should_dim_pane(true, false));
-        assert!(!should_dim_pane(false, false));
-        assert!(!should_dim_pane(true, true));
-        assert!(should_dim_pane(false, true));
+        assert!(!should_dim_pane(true, false, false));
+        assert!(!should_dim_pane(false, false, false));
+        assert!(!should_dim_pane(true, true, false));
+        assert!(should_dim_pane(false, true, false));
+    }
+
+    #[test]
+    fn terminal_renderer_never_dims_the_model_focused_pane() {
+        // The model-focused pane stays undimmed even while its search entry
+        // (or the command palette, or a dialog) owns GTK focus.
+        assert!(!should_dim_pane(false, true, true));
+        assert!(!should_dim_pane(false, false, true));
+        // A sibling that is neither GTK- nor model-focused still dims.
+        assert!(should_dim_pane(false, true, false));
     }
 
     #[test]

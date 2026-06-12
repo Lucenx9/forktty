@@ -88,13 +88,11 @@ impl TerminalSelection {
         }
     }
 
-    fn text(&self) -> Option<&str> {
-        self.text.as_deref()
+    /// The stored selection text, if any. Copy consults this first and only
+    /// falls back to rendering the viewport when there is no selection.
+    pub(super) fn selected_text(&self) -> Option<String> {
+        self.text.clone()
     }
-}
-
-pub(super) fn copy_source_text(selection: &TerminalSelection, full_buffer: &str) -> String {
-    selection.text().unwrap_or(full_buffer).to_string()
 }
 
 /// The half-open column span of `row` covered by the normalized selection
@@ -206,11 +204,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_selection_prefers_explicit_selection_over_full_buffer() {
+    fn terminal_selection_exposes_stored_text() {
         let mut selection = TerminalSelection::default();
+        assert_eq!(selection.selected_text(), None);
+
         selection.select_text("selected");
 
-        assert_eq!(copy_source_text(&selection, "full buffer"), "selected");
+        assert_eq!(selection.selected_text().as_deref(), Some("selected"));
     }
 
     #[test]

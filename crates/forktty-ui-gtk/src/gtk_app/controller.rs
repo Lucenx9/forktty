@@ -457,6 +457,24 @@ impl TerminalController {
         }
     }
 
+    /// Pushes the model's focused surface into each terminal widget so the
+    /// renderer never dims the logically active pane while GTK focus sits in
+    /// a non-terminal widget (the pane's search entry, the command palette,
+    /// dialogs). Runs from `ensure_layout_current` (the 16ms UI timer):
+    /// focus-only changes don't alter the layout signature, so the sibling
+    /// flag path alone would miss them.
+    fn sync_terminal_model_focus_flags(&self) {
+        let focused_surface_id = self
+            .model
+            .lock()
+            .ok()
+            .and_then(|model| model.active_workspace())
+            .map(|workspace| workspace.focused_surface_id);
+        for (surface_id, widget) in &self.widgets {
+            widget.set_is_model_focused(focused_surface_id.as_deref() == Some(surface_id.as_str()));
+        }
+    }
+
     pub(super) fn sync_model_focus_to_ui(&mut self) {
         self.ensure_layout_current();
         if let Some(surface_id) = self
@@ -477,6 +495,7 @@ impl TerminalController {
             if self.last_layout_signature.as_deref() != Some(EMPTY_LAYOUT_SIGNATURE) {
                 self.rebuild_layout();
             }
+            self.sync_terminal_model_focus_flags();
             return;
         };
         let signature =
@@ -486,6 +505,7 @@ impl TerminalController {
         } else {
             self.refresh_chromes();
         }
+        self.sync_terminal_model_focus_flags();
     }
 
     fn spawn_active_surfaces_if_needed(&mut self) {

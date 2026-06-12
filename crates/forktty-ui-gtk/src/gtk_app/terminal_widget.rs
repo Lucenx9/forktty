@@ -1,6 +1,7 @@
 use super::terminal_geometry::{
-    padded_cell_for_position, padded_mouse_position, terminal_content_pixels,
-    terminal_grid_cells_for_allocation, terminal_grid_geometry, TerminalGridGeometry,
+    padded_cell_for_position, padded_cell_for_position_clamped, padded_mouse_position,
+    terminal_content_pixels, terminal_grid_cells_for_allocation, terminal_grid_geometry,
+    TerminalGridGeometry,
 };
 use super::terminal_links::url_at_point;
 use super::*;
@@ -52,6 +53,10 @@ pub(super) struct GhosttyTerminalWidget {
     // True when the current workspace layout shows this pane alongside another
     // pane. Single-pane workspaces never dim terminals when focus sits outside.
     has_siblings: Rc<Cell<bool>>,
+    // True when the model considers this pane focused. GTK focus leaves every
+    // drawing area while a search entry, the command palette, or a dialog is
+    // active; the model focus keeps the logically active pane undimmed.
+    is_model_focused: Rc<Cell<bool>>,
     // Fractional scroll-line remainder shared by smooth and discrete events
     // (hi-res wheels report fractional ticks). A direction flip or gesture
     // end resets it so reversals never inherit stale partial lines.
@@ -139,6 +144,7 @@ impl GhosttyTerminalWidget {
         let visual_bell_active = Rc::new(Cell::new(false));
         let visual_bell_generation = Rc::new(Cell::new(0));
         let has_siblings = Rc::new(Cell::new(false));
+        let is_model_focused = Rc::new(Cell::new(false));
         let scroll_remainder = Rc::new(Cell::new(reset_scroll_accumulator()));
         let font = terminal_font_description(&drawing_area, config);
         let renderer = TerminalRenderer::from_config_with_font(config, font);
@@ -152,6 +158,7 @@ impl GhosttyTerminalWidget {
             let cursor_blink_visible = cursor_blink_visible.clone();
             let visual_bell_active = visual_bell_active.clone();
             let has_siblings = has_siblings.clone();
+            let is_model_focused = is_model_focused.clone();
             drawing_area.set_draw_func(move |area, cr, width, height| {
                 let frame = runtime.borrow_mut().render_frame();
                 match frame {
@@ -170,6 +177,7 @@ impl GhosttyTerminalWidget {
                                 focused: area.has_focus(),
                                 blink_visible: cursor_blink_visible.get(),
                                 has_siblings: has_siblings.get(),
+                                model_focused: is_model_focused.get(),
                                 visual_bell_active: visual_bell_active.get(),
                             },
                             viewport,
@@ -324,7 +332,7 @@ impl GhosttyTerminalWidget {
                     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
                     if is_left && ctrl && n_press == 1 {
                         let point =
-                            selection_cell_for_position(&drawing_area, &renderer, x, y);
+                            selection_cell_for_position_clamped(&drawing_area, &renderer, x, y);
                         match link_at_point(&runtime, point) {
                             Ok(Some(link)) => {
                                 suppress_release.set(true);
@@ -399,16 +407,28 @@ impl GhosttyTerminalWidget {
                             // A fresh gesture must not inherit a previous
                             // drag's pending autoscroll.
                             autoscroll.lines.set(0);
-                            let point =
-                                selection_cell_for_position(&drawing_area, &renderer, x, y);
                             if n_press == 1 {
                                 clear_hover_link(&hover_link_for_click, &drawing_area);
-                                selection.begin_drag(point);
+                                selection.begin_drag(selection_cell_for_position(
+                                    &drawing_area,
+                                    &renderer,
+                                    x,
+                                    y,
+                                ));
                             } else {
                                 // Double click selects the word, triple click
                                 // the visual row. Both finish immediately, so
                                 // the release needs explicit suppression.
+                                // The point query is clamped so a click a few
+                                // px into the trailing gutter still selects
+                                // the last row/column.
                                 suppress_release.set(true);
+                                let point = selection_cell_for_position_clamped(
+                                    &drawing_area,
+                                    &renderer,
+                                    x,
+                                    y,
+                                );
                                 let frame = runtime.borrow_mut().render_frame();
                                 match frame {
                                     Ok(frame) => {
@@ -548,7 +568,7 @@ impl GhosttyTerminalWidget {
                     let resolved = if ctrl {
                         link_at_point(
                             &runtime,
-                            selection_cell_for_position(&drawing_area, &renderer, x, y),
+                            selection_cell_for_position_clamped(&drawing_area, &renderer, x, y),
                         )
                         .unwrap_or_else(|err| {
                             eprintln!("Failed to resolve terminal link: {err}");
@@ -703,6 +723,7 @@ impl GhosttyTerminalWidget {
             visual_bell_active,
             visual_bell_generation,
             has_siblings,
+            is_model_focused,
             scroll_remainder,
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
@@ -748,6 +769,7 @@ impl GhosttyTerminalWidget {
             visual_bell_active: Rc::downgrade(&self.visual_bell_active),
             visual_bell_generation: Rc::downgrade(&self.visual_bell_generation),
             has_siblings: Rc::downgrade(&self.has_siblings),
+            is_model_focused: Rc::downgrade(&self.is_model_focused),
             scroll_remainder: Rc::downgrade(&self.scroll_remainder),
             search_index: Rc::downgrade(&self.search_index),
             search_cache: Rc::downgrade(&self.search_cache),
@@ -765,6 +787,12 @@ impl GhosttyTerminalWidget {
 
     pub(super) fn set_has_siblings(&self, has_siblings: bool) {
         if self.has_siblings.replace(has_siblings) != has_siblings {
+            self.drawing_area.queue_draw();
+        }
+    }
+
+    pub(super) fn set_is_model_focused(&self, is_model_focused: bool) {
+        if self.is_model_focused.replace(is_model_focused) != is_model_focused {
             self.drawing_area.queue_draw();
         }
     }
@@ -978,6 +1006,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     visual_bell_active: std::rc::Weak<Cell<bool>>,
     visual_bell_generation: std::rc::Weak<Cell<u64>>,
     has_siblings: std::rc::Weak<Cell<bool>>,
+    is_model_focused: std::rc::Weak<Cell<bool>>,
     scroll_remainder: std::rc::Weak<Cell<f64>>,
     search_index: std::rc::Weak<Cell<Option<usize>>>,
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
@@ -996,6 +1025,7 @@ impl WeakGhosttyTerminalWidget {
             visual_bell_active: self.visual_bell_active.upgrade()?,
             visual_bell_generation: self.visual_bell_generation.upgrade()?,
             has_siblings: self.has_siblings.upgrade()?,
+            is_model_focused: self.is_model_focused.upgrade()?,
             scroll_remainder: self.scroll_remainder.upgrade()?,
             search_index: self.search_index.upgrade()?,
             search_cache: self.search_cache.upgrade()?,
@@ -1030,16 +1060,22 @@ struct TerminalContentPadding {
     bottom: i32,
 }
 
-/// Grid geometry, CSS padding, and cell size for a pane, all derived from the
-/// same allocation snapshot. Event coordinates include the CSS padding while
-/// the drawn grid lives in the content box, so every pointer consumer must
-/// shift positions by `padding` and build the grid from the content size —
-/// going through this one helper keeps the input mapping and the renderer
-/// from disagreeing by a padding's width.
+/// Grid geometry, CSS padding, cell size, and grid bounds for a pane, all
+/// derived from the same allocation snapshot. Event coordinates include the
+/// CSS padding while the drawn grid lives in the content box, so every
+/// pointer consumer must shift positions by `padding` and build the grid from
+/// the content size — going through this one helper keeps the input mapping
+/// and the renderer from disagreeing by a padding's width.
 fn terminal_area_geometry(
     area: &gtk::DrawingArea,
     renderer: &TerminalRenderer,
-) -> (TerminalGridGeometry, TerminalContentPadding, i32, i32) {
+) -> (
+    TerminalGridGeometry,
+    TerminalContentPadding,
+    i32,
+    i32,
+    (u16, u16),
+) {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
     let padding = terminal_content_padding(area);
     let content_width = terminal_content_size(area.allocated_width(), padding.left, padding.right);
@@ -1055,7 +1091,7 @@ fn terminal_area_geometry(
         cell_width,
         cell_height,
     );
-    (grid, padding, cell_width, cell_height)
+    (grid, padding, cell_width, cell_height, (cols, rows))
 }
 
 fn terminal_mouse_input_for_area(
@@ -1063,7 +1099,7 @@ fn terminal_mouse_input_for_area(
     renderer: &TerminalRenderer,
     event: TerminalMouseEventInput,
 ) -> TerminalMouseInput {
-    let (grid, padding, cell_width, cell_height) = terminal_area_geometry(area, renderer);
+    let (grid, padding, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
     let (x, y) = terminal_content_position(event.x, event.y, padding);
     terminal_mouse_input(
         TerminalMouseEventInput { x, y, ..event },
@@ -1151,9 +1187,29 @@ fn selection_cell_for_position(
     x: f64,
     y: f64,
 ) -> SelectionPoint {
-    let (geometry, padding, cell_width, cell_height) = terminal_area_geometry(area, renderer);
+    let (geometry, padding, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
     let (x, y) = terminal_content_position(x, y, padding);
     let (col, row) = padded_cell_for_position(&geometry, x, y, cell_width, cell_height);
+    SelectionPoint { row, col }
+}
+
+/// [`selection_cell_for_position`] clamped to the grid, for point queries
+/// (word/line click selection, link resolution): a pointer a few px into the
+/// trailing padding resolves to the last cell instead of one past the grid.
+/// Drag extension (`begin_drag`/`extend_drag`/autoscroll) keeps the unclamped
+/// mapping, where exceeding the last row is what extends a drag selection to
+/// end-of-line.
+fn selection_cell_for_position_clamped(
+    area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
+    x: f64,
+    y: f64,
+) -> SelectionPoint {
+    let (geometry, padding, cell_width, cell_height, (cols, rows)) =
+        terminal_area_geometry(area, renderer);
+    let (x, y) = terminal_content_position(x, y, padding);
+    let (col, row) =
+        padded_cell_for_position_clamped(&geometry, x, y, cell_width, cell_height, cols, rows);
     SelectionPoint { row, col }
 }
 
@@ -1352,6 +1408,21 @@ fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFra
         .collect::<Vec<_>>()
         .join("\n");
     text.trim_end().to_string()
+}
+
+/// What a copy puts on the clipboard: the stored selection text when present
+/// (never touching the frame, so a render error cannot break copying a
+/// selection), otherwise the viewport text from `render`. With no selection,
+/// a render error propagates so the caller can report it without writing
+/// anything to the clipboard.
+fn copy_payload<E>(
+    selection_text: Option<String>,
+    render: impl FnOnce() -> Result<String, E>,
+) -> Result<String, E> {
+    match selection_text {
+        Some(text) => Ok(text),
+        None => render(),
+    }
 }
 
 fn selection_text_from_frame(
@@ -1627,40 +1698,64 @@ fn paste_primary_selection(
     drawing_area: &gtk::DrawingArea,
     toast_handle: Option<ToastHandle>,
 ) {
+    let Some(display) = gtk::gdk::Display::default() else {
+        eprintln!("Failed to paste PRIMARY selection: no display available");
+        show_user_action_toast(&toast_handle, "Paste failed");
+        return;
+    };
+    paste_clipboard_text(
+        runtime,
+        selection,
+        drawing_area,
+        toast_handle,
+        &display.primary_clipboard(),
+        "Failed to read PRIMARY selection",
+    );
+}
+
+/// Reads text from `clipboard` and pastes it through the sanitizing/bracketed
+/// paste encoder. An empty or non-text clipboard is a normal no-op, not a
+/// failure: GDK reports it as `Ok(None)` or as a `NotFound`/`NotSupported`
+/// error ("Cannot read from empty clipboard." / "No compatible formats..."),
+/// none of which deserve a "Paste failed" toast.
+fn paste_clipboard_text(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    drawing_area: &gtk::DrawingArea,
+    toast_handle: Option<ToastHandle>,
+    clipboard: &gtk::gdk::Clipboard,
+    read_error_prefix: &'static str,
+) {
     let runtime = runtime.clone();
     let selection = selection.clone();
     let drawing_area = drawing_area.clone();
-    if let Some(display) = gtk::gdk::Display::default() {
-        let toast_handle = toast_handle.clone();
-        display
-            .primary_clipboard()
-            .read_text_async(None::<&gio::Cancellable>, move |result| {
-                let text = match result {
-                    Ok(Some(text)) => text,
-                    Ok(None) => {
-                        eprintln!("Failed to paste PRIMARY selection: clipboard contains no text");
-                        show_user_action_toast(&toast_handle, "Paste failed");
-                        return;
-                    }
-                    Err(err) => {
-                        eprintln!("Failed to read PRIMARY selection: {err}");
-                        show_user_action_toast(&toast_handle, "Paste failed");
-                        return;
-                    }
-                };
-                if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
-                    eprintln!("Failed to scroll terminal to bottom: {err}");
-                }
-                if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
-                    eprintln!("Failed to paste into terminal: {err}");
-                    show_user_action_toast(&toast_handle, "Paste failed");
-                }
-                drawing_area.queue_draw();
-            });
-    } else {
-        eprintln!("Failed to paste PRIMARY selection: no display available");
-        show_user_action_toast(&toast_handle, "Paste failed");
-    }
+    clipboard.read_text_async(None::<&gio::Cancellable>, move |result| {
+        let text = match result {
+            Ok(Some(text)) => text,
+            Ok(None) => return,
+            Err(err)
+                if matches!(
+                    err.kind::<gio::IOErrorEnum>(),
+                    Some(gio::IOErrorEnum::NotFound | gio::IOErrorEnum::NotSupported)
+                ) =>
+            {
+                return;
+            }
+            Err(err) => {
+                eprintln!("{read_error_prefix}: {err}");
+                show_user_action_toast(&toast_handle, "Paste failed");
+                return;
+            }
+        };
+        if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
+            eprintln!("Failed to scroll terminal to bottom: {err}");
+        }
+        if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
+            eprintln!("Failed to paste into terminal: {err}");
+            show_user_action_toast(&toast_handle, "Paste failed");
+        }
+        drawing_area.queue_draw();
+    });
 }
 
 fn show_user_action_toast(toast_handle: &Option<ToastHandle>, message: &str) {
@@ -1768,61 +1863,48 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
     }
 
     fn copy_text(&self) {
-        if let Some(display) = gtk::gdk::Display::default() {
-            // With nothing selected, copy what is on screen — not the whole
-            // scrollback, which used to silently fill the clipboard with the
-            // entire session history.
-            let fallback = match self.runtime.borrow_mut().render_frame() {
-                Ok(frame) => viewport_text_from_frame(&frame),
-                Err(err) => {
-                    eprintln!("Failed to render terminal frame for copy: {err}");
-                    show_user_action_toast(&self.toast_handle, "Copy failed");
-                    return;
-                }
-            };
-            let text = copy_source_text(&self.selection.borrow(), &fallback);
-            display.clipboard().set_text(&text);
-        } else {
+        let Some(display) = gtk::gdk::Display::default() else {
             eprintln!("Failed to copy terminal text: no display available");
             show_user_action_toast(&self.toast_handle, "Copy failed");
+            return;
+        };
+        // With nothing selected, copy what is on screen — not the whole
+        // scrollback, which used to silently fill the clipboard with the
+        // entire session history. The frame is only rendered for that
+        // fallback: a stored selection must still copy when the backend
+        // cannot render a frame.
+        let selection_text = self.selection.borrow().selected_text();
+        let payload = copy_payload(selection_text, || {
+            self.runtime
+                .borrow_mut()
+                .render_frame()
+                .map(|frame| viewport_text_from_frame(&frame))
+        });
+        match payload {
+            Ok(text) => display.clipboard().set_text(&text),
+            // No selection and no frame: keep the toast and leave the
+            // clipboard untouched rather than clobber it with nothing.
+            Err(err) => {
+                eprintln!("Failed to render terminal frame for copy: {err}");
+                show_user_action_toast(&self.toast_handle, "Copy failed");
+            }
         }
     }
 
     fn paste_from_clipboard(&self) {
-        let runtime = self.runtime.clone();
-        let selection = self.selection.clone();
-        let drawing_area = self.drawing_area.clone();
-        let toast_handle = self.toast_handle.clone();
-        if let Some(display) = gtk::gdk::Display::default() {
-            display
-                .clipboard()
-                .read_text_async(None::<&gio::Cancellable>, move |result| {
-                    let text = match result {
-                        Ok(Some(text)) => text,
-                        Ok(None) => {
-                            eprintln!("Failed to paste clipboard text: clipboard contains no text");
-                            show_user_action_toast(&toast_handle, "Paste failed");
-                            return;
-                        }
-                        Err(err) => {
-                            eprintln!("Failed to read clipboard text: {err}");
-                            show_user_action_toast(&toast_handle, "Paste failed");
-                            return;
-                        }
-                    };
-                    if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
-                        eprintln!("Failed to scroll terminal to bottom: {err}");
-                    }
-                    if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
-                        eprintln!("Failed to paste into terminal: {err}");
-                        show_user_action_toast(&toast_handle, "Paste failed");
-                    }
-                    drawing_area.queue_draw();
-                });
-        } else {
+        let Some(display) = gtk::gdk::Display::default() else {
             eprintln!("Failed to paste clipboard text: no display available");
-            show_user_action_toast(&toast_handle, "Paste failed");
-        }
+            show_user_action_toast(&self.toast_handle, "Paste failed");
+            return;
+        };
+        paste_clipboard_text(
+            &self.runtime,
+            &self.selection,
+            &self.drawing_area,
+            self.toast_handle.clone(),
+            &display.clipboard(),
+            "Failed to read clipboard text",
+        );
     }
 
     fn select_all_text(&self) {
@@ -2115,7 +2197,7 @@ mod selection_tests {
             SelectionPoint { row: 0, col: 6 },
             SelectionPoint { row: 0, col: 9 },
         );
-        assert_eq!(copy_source_text(&selection, "fallback"), "beta");
+        assert_eq!(selection.selected_text().as_deref(), Some("beta"));
         assert!(!selection.is_selecting());
         assert!(selection.normalized_range().is_some());
 
@@ -2126,8 +2208,34 @@ mod selection_tests {
             SelectionPoint { row: 3, col: 0 },
             SelectionPoint { row: 3, col: 5 },
         );
-        assert_eq!(copy_source_text(&selection, "fallback"), "fallback");
+        assert_eq!(selection.selected_text(), None);
         assert_eq!(selection.normalized_range(), None);
+    }
+
+    #[test]
+    fn copy_payload_prefers_the_selection_and_never_renders_for_it() {
+        // A stored selection copies without touching the frame, so a failing
+        // backend render cannot break it.
+        let rendered = Cell::new(false);
+        let payload = copy_payload(Some("selected".to_string()), || {
+            rendered.set(true);
+            Err("render failed")
+        });
+        assert_eq!(payload, Ok("selected".to_string()));
+        assert!(!rendered.get());
+
+        // No selection: the rendered viewport is the fallback.
+        assert_eq!(
+            copy_payload(None, || Ok::<_, &str>("screen".to_string())),
+            Ok("screen".to_string())
+        );
+
+        // No selection and no frame: the error propagates so the caller can
+        // toast without clobbering the clipboard.
+        assert_eq!(
+            copy_payload(None, || Err::<String, _>("render failed")),
+            Err("render failed")
+        );
     }
 
     #[test]

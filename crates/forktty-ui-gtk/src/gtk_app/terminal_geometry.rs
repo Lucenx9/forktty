@@ -64,6 +64,27 @@ pub(super) fn padded_cell_for_position(
     )
 }
 
+/// [`padded_cell_for_position`] clamped to the grid bounds: a pointer in the
+/// trailing (bottom/right) padding maps to the last cell instead of one past
+/// it. For point queries (word/line click selection, link resolution) only —
+/// drag extension stays on the unclamped mapping, where exceeding the last
+/// row is what extends the selection to end-of-line.
+pub(super) fn padded_cell_for_position_clamped(
+    geometry: &TerminalGridGeometry,
+    x: f64,
+    y: f64,
+    cell_width_px: i32,
+    cell_height_px: i32,
+    cols: u16,
+    rows: u16,
+) -> (usize, usize) {
+    let (col, row) = padded_cell_for_position(geometry, x, y, cell_width_px, cell_height_px);
+    (
+        col.min(usize::from(cols.saturating_sub(1))),
+        row.min(usize::from(rows.saturating_sub(1))),
+    )
+}
+
 pub(super) fn padded_mouse_position(geometry: &TerminalGridGeometry, x: f64, y: f64) -> (f64, f64) {
     (
         padded_mouse_axis_position(x, geometry.origin_x, geometry.grid_width),
@@ -142,6 +163,52 @@ mod tests {
         assert_eq!(
             padded_cell_for_position(&geometry, 19.0, 28.0, 10, 20),
             (1, 1)
+        );
+    }
+
+    #[test]
+    fn clamped_cell_mapping_pins_trailing_padding_to_the_last_cell() {
+        // 10x3 grid: origin (9, 8), 100x60 px, so the last cell ends at
+        // x = 109, y = 68 and the trailing gutter starts past that.
+        let geometry = terminal_grid_geometry(119, 77, 10, 3, 10, 20);
+
+        // A pointer a few px into the trailing padding — and one far past
+        // the widget — both resolve to the last cell.
+        assert_eq!(
+            padded_cell_for_position_clamped(&geometry, 112.0, 70.0, 10, 20, 10, 3),
+            (9, 2)
+        );
+        assert_eq!(
+            padded_cell_for_position_clamped(&geometry, 500.0, 500.0, 10, 20, 10, 3),
+            (9, 2)
+        );
+        // Interior pointers are unchanged.
+        assert_eq!(
+            padded_cell_for_position_clamped(&geometry, 19.0, 28.0, 10, 20, 10, 3),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn clamped_cell_mapping_is_safe_on_degenerate_grids() {
+        let geometry = terminal_grid_geometry(119, 77, 10, 3, 10, 20);
+
+        assert_eq!(
+            padded_cell_for_position_clamped(&geometry, 500.0, 500.0, 10, 20, 0, 0),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn unclamped_cell_mapping_exceeds_the_grid_for_drag_extension() {
+        // Drag-select relies on the bottom/right gutter mapping past the
+        // last cell so dragging below the pane extends the selection to
+        // end-of-line on the last row; this must stay unclamped.
+        let geometry = terminal_grid_geometry(119, 77, 10, 3, 10, 20);
+
+        assert_eq!(
+            padded_cell_for_position(&geometry, 112.0, 70.0, 10, 20),
+            (10, 3)
         );
     }
 
