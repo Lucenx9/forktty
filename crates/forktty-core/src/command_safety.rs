@@ -148,9 +148,10 @@ pub fn is_valid_ssh_host(host: &str) -> bool {
 /// Returns a trimmed, validated worktree/branch name suitable for passing to
 /// `git worktree add` and to filesystem APIs.
 ///
-/// Rejects empty strings, names longer than 255 bytes, embedded NULs and
-/// backslashes, and any path segment that is empty, `.`, or `..`. The trimmed
-/// slice is borrowed from `name`, so callers can keep the original allocation.
+/// Rejects empty strings, names longer than 255 bytes, leading dashes, control
+/// characters, backslashes, and any path segment that is empty, `.`, or `..`.
+/// The trimmed slice is borrowed from `name`, so callers can keep the original
+/// allocation.
 pub fn validate_worktree_name(name: &str) -> Result<&str, WorktreeNameError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -159,7 +160,7 @@ pub fn validate_worktree_name(name: &str) -> Result<&str, WorktreeNameError> {
     if trimmed.len() > 255 {
         return Err(WorktreeNameError::TooLong);
     }
-    if trimmed.contains('\0') || trimmed.contains('\\') {
+    if trimmed.starts_with('-') || trimmed.contains('\\') || trimmed.chars().any(char::is_control) {
         return Err(WorktreeNameError::UnsupportedCharacters);
     }
     if trimmed
@@ -342,6 +343,14 @@ mod tests {
         );
         assert_eq!(
             validate_worktree_name("feature\\windows"),
+            Err(WorktreeNameError::UnsupportedCharacters)
+        );
+        assert_eq!(
+            validate_worktree_name("-flag"),
+            Err(WorktreeNameError::UnsupportedCharacters)
+        );
+        assert_eq!(
+            validate_worktree_name("feature\nname"),
             Err(WorktreeNameError::UnsupportedCharacters)
         );
         assert_eq!(

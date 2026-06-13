@@ -403,6 +403,8 @@ impl GhosttyTerminalWidget {
                         LeftMousePressDecision::ForwardOrSelectIfUntracked
                     };
                     if matches!(left_decision, LeftMousePressDecision::DeferForLocalDrag) {
+                        autoscroll.pointer.set((x, y));
+                        autoscroll.scroll_compensated_head.set(false);
                         *pending_left_press.borrow_mut() =
                             Some(DeferredLeftPress { x, y, modifiers });
                         selection.borrow_mut().clear();
@@ -437,6 +439,8 @@ impl GhosttyTerminalWidget {
                             // A fresh gesture must not inherit a previous
                             // drag's pending autoscroll.
                             autoscroll.lines.set(0);
+                            autoscroll.pointer.set((x, y));
+                            autoscroll.scroll_compensated_head.set(false);
                             if n_press == 1 {
                                 clear_hover_link(&hover_link_for_click, &drawing_area);
                                 selection.begin_drag(selection_cell_for_position(
@@ -497,6 +501,7 @@ impl GhosttyTerminalWidget {
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
                 let pending_left_press = pending_left_press.clone();
+                let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 click.connect_released(move |gesture, _n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
@@ -517,7 +522,9 @@ impl GhosttyTerminalWidget {
                                 &renderer,
                                 x,
                                 y,
+                                should_extend_selection_on_release(&autoscroll, x, y),
                             );
+                            autoscroll.scroll_compensated_head.set(false);
                             return;
                         }
                         if let Some(pending) = pending_left_press.borrow_mut().take() {
@@ -639,10 +646,11 @@ impl GhosttyTerminalWidget {
                                 x,
                                 y,
                             ));
+                        autoscroll.pointer.set((x, y));
+                        autoscroll.scroll_compensated_head.set(false);
                         // Steer drag-autoscroll: past the top/bottom edge a
                         // timer scrolls and keeps extending the selection
                         // until the pointer comes back inside.
-                        autoscroll.pointer.set((x, y));
                         let lines = autoscroll_lines_per_tick(
                             y,
                             f64::from(drawing_area.allocated_height()),
@@ -691,6 +699,8 @@ impl GhosttyTerminalWidget {
                             let mut selection = selection.borrow_mut();
                             selection.begin_drag(start);
                             selection.extend_drag(end);
+                            autoscroll.pointer.set((x, y));
+                            autoscroll.scroll_compensated_head.set(false);
                             drawing_area.queue_draw();
                         }
                         return;
@@ -756,6 +766,7 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.downgrade();
                 let selection = selection.clone();
+                let autoscroll = autoscroll.clone();
                 let scroll_remainder = scroll_remainder.clone();
                 let scroll_remainder_for_scroll = scroll_remainder.clone();
                 let wayland_display = display_is_wayland();
@@ -819,6 +830,8 @@ impl GhosttyTerminalWidget {
                                         eprintln!(
                                             "Failed to re-anchor terminal selection after scroll: {err}"
                                         );
+                                    } else {
+                                        autoscroll.scroll_compensated_head.set(true);
                                     }
                                 } else {
                                     // Selection coordinates are viewport-relative;
@@ -1461,10 +1474,13 @@ fn finish_selection_drag(
     renderer: &TerminalRenderer,
     x: f64,
     y: f64,
+    extend_on_release: bool,
 ) {
-    selection
-        .borrow_mut()
-        .extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+    if extend_on_release {
+        selection
+            .borrow_mut()
+            .extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+    }
     finalize_selection_drag(runtime, selection, drawing_area);
 }
 
@@ -1572,6 +1588,11 @@ struct SelectionAutoscroll {
     lines: Cell<isize>,
     pointer: Cell<(f64, f64)>,
     active: Cell<bool>,
+    scroll_compensated_head: Cell<bool>,
+}
+
+fn should_extend_selection_on_release(autoscroll: &SelectionAutoscroll, x: f64, y: f64) -> bool {
+    !autoscroll.scroll_compensated_head.get() || autoscroll.pointer.get() != (x, y)
 }
 
 /// Scrolls the viewport while a selection drag sits past the top or bottom
@@ -2631,6 +2652,18 @@ mod selection_tests {
                 SelectionPoint { row: 3, col: 19 }
             ))
         );
+    }
+
+    #[test]
+    fn release_after_scroll_compensation_extends_only_after_pointer_motion() {
+        let drag = SelectionAutoscroll::default();
+        drag.pointer.set((20.0, 30.0));
+
+        assert!(should_extend_selection_on_release(&drag, 20.0, 30.0));
+
+        drag.scroll_compensated_head.set(true);
+        assert!(!should_extend_selection_on_release(&drag, 20.0, 30.0));
+        assert!(should_extend_selection_on_release(&drag, 21.0, 30.0));
     }
 
     #[test]

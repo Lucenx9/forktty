@@ -12,6 +12,15 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Metadata OSC parsing now aborts an unterminated OSC string on a bare `ESC`, so OSC 9 notifications and OSC 99 agent metadata that follow in the same PTY chunk are no longer swallowed.
+- The Worktree dialog no longer overwrites a typed Create/Attach branch name when the asynchronous existing-worktree list finishes loading.
+- Agent HUD Resume buttons are re-enabled after a failed resume attempt instead of staying disabled until the HUD is reopened.
+- Releasing a terminal text selection after wheel-scrolling mid-drag now preserves the scroll-compensated selection endpoint unless the pointer actually moved.
+- Bad config/session quarantine paths are now reserved atomically before rename, avoiding races between simultaneous ForkTTY instances.
+- Update checks now strip only one leading `v` from GitHub release tags, so malformed tags like `vv1.2.3` are ignored instead of parsed as `1.2.3`.
+- Worktree and branch names now reject leading dashes and control characters before reaching git APIs.
+- OSC 8 hyperlink lookup now retries with a large enough buffer for long multibyte UTF-8 URIs.
+- The MCP stdio server now returns a JSON-RPC parse error and continues after an invalid UTF-8 line instead of ending the session.
 - Custom terminal theme colors are now re-applied when an OSC color reset (`OSC 104`/`110`/`111`) follows an aborted OSC sequence in the same output chunk; previously the reset was swallowed as payload of the aborted sequence and the pane kept the wrong colors.
 - The MCP stdio server now reads incoming messages through a bounded buffer, so an oversized message is rejected at the 1 MiB limit without first allocating the entire message in memory.
 - Clicking an unfocused terminal pane now focuses it *and* lets the same click start a text selection (or reach the application), instead of swallowing the first click so the drag was lost and had to be repeated.

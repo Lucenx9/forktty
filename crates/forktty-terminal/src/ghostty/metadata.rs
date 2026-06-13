@@ -72,13 +72,9 @@ impl MetadataParser {
                 if byte == b'\\' {
                     return self.finish();
                 }
-                if self.payload.len() + 1 >= MAX_METADATA_PAYLOAD_BYTES {
-                    self.reset();
-                } else {
-                    self.payload.push(0x1b);
-                    self.payload.push(byte);
-                    self.state = ParserState::OscPayload;
-                }
+                self.reset();
+                self.state = ParserState::Escape;
+                return self.next(byte);
             }
         }
         None
@@ -117,6 +113,45 @@ mod tests {
             events,
             vec![TerminalMetadataEvent::Osc99 {
                 payload: "status=ready;label=Build".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn bare_escape_aborts_osc_9_before_osc_99() {
+        let events = MetadataParser::new().feed(b"\x1b]9;hi\x1b]99;status=ready\x07");
+
+        assert_eq!(
+            events,
+            vec![TerminalMetadataEvent::Osc99 {
+                payload: "status=ready".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn bare_escape_abort_does_not_poison_next_feed() {
+        let mut parser = MetadataParser::new();
+        assert!(parser.feed(b"\x1b]99;status=ready\x1bX").is_empty());
+
+        let events = parser.feed(b"\x1b]9;ok\x07");
+
+        assert_eq!(
+            events,
+            vec![TerminalMetadataEvent::Osc9 {
+                payload: "ok".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn bare_escape_aborts_osc_without_payload_separator() {
+        let events = MetadataParser::new().feed(b"\x1b]9\x1b]99;status=ready\x07");
+
+        assert_eq!(
+            events,
+            vec![TerminalMetadataEvent::Osc99 {
+                payload: "status=ready".to_string()
             }]
         );
     }

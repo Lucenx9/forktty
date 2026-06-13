@@ -1,3 +1,4 @@
+use crate::backup::BackupReservationKind;
 use crate::command_safety::is_valid_ssh_host;
 use crate::model::{PaneNode, SplitAxis, Surface, SurfaceKind, Workspace, MAX_SESSION_SPLIT_DEPTH};
 use serde::{Deserialize, Serialize};
@@ -856,12 +857,13 @@ fn quarantine_corrupt_session_with_timestamp(
     path: &Path,
     timestamp: &str,
 ) -> Result<Option<PathBuf>, SessionError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => {}
+    let reservation_kind = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => BackupReservationKind::Directory,
+        Ok(_) => BackupReservationKind::File,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
-    }
-    let quarantine_path = available_bad_session_path(path, timestamp);
+    };
+    let quarantine_path = available_bad_session_path(path, timestamp, reservation_kind);
     fs::rename(path, &quarantine_path)?;
     // Flush the rename like the config quarantine path does, so a crash right
     // after quarantining can't resurrect the corrupt file on the next boot.
@@ -869,17 +871,13 @@ fn quarantine_corrupt_session_with_timestamp(
     Ok(Some(quarantine_path))
 }
 
-fn available_bad_session_path(path: &Path, timestamp: &str) -> PathBuf {
-    for suffix in std::iter::once(String::new()).chain((1u32..).map(|index| format!("-{index}"))) {
-        let candidate = path.with_extension(format!("json.bad-{timestamp}{suffix}"));
-        if matches!(
-            fs::symlink_metadata(&candidate),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound
-        ) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded quarantine path search should always return")
+fn available_bad_session_path(
+    path: &Path,
+    timestamp: &str,
+    kind: BackupReservationKind,
+) -> PathBuf {
+    let extension = format!("json.bad-{timestamp}");
+    crate::backup::reserve_unique_backup_path_with_kind(path, &extension, kind)
 }
 
 fn default_session_version() -> u32 {
@@ -1560,7 +1558,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session-v2.json");
         let first_candidate = path.with_extension("json.bad-20260521010203");
-        let second_candidate = path.with_extension("json.bad-20260521010203-1");
         fs::write(&path, "new bad session").unwrap();
         fs::write(&first_candidate, "previous bad session").unwrap();
 
@@ -1568,16 +1565,27 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(quarantine_path, second_candidate);
+        assert_ne!(quarantine_path, first_candidate);
         assert!(!path.exists());
         assert_eq!(
             fs::read_to_string(&first_candidate).unwrap(),
             "previous bad session"
         );
         assert_eq!(
-            fs::read_to_string(&second_candidate).unwrap(),
+            fs::read_to_string(&quarantine_path).unwrap(),
             "new bad session"
         );
+    }
+
+    #[test]
+    fn available_bad_session_path_reserves_the_returned_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+
+        let reserved =
+            available_bad_session_path(&path, "20260521010203", BackupReservationKind::File);
+
+        assert!(reserved.exists(), "candidate must be atomically reserved");
     }
 
     #[test]

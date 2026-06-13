@@ -1,3 +1,4 @@
+use crate::backup::BackupReservationKind;
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -539,12 +540,13 @@ fn quarantine_bad_config_with_timestamp(
     path: &Path,
     timestamp: &str,
 ) -> Result<Option<PathBuf>, ConfigError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => {}
+    let reservation_kind = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => BackupReservationKind::Directory,
+        Ok(_) => BackupReservationKind::File,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
-    }
-    let quarantine_path = available_bad_config_path(path, timestamp);
+    };
+    let quarantine_path = available_bad_config_path(path, timestamp, reservation_kind);
     fs::rename(path, &quarantine_path)?;
     sync_parent_dir(&quarantine_path)?;
     Ok(Some(quarantine_path))
@@ -558,17 +560,9 @@ fn should_quarantine_config_load_error(err: &ConfigError) -> bool {
     }
 }
 
-fn available_bad_config_path(path: &Path, timestamp: &str) -> PathBuf {
-    for suffix in std::iter::once(String::new()).chain((1u32..).map(|index| format!("-{index}"))) {
-        let candidate = path.with_extension(format!("toml.bad-{timestamp}{suffix}"));
-        if matches!(
-            fs::symlink_metadata(&candidate),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound
-        ) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded quarantine path search should always return")
+fn available_bad_config_path(path: &Path, timestamp: &str, kind: BackupReservationKind) -> PathBuf {
+    let extension = format!("toml.bad-{timestamp}");
+    crate::backup::reserve_unique_backup_path_with_kind(path, &extension, kind)
 }
 
 pub fn format_config_recovery_warning(recovery: &ConfigRecovery) -> String {
@@ -1143,7 +1137,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let first_candidate = path.with_extension("toml.bad-20260521010203");
-        let second_candidate = path.with_extension("toml.bad-20260521010203-1");
         fs::write(&path, "new bad config").unwrap();
         fs::write(&first_candidate, "previous bad config").unwrap();
 
@@ -1151,16 +1144,27 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(quarantine_path, second_candidate);
+        assert_ne!(quarantine_path, first_candidate);
         assert!(!path.exists());
         assert_eq!(
             fs::read_to_string(&first_candidate).unwrap(),
             "previous bad config"
         );
         assert_eq!(
-            fs::read_to_string(&second_candidate).unwrap(),
+            fs::read_to_string(&quarantine_path).unwrap(),
             "new bad config"
         );
+    }
+
+    #[test]
+    fn available_bad_config_path_reserves_the_returned_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let reserved =
+            available_bad_config_path(&path, "20260521010203", BackupReservationKind::File);
+
+        assert!(reserved.exists(), "candidate must be atomically reserved");
     }
 
     #[test]

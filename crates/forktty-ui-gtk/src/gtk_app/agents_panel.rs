@@ -572,6 +572,7 @@ fn append_agent_row(
             state_for_resume.clone(),
             controller_for_resume.clone(),
             surface_for_resume.clone(),
+            button.clone(),
         );
     });
 
@@ -588,6 +589,7 @@ fn resume_agent_from_hud(
     state: SocketAppState,
     controller: Option<Rc<RefCell<TerminalController>>>,
     surface_id: String,
+    resume_button: gtk::Button,
 ) {
     glib::MainContext::default().spawn_local(async move {
         match dispatch(&state, "agent.resume", json!({ "surface_id": surface_id })).await {
@@ -606,6 +608,7 @@ fn resume_agent_from_hud(
                     &err.to_string(),
                     NotificationKind::Error,
                 );
+                resume_button.set_sensitive(true);
             }
         }
     });

@@ -614,13 +614,14 @@ impl GhosttyCore {
             Err(_) => return Ok(None),
         };
         let mut buf = vec![0u8; 1024];
-        let len = match grid_ref.hyperlink_uri(&mut buf) {
-            Ok(len) => len,
-            Err(libghostty_vt::Error::OutOfSpace { required }) => {
-                buf = vec![0u8; required];
-                grid_ref.hyperlink_uri(&mut buf)?
+        let len = loop {
+            match grid_ref.hyperlink_uri(&mut buf) {
+                Ok(len) => break len,
+                Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                    buf = vec![0u8; hyperlink_uri_retry_buffer_len(buf.len(), required)];
+                }
+                Err(err) => return Err(err),
             }
-            Err(err) => return Err(err),
         };
         if len == 0 {
             return Ok(None);
@@ -765,6 +766,12 @@ impl GhosttyCore {
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
+}
+
+fn hyperlink_uri_retry_buffer_len(current_len: usize, required: usize) -> usize {
+    required
+        .saturating_mul(4)
+        .max(current_len.saturating_add(1))
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1865,6 +1872,30 @@ mod tests {
         assert_eq!(core.hyperlink_uri_at(6, 0).unwrap(), None);
         // Out-of-range coordinates are a graceful None, not an error.
         assert_eq!(core.hyperlink_uri_at(0, 50).unwrap(), None);
+    }
+
+    #[test]
+    fn core_hyperlink_uri_at_retries_multibyte_uris_until_they_fit() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let uri = format!("https://example.test/{}", "é".repeat(600));
+        core.feed(format!("\x1b]8;;{uri}\x1b\\link\x1b]8;;\x1b\\").as_bytes())
+            .unwrap();
+
+        assert_eq!(
+            core.hyperlink_uri_at(0, 0).unwrap().as_deref(),
+            Some(uri.as_str())
+        );
+    }
+
+    #[test]
+    fn hyperlink_uri_retry_buffer_allows_utf8_worst_case() {
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 600), 2400);
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 0), 1025);
     }
 
     #[test]

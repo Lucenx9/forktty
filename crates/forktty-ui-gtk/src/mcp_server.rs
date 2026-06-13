@@ -36,6 +36,15 @@ pub(crate) fn run_with_io<R: BufRead, W: Write>(
                 write_json_line(&mut writer, &response)?;
                 continue;
             }
+            BoundedLine::InvalidUtf8(err) => {
+                let response = jsonrpc_error(
+                    Value::Null,
+                    -32700,
+                    format!("Parse error: invalid UTF-8: {err}"),
+                );
+                write_json_line(&mut writer, &response)?;
+                continue;
+            }
             BoundedLine::Line(line) => line,
         };
         let trimmed = line.trim();
@@ -52,6 +61,7 @@ pub(crate) fn run_with_io<R: BufRead, W: Write>(
 enum BoundedLine {
     Eof,
     Line(String),
+    InvalidUtf8(std::string::FromUtf8Error),
     Oversized,
 }
 
@@ -88,9 +98,10 @@ fn read_line_bounded<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
     if oversized {
         return Ok(BoundedLine::Oversized);
     }
-    String::from_utf8(buf)
-        .map(BoundedLine::Line)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+    Ok(match String::from_utf8(buf) {
+        Ok(line) => BoundedLine::Line(line),
+        Err(err) => BoundedLine::InvalidUtf8(err),
+    })
 }
 
 fn write_json_line(writer: &mut impl Write, response: &Value) -> CliResult<()> {
@@ -1404,6 +1415,36 @@ mod tests {
             .unwrap()
             .contains("byte limit"));
         assert_eq!(responses[1]["id"], 1);
+        assert_eq!(responses[1]["result"]["serverInfo"]["name"], "forktty");
+    }
+
+    #[test]
+    fn invalid_utf8_message_is_rejected_and_processing_continues() {
+        let mut input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"".to_vec();
+        input.extend_from_slice(b"\xff}\n");
+        input.extend_from_slice(
+            br#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}
+"#,
+        );
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+        let responses = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["error"]["code"], -32700);
+        assert!(responses[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid UTF-8"));
+        assert_eq!(responses[1]["id"], 2);
         assert_eq!(responses[1]["result"]["serverInfo"]["name"], "forktty");
     }
 

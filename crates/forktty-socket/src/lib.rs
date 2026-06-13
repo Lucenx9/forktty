@@ -9064,6 +9064,8 @@ mod tests {
         assert_eq!(err.code(), "invalid_param");
         assert!(validate_worktree_name("feature//empty").is_err());
         assert!(validate_worktree_name("feature\\windows").is_err());
+        assert!(validate_worktree_name("-flag").is_err());
+        assert!(validate_worktree_name("feature\nname").is_err());
         assert!(validate_worktree_name("").is_err());
     }
 

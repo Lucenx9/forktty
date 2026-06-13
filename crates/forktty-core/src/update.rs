@@ -123,7 +123,8 @@ pub fn select_newest_update(
 }
 
 fn parse_release_version(tag_name: &str) -> Option<Version> {
-    Version::parse(tag_name.trim().trim_start_matches('v')).ok()
+    let tag_name = tag_name.trim();
+    Version::parse(tag_name.strip_prefix('v').unwrap_or(tag_name)).ok()
 }
 
 fn select_assets(assets: &[GithubAsset], arch: TargetArch) -> Vec<ReleaseAsset> {
@@ -172,4 +173,18 @@ fn has_required_assets(assets: &[ReleaseAsset]) -> bool {
         && assets
             .iter()
             .any(|asset| asset.kind == AssetKind::Sha256Sums)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_release_version_strips_at_most_one_leading_v() {
+        assert_eq!(
+            parse_release_version(" v1.2.3 ").unwrap(),
+            Version::parse("1.2.3").unwrap()
+        );
+        assert!(parse_release_version("vv1.2.3").is_none());
+    }
 }
