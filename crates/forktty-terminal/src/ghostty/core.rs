@@ -829,6 +829,7 @@ fn scan_osc_theme_reset_sequences(bytes: &[u8], previous_tail_len: usize) -> Ter
         let mut end = params_start;
         let mut terminator_start = None;
         let mut sequence_end = None;
+        let mut aborted_at = None;
         while end < bytes.len() {
             match bytes[end] {
                 0x07 => {
@@ -841,10 +842,23 @@ fn scan_osc_theme_reset_sequences(bytes: &[u8], previous_tail_len: usize) -> Ter
                     sequence_end = Some(end + 1);
                     break;
                 }
+                // A bare ESC aborts an OSC string and starts a new sequence;
+                // rescan from it or a reset following an aborted OSC would be
+                // swallowed as payload. An ESC as the final byte stays
+                // unterminated instead: it may be the first half of an ST
+                // split across feed chunks.
+                0x1b if end + 1 < bytes.len() => {
+                    aborted_at = Some(end);
+                    break;
+                }
                 _ => end += 1,
             }
         }
 
+        if let Some(aborted_at) = aborted_at {
+            index = aborted_at;
+            continue;
+        }
         let (Some(terminator_start), Some(sequence_end)) = (terminator_start, sequence_end) else {
             break;
         };
@@ -1474,6 +1488,33 @@ mod tests {
         // RIS cleared DECSET 2004 in the terminal; the mirror must follow or
         // safe pastes would stay bracketed forever.
         assert_eq!(core.paste_bytes("plain").unwrap(), b"plain");
+    }
+
+    #[test]
+    fn scan_osc_theme_resets_detects_reset_after_aborted_osc() {
+        // A bare ESC aborts an OSC string; the reset that follows must not be
+        // swallowed as payload of the aborted sequence.
+        let resets = scan_osc_theme_reset_sequences(b"\x1b]4;1;rgb:aa/bb/cc\x1b]111\x07", 0);
+
+        assert!(resets.background);
+        assert!(!resets.foreground);
+        assert!(!resets.palette);
+    }
+
+    #[test]
+    fn core_reapplies_theme_background_after_osc_111_following_aborted_osc() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        core.feed(b"\x1b]4;1;rgb:01/02/03\x1b]111\x07").unwrap();
+
+        assert_eq!(core.render_frame().unwrap().background, colors.background);
     }
 
     #[test]

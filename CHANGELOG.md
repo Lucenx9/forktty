@@ -7,6 +7,9 @@ All notable changes to ForkTTY are documented here.
 ### Added
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
+### Fixed
+- Custom terminal theme colors are now re-applied when an OSC color reset (`OSC 104`/`110`/`111`) follows an aborted OSC sequence in the same output chunk; previously the reset was swallowed as payload of the aborted sequence and the pane kept the wrong colors.
+
 ## [0.2.0-alpha.12] - 2026-06-13
 
 ### Added
