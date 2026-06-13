@@ -2194,23 +2194,23 @@ fn browser_import_dialog_params_builds_include_and_destination() {
 }
 
 #[test]
-fn terminal_focus_click_claims_when_terminal_needs_focus() {
-    assert!(!terminal_focus_click_should_claim(
+fn terminal_focus_click_focuses_when_terminal_needs_focus() {
+    assert!(!terminal_focus_click_should_focus(
         true,
         Some("pane-1"),
         "pane-1"
     ));
-    assert!(terminal_focus_click_should_claim(
+    assert!(terminal_focus_click_should_focus(
         false,
         Some("pane-1"),
         "pane-1"
     ));
-    assert!(terminal_focus_click_should_claim(
+    assert!(terminal_focus_click_should_focus(
         true,
         Some("pane-2"),
         "pane-1"
     ));
-    assert!(!terminal_focus_click_should_claim(true, None, "pane-1"));
+    assert!(!terminal_focus_click_should_focus(true, None, "pane-1"));
 }
 
 #[test]
