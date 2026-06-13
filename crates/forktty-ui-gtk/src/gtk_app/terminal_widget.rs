@@ -619,10 +619,10 @@ impl GhosttyTerminalWidget {
                     };
                     if selection.borrow().is_selecting() {
                         // A broken pointer grab can swallow the button release
-                        // (e.g. the focus gesture claiming a click on an
-                        // unfocused pane cancels this one). If button 1 is no
-                        // longer physically down, finalize the selection rather
-                        // than let it trail the pointer with nothing driving it.
+                        // (e.g. another gesture claiming the sequence cancels
+                        // this one mid-drag). If button 1 is no longer
+                        // physically down, finalize the selection rather than
+                        // let it trail the pointer with nothing driving it.
                         if !controller
                             .current_event_state()
                             .contains(gtk::gdk::ModifierType::BUTTON1_MASK)
@@ -804,12 +804,28 @@ impl GhosttyTerminalWidget {
                             drawing_area.queue_draw();
                             glib::Propagation::Stop
                         }
-                        Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
-                            if scrolled {
-                                // Selection coordinates are viewport-relative;
-                                // scrolling would leave the highlight on the
-                                // wrong text.
-                                selection.borrow_mut().clear();
+                        Ok(ScrollRouting::ViewportScrolled(scrolled_rows)) => {
+                            if scrolled_rows != 0 {
+                                if selection.borrow().is_selecting() {
+                                    // Mid-drag the wheel behaves like
+                                    // drag-autoscroll: re-anchor the selection
+                                    // by the scrolled rows instead of silently
+                                    // dropping the drag.
+                                    if let Err(err) = compensate_selection_for_scroll(
+                                        &runtime,
+                                        &selection,
+                                        scrolled_rows,
+                                    ) {
+                                        eprintln!(
+                                            "Failed to re-anchor terminal selection after scroll: {err}"
+                                        );
+                                    }
+                                } else {
+                                    // Selection coordinates are viewport-relative;
+                                    // scrolling would leave the highlight on the
+                                    // wrong text.
+                                    selection.borrow_mut().clear();
+                                }
                                 drawing_area.queue_draw();
                             }
                             glib::Propagation::Stop
@@ -1606,8 +1622,8 @@ fn spawn_selection_autoscroll_timer(
 /// One drag-autoscroll step: scrolls the viewport by `lines` and re-anchors
 /// the in-progress selection by however many rows the core actually scrolled
 /// (the core clamps at the scrollback edges), so the highlight keeps covering
-/// the same text. This is what tells autoscroll apart from a user wheel
-/// scroll, which still clears the selection.
+/// the same text. A user wheel scroll mid-drag gets the same re-anchoring;
+/// only a *finished* selection is cleared when the viewport scrolls.
 fn autoscroll_selection_tick(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
@@ -1711,8 +1727,9 @@ fn selection_text_from_frame(
 enum ScrollRouting {
     /// The event was encoded and written to a mouse-tracking application.
     Forwarded,
-    /// Tracking is off; the viewport scrolled (or was already at its limit).
-    ViewportScrolled(bool),
+    /// Tracking is off; carries the rows the viewport actually moved (0 when
+    /// it was already at its limit), so the caller can re-anchor a selection.
+    ViewportScrolled(isize),
     /// Nothing to do (no line delta for this event).
     NotHandled,
 }
@@ -1899,18 +1916,49 @@ fn route_terminal_scroll(
             // scroll the viewport by the consumed-but-unforwarded lines.
             let forwarded_lines =
                 forwarded as isize * WHEEL_PRESS_LINES * emission.presses.signum();
-            let scrolled = runtime
-                .borrow_mut()
-                .scroll_viewport_lines(emission.lines - forwarded_lines);
-            return Ok(ScrollRouting::ViewportScrolled(scrolled?));
+            let scrolled = scroll_viewport_rows(runtime, emission.lines - forwarded_lines)?;
+            return Ok(ScrollRouting::ViewportScrolled(scrolled));
         }
         return Ok(ScrollRouting::Forwarded);
     }
     if emission.lines == 0 {
         return Ok(ScrollRouting::NotHandled);
     }
-    let scrolled = runtime.borrow_mut().scroll_viewport_lines(emission.lines);
-    Ok(ScrollRouting::ViewportScrolled(scrolled?))
+    let scrolled = scroll_viewport_rows(runtime, emission.lines)?;
+    Ok(ScrollRouting::ViewportScrolled(scrolled))
+}
+
+/// Scrolls the viewport by `lines` and reports how many rows it actually
+/// moved (the core clamps at the scrollback edges).
+fn scroll_viewport_rows(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    lines: isize,
+) -> Result<isize, TerminalError> {
+    let mut runtime = runtime.borrow_mut();
+    let before = runtime.viewport_position()?;
+    runtime.scroll_viewport_lines(lines)?;
+    let after = runtime.viewport_position()?;
+    Ok(after.top as isize - before.top as isize)
+}
+
+/// Re-anchors an in-progress selection drag after the viewport scrolled under
+/// it, mirroring `autoscroll_selection_tick`, so a wheel scroll during a drag
+/// moves the view without killing the selection.
+fn compensate_selection_for_scroll(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    scrolled_rows: isize,
+) -> Result<(), TerminalError> {
+    let (max_row, max_col) = {
+        let runtime = runtime.borrow_mut();
+        let rows = runtime.viewport_position()?.rows;
+        let cols = runtime.size().cols;
+        (rows.saturating_sub(1), usize::from(cols.saturating_sub(1)))
+    };
+    selection
+        .borrow_mut()
+        .compensate_scroll(scrolled_rows, max_row, max_col);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2361,7 +2409,9 @@ mod selection_tests {
         let routing =
             route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
 
-        assert_eq!(routing, ScrollRouting::ViewportScrolled(true));
+        // 6 lines on a 4-row terminal leave 2 scrollback rows; a 3-line wheel
+        // scroll up clamps at the top, so the viewport moved exactly -2 rows.
+        assert_eq!(routing, ScrollRouting::ViewportScrolled(-2));
         assert_eq!(remainder.get(), 0.0);
 
         // A sub-line touchpad delta is accumulated, not routed anywhere yet.

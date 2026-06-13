@@ -10,6 +10,8 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Custom terminal theme colors are now re-applied when an OSC color reset (`OSC 104`/`110`/`111`) follows an aborted OSC sequence in the same output chunk; previously the reset was swallowed as payload of the aborted sequence and the pane kept the wrong colors.
 - The MCP stdio server now reads incoming messages through a bounded buffer, so an oversized message is rejected at the 1 MiB limit without first allocating the entire message in memory.
+- Clicking an unfocused terminal pane now focuses it *and* lets the same click start a text selection (or reach the application), instead of swallowing the first click so the drag was lost and had to be repeated.
+- Scrolling the wheel or touchpad while dragging a selection now keeps the drag anchored to the same text, like drag-autoscroll already did, instead of silently dropping the in-progress selection; a finished selection is still cleared when the viewport scrolls.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
