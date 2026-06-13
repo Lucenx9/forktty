@@ -24,22 +24,20 @@ pub(crate) fn run_with_io<R: BufRead, W: Write>(
     mut writer: W,
     socket_path: PathBuf,
 ) -> CliResult<()> {
-    let mut line = String::new();
     loop {
-        line.clear();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            break;
-        }
-        if line.len() > MAX_MCP_MESSAGE_BYTES {
-            let response = jsonrpc_error(
-                Value::Null,
-                -32700,
-                format!("MCP message exceeds {MAX_MCP_MESSAGE_BYTES} byte limit"),
-            );
-            write_json_line(&mut writer, &response)?;
-            continue;
-        }
+        let line = match read_line_bounded(&mut reader, MAX_MCP_MESSAGE_BYTES)? {
+            BoundedLine::Eof => break,
+            BoundedLine::Oversized => {
+                let response = jsonrpc_error(
+                    Value::Null,
+                    -32700,
+                    format!("MCP message exceeds {MAX_MCP_MESSAGE_BYTES} byte limit"),
+                );
+                write_json_line(&mut writer, &response)?;
+                continue;
+            }
+            BoundedLine::Line(line) => line,
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -49,6 +47,50 @@ pub(crate) fn run_with_io<R: BufRead, W: Write>(
         }
     }
     Ok(())
+}
+
+enum BoundedLine {
+    Eof,
+    Line(String),
+    Oversized,
+}
+
+/// Reads one `\n`-terminated line, buffering at most `max_bytes` (the
+/// trailing newline counts toward the limit, matching the previous
+/// `read_line` check). An oversized line is drained without being stored, so
+/// a misbehaving client cannot grow this process's memory with the message.
+fn read_line_bounded<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<BoundedLine> {
+    let mut buf = Vec::new();
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if buf.is_empty() && !oversized {
+                return Ok(BoundedLine::Eof);
+            }
+            break;
+        }
+        let newline = available.iter().position(|&b| b == b'\n');
+        let take = newline.map_or(available.len(), |pos| pos + 1);
+        if !oversized {
+            if buf.len() + take > max_bytes {
+                oversized = true;
+                buf = Vec::new();
+            } else {
+                buf.extend_from_slice(&available[..take]);
+            }
+        }
+        reader.consume(take);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if oversized {
+        return Ok(BoundedLine::Oversized);
+    }
+    String::from_utf8(buf)
+        .map(BoundedLine::Line)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
 fn write_json_line(writer: &mut impl Write, response: &Value) -> CliResult<()> {
@@ -1333,6 +1375,36 @@ mod tests {
         assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
         assert_eq!(annotation("status_set")["idempotentHint"], true);
         assert_eq!(annotation("surface_send_text")["openWorldHint"], false);
+    }
+
+    #[test]
+    fn oversized_message_is_rejected_and_processing_continues() {
+        let mut input = vec![b'x'; MAX_MCP_MESSAGE_BYTES + 1];
+        input.push(b'\n');
+        input.extend_from_slice(
+            br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}
+"#,
+        );
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+        let responses = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["error"]["code"], -32700);
+        assert!(responses[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("byte limit"));
+        assert_eq!(responses[1]["id"], 1);
+        assert_eq!(responses[1]["result"]["serverInfo"]["name"], "forktty");
     }
 
     #[test]

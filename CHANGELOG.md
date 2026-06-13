@@ -9,6 +9,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Custom terminal theme colors are now re-applied when an OSC color reset (`OSC 104`/`110`/`111`) follows an aborted OSC sequence in the same output chunk; previously the reset was swallowed as payload of the aborted sequence and the pane kept the wrong colors.
+- The MCP stdio server now reads incoming messages through a bounded buffer, so an oversized message is rejected at the 1 MiB limit without first allocating the entire message in memory.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
