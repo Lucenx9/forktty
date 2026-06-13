@@ -32,6 +32,11 @@ Set this in `~/.config/forktty/config.toml` to disable the ping:
 anonymous_ping = false
 ```
 
+On the first launch a one-time welcome dialog shows this toggle (default-on)
+with a link to this notice before any ping is sent: the first ping is deferred
+until you dismiss that dialog, so you always see and can change the setting
+before data leaves the machine.
+
 The ping is sent only by GTK startup. CLI invocations, agent hooks, socket
 clients, and the local MCP bridge do not send telemetry pings.
 

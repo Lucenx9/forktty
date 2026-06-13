@@ -194,6 +194,13 @@ The local stamp is stored under `$XDG_STATE_HOME/forktty/telemetry-ping.json`
 or the platform data fallback. Set `telemetry.anonymous_ping = false` to
 disable the ping.
 
+On the first launch a one-time welcome dialog presents the (default-on)
+telemetry toggle before any ping is sent; the startup ping is deferred until
+the dialog is dismissed, then sent only if the toggle is still enabled.
+Dismissing the dialog records `$XDG_STATE_HOME/forktty/welcome-seen.json` (or
+the platform data fallback) so it is not shown again, and the update check is
+skipped on that first launch.
+
 ## Socket API
 
 Socket path:

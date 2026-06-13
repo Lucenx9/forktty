@@ -54,7 +54,13 @@ pub(super) fn build_ui(app: &adw::Application) {
         ),
     };
     apply_color_scheme(&app_config);
-    crate::telemetry::maybe_start_anonymous_ping(&app_config);
+    // On first launch the welcome dialog shows the (default-on) telemetry
+    // toggle before any data leaves the machine, so defer the startup ping
+    // until the user has dismissed it (see below, after `window.present()`).
+    let welcome_pending = welcome_pending();
+    if !welcome_pending {
+        crate::telemetry::maybe_start_anonymous_ping(&app_config);
+    }
     let shell = configured_shell(&app_config);
     let quake_mode = app_config.appearance.window_mode == "quake";
     let (default_width, default_height) = if quake_mode {
@@ -568,7 +574,14 @@ pub(super) fn build_ui(app: &adw::Application) {
     });
 
     window.present();
-    maybe_start_update_check(&window, &app_config);
+    if welcome_pending {
+        // First launch: greet the user and let them confirm telemetry and set
+        // up agent integration. Skip the update check this once to avoid
+        // stacking a second dialog on a freshly installed build.
+        show_welcome_dialog(&window, app_config.telemetry.anonymous_ping);
+    } else {
+        maybe_start_update_check(&window, &app_config);
+    }
 
     let state_for_bootstrap = state.clone();
     let controller_for_bootstrap = controller.clone();
