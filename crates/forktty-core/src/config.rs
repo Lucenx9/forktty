@@ -36,6 +36,8 @@ pub struct AppConfig {
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub notifications: NotificationConfig,
+    #[serde(default)]
+    pub updates: UpdateConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -80,6 +82,12 @@ pub struct NotificationConfig {
     pub desktop: bool,
     #[serde(default = "default_true")]
     pub sound: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UpdateConfig {
+    #[serde(default = "default_true")]
+    pub auto_check: bool,
 }
 
 pub const TERMINAL_THEME_SYSTEM: &str = "system";
@@ -133,6 +141,12 @@ impl Default for NotificationConfig {
             desktop: true,
             sound: true,
         }
+    }
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self { auto_check: true }
     }
 }
 

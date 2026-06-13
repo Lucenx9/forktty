@@ -30,7 +30,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, legacy Gemini CLI, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
-- **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
+- **Local-first posture**: no telemetry, no product service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can be disabled.
 
 ## Install
 
@@ -39,8 +39,9 @@ The fastest paths are the prebuilt artifacts from the
 Each release ships:
 
 - `forktty-0.2.0-alpha.12-x86_64.AppImage` — recommended portable Linux package.
+- `forktty-0.2.0-alpha.12-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
 - `forktty_0.2.0.alpha.12_amd64.deb` — Debian/Ubuntu package.
-- `SHA256SUMS` — checksums for both artifacts.
+- `SHA256SUMS` — checksums for release artifacts.
 
 After downloading, verify checksums:
 
@@ -66,6 +67,15 @@ It is the primary downloadable artifact for alpha releases and works on
 most modern distros that ship a recent glibc, but it should
 still be tested on the target distro/desktop environment before being
 relied on.
+
+ForkTTY checks GitHub Releases for updates at most once per day by default.
+AppImage installs can update in place after confirmation: ForkTTY downloads
+the new AppImage and `SHA256SUMS`, verifies SHA256, then atomically replaces
+the current file. Non-AppImage installs open the release page instead. AppImage
+managers such as Gear Lever continue to work when they launch ForkTTY from a
+stable writable AppImage path; if ForkTTY sees an extracted, read-only, or
+otherwise unsafe path, it falls back to the release page and leaves the manager
+in control.
 
 If the AppImage launches but the GTK interface renders incorrectly, try
 an explicit GTK renderer from a terminal:
@@ -156,6 +166,10 @@ Build the AppImage locally (requires `appimagetool` on
 bash scripts/build-appimage.sh
 ./target/packaging/appimage/forktty-*-x86_64.AppImage
 ```
+
+Set `APPIMAGE_UPDATE_INFO=1` when building release-style AppImages with
+embedded update metadata; this requires `zsyncmake` on `PATH` and emits a
+matching `.zsync` file.
 
 ## First Run
 
@@ -410,11 +424,16 @@ window_mode = "normal" # "normal" or "quake"
 [notifications]
 desktop = true
 sound = true
+
+[updates]
+auto_check = true
 ```
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
 `scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
+
+`updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 
 See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 
@@ -435,7 +454,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
 - Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.
-- ForkTTY makes no telemetry, update-check, or product network calls. The shipped AppImage and `.deb` do not embed a browser runtime.
+- ForkTTY makes no telemetry or product network calls. With `updates.auto_check = true`, the GTK app checks GitHub Releases at most once per day; browser panes and PR lookup remain optional/user-directed network paths. The shipped AppImage and `.deb` do not embed a browser runtime.
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 

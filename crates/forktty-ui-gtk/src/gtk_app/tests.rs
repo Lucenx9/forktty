@@ -952,6 +952,76 @@ fn agent_hud_focuses_existing_agent_surface() {
 }
 
 #[test]
+fn update_stamp_waits_24h_and_honors_rate_limit_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let stamp = dir.path().join("update-check.json");
+    let now = 1_800_000_000_000;
+
+    assert!(update_check_due_at(&stamp, now));
+    record_update_attempt_at(&stamp, now, Some(now + 3_600_000)).unwrap();
+
+    assert!(!update_check_due_at(&stamp, now + 3_599_999));
+    assert!(!update_check_due_at(&stamp, now + 3_600_000));
+    assert!(update_check_due_at(&stamp, now + 86_400_000 + 1));
+}
+
+#[test]
+fn update_rate_limit_deadline_prefers_retry_after_then_reset_header() {
+    let now = 1_800_000_000_000;
+
+    assert_eq!(
+        rate_limit_retry_after_ms(429, Some("120"), Some("0"), Some("1800000300"), now),
+        Some(now + 120_000)
+    );
+    assert_eq!(
+        rate_limit_retry_after_ms(403, None, Some("0"), Some("1800000300"), now),
+        Some(1_800_000_300_000)
+    );
+    assert_eq!(
+        rate_limit_retry_after_ms(500, Some("120"), Some("0"), Some("1800000300"), now),
+        None
+    );
+}
+
+#[test]
+fn appimage_target_rejects_extract_and_run_and_non_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let appimage = dir.path().join("ForkTTY.AppImage");
+    std::fs::write(&appimage, b"old").unwrap();
+
+    assert!(appimage_target_from_env(Some(&appimage), Some("1")).is_none());
+    assert!(appimage_target_from_env(Some(dir.path()), None).is_none());
+
+    let target = appimage_target_from_env(Some(&appimage), None).expect("valid appimage target");
+    assert_eq!(target.canonical_path, appimage.canonicalize().unwrap());
+}
+
+#[test]
+fn appimage_update_replaces_only_after_checksum_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("ForkTTY.AppImage");
+    let temp = dir.path().join(".forktty-update.tmp");
+    std::fs::write(&target, b"old image").unwrap();
+    std::fs::write(&temp, b"new image").unwrap();
+
+    let wrong = "0000000000000000000000000000000000000000000000000000000000000000  forktty-new-x86_64.AppImage\n";
+    let err =
+        replace_appimage_with_verified_temp(&target, &temp, "forktty-new-x86_64.AppImage", wrong)
+            .unwrap_err();
+    assert!(err.to_string().contains("checksum"));
+    assert_eq!(std::fs::read(&target).unwrap(), b"old image");
+
+    std::fs::write(&temp, b"new image").unwrap();
+    let digest = sha256_hex(b"new image");
+    let sums = format!("{digest}  forktty-new-x86_64.AppImage\n");
+    replace_appimage_with_verified_temp(&target, &temp, "forktty-new-x86_64.AppImage", &sums)
+        .unwrap();
+
+    assert_eq!(std::fs::read(&target).unwrap(), b"new image");
+    assert!(!temp.exists());
+}
+
+#[test]
 fn collect_panes_counts_panes_not_tabs() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

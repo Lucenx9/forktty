@@ -2,15 +2,18 @@
 
 ## Data Collection
 
-ForkTTY does not collect, transmit, sell, or process personal data through any external service. It has no telemetry, analytics, crash reporting, update checks, or product network calls.
+ForkTTY does not collect, transmit, sell, or process personal data through any external service. It has no telemetry, analytics, crash reporting, or product network calls.
 
 ## Network Activity
 
-ForkTTY makes no telemetry, analytics, crash-reporting, update-check, or
-product-service network connections.
+ForkTTY makes no telemetry, analytics, crash-reporting, or product-service
+network connections.
 
 Optional features can make user-directed network requests:
 
+- Update checks, when `updates.auto_check = true`, fetch GitHub Releases at
+  most once per day to discover newer ForkTTY versions. AppImage updates only
+  download release assets after user confirmation.
 - Browser panes built with the `browser` feature load URLs opened by the
   user or by local socket automation.
 - Linked PR lookup, when enabled in settings, shells out to the local
@@ -36,6 +39,7 @@ ForkTTY stores local application data only:
 | Quarantined sessions | `~/.local/share/forktty/session-v2.json.bad-*` | Invalid/corrupt session files kept for debugging |
 | Browser profiles | `~/.local/share/forktty/browser_profiles/profiles.json` | Browser profile names and IDs for the optional browser feature |
 | Browser profile data | `~/.local/share/forktty/browser_profiles/<id>/` | Optional WebKit data/cache/cookies plus ForkTTY history/bookmark stores for that profile |
+| Update check stamp | `~/.local/state/forktty/update-check.json` | Last update-check attempt time and optional GitHub rate-limit deadline |
 | Logs | `~/.local/share/forktty/logs/` | Local structured logs for debugging |
 | IPC socket | `$XDG_RUNTIME_DIR/forktty.sock` | Ephemeral local socket for automation |
 

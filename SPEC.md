@@ -127,9 +127,41 @@ window_mode = "normal"
 [notifications]
 desktop = true
 sound = true
+
+[updates]
+auto_check = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, update auto-check toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+
+## Updates
+
+When `updates.auto_check = true`, GTK startup checks GitHub Releases at most
+once every 24 hours by fetching:
+
+```text
+https://api.github.com/repos/Lucenx9/forktty/releases?per_page=10
+```
+
+The request uses HTTPS, a `ForkTTY/<version>` user agent, the GitHub JSON
+media type, and `X-GitHub-Api-Version`. The local stamp is updated for both
+success and failure; 403/429 responses honor `Retry-After` or
+`X-RateLimit-Reset` before the next attempt.
+
+Stable builds ignore prerelease releases. Prerelease builds consider newer
+prereleases and stable releases. Release assets are selected only from
+GitHub-provided asset names and `browser_download_url`; ForkTTY does not
+construct release download URLs.
+
+If the app is running from a writable, regular AppImage path exposed by
+`APPIMAGE` and not from `APPIMAGE_EXTRACT_AND_RUN=1`, ForkTTY can update in
+place after explicit user confirmation. It downloads the AppImage and
+`SHA256SUMS` into the target directory, verifies SHA256, chmods the temp file,
+fsyncs file and directory, then renames over the current AppImage and offers a
+restart. The old file remains intact until the final rename. Non-AppImage,
+read-only, extracted, or otherwise unsafe launches open the GitHub release page
+instead. External AppImage managers such as Gear Lever can continue to launch
+the same path; they may rescan their own metadata separately.
 
 ## Socket API
 
@@ -282,8 +314,9 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 ## Security Constraints
 
 - Local Linux desktop threat model; same-user processes are not treated as hostile isolation boundaries.
-- No telemetry, update checks, or product-service network calls. Optional
-  browser panes and optional PR lookup can make user-directed network requests.
+- No telemetry or product-service network calls. Optional update checks query
+  GitHub Releases at most once per day and can be disabled. Optional browser
+  panes and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
 - `forktty mcp` is a local stdio bridge only; it opens no network listener and
   enforces the same Unix socket ownership boundary as the CLI.

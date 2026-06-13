@@ -567,6 +567,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     });
 
     window.present();
+    maybe_start_update_check(&window, &app_config);
 
     let state_for_bootstrap = state.clone();
     let controller_for_bootstrap = controller.clone();

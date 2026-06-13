@@ -28,7 +28,7 @@ Assumptions:
 - Same-user local processes may interact with user-owned runtime resources.
 - User-authored hooks and notification commands execute with the user's privileges.
 
-ForkTTY makes no telemetry, update-check, or product-service network calls and does not treat the local Unix socket as a remote security boundary. Optional browser panes load user-requested URLs, and optional PR lookup delegates to the local `gh` CLI.
+ForkTTY makes no telemetry or product-service network calls and does not treat the local Unix socket as a remote security boundary. Optional update checks query GitHub Releases at most once per day and can be disabled. Optional browser panes load user-requested URLs, and optional PR lookup delegates to the local `gh` CLI.
 
 ## Security Boundaries
 
@@ -39,6 +39,7 @@ ForkTTY makes no telemetry, update-check, or product-service network calls and d
 | ForkTTY config | `~/.config/forktty/config.toml` must be a regular file and no larger than 1 MiB before parsing. Saved config validates shell, font size, sidebar position, renderer, window mode, worktree layout, and notification command. |
 | Session restore | `session-v2.json` is size-bounded, regular-file checked, structurally validated, and quarantined on invalid input. |
 | Notification command | Empty disables it. If set, it is parsed with `shell_words`; the first token must be an absolute executable file; argv execution is used; no `sh -c`; title/body are passed through environment variables. |
+| AppImage updater | Uses HTTPS GitHub release assets only, requires `SHA256SUMS`, writes the new AppImage to a temp file in the target directory, verifies SHA256 before chmod/rename, fsyncs file and parent directory, and never invokes a shell. Non-AppImage, extracted, read-only, or unsafe AppImage paths fall back to opening the release page. |
 | Desktop notifications | Sent through `notify-rust` / XDG D-Bus. Notification text can include local terminal output. |
 | Worktree names | Rejects empty names, `/`, `\`, `..`, and NUL. |
 | Worktree paths | Canonicalized and verified against Git repository boundaries before sensitive operations. |
@@ -76,6 +77,7 @@ Do not point `notification_command` at a script unless you trust that script wit
 - Session files and logs can contain local paths, branch names, workspace names, and notification text.
 - Optional browser profile data can contain cookies, cache, localStorage, history, bookmarks, and URLs for pages the user opens.
 - ForkTTY owns the child PTY, so byte-level terminal escape parsing is intentionally narrower than the legacy PTY-owner path.
+- AppImage checksum verification protects transport/integrity errors, not compromise of the GitHub repository, release account, or checksum asset. Detached release signing is not implemented yet.
 
 ## Dependencies and CI
 
