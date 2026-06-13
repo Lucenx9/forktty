@@ -1638,6 +1638,87 @@ window.ft-dialog,
   border-radius: 7px;
 }
 
+.welcome-dialog {
+  background: #181818;
+}
+
+.welcome-body {
+  padding: 16px 22px 18px 22px;
+  background: #181818;
+}
+
+.welcome-hero {
+  margin: 0 8px 18px 8px;
+}
+
+.welcome-logo {
+  margin-bottom: 4px;
+}
+
+.welcome-heading {
+  color: #d7d7d7;
+  font-size: 1.30em;
+  font-weight: 750;
+}
+
+.welcome-subtitle {
+  color: #8a8a8a;
+  font-size: 0.90em;
+  margin-top: 2px;
+}
+
+.welcome-setup-box {
+  margin-bottom: 16px;
+}
+
+.welcome-setup {
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+.welcome-setup-status {
+  color: #8a8a8a;
+  font-size: 0.82em;
+  margin-top: 2px;
+}
+
+.welcome-setup-status.error {
+  color: #d36b6b;
+}
+
+.welcome-card {
+  margin-bottom: 10px;
+}
+
+.welcome-link {
+  color: #e88745;
+  font-size: 0.86em;
+}
+
+.welcome-link:hover {
+  color: #f09a58;
+}
+
+.welcome-telemetry-status {
+  color: #8a8a8a;
+  font-size: 0.82em;
+  margin-top: 2px;
+}
+
+.welcome-telemetry-status.error {
+  color: #d36b6b;
+}
+
+.welcome-footer {
+  margin-top: 16px;
+}
+
+.welcome-start {
+  min-height: 34px;
+  padding: 5px 18px;
+  border-radius: 8px;
+}
+
 .ft-section-title {
   color: #8a8a8a;
   font-size: 0.74em;
