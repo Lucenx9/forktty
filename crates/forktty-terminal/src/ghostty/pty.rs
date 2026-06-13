@@ -174,7 +174,10 @@ impl PtySession {
             }
             thread::sleep(Duration::from_millis(10));
         }
-        Ok(out)
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "terminal output did not contain expected bytes before timeout",
+        ))
     }
 
     pub fn resize(&mut self, size: PtySize) -> io::Result<()> {
@@ -254,6 +257,7 @@ fn poll_master_write_ready(fd: BorrowedFd<'_>, deadline: Instant) -> io::Result<
         }
         let mut fds = [PollFd::new(fd, PollFlags::POLLOUT)];
         match poll(&mut fds, PollTimeout::from(100u16)) {
+            Ok(0) => {}
             Ok(_) => return Ok(()),
             Err(nix::Error::EINTR) => {}
             Err(err) => return Err(io_error(err)),
@@ -415,6 +419,41 @@ mod tests {
             output.contains(&expected),
             "child saw a truncated paste: wc reported {output:?}, expected {expected} bytes"
         );
+    }
+
+    #[test]
+    fn poll_master_write_ready_times_out_when_fd_stays_blocked() {
+        let (_read_fd, write_fd) = nix::unistd::pipe().unwrap();
+        set_nonblocking(&write_fd).unwrap();
+
+        let block = vec![0u8; 8192];
+        loop {
+            match nix::unistd::write(&write_fd, &block) {
+                Ok(_) => {}
+                Err(nix::Error::EAGAIN) => break,
+                Err(err) => panic!("unexpected pipe fill error: {err}"),
+            }
+        }
+
+        let err = poll_master_write_ready(
+            write_fd.as_fd(),
+            Instant::now() + Duration::from_millis(150),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn pty_read_until_times_out_when_needle_missing() {
+        let request =
+            test_spawn_request_for_shell("/bin/sh").with_args(["-lc", "printf partial; sleep 1"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        let err = session
+            .read_until(b"missing", Duration::from_millis(50))
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]

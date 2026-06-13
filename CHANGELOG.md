@@ -12,6 +12,9 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.
+- Large PTY writes now keep waiting after `poll()` reports no writable fd before the per-write deadline, instead of treating the poll timeout as readiness.
+- PTY `read_until` now reports `TimedOut` when the requested bytes do not arrive before its deadline.
 - Metadata OSC parsing now aborts an unterminated OSC string on a bare `ESC`, so OSC 9 notifications and OSC 99 agent metadata that follow in the same PTY chunk are no longer swallowed.
 - The Worktree dialog no longer overwrites a typed Create/Attach branch name when the asynchronous existing-worktree list finishes loading.
 - Agent HUD Resume buttons are re-enabled after a failed resume attempt instead of staying disabled until the HUD is reopened.
