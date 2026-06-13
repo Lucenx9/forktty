@@ -871,12 +871,23 @@ fn scan_osc_theme_reset_sequences(bytes: &[u8], previous_tail_len: usize) -> Ter
         };
         if sequence_end >= previous_tail_len {
             let params = &bytes[params_start..terminator_start];
+            // A later explicit color *set* in the same scan window overrides an
+            // earlier reset, so the application's color wins instead of being
+            // clobbered by the re-seeded theme color. Queries (`...;?`) report
+            // the current color without changing it, so they are not sets.
+            let is_query = params.ends_with(b"?");
             if params == b"110" {
                 resets.foreground = true;
             } else if params == b"111" {
                 resets.background = true;
             } else if params == b"104" || params.starts_with(b"104;") {
                 resets.palette = true;
+            } else if !is_query && params.starts_with(b"10;") {
+                resets.foreground = false;
+            } else if !is_query && params.starts_with(b"11;") {
+                resets.background = false;
+            } else if !is_query && params.starts_with(b"4;") {
+                resets.palette = false;
             }
         }
         index = sequence_end + 1;
@@ -1472,6 +1483,32 @@ mod tests {
 
         let frame = core.render_frame().unwrap();
         assert_eq!(frame.rows[0].cells[0].foreground, Some(colors.palette[0]));
+    }
+
+    #[test]
+    fn core_keeps_app_background_set_after_reset_in_same_chunk() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        // A reset immediately followed by an explicit set in the same chunk:
+        // the application's set must survive, not be clobbered by the re-seeded
+        // theme background.
+        core.feed(b"\x1b]111\x07\x1b]11;#abcdef\x07").unwrap();
+
+        assert_eq!(
+            core.render_frame().unwrap().background,
+            TerminalRgb {
+                red: 0xab,
+                green: 0xcd,
+                blue: 0xef,
+            }
+        );
     }
 
     #[test]

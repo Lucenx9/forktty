@@ -29,6 +29,11 @@ All notable changes to ForkTTY are documented here.
 - The MCP stdio server now reads incoming messages through a bounded buffer, so an oversized message is rejected at the 1 MiB limit without first allocating the entire message in memory.
 - Clicking an unfocused terminal pane now focuses it *and* lets the same click start a text selection (or reach the application), instead of swallowing the first click so the drag was lost and had to be repeated.
 - Scrolling the wheel or touchpad while dragging a selection now keeps the drag anchored to the same text, like drag-autoscroll already did, instead of silently dropping the in-progress selection; a finished selection is still cleared when the viewport scrolls.
+- A terminal color reset (`OSC 110`/`111`/`104`) immediately followed by an explicit color set in the same output chunk now keeps the application's color, instead of clobbering it with the re-seeded theme color.
+- Hook/MCP socket requests no longer reject a parameter sent as an explicit JSON `null` (e.g. `hook_session_id: null`) with a type error; `null` is now treated as absent, matching the numeric parameter handling.
+- A completed worktree merge whose post-commit cleanup fails is now reported as success instead of failure, avoiding a retry that would create a duplicate merge commit.
+- An agent hook event now still runs its later cleanup actions (clearing a stale status or permission marker) when an earlier action fails transiently, instead of stopping at the first error.
+- The `appearance.terminal_renderer` validation error message now lists `vte`, which is an accepted value.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 

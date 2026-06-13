@@ -3887,6 +3887,12 @@ fn optional_non_blank_string_param<'a>(
     let Some(value) = params.get(key) else {
         return Ok(None);
     };
+    // Treat an explicit JSON `null` as absent, matching `optional_u64_param`,
+    // so clients that always serialize optional fields (as `null` when unset)
+    // are not rejected with a type error before the method handler runs.
+    if value.is_null() {
+        return Ok(None);
+    }
     match value.as_str().map(str::trim) {
         Some(value) if !value.is_empty() => Ok(Some(value)),
         Some(_) => Err(format!("Invalid parameter {key}: must not be empty").into()),
@@ -4689,6 +4695,30 @@ mod tests {
     use std::sync::Barrier;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[test]
+    fn optional_non_blank_string_param_treats_null_as_absent() {
+        let params = serde_json::json!({ "key": null });
+        assert_eq!(
+            optional_non_blank_string_param(&params, "key").unwrap(),
+            None
+        );
+
+        let missing = serde_json::json!({});
+        assert_eq!(
+            optional_non_blank_string_param(&missing, "key").unwrap(),
+            None
+        );
+
+        let present = serde_json::json!({ "key": "value" });
+        assert_eq!(
+            optional_non_blank_string_param(&present, "key").unwrap(),
+            Some("value")
+        );
+
+        let wrong_type = serde_json::json!({ "key": 7 });
+        assert!(optional_non_blank_string_param(&wrong_type, "key").is_err());
+    }
 
     /// RAII guard that sets an environment variable for the duration of a test
     /// and restores the previous value (or removes it) on drop, even on panic.

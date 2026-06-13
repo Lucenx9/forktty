@@ -758,7 +758,13 @@ fn finish_successful_merge(
     finalize_result: Result<(), WorktreeError>,
 ) -> Result<String, WorktreeError> {
     if let Err(err) = finalize_result {
-        abort_pending_merge(repo)?;
+        // The merge commit is already durable at this point; a failure while
+        // tidying up residual merge state must not turn the completed merge
+        // into a reported failure (which would prompt a retry and a duplicate
+        // merge commit). Best-effort cleanup, then report success.
+        if let Err(cleanup_err) = abort_pending_merge(repo) {
+            eprintln!("Worktree merge cleanup after finalization failure failed: {cleanup_err}");
+        }
         eprintln!("Recovered after completed worktree merge finalization failed: {err}");
     }
     Ok(format!("Merged '{branch_name}' into HEAD"))

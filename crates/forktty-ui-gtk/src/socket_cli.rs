@@ -6319,11 +6319,13 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                 params,
                 HOOK_STATUS_TIMEOUT,
             ) {
+                // Keep going on failure: a transient error on one action (e.g.
+                // an informational log) must not skip later cleanup actions
+                // like clearing a stale status or permission marker.
                 eprintln!(
                     "{}",
                     sanitize_for_terminal(&format!("ForkTTY hook warning: {}", err.message))
                 );
-                break;
             }
         }
     }

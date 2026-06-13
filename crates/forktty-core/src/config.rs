@@ -414,7 +414,7 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
         "auto" | "dom" | "canvas" | "webgl" | "ghostty" | "vte"
     ) {
         return Err(ConfigError::Invalid(
-            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty"
+            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty, vte"
                 .to_string(),
         ));
     }
@@ -817,7 +817,7 @@ mod tests {
         config.appearance.terminal_renderer = "magic".to_string();
         let err = validate_config(&config).unwrap_err();
         assert!(err.to_string().contains(
-            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty"
+            "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty, vte"
         ));
     }
 
