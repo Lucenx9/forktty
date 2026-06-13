@@ -130,9 +130,12 @@ sound = true
 
 [updates]
 auto_check = true
+
+[telemetry]
+anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, update auto-check toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 ## Updates
 
@@ -162,6 +165,34 @@ restart. The old file remains intact until the final rename. Non-AppImage,
 read-only, extracted, or otherwise unsafe launches open the GitHub release page
 instead. External AppImage managers such as Gear Lever can continue to launch
 the same path; they may rescan their own metadata separately.
+
+## Telemetry
+
+When `telemetry.anonymous_ping = true`, GTK startup sends at most one anonymous
+usage ping per UTC day to:
+
+```text
+https://forktty-site.vercel.app/api/telemetry/ping
+```
+
+The request is a best-effort HTTPS POST with this JSON shape:
+
+```json
+{
+  "schema": 1,
+  "kind": "daily_ping",
+  "app": "forktty",
+  "version": "0.2.0-alpha.12",
+  "date": "2026-06-13"
+}
+```
+
+The payload contains no install id, rotating id, username, hostname, cwd,
+repository path, branch, shell, agent metadata, terminal buffer, socket payload,
+or crash data. CLI invocations and agent hooks do not send telemetry pings.
+The local stamp is stored under `$XDG_STATE_HOME/forktty/telemetry-ping.json`
+or the platform data fallback. Set `telemetry.anonymous_ping = false` to
+disable the ping.
 
 ## Socket API
 
@@ -314,9 +345,11 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 ## Security Constraints
 
 - Local Linux desktop threat model; same-user processes are not treated as hostile isolation boundaries.
-- No telemetry or product-service network calls. Optional update checks query
-  GitHub Releases at most once per day and can be disabled. Optional browser
-  panes and optional PR lookup can make user-directed network requests.
+- No crash-reporting or product event-tracking network calls. The default
+  anonymous daily usage ping can be disabled with
+  `telemetry.anonymous_ping = false`; optional update checks query GitHub
+  Releases at most once per day and can be disabled. Optional browser panes
+  and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
 - `forktty mcp` is a local stdio bridge only; it opens no network listener and
   enforces the same Unix socket ownership boundary as the CLI.

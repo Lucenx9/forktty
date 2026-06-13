@@ -54,6 +54,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         ),
     };
     apply_color_scheme(&app_config);
+    crate::telemetry::maybe_start_anonymous_ping(&app_config);
     let shell = configured_shell(&app_config);
     let quake_mode = app_config.appearance.window_mode == "quake";
     let (default_width, default_height) = if quake_mode {

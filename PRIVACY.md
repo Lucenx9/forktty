@@ -2,12 +2,38 @@
 
 ## Data Collection
 
-ForkTTY does not collect, transmit, sell, or process personal data through any external service. It has no telemetry, analytics, crash reporting, or product network calls.
+ForkTTY sends a default-on anonymous daily usage ping from the GTK app so the maintainer can estimate whether the app is being used. ForkTTY does not upload crash reports, terminal contents, project data, command data, socket payloads, usernames, hostnames, install identifiers, or event analytics.
 
 ## Network Activity
 
-ForkTTY makes no telemetry, analytics, crash-reporting, or product-service
-network connections.
+With `telemetry.anonymous_ping = true`, GTK startup sends at most one HTTPS POST
+per UTC day to:
+
+```text
+https://forktty-site.vercel.app/api/telemetry/ping
+```
+
+The JSON body is:
+
+```json
+{
+  "schema": 1,
+  "kind": "daily_ping",
+  "app": "forktty",
+  "version": "0.2.0-alpha.12",
+  "date": "2026-06-13"
+}
+```
+
+Set this in `~/.config/forktty/config.toml` to disable the ping:
+
+```toml
+[telemetry]
+anonymous_ping = false
+```
+
+The ping is sent only by GTK startup. CLI invocations, agent hooks, socket
+clients, and the local MCP bridge do not send telemetry pings.
 
 Optional features can make user-directed network requests:
 
@@ -40,6 +66,7 @@ ForkTTY stores local application data only:
 | Browser profiles | `~/.local/share/forktty/browser_profiles/profiles.json` | Browser profile names and IDs for the optional browser feature |
 | Browser profile data | `~/.local/share/forktty/browser_profiles/<id>/` | Optional WebKit data/cache/cookies plus ForkTTY history/bookmark stores for that profile |
 | Update check stamp | `~/.local/state/forktty/update-check.json` | Last update-check attempt time and optional GitHub rate-limit deadline |
+| Telemetry ping stamp | `~/.local/state/forktty/telemetry-ping.json` | Last UTC date when GTK startup attempted the anonymous usage ping |
 | Logs | `~/.local/share/forktty/logs/` | Local structured logs for debugging |
 | IPC socket | `$XDG_RUNTIME_DIR/forktty.sock` | Ephemeral local socket for automation |
 
@@ -73,7 +100,9 @@ The runtime socket is ephemeral and normally lives under `$XDG_RUNTIME_DIR`.
 
 ## EU/GDPR Note
 
-ForkTTY is local-only software with no external data collection by the application. You control any data stored on your machine and any local scripts you configure.
+ForkTTY minimizes the default anonymous usage ping to audience measurement only
+and provides an opt-out setting. You control local data stored on your machine
+and any local scripts you configure.
 
 ## Contact
 

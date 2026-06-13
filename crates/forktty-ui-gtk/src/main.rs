@@ -3,6 +3,7 @@ mod cli;
 mod mcp_server;
 mod panic_log;
 mod socket_cli;
+mod telemetry;
 
 #[cfg(feature = "gtk-ghostty")]
 mod gtk_app;

@@ -38,6 +38,8 @@ pub struct AppConfig {
     pub notifications: NotificationConfig,
     #[serde(default)]
     pub updates: UpdateConfig,
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -88,6 +90,12 @@ pub struct NotificationConfig {
 pub struct UpdateConfig {
     #[serde(default = "default_true")]
     pub auto_check: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TelemetryConfig {
+    #[serde(default = "default_true")]
+    pub anonymous_ping: bool,
 }
 
 pub const TERMINAL_THEME_SYSTEM: &str = "system";
@@ -147,6 +155,14 @@ impl Default for NotificationConfig {
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self { auto_check: true }
+    }
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            anonymous_ping: true,
+        }
     }
 }
 
@@ -691,6 +707,29 @@ mod tests {
         assert!(config.appearance.terminal_audible_bell);
         assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_SYSTEM);
         assert!(!config.general.enable_pr_lookup);
+    }
+
+    #[test]
+    fn telemetry_anonymous_ping_defaults_to_enabled() {
+        assert!(AppConfig::default().telemetry.anonymous_ping);
+    }
+
+    #[test]
+    fn telemetry_anonymous_ping_can_be_disabled_from_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [telemetry]
+            anonymous_ping = false
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert!(!config.telemetry.anonymous_ping);
     }
 
     #[test]

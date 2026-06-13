@@ -2369,6 +2369,16 @@ fn settings_change_rebases_onto_externally_modified_config() {
 }
 
 #[test]
+fn settings_change_preserves_telemetry_config() {
+    let mut base = config::AppConfig::default();
+    base.telemetry.anonymous_ping = false;
+
+    let next = rebased_settings_config(&base, |config| config.appearance.font_size = 18);
+
+    assert!(!next.telemetry.anonymous_ping);
+}
+
+#[test]
 fn maximized_layout_signature_tracks_focused_pane() {
     // In maximize mode only the focused pane is rendered, so a focus-only
     // change must produce a different signature and trigger a rebuild.

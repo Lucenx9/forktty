@@ -30,7 +30,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, legacy Gemini CLI, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
-- **Local-first posture**: no telemetry, no product service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can be disabled.
+- **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
 
 ## Install
 
@@ -427,6 +427,9 @@ sound = true
 
 [updates]
 auto_check = true
+
+[telemetry]
+anonymous_ping = true
 ```
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
@@ -434,6 +437,8 @@ auto_check = true
 `scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
+
+`telemetry.anonymous_ping = true` sends at most one GTK-startup ping per UTC day to `https://forktty-site.vercel.app/api/telemetry/ping`. The JSON body is limited to `schema`, `kind`, `app`, `version`, and `date`; it contains no install id, username, hostname, cwd, repository path, branch, shell, agent metadata, terminal buffer, socket payload, or crash data. Set it to `false` to disable the ping.
 
 See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 
@@ -454,7 +459,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
 - Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.
-- ForkTTY makes no telemetry or product network calls. With `updates.auto_check = true`, the GTK app checks GitHub Releases at most once per day; browser panes and PR lookup remain optional/user-directed network paths. The shipped AppImage and `.deb` do not embed a browser runtime.
+- ForkTTY makes no crash-reporting or product event-tracking network calls. With `telemetry.anonymous_ping = true`, the GTK app sends one anonymous daily usage ping; set it to `false` to disable it. With `updates.auto_check = true`, the GTK app checks GitHub Releases at most once per day; browser panes and PR lookup remain optional/user-directed network paths. The shipped AppImage and `.deb` do not embed a browser runtime.
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
