@@ -231,7 +231,10 @@ fn tail_text_lines(text: &str, lines: usize) -> String {
 }
 
 fn truncate_text(text: String, max_bytes: usize, from_end: bool) -> (String, bool) {
-    if max_bytes == 0 || text.len() <= max_bytes {
+    if max_bytes == 0 {
+        return (String::new(), !text.is_empty());
+    }
+    if text.len() <= max_bytes {
         return (text, false);
     }
     if from_end {
@@ -498,6 +501,46 @@ mod tests {
             backend.sent_text("surface-1"),
             Err(TerminalError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn terminal_text_snapshot_zero_max_bytes_returns_empty_and_marks_truncated() {
+        let visible = TerminalTextSnapshot::from_text(
+            "surface-1",
+            "hello",
+            80,
+            24,
+            TerminalTextCapture::Visible,
+            0,
+        );
+        assert_eq!(visible.text, "");
+        assert!(visible.truncated);
+
+        let tail = TerminalTextSnapshot::from_text(
+            "surface-1",
+            "hello",
+            80,
+            24,
+            TerminalTextCapture::Tail { lines: 1 },
+            0,
+        );
+        assert_eq!(tail.text, "");
+        assert!(tail.truncated);
+    }
+
+    #[test]
+    fn terminal_text_snapshot_zero_max_bytes_empty_input_is_not_truncated() {
+        let snapshot = TerminalTextSnapshot::from_text(
+            "surface-1",
+            "",
+            80,
+            24,
+            TerminalTextCapture::Visible,
+            0,
+        );
+
+        assert_eq!(snapshot.text, "");
+        assert!(!snapshot.truncated);
     }
 
     #[test]
