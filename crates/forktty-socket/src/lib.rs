@@ -10557,6 +10557,34 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_default_workspace_creates_new_workspace_if_none_exists() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        assert!(model.lock().unwrap().active_workspace().is_none());
+
+        bootstrap_default_workspace(&state, PathBuf::from("/foo/bar")).unwrap();
+
+        let m = model.lock().unwrap();
+        let workspace = m.active_workspace().unwrap();
+        assert_eq!(workspace.working_dir, PathBuf::from("/foo/bar"));
+
+        let surfaces = m.list_surfaces(Some(&workspace.id));
+        assert_eq!(surfaces.len(), 1);
+        let surface_id = &surfaces[0].id;
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert_eq!(shell, "/bin/sh");
+    }
+
+    #[test]
     fn bootstrap_default_workspace_respawns_existing_ssh_workspace_with_ssh_process() {
         let (state, backend) = test_state();
         let runtime = tokio::runtime::Builder::new_current_thread()

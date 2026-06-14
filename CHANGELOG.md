@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Security
+- Browser automation now injects and evaluates its driver in an isolated WebKit script world, preventing visited pages from detecting or tampering with `window.__forktty`.
 - Chromium cookie import now verifies the version-24+ encrypted host digest before accepting decrypted values, rejecting malformed or cross-host cookie rows.
 - Agent resume PTY spawns now resolve bare provider commands using only absolute `PATH` entries before applying the recorded session cwd, preventing relative/empty `PATH` entries from executing project-local binaries during restore or resume.
 - Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
@@ -20,6 +21,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Command palette shortcut searches such as `ctrl shift c` now match the intended shortcut instead of treating the key token as a fuzzy match against modifier text on earlier commands.
+- Malformed browser bookmark files are now moved aside after backup so repeated opens cannot create unbounded backup copies.
 - `forktty doctor` once again exits 2 whenever the diagnostics report contains warnings, preserving the documented health-check behavior even without `--strict`.
 - Ctrl+click terminal links now open only `http://` and `https://` targets, blocking terminal-controlled `file://` and custom URI handlers.
 - AppImage self-updates now create downloaded replacement files with owner-only permissions before checksum verification, closing a local same-group temp-file tampering window under permissive umasks.
