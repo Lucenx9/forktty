@@ -185,6 +185,31 @@ mod tests {
     }
 
     #[test]
+    fn separate_plan_reuses_existing_unicode_titlecase_destination() {
+        let work_id = ProfileId::new();
+        let plan = resolve_separate_profiles_plan(&[src("ǅ", true)], &[dest("ǆ", work_id)]);
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(
+            plan.entries[0].destination,
+            ImportDestination::Existing(work_id)
+        );
+    }
+
+    #[test]
+    fn separate_plan_deduplicates_unicode_titlecase_create_names() {
+        let plan = resolve_separate_profiles_plan(&[src("ǅ", true), src("ǆ", false)], &[]);
+        assert_eq!(plan.entries.len(), 2);
+        assert_eq!(
+            plan.entries[0].destination,
+            ImportDestination::Create("ǅ".to_string())
+        );
+        assert_eq!(
+            plan.entries[1].destination,
+            ImportDestination::Create("ǆ (2)".to_string())
+        );
+    }
+
+    #[test]
     fn empty_selection_yields_empty_single_destination_plan() {
         let id = ProfileId::default();
         let plan = resolve_default_plan(&[], &[], id);
