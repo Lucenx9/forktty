@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Session locking now creates and hardens the state directory and lock file with private permissions, preventing other local users from reading or pre-locking `session.lock` to block startup.
 - Atomic profile metadata saves now preserve an existing `profiles.json` file mode on Unix when ownership matches, and drop group/other bits when replacing with a temp inode owned by a different uid or gid.
 - Browser history databases and SQLite WAL/SHM sidecars are now created with owner-only file permissions inside owner-only profile directories.
 - Bookmark files and corrupt-bookmark backups are now saved with owner-only permissions to avoid exposing sensitive URLs to other local users.
@@ -73,6 +74,7 @@ All notable changes to ForkTTY are documented here.
 - Re-running `worktree.create` for a branch that already has a ForkTTY-supported linked worktree now reopens that worktree instead of failing on the already-created branch, recovering the crash window between Git worktree registration and ForkTTY session persistence.
 - Concurrent nested worktree creation now serializes updates to `.git/info/exclude`, keeping the `.worktrees/` entry idempotent.
 - Closing a non-last tab now keeps the model locked through backend close and model removal, so concurrent UI/socket closes cannot observe a half-closed surface.
+- Terminal copy, mouse selection, and Select All now omit invisible terminal cells, so escape-hidden text cannot be copied to the clipboard.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
