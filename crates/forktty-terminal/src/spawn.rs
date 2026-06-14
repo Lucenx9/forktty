@@ -2,7 +2,11 @@ use crate::SpawnRequest;
 use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::{fs, path::Path};
+use std::{
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
     let appimage_dirs = appimage_runtime_dirs();
@@ -148,6 +152,27 @@ fn is_inside_appimage_dir(value: &str, appimage_dirs: &[String]) -> bool {
     })
 }
 
+/// Resolve a child program using only absolute PATH entries.
+///
+/// The terminal backend may later change the child cwd before spawning. Empty or
+/// relative PATH components (for example `.` or a trailing `:`) would then be
+/// interpreted relative to that cwd by `execvp`, so they are deliberately
+/// ignored here and the returned program is always absolute when PATH lookup is
+/// needed.
+pub fn resolve_child_program(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
+    let program_path = Path::new(program);
+    if program_path.is_absolute() {
+        return is_executable_file(program_path).then(|| program_path.to_path_buf());
+    }
+    if program_path.components().count() > 1 {
+        return None;
+    }
+    std::env::split_paths(path?)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(program))
+        .find(|candidate| is_executable_file(candidate))
+}
+
 pub fn env_command_path() -> Option<String> {
     ["/usr/bin/env", "/bin/env"]
         .iter()
@@ -175,6 +200,7 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -427,6 +453,55 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_child_program_ignores_relative_path_entries() {
+        let trusted = TestDir::new("trusted-bin");
+        let untrusted = TestDir::new("untrusted-project");
+        let trusted_tool = trusted.path().join("claude");
+        let untrusted_tool = untrusted.path().join("claude");
+        fs::write(&trusted_tool, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::write(&untrusted_tool, "#!/bin/sh\nexit 1\n").unwrap();
+        for path in [&trusted_tool, &untrusted_tool] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+        let path = format!(
+            ".:{}::{}",
+            trusted.path().display(),
+            untrusted
+                .path()
+                .strip_prefix(std::env::current_dir().unwrap())
+                .unwrap()
+                .display()
+        );
+
+        let resolved = resolve_child_program("claude", Some(OsStr::new(&path))).unwrap();
+
+        assert_eq!(resolved, trusted_tool);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_child_program_rejects_bare_program_when_only_relative_path_matches() {
+        let untrusted = TestDir::new("relative-bin");
+        let untrusted_tool = untrusted.path().join("codex");
+        fs::write(&untrusted_tool, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = fs::metadata(&untrusted_tool).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&untrusted_tool, permissions).unwrap();
+        let relative = untrusted
+            .path()
+            .strip_prefix(std::env::current_dir().unwrap())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let path = format!(".:{relative}:");
+
+        assert!(resolve_child_program("codex", Some(OsStr::new(&path))).is_none());
     }
 
     #[test]
