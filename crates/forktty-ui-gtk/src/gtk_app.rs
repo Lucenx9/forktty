@@ -60,6 +60,7 @@ const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "Symbols Nerd Font Mono",
 ];
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
+const TERMINAL_METADATA_NOTIFICATION_INTERVAL: Duration = Duration::from_secs(10);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
 const PANED_RATIO_MAX_FRAMES: u8 = 30;
 const SESSION_RESIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(250);
@@ -67,12 +68,16 @@ const SPLIT_VERTICAL_SHORTCUT: &str = "Ctrl+Shift+E";
 const SPLIT_VERTICAL_ACCEL: &str = "<Control><Shift>E";
 const PREVIOUS_TAB_SHORTCUT: &str = "Ctrl+PageUp";
 const PREVIOUS_TAB_ACCEL: &str = "<Control>Page_Up";
+const PREVIOUS_TAB_KP_ACCEL: &str = "<Control>KP_Page_Up";
 const NEXT_TAB_SHORTCUT: &str = "Ctrl+PageDown";
 const NEXT_TAB_ACCEL: &str = "<Control>Page_Down";
+const NEXT_TAB_KP_ACCEL: &str = "<Control>KP_Page_Down";
 const FIRST_TAB_SHORTCUT: &str = "Ctrl+Home";
 const FIRST_TAB_ACCEL: &str = "<Control>Home";
+const FIRST_TAB_KP_ACCEL: &str = "<Control>KP_Home";
 const LAST_TAB_SHORTCUT: &str = "Ctrl+End";
 const LAST_TAB_ACCEL: &str = "<Control>End";
+const LAST_TAB_KP_ACCEL: &str = "<Control>KP_End";
 const RESTART_PANE_SHORTCUT: &str = "Ctrl+Shift+R";
 const RESTART_PANE_ACCEL: &str = "<Control><Shift>R";
 const EMPTY_LAYOUT_SIGNATURE: &str = "empty-layout";
