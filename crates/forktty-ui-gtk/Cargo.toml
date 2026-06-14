@@ -42,4 +42,6 @@ webkit6 = { version = "0.5", optional = true }
 
 [dev-dependencies]
 git2.workspace = true
+scopeguard = "1.2.0"
+serial_test = "3.5.0"
 tempfile.workspace = true
