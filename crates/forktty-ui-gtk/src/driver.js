@@ -1,6 +1,7 @@
 // ForkTTY browser-pane scripting driver (SP2). Injected as a persistent
-// WebKit user script at document-start, so window.__forktty is present on
-// every page and after every navigation. Idempotent: re-running keeps state.
+// WebKit user script at document-start in ForkTTY's isolated automation
+// script world, so page JavaScript cannot observe or tamper with
+// window.__forktty. Idempotent: re-running keeps state.
 (function () {
   if (window.__forktty) return;
 

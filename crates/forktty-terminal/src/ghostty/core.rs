@@ -591,6 +591,15 @@ impl GhosttyCore {
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
 
+    /// Plain-text dump for clipboard select-all: scrollback plus screen,
+    /// soft-wrapped rows rejoined, with invisible/spacer cells omitted.
+    pub fn visible_full_text_unwrapped(&self) -> Result<String> {
+        let rows = self.visible_screen_rows()?;
+        Ok(join_rows_honoring_wrap(rows.into_iter())
+            .trim_end()
+            .to_string())
+    }
+
     pub fn viewport_position(&self) -> Result<TerminalViewportPosition> {
         let scrollbar = self.terminal.scrollbar()?;
         Ok(TerminalViewportPosition {
@@ -681,12 +690,15 @@ impl GhosttyCore {
             // Out-of-range points are a lookup miss, not a failure.
             Err(_) => return Ok(None),
         };
-        let mut buf = vec![0u8; 1024];
+        let mut buf = vec![0u8; HYPERLINK_URI_INITIAL_BUFFER_BYTES];
         let len = loop {
             match grid_ref.hyperlink_uri(&mut buf) {
                 Ok(len) => break len,
                 Err(libghostty_vt::Error::OutOfSpace { required }) => {
-                    buf = vec![0u8; hyperlink_uri_retry_buffer_len(buf.len(), required)];
+                    let Some(next_len) = hyperlink_uri_retry_buffer_len(buf.len(), required) else {
+                        return Ok(None);
+                    };
+                    buf = vec![0u8; next_len];
                 }
                 Err(err) => return Err(err),
             }
@@ -834,12 +846,89 @@ impl GhosttyCore {
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
+
+    fn visible_screen_rows(&self) -> Result<Vec<(String, bool)>> {
+        let cols = self.terminal.cols()?;
+        let total_rows = self.terminal.total_rows()?;
+        let mut rows = Vec::with_capacity(total_rows);
+        for y in 0..total_rows {
+            let wrapped = if cols == 0 {
+                false
+            } else {
+                self.terminal
+                    .grid_ref(Point::Screen(PointCoordinate { x: 0, y: y as u32 }))?
+                    .row()?
+                    .is_wrapped()?
+            };
+            let mut text = String::new();
+            for x in 0..cols {
+                let grid_ref = self
+                    .terminal
+                    .grid_ref(Point::Screen(PointCoordinate { x, y: y as u32 }))?;
+                let style = grid_ref.style()?;
+                let cell = grid_ref.cell()?;
+                if style.invisible
+                    || matches!(cell.wide()?, CellWide::SpacerTail | CellWide::SpacerHead)
+                {
+                    continue;
+                }
+                push_grid_ref_graphemes(&grid_ref, &mut text)?;
+            }
+            rows.push((text, wrapped));
+        }
+        Ok(rows)
+    }
 }
 
-fn hyperlink_uri_retry_buffer_len(current_len: usize, required: usize) -> usize {
-    required
-        .saturating_mul(4)
-        .max(current_len.saturating_add(1))
+fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String {
+    let mut out = String::new();
+    let mut rows = rows.peekable();
+    while let Some((text, wrapped)) = rows.next() {
+        let has_next = rows.peek().is_some();
+        if wrapped && has_next {
+            out.push_str(&text);
+        } else {
+            out.push_str(text.trim_end());
+            if has_next {
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn push_grid_ref_graphemes(
+    grid_ref: &libghostty_vt::screen::GridRef<'_>,
+    out: &mut String,
+) -> Result<()> {
+    let mut buf = vec!['\0'; 4];
+    let len = loop {
+        match grid_ref.graphemes(&mut buf) {
+            Ok(len) => break len,
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                buf.resize(required, '\0');
+            }
+            Err(err) => return Err(err),
+        }
+    };
+    out.extend(buf[..len].iter().copied());
+    Ok(())
+}
+
+const HYPERLINK_URI_INITIAL_BUFFER_BYTES: usize = 1024;
+const HYPERLINK_URI_MAX_BYTES: usize = 8 * 1024;
+
+fn hyperlink_uri_retry_buffer_len(current_len: usize, required: usize) -> Option<usize> {
+    if required > HYPERLINK_URI_MAX_BYTES || current_len >= HYPERLINK_URI_MAX_BYTES {
+        return None;
+    }
+
+    Some(
+        required
+            .saturating_mul(4)
+            .max(current_len.saturating_add(1))
+            .min(HYPERLINK_URI_MAX_BYTES),
+    )
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1776,6 +1865,20 @@ mod tests {
     }
 
     #[test]
+    fn paste_replaces_unsafe_control_bytes_with_spaces() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.set_bracketed_paste_for_test(true).unwrap();
+
+        let encoded = core.paste_bytes("echo \x1b[31mred\x1b[0m\x03").unwrap();
+        assert_eq!(encoded, b"\x1b[200~echo  [31mred [0m \x1b[201~");
+    }
+
+    #[test]
     fn unsafe_paste_uses_bracketed_paste_even_when_mode_is_off() {
         let core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 80,
@@ -1949,6 +2052,27 @@ mod tests {
     }
 
     #[test]
+    fn visible_full_text_unwrapped_omits_invisible_cells_in_scrollback() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"safe \x1b[8mSECRET\x1b[0mtext\r\nnext\r\nbottom")
+            .unwrap();
+
+        assert_eq!(
+            core.visible_full_text_unwrapped()
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["safe text", "next", "bottom"]
+        );
+    }
+
+    #[test]
     fn viewport_position_tracks_scrolling_and_full_text_lines_map_to_rows() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 12,
@@ -2034,8 +2158,27 @@ mod tests {
 
     #[test]
     fn hyperlink_uri_retry_buffer_allows_utf8_worst_case() {
-        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 600), 2400);
-        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 0), 1025);
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 600), Some(2400));
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 0), Some(1025));
+    }
+
+    #[test]
+    fn hyperlink_uri_retry_buffer_is_capped() {
+        assert_eq!(
+            hyperlink_uri_retry_buffer_len(
+                HYPERLINK_URI_INITIAL_BUFFER_BYTES,
+                HYPERLINK_URI_MAX_BYTES + 1
+            ),
+            None
+        );
+        assert_eq!(
+            hyperlink_uri_retry_buffer_len(HYPERLINK_URI_MAX_BYTES, HYPERLINK_URI_MAX_BYTES),
+            None
+        );
+        assert_eq!(
+            hyperlink_uri_retry_buffer_len(HYPERLINK_URI_INITIAL_BUFFER_BYTES, 4096),
+            Some(HYPERLINK_URI_MAX_BYTES)
+        );
     }
 
     #[test]

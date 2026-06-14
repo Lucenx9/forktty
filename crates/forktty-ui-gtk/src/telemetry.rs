@@ -16,18 +16,31 @@ struct TelemetryStamp {
 }
 
 pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
+    maybe_start_anonymous_ping_with(config, telemetry_stamp_path(), now_unix_seconds(), true);
+}
+
+fn maybe_start_anonymous_ping_with(
+    config: &forktty_core::AppConfig,
+    stamp_path: Option<PathBuf>,
+    now_seconds: i64,
+    dispatch_ping: bool,
+) {
     if !config.telemetry.anonymous_ping || !valid_endpoint(TELEMETRY_ENDPOINT) {
         return;
     }
-    let Some(stamp_path) = telemetry_stamp_path() else {
+    let Some(stamp_path) = stamp_path else {
         return;
     };
-    let today = utc_date_from_unix_seconds(now_unix_seconds());
+    let today = utc_date_from_unix_seconds(now_seconds);
     let last_ping_date = read_last_ping_date(&stamp_path);
     if !ping_due(true, last_ping_date.as_deref(), &today) {
         return;
     }
     if record_ping_attempt(&stamp_path, &today).is_err() {
+        return;
+    }
+
+    if !dispatch_ping {
         return;
     }
 
@@ -190,5 +203,78 @@ mod tests {
         assert!(!valid_endpoint(
             "http://forktty-site.vercel.app/api/telemetry/ping"
         ));
+    }
+
+    #[test]
+    fn test_maybe_start_anonymous_ping_disabled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+
+        let mut config = forktty_core::AppConfig::default();
+        config.telemetry.anonymous_ping = false;
+
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), 1_780_000_000, false);
+
+        assert!(!stamp_path.exists());
+    }
+
+    #[test]
+    fn test_maybe_start_anonymous_ping_enabled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+        let now = 1_780_000_000;
+
+        let mut config = forktty_core::AppConfig::default();
+        config.telemetry.anonymous_ping = true;
+
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), now, false);
+
+        assert!(stamp_path.exists());
+        let date = read_last_ping_date(&stamp_path).unwrap();
+        assert_eq!(date, utc_date_from_unix_seconds(now));
+    }
+
+    #[test]
+    fn test_maybe_start_anonymous_ping_updates_if_old() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+        let now = 1_780_000_000;
+
+        record_ping_attempt(&stamp_path, "1999-01-01").expect("record stamp");
+
+        let mut config = forktty_core::AppConfig::default();
+        config.telemetry.anonymous_ping = true;
+
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), now, false);
+
+        let date = read_last_ping_date(&stamp_path).unwrap();
+        assert_eq!(date, utc_date_from_unix_seconds(now));
+    }
+
+    #[test]
+    fn test_maybe_start_anonymous_ping_skips_if_recently_pinged() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+        let now = 1_780_000_000;
+        let today = utc_date_from_unix_seconds(now);
+
+        let custom_json = json!({
+            "last_ping_date": today,
+            "custom_marker": "do_not_overwrite",
+        });
+        fs::write(
+            &stamp_path,
+            serde_json::to_vec_pretty(&custom_json).unwrap(),
+        )
+        .unwrap();
+
+        let mut config = forktty_core::AppConfig::default();
+        config.telemetry.anonymous_ping = true;
+
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), now, false);
+
+        let bytes = fs::read(&stamp_path).unwrap();
+        let stamp: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(stamp["custom_marker"], "do_not_overwrite");
     }
 }
