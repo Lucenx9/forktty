@@ -3,10 +3,11 @@
 //! (history/bookmark verbs) use these stores against the same per-profile files.
 //! sqlite runs in WAL mode so a concurrent reader and writer do not block.
 
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
@@ -79,6 +80,100 @@ fn backup_corrupt_sqlite(path: &Path) -> Result<(), HistoryError> {
     Ok(())
 }
 
+fn ensure_private_history_dir(parent: &Path) -> Result<(), HistoryError> {
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        let mut missing = Vec::new();
+        let mut cursor = Some(parent);
+        while let Some(dir) = cursor {
+            match fs::metadata(dir) {
+                Ok(meta) if meta.is_dir() => break,
+                Ok(_) => {
+                    return Err(HistoryError::Io(format!(
+                        "history directory path is not a directory: {}",
+                        dir.display()
+                    )));
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(dir.to_path_buf());
+                    cursor = dir.parent().filter(|path| !path.as_os_str().is_empty());
+                }
+                Err(err) => return Err(HistoryError::Io(err.to_string())),
+            }
+        }
+
+        for dir in missing.iter().rev() {
+            match fs::DirBuilder::new().mode(0o700).create(dir) {
+                Ok(()) => fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+                    .map_err(|err| HistoryError::Io(err.to_string()))?,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !fs::metadata(dir)
+                        .map_err(|err| HistoryError::Io(err.to_string()))?
+                        .is_dir()
+                    {
+                        return Err(HistoryError::Io(format!(
+                            "history directory path is not a directory: {}",
+                            dir.display()
+                        )));
+                    }
+                }
+                Err(err) => return Err(HistoryError::Io(err.to_string())),
+            }
+        }
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(parent).map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn ensure_private_history_file(path: &Path) -> Result<(), HistoryError> {
+    #[cfg(unix)]
+    {
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn apply_private_history_sidecar_permissions(path: &Path) -> Result<(), HistoryError> {
+    #[cfg(unix)]
+    {
+        for sensitive_path in [
+            path.to_path_buf(),
+            sqlite_sidecar_path(path, "-wal"),
+            sqlite_sidecar_path(path, "-shm"),
+        ] {
+            match fs::set_permissions(&sensitive_path, fs::Permissions::from_mode(0o600)) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(HistoryError::Io(err.to_string())),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 fn now_us() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -114,13 +209,20 @@ impl HistoryStore {
     /// Open (creating + migrating) `history.sqlite` at `path`, ensuring the parent dir.
     pub fn open(path: &Path) -> Result<Self, HistoryError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| HistoryError::Io(e.to_string()))?;
+            ensure_private_history_dir(parent)?;
         }
+        ensure_private_history_file(path)?;
         match Self::open_sqlite(path) {
-            Ok(store) => Ok(store),
+            Ok(store) => {
+                apply_private_history_sidecar_permissions(path)?;
+                Ok(store)
+            }
             Err(e) if path.exists() && is_recoverable_sqlite_error(&e) => {
                 backup_corrupt_sqlite(path)?;
-                Self::open_sqlite(path).map_err(HistoryError::from)
+                ensure_private_history_file(path)?;
+                let store = Self::open_sqlite(path).map_err(HistoryError::from)?;
+                apply_private_history_sidecar_permissions(path)?;
+                Ok(store)
             }
             Err(e) => Err(HistoryError::from(e)),
         }
@@ -581,6 +683,68 @@ mod tests {
         assert!(path.parent().unwrap().exists());
         h.record_visit("https://a.test/", "A").unwrap();
         assert_eq!(h.list(10).unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_hardens_history_file_directory_and_sidecars() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("nested")
+            .join("profile")
+            .join("history.sqlite");
+
+        let h = HistoryStore::open(&path).unwrap();
+        h.record_visit("https://private.test/", "Private").unwrap();
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&sqlite_sidecar_path(&path, "-wal")), 0o600);
+        assert_eq!(mode(&sqlite_sidecar_path(&path, "-shm")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_tightens_existing_permissive_history_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let profile_dir = dir.path().join("profile");
+        std::fs::create_dir(&profile_dir).unwrap();
+        std::fs::set_permissions(&profile_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = profile_dir.join("history.sqlite");
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let h = HistoryStore::open(&path).unwrap();
+        h.record_visit("https://private.test/", "Private").unwrap();
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&profile_dir), 0o700);
+        assert_eq!(mode(&path), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_recreates_history_db_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        std::fs::write(&path, b"not a sqlite database").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let h = HistoryStore::open(&path).unwrap();
+        h.record_visit("https://recovered-private.test/", "Recovered")
+            .unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(path.with_extension("sqlite.bak").exists());
     }
 
     #[test]
