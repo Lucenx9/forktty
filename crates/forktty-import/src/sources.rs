@@ -307,20 +307,6 @@ mod tests {
             }
         }
 
-        fn clear() -> Self {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            let saved_home = std::env::var("HOME").ok();
-            let saved_userprofile = std::env::var("USERPROFILE").ok();
-
-            std::env::remove_var("HOME");
-            std::env::remove_var("USERPROFILE");
-
-            Self {
-                _guard,
-                saved_home,
-                saved_userprofile,
-            }
-        }
     }
 
     impl<'a> Drop for EnvGuard<'a> {
@@ -555,8 +541,10 @@ mod tests {
     }
 
     #[test]
-    fn discover_returns_empty_when_home_is_missing() {
-        let _guard = EnvGuard::clear();
+    fn discover_returns_empty_for_empty_home_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::new(dir.path());
+
         let browsers = discover();
         assert!(browsers.is_empty());
     }
