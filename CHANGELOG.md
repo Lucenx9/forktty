@@ -13,6 +13,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser history now ignores oversized URLs and truncates oversized page titles before writing to SQLite, preventing web-controlled title or URL churn from causing unbounded history database growth.
+- Browser imports now report oversized history URLs as skipped writes instead of counting them as imported rows.
 - Notification commands using SSH's own `-c` option are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
 - Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.

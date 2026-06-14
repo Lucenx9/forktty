@@ -223,9 +223,9 @@ impl HistoryStore {
         url: &str,
         title: &str,
         visit_count: i64,
-    ) -> Result<(), HistoryError> {
+    ) -> Result<bool, HistoryError> {
         let Some((url, title)) = bounded_history_fields(url, title) else {
-            return Ok(());
+            return Ok(false);
         };
         let count = visit_count.max(1);
         self.conn.execute(
@@ -237,7 +237,7 @@ impl HistoryStore {
                  title         = CASE WHEN ?2 <> '' THEN ?2 ELSE title END",
             rusqlite::params![url, title, count, now_us()],
         )?;
-        Ok(())
+        Ok(true)
     }
 
     /// Most-recently-visited rows first, capped at `limit`.
