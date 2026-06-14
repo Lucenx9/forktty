@@ -6058,25 +6058,7 @@ fn parse_launcher_from_managed_command(command: &str, spec: &AgentSpec) -> Optio
     None
 }
 
-fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let (spec, rest) = single_agent_command(args, "hooks test")?;
-    require_no_args(&rest, &format!("hooks test {}", spec.key))?;
-    let target = hook_target_params();
-    let status_key = format!("agent:{}:hook-test", spec.key);
-    let order = next_hook_event_order();
-    let workspace = target
-        .get("workspace_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let surface = target
-        .get("surface_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-
-    // Every method is attempted even after a failure: the point of the
-    // report is per-method pass/fail, and cleanup calls must run regardless.
-    let mut checks: Vec<Value> = Vec::new();
-
+fn test_system_ping(context: &CliContext, checks: &mut Vec<Value>) {
     let ping = match send_socket_request(&context.socket_path, "system.ping", json!({})) {
         Ok(value) if value.as_str() == Some("pong") => Ok(value),
         Ok(value) => Err(CliError::new(format!(
@@ -6084,10 +6066,19 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         ))),
         Err(err) => Err(err),
     };
-    record_hook_check(&mut checks, "system.ping", ping);
+    record_hook_check(checks, "system.ping", ping);
+}
 
+fn test_metadata_set_status(
+    context: &CliContext,
+    spec: &AgentSpec,
+    target: &Map<String, Value>,
+    status_key: &str,
+    order: &str,
+    checks: &mut Vec<Value>,
+) {
     let mut status_params = target.clone();
-    status_params.insert("key".to_string(), Value::String(status_key.clone()));
+    status_params.insert("key".to_string(), Value::String(status_key.to_string()));
     status_params.insert(
         "label".to_string(),
         Value::String(format!("{} hook test", spec.label)),
@@ -6096,10 +6087,10 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     status_params.insert("color".to_string(), Value::String("blue".to_string()));
     status_params.insert(
         HOOK_EVENT_ORDER_PARAM.to_string(),
-        Value::String(order.clone()),
+        Value::String(order.to_string()),
     );
     record_hook_check(
-        &mut checks,
+        checks,
         "metadata.set_status",
         send_socket_request(
             &context.socket_path,
@@ -6107,7 +6098,14 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             Value::Object(status_params),
         ),
     );
+}
 
+fn test_metadata_log(
+    context: &CliContext,
+    spec: &AgentSpec,
+    target: &Map<String, Value>,
+    checks: &mut Vec<Value>,
+) {
     let mut log_params = target.clone();
     log_params.insert("level".to_string(), Value::String("info".to_string()));
     log_params.insert(
@@ -6115,7 +6113,7 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Value::String(format!("{} hook roundtrip test", spec.label)),
     );
     record_hook_check(
-        &mut checks,
+        checks,
         "metadata.log",
         send_socket_request(
             &context.socket_path,
@@ -6123,7 +6121,14 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             Value::Object(log_params),
         ),
     );
+}
 
+fn test_notification_create(
+    context: &CliContext,
+    spec: &AgentSpec,
+    target: &Map<String, Value>,
+    checks: &mut Vec<Value>,
+) -> (Value, Option<Value>) {
     let before = send_socket_request(&context.socket_path, "notification.list", json!({}))
         .unwrap_or(Value::Null);
     let mut notification_params = target.clone();
@@ -6137,7 +6142,7 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     );
     notification_params.insert("kind".to_string(), Value::String("prompt".to_string()));
     let created = record_hook_check(
-        &mut checks,
+        checks,
         "notification.create",
         send_socket_request(
             &context.socket_path,
@@ -6145,15 +6150,24 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             Value::Object(notification_params),
         ),
     );
+    (before, created)
+}
 
+fn test_metadata_clear_status(
+    context: &CliContext,
+    target: &Map<String, Value>,
+    status_key: &str,
+    order: &str,
+    checks: &mut Vec<Value>,
+) {
     let mut clear_status = target.clone();
-    clear_status.insert("key".to_string(), Value::String(status_key));
+    clear_status.insert("key".to_string(), Value::String(status_key.to_string()));
     clear_status.insert(
         HOOK_EVENT_ORDER_PARAM.to_string(),
-        Value::String(increment_hook_event_order(&order)),
+        Value::String(increment_hook_event_order(order)),
     );
     record_hook_check(
-        &mut checks,
+        checks,
         "metadata.clear_status",
         send_socket_request(
             &context.socket_path,
@@ -6161,7 +6175,14 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             Value::Object(clear_status),
         ),
     );
+}
 
+fn test_notification_clear(
+    context: &CliContext,
+    before: Value,
+    created: Option<Value>,
+    checks: &mut Vec<Value>,
+) {
     if before.as_array().is_some_and(Vec::is_empty)
         && created
             .as_ref()
@@ -6174,13 +6195,21 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                 && items[0].get("id") == created.as_ref().and_then(|value| value.get("id"))
         }) {
             record_hook_check(
-                &mut checks,
+                checks,
                 "notification.clear",
                 send_socket_request(&context.socket_path, "notification.clear", json!({})),
             );
         }
     }
+}
 
+fn print_hook_test_report(
+    context: &CliContext,
+    spec: &AgentSpec,
+    workspace: Option<String>,
+    surface: Option<String>,
+    checks: Vec<Value>,
+) -> CliResult<()> {
     let healthy = checks.iter().all(|check| check["ok"] == json!(true));
     let report = json!({
         "version": 1,
@@ -6223,6 +6252,35 @@ fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         if healthy { "ok" } else { "failed" }
     );
     hooks_health_exit("hooks test", spec.key, healthy)
+}
+
+fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let (spec, rest) = single_agent_command(args, "hooks test")?;
+    require_no_args(&rest, &format!("hooks test {}", spec.key))?;
+    let target = hook_target_params();
+    let status_key = format!("agent:{}:hook-test", spec.key);
+    let order = next_hook_event_order();
+    let workspace = target
+        .get("workspace_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let surface = target
+        .get("surface_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    // Every method is attempted even after a failure: the point of the
+    // report is per-method pass/fail, and cleanup calls must run regardless.
+    let mut checks: Vec<Value> = Vec::new();
+
+    test_system_ping(context, &mut checks);
+    test_metadata_set_status(context, spec, &target, &status_key, &order, &mut checks);
+    test_metadata_log(context, spec, &target, &mut checks);
+    let (before, created) = test_notification_create(context, spec, &target, &mut checks);
+    test_metadata_clear_status(context, &target, &status_key, &order, &mut checks);
+    test_notification_clear(context, before, created, &mut checks);
+
+    print_hook_test_report(context, spec, workspace, surface, checks)
 }
 
 fn single_agent_command(
