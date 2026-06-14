@@ -44,6 +44,7 @@ All notable changes to ForkTTY are documented here.
 - Notification commands using SSH/mosh options that contain `-c` are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
 - Worktree and workspace rollback paths now close spawned replacement terminals instead of only forgetting bookkeeping entries, preventing untracked terminal processes after cleanup failures.
 - OSC 8 hyperlink lookup now caps URI buffers at 8 KiB and fails closed for larger terminal-provided targets, avoiding attacker-controlled memory growth when resolving links.
+- Panic logs are now created in a private state directory with owner-only file permissions, and older permissive logs are rotated before new panic entries are written.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
 - Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.
 - Large PTY writes now keep waiting after `poll()` reports no writable fd before the per-write deadline, instead of treating the poll timeout as readiness.
