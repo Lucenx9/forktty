@@ -674,6 +674,7 @@ dependencies = [
  "chrono",
  "dirs",
  "git2",
+ "libc",
  "notify-rust",
  "rusqlite",
  "semver",

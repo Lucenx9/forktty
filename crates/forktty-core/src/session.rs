@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[derive(Error, Debug)]
 pub enum SessionError {
@@ -348,7 +348,12 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    let mut file = match fs::File::open(path) {
+    if !link_metadata.file_type().is_symlink() && !link_metadata.file_type().is_file() {
+        log_quarantine_reason(path, "session path is not a regular file");
+        quarantine_corrupt_session(path)?;
+        return Ok(None);
+    }
+    let mut file = match open_session_for_read(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             if link_metadata.file_type().is_symlink() {
@@ -405,6 +410,19 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
             Ok(None)
         }
     }
+}
+
+fn open_session_for_read(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        // Session paths are untrusted local state. Opening symlinks with
+        // O_NONBLOCK prevents a symlink-to-FIFO from hanging startup before
+        // the post-open regular-file check can quarantine it.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    options.open(path)
 }
 
 fn sanitize_for_terminal(input: &str) -> String {
@@ -899,6 +917,16 @@ mod tests {
             (actual - expected).abs() < 1e-6,
             "expected ratio {expected}, got {actual}"
         );
+    }
+
+    #[cfg(unix)]
+    fn mkfifo(path: &Path) {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo failed: {}", std::io::Error::last_os_error());
     }
 
     #[test]
@@ -1598,6 +1626,40 @@ mod tests {
         let loaded = load_session_from_path(&path).unwrap();
         assert!(loaded.is_none());
         assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantines_fifo_session_path_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        mkfifo(&path);
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantines_symlink_to_fifo_session_path_without_blocking() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        let fifo = dir.path().join("session-fifo");
+        mkfifo(&fifo);
+        symlink(&fifo, &path).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(!path.exists());
+        assert!(
+            fifo.exists(),
+            "quarantining the symlink must not rename its target"
+        );
     }
 
     #[test]
