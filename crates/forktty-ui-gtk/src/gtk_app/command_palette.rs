@@ -691,22 +691,83 @@ pub(super) fn show_command_palette_with_query(
     search.grab_focus();
 }
 
-pub(super) fn command_matches(label: &str, query: &str) -> bool {
-    if query.is_empty() || label.contains(query) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CommandSearchText {
+    label: String,
+    shortcut: Option<String>,
+}
+
+pub(super) fn command_matches(command: &CommandSearchText, query: &str) -> bool {
+    if query.is_empty() || command.label.contains(query) {
         return true;
+    }
+    if let Some(shortcut) = &command.shortcut {
+        if shortcut_matches(shortcut, query) {
+            return true;
+        }
     }
     query
         .split_whitespace()
-        .all(|token| is_subsequence(token, label))
+        .all(|token| is_subsequence(token, &command.label))
 }
 
-pub(super) fn command_search_text(label: &str, shortcut: Option<&str>) -> String {
-    let mut search_text = label.to_ascii_lowercase();
-    if let Some(shortcut) = shortcut {
-        search_text.push(' ');
-        search_text.push_str(&shortcut.to_ascii_lowercase());
+pub(super) fn command_search_text(label: &str, shortcut: Option<&str>) -> CommandSearchText {
+    CommandSearchText {
+        label: label.to_ascii_lowercase(),
+        shortcut: shortcut.map(str::to_ascii_lowercase),
     }
-    search_text
+}
+
+fn shortcut_matches(shortcut: &str, query: &str) -> bool {
+    if shortcut.contains(query) {
+        return true;
+    }
+    let query_tokens = shortcut_tokens(query);
+    !query_tokens.is_empty()
+        && shortcut
+            .split('/')
+            .map(shortcut_tokens)
+            .any(|tokens| token_subsequence(&query_tokens, &tokens))
+}
+
+fn shortcut_tokens(value: &str) -> Vec<String> {
+    value
+        .split(|ch: char| ch == '+' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .flat_map(expand_shortcut_token)
+        .collect()
+}
+
+fn expand_shortcut_token(token: &str) -> Vec<String> {
+    for modifier in ["control", "ctrl", "shift", "alt", "super", "meta"] {
+        if let Some(rest) = token.strip_prefix(modifier) {
+            if !rest.is_empty() {
+                let normalized = if modifier == "control" {
+                    "ctrl"
+                } else {
+                    modifier
+                };
+                return vec![normalized.to_string(), rest.to_string()];
+            }
+        }
+    }
+    vec![token.to_string()]
+}
+
+fn token_subsequence(query: &[String], shortcut: &[String]) -> bool {
+    let mut query = query.iter();
+    let Some(mut current) = query.next() else {
+        return true;
+    };
+    for token in shortcut {
+        if token == current {
+            match query.next() {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+    }
+    false
 }
 
 pub(super) fn is_subsequence(needle: &str, haystack: &str) -> bool {
