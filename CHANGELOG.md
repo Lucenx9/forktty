@@ -6,6 +6,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Security
 - Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
+- Socket-triggered notification dispatch and custom notification command reaping now use bounded queues instead of spawning unbounded OS threads per `notification.create`, preventing a local client from exhausting threads by flooding notifications.
 
 ### Added
 - `forktty doctor` now accepts `--hooks`, `--socket`, and `--packaging` scopes for running only the relevant local diagnostics.
@@ -107,9 +108,6 @@ All notable changes to ForkTTY are documented here.
 - Worktree merge failures now restore the checkout before returning an error, including failed fast-forward ref updates and failures after `repo.merge()`. If the merge commit was already created, a recovered finalization error no longer reports the merge as failed.
 - Large PTY writes now retry `poll()` interrupted by signals instead of treating `EINTR` as a fatal partial-paste error.
 - Config recovery no longer quarantines a valid config file on transient I/O errors such as permission/read failures.
-
-### Security
-- Socket-triggered notification dispatch and custom notification command reaping now use bounded queues instead of spawning unbounded OS threads per `notification.create`, preventing a local client from exhausting threads by flooding notifications.
 
 ## [0.2.0-alpha.11] - 2026-06-11
 
