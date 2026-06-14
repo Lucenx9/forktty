@@ -5,7 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Security
+- Agent resume PTY spawns now resolve bare provider commands using only absolute `PATH` entries before applying the recorded session cwd, preventing relative/empty `PATH` entries from executing project-local binaries during restore or resume.
 - Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
+- Socket-triggered notification dispatch and custom notification command reaping now use bounded queues instead of spawning unbounded OS threads per `notification.create`, preventing a local client from exhausting threads by flooding notifications.
 
 ### Added
 - `forktty doctor` now accepts `--hooks`, `--socket`, and `--packaging` scopes for running only the relevant local diagnostics.
@@ -17,6 +19,8 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Sidebar visibility persistence now rebases onto the latest config under a process-wide update lock, avoiding stale background saves that could overwrite newer settings-dialog changes.
+- Ctrl+click terminal links now open only `http://` and `https://` targets, blocking terminal-controlled `file://` and custom URI handlers.
+- AppImage self-updates now create downloaded replacement files with owner-only permissions before checksum verification, closing a local same-group temp-file tampering window under permissive umasks.
 - Notification commands using SSH/mosh options that contain `-c` are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
 - OSC 8 hyperlink lookup now caps URI buffers at 8 KiB and fails closed for larger terminal-provided targets, avoiding attacker-controlled memory growth when resolving links.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
