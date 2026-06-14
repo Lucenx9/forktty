@@ -53,7 +53,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Compact status/HUD export through `status.summary`, `forktty statusline`, and MCP `status_summary`.
 - [x] GTK Agent HUD for persisted agent lifecycle, last activity, needs-input attention, focus, and resume.
 - [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
-- [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream.
+- [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream and rate-limited per surface.
 - [x] Ghostty bell and child-exit notifications.
 - [x] Explicit notification `kind` support.
 
