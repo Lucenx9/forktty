@@ -2583,6 +2583,17 @@ fn command_palette_search_matches_labels_and_shortcuts() {
 }
 
 #[test]
+fn command_palette_shortcut_search_does_not_match_modifier_letters() {
+    let copy = command_search_text("Copy", Some("Ctrl+Shift+C"));
+    let split_right = command_search_text("Split Right", Some("Ctrl+Shift+H"));
+    let split_down = command_search_text("Split Down", Some("Ctrl+Shift+J"));
+
+    assert!(command_matches(&copy, "ctrl shift c"));
+    assert!(!command_matches(&split_right, "ctrl shift c"));
+    assert!(!command_matches(&split_down, "ctrl shift c"));
+}
+
+#[test]
 fn command_palette_search_supports_fuzzy_words() {
     let split = command_search_text("Split Right", Some("Ctrl+Shift+H"));
 

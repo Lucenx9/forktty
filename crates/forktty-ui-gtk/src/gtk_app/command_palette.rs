@@ -691,22 +691,45 @@ pub(super) fn show_command_palette_with_query(
     search.grab_focus();
 }
 
-pub(super) fn command_matches(label: &str, query: &str) -> bool {
-    if query.is_empty() || label.contains(query) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CommandSearchText {
+    label: String,
+    shortcut: Option<String>,
+}
+
+pub(super) fn command_matches(command: &CommandSearchText, query: &str) -> bool {
+    if query.is_empty() || command.label.contains(query) {
         return true;
+    }
+    if let Some(shortcut) = &command.shortcut {
+        if shortcut_matches(shortcut, query) {
+            return true;
+        }
     }
     query
         .split_whitespace()
-        .all(|token| is_subsequence(token, label))
+        .all(|token| is_subsequence(token, &command.label))
 }
 
-pub(super) fn command_search_text(label: &str, shortcut: Option<&str>) -> String {
-    let mut search_text = label.to_ascii_lowercase();
-    if let Some(shortcut) = shortcut {
-        search_text.push(' ');
-        search_text.push_str(&shortcut.to_ascii_lowercase());
+pub(super) fn command_search_text(label: &str, shortcut: Option<&str>) -> CommandSearchText {
+    CommandSearchText {
+        label: label.to_ascii_lowercase(),
+        shortcut: shortcut.map(str::to_ascii_lowercase),
     }
-    search_text
+}
+
+fn shortcut_matches(shortcut: &str, query: &str) -> bool {
+    shortcut.contains(query)
+        || normalize_shortcut(shortcut, '+') == normalize_shortcut(query, '+')
+        || normalize_shortcut(shortcut, ' ').contains(&normalize_shortcut(query, ' '))
+}
+
+fn normalize_shortcut(value: &str, separator: char) -> String {
+    value
+        .split(|ch: char| ch == '+' || ch == '/' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(&separator.to_string())
 }
 
 pub(super) fn is_subsequence(needle: &str, haystack: &str) -> bool {
