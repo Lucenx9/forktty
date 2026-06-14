@@ -6,8 +6,9 @@
 //! diagnosable immediately. The previous hook is chained, so stderr
 //! output and `RUST_BACKTRACE` behavior are unchanged.
 
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const PANIC_LOG_FILE: &str = "panic.log";
@@ -69,9 +70,19 @@ fn format_panic_entry(
 /// before the chained hook runs), so every failure here is swallowed.
 fn append_to_log(path: &Path, entry: &str) {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent);
+        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
     }
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+    {
+        let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
         let _ = file.write_all(entry.as_bytes());
     }
 }
@@ -104,12 +115,21 @@ mod tests {
     }
 
     #[test]
-    fn append_creates_parent_dirs_and_appends() {
+    fn append_creates_private_parent_dirs_and_appends_to_private_log() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("nested").join("panic.log");
+        let parent = dir.path().join("nested");
+        let path = parent.join("panic.log");
         append_to_log(&path, "first\n");
         append_to_log(&path, "second\n");
         let contents = std::fs::read_to_string(&path).expect("log file");
         assert_eq!(contents, "first\nsecond\n");
+        assert_eq!(
+            std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }
