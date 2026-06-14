@@ -21,6 +21,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - `forktty events` now mirrors lag notices to stderr regardless of the JSON object key order used by the socket server.
+- Ctrl+keypad Home/End/PageUp/PageDown are now reserved for tab-navigation accelerators like their non-keypad equivalents instead of being consumed by terminal input handling.
 - Retrying Worktree Create for an already-linked branch no longer deletes that existing worktree and branch if terminal spawning fails.
 - Sidebar visibility persistence now rebases onto the latest config under a process-wide update lock, avoiding stale background saves that could overwrite newer settings-dialog changes.
 - Malformed browser bookmark files are now moved aside after backup so repeated opens cannot create unbounded backup copies.
