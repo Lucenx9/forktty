@@ -7044,11 +7044,6 @@ impl<'a> HookActionBuilder<'a> {
     }
 
     fn handle_stop(&self) -> Vec<(String, Value)> {
-        let mut clear_permission = self.target.clone();
-        clear_permission.insert(
-            "key".to_string(),
-            Value::String(self.permission_key.clone()),
-        );
         vec![
             self.log(
                 "info",
@@ -7059,16 +7054,6 @@ impl<'a> HookActionBuilder<'a> {
                 },
             ),
             self.status("Ready", "green", self.event),
-            (
-                "metadata.clear_status".to_string(),
-                add_hook_metadata(
-                    clear_permission,
-                    self.spec,
-                    self.event,
-                    self.payload,
-                    self.order,
-                ),
-            ),
         ]
     }
 
@@ -9146,17 +9131,18 @@ mod tests {
     }
 
     #[test]
-    fn stop_clears_permission_status() {
+    fn stop_preserves_permission_status() {
         let actions = build_hook_actions(
             agent_spec("codex").unwrap(),
             "stop",
             &json!({ "session_id": "sess-codex-stop" }),
             "11",
         );
-        assert_eq!(actions.len(), 3);
-        assert_eq!(actions[2].0, "metadata.clear_status");
-        assert_eq!(actions[2].1["key"], "agent:codex:permission");
-        assert_eq!(actions[2].1["hook_session_id"], "sess-codex-stop");
+        assert_eq!(actions.len(), 2);
+        for (method, params) in &actions {
+            assert_ne!(method, "metadata.clear_status");
+            assert_ne!(params["key"], "agent:codex:permission");
+        }
     }
 
     #[test]
