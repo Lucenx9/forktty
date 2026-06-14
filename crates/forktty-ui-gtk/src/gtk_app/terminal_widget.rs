@@ -1788,6 +1788,11 @@ const LINES_PER_WHEEL_UNIT: f64 = 3.0;
 /// made touchpads scroll tracking apps 3x faster than physical wheels.
 const WHEEL_PRESS_LINES: isize = 3;
 
+/// Maximum whole scroll lines consumed from one GTK callback. Synthetic or
+/// malformed smooth-scroll deltas can otherwise expand into huge per-press
+/// replay loops for mouse-tracking applications and monopolize the UI thread.
+const MAX_SCROLL_LINES_PER_EVENT: isize = 120;
+
 /// One scroll event's worth of consumption from the line accumulator.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ScrollEmission {
@@ -1804,6 +1809,13 @@ struct ScrollEmission {
 /// (3 lines) when forwarding presses to a mouse-tracking application. A
 /// direction flip drops the leftover so reversals respond immediately.
 fn accumulate_scroll_emission(remainder: f64, line_delta: f64, tracking: bool) -> ScrollEmission {
+    if !remainder.is_finite() || !line_delta.is_finite() {
+        return ScrollEmission {
+            presses: 0,
+            lines: 0,
+            remainder: 0.0,
+        };
+    }
     if line_delta == 0.0 {
         return ScrollEmission {
             presses: 0,
@@ -1814,16 +1826,38 @@ fn accumulate_scroll_emission(remainder: f64, line_delta: f64, tracking: bool) -
     let same_direction =
         remainder == 0.0 || remainder.is_sign_positive() == line_delta.is_sign_positive();
     let accumulated = if same_direction { remainder } else { 0.0 } + line_delta;
+    if !accumulated.is_finite() {
+        return ScrollEmission {
+            presses: 0,
+            lines: 0,
+            remainder: 0.0,
+        };
+    }
+
     let (presses, lines) = if tracking {
-        let presses = (accumulated / WHEEL_PRESS_LINES as f64).trunc() as isize;
+        let max_presses = MAX_SCROLL_LINES_PER_EVENT / WHEEL_PRESS_LINES;
+        let presses = (accumulated / WHEEL_PRESS_LINES as f64)
+            .trunc()
+            .clamp(-(max_presses as f64), max_presses as f64) as isize;
         (presses, presses * WHEEL_PRESS_LINES)
     } else {
-        (0, accumulated.trunc() as isize)
+        (
+            0,
+            accumulated.trunc().clamp(
+                -(MAX_SCROLL_LINES_PER_EVENT as f64),
+                MAX_SCROLL_LINES_PER_EVENT as f64,
+            ) as isize,
+        )
     };
+    let capped = accumulated.abs() >= MAX_SCROLL_LINES_PER_EVENT as f64;
     ScrollEmission {
         presses,
         lines,
-        remainder: accumulated - lines as f64,
+        remainder: if capped {
+            0.0
+        } else {
+            accumulated - lines as f64
+        },
     }
 }
 
@@ -3127,6 +3161,40 @@ mod mouse_tests {
         }
         assert_eq!((presses, lines), (1, 3));
         assert_f64_eq(remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_caps_oversized_tracking_replay() {
+        let emission = accumulate_scroll_emission(0.0, 1_000_000.0, true);
+        assert_eq!(
+            (emission.presses, emission.lines),
+            (
+                MAX_SCROLL_LINES_PER_EVENT / WHEEL_PRESS_LINES,
+                MAX_SCROLL_LINES_PER_EVENT,
+            )
+        );
+        assert_f64_eq(emission.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_caps_oversized_viewport_scroll() {
+        let emission = accumulate_scroll_emission(0.0, -1_000_000.0, false);
+        assert_eq!(
+            (emission.presses, emission.lines),
+            (0, -MAX_SCROLL_LINES_PER_EVENT)
+        );
+        assert_f64_eq(emission.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_rejects_non_finite_deltas_and_remainders() {
+        let infinite_delta = accumulate_scroll_emission(0.0, f64::INFINITY, true);
+        assert_eq!((infinite_delta.presses, infinite_delta.lines), (0, 0));
+        assert_f64_eq(infinite_delta.remainder, 0.0);
+
+        let nan_remainder = accumulate_scroll_emission(f64::NAN, 1.0, false);
+        assert_eq!((nan_remainder.presses, nan_remainder.lines), (0, 0));
+        assert_f64_eq(nan_remainder.remainder, 0.0);
     }
 
     #[test]
