@@ -2280,7 +2280,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             selection.clear();
             // Select-all covers the whole scrollback, like other terminals,
             // joining soft-wrapped rows so a wrapped command pastes as one line.
-            selection.select_text(self.runtime.borrow().full_text_unwrapped());
+            selection.select_text(self.runtime.borrow().visible_full_text_unwrapped());
         }
         self.copy_text();
     }
