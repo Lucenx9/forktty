@@ -286,8 +286,7 @@ impl BookmarkStore {
             Some(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
                 Ok(v) => v,
                 Err(_) => {
-                    let bak = reserve_unique_backup_path(path, "json.bak");
-                    let _ = write_private_file(&bak, &bytes);
+                    backup_malformed_bookmarks(path, &bytes);
                     Vec::new()
                 }
             },
@@ -376,12 +375,13 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), HistoryError> {
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     options.mode(PRIVATE_FILE_MODE);
     let mut file = options
         .open(path)
         .map_err(|err| HistoryError::Io(err.to_string()))?;
+    set_private_permissions(path)?;
     std::io::Write::write_all(&mut file, bytes).map_err(|err| HistoryError::Io(err.to_string()))?;
     file.sync_all()
         .map_err(|err| HistoryError::Io(err.to_string()))?;
@@ -399,6 +399,16 @@ fn set_private_permissions(path: &Path) -> Result<(), HistoryError> {
         let _ = path;
     }
     Ok(())
+}
+
+fn backup_malformed_bookmarks(path: &Path, bytes: &[u8]) {
+    let backup = reserve_unique_backup_path(path, "json.bak");
+    if std::fs::rename(path, &backup).is_err() {
+        let _ = write_private_file(&backup, bytes);
+        let _ = std::fs::remove_file(path);
+    } else {
+        let _ = set_private_permissions(&backup);
+    }
 }
 
 fn read_optional_file_bounded(
@@ -686,11 +696,13 @@ mod tests {
         std::fs::write(&path, b"{ this is not valid json").unwrap();
         let b = BookmarkStore::open(&path).unwrap();
         assert!(b.list().is_empty());
-        // Original bytes preserved alongside as a .bak.
+        // Original bytes moved alongside as a .bak so future opens do not repeat recovery.
         let bak = path.with_extension("json.bak");
         assert!(bak.exists());
+        assert_eq!(std::fs::read(&bak).unwrap(), b"{ this is not valid json");
         #[cfg(unix)]
         assert_eq!(file_mode(&bak), PRIVATE_FILE_MODE);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -704,6 +716,7 @@ mod tests {
         let b = BookmarkStore::open(&path).unwrap();
         assert!(b.list().is_empty());
         assert_eq!(std::fs::read(&first_backup).unwrap(), b"previous backup");
+        assert!(!path.exists());
 
         let backup_count = std::fs::read_dir(dir.path())
             .unwrap()
@@ -716,6 +729,30 @@ mod tests {
             })
             .count();
         assert_eq!(backup_count, 2);
+    }
+
+    #[test]
+    fn bookmark_repeated_open_after_malformed_file_does_not_create_more_backups() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        std::fs::write(&path, b"{ this is not valid json").unwrap();
+
+        let first = BookmarkStore::open(&path).unwrap();
+        assert!(first.list().is_empty());
+        let second = BookmarkStore::open(&path).unwrap();
+        assert!(second.list().is_empty());
+
+        let backup_count = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("bookmarks.json.bak")
+            })
+            .count();
+        assert_eq!(backup_count, 1);
     }
 
     #[test]
