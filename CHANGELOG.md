@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Bookmark files and corrupt-bookmark backups are now saved with owner-only permissions to avoid exposing sensitive URLs to other local users.
+- Stale Ghostty event batches from an old pane spawn are now discarded before they can mark a restarted pane not ready, overwrite its terminal status, or emit stale notifications.
 - Browser imports now copy temporary SQLite databases and WAL/SHM sidecars into a private `0700` directory with newly-created `0600` files, preventing local temp-file races from exposing browser data.
 - Browser-feature socket dispatch fuzz tests now isolate `XDG_DATA_HOME`, preventing adversarial method sweeps from clearing a developer's real browser history.
 - `forktty events` now mirrors lag notices to stderr regardless of the JSON object key order used by the socket server.
