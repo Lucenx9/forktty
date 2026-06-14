@@ -1,14 +1,16 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
-    command_safety::{is_executable_file, is_valid_ssh_host},
-    config, dispatch_notification, normalize_agent_status, validate_worktree_name, worktree,
-    AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError,
-    BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
-    NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
-    MAX_BROWSER_SCRIPT_BYTES,
+    command_safety::is_valid_ssh_host, config, dispatch_notification, normalize_agent_status,
+    validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
+    AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
+    JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
+    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_SCRIPT_BYTES,
 };
-use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
+use forktty_terminal::{
+    spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
+    TerminalTextCapture,
+};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
@@ -18,7 +20,7 @@ use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt}
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -57,10 +59,16 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// response to a slow reader still gets through.
 const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
+/// Pending desktop notification dispatch jobs. Dispatch can block in
+/// notify-rust/custom commands, so keep a small bounded queue rather than
+/// spawning one OS thread per socket request.
+const NOTIFICATION_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_DISPATCHER: OnceLock<mpsc::SyncSender<forktty_core::NotificationItem>> =
+    OnceLock::new();
 
 /// Methods advertised by `system.capabilities`. Every entry except
 /// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
@@ -859,9 +867,10 @@ pub async fn dispatch(
                 }
                 if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
                     let mut err = err;
-                    if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
-                    {
+                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
+                        state,
+                        &replacement.focused_surface_id,
+                    ) {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
                     if let Err(rollback_err) =
@@ -889,7 +898,7 @@ pub async fn dispatch(
                         previous_active_id,
                     )?;
                     if rolled_back {
-                        if let Err(cleanup_err) = forget_terminal_surface_if_present(
+                        if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
                             state,
                             &replacement.focused_surface_id,
                         ) {
@@ -1051,9 +1060,10 @@ pub async fn dispatch(
                 }
                 if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
                     let mut err = err;
-                    if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
-                    {
+                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
+                        state,
+                        &replacement.focused_surface_id,
+                    ) {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
                     if let Err(rollback_err) =
@@ -1065,9 +1075,10 @@ pub async fn dispatch(
                 }
                 if let Err(err) = finish_removal_blocking(removal, false).await {
                     let mut err = err.to_string();
-                    if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
-                    {
+                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
+                        state,
+                        &replacement.focused_surface_id,
+                    ) {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
                     if let Err(rollback_err) =
@@ -1099,7 +1110,7 @@ pub async fn dispatch(
                         previous_active_id,
                     )?;
                     if rolled_back {
-                        if let Err(cleanup_err) = forget_terminal_surface_if_present(
+                        if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
                             state,
                             &replacement.focused_surface_id,
                         ) {
@@ -1545,7 +1556,7 @@ pub async fn dispatch(
                 if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
                     let mut err = err;
                     if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.id)
+                        close_replacement_terminal_surface_if_present(state, &replacement.id)
                     {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
@@ -1563,7 +1574,7 @@ pub async fn dispatch(
                     (surface, replacement_in_model)
                 };
                 if surface.is_err() || !replacement_in_model {
-                    forget_terminal_surface_if_present(state, &replacement.id)?;
+                    close_replacement_terminal_surface_if_present(state, &replacement.id)?;
                 }
                 let surface = surface?;
                 evict_hook_session_targets_for_surface(state, surface_id)?;
@@ -1637,10 +1648,7 @@ pub async fn dispatch(
             }
             let hook_session_cwd = optional_hook_session_cwd(&params)?;
             let surface_id = optional_surface_id_param(&params)?;
-            let agent = agent_kind_from_status_key(key)
-                .or_else(|| agent_kind_from_permission_status_key(key));
-            let permission_mode =
-                agent_kind_from_permission_status_key(key).map(|_| value.to_string());
+            let agent = agent_kind_from_status_key(key);
             let last_activity_ms = current_unix_epoch_ms();
             let status = {
                 let mut model = state
@@ -1658,12 +1666,6 @@ pub async fn dispatch(
                         if let Some(hook_session_cwd) = hook_session_cwd {
                             model
                                 .set_surface_agent_session_resume_cwd(surface_id, hook_session_cwd);
-                        }
-                        if let Some(permission_mode) = permission_mode.as_deref() {
-                            model.set_surface_agent_session_permission_mode(
-                                surface_id,
-                                permission_mode,
-                            );
                         }
                         model.set_surface_agent_session_lifecycle(
                             surface_id,
@@ -2105,7 +2107,7 @@ fn agent_resume_readiness(
     let argv = std::iter::once(command.program.clone())
         .chain(command.args.iter().cloned())
         .collect::<Vec<_>>();
-    let executable = resolve_program_on_path(&command.program, path);
+    let executable = resolve_child_program(&command.program, path);
     let executable_value = executable
         .as_ref()
         .map(|path| Value::String(path.to_string_lossy().into_owned()))
@@ -2118,16 +2120,6 @@ fn agent_resume_readiness(
         executable_value,
         argv,
     )
-}
-
-fn resolve_program_on_path(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
-    let program_path = Path::new(program);
-    if program_path.components().count() > 1 || program_path.is_absolute() {
-        return is_executable_file(program_path).then(|| program_path.to_path_buf());
-    }
-    std::env::split_paths(path?)
-        .map(|dir| dir.join(program))
-        .find(|candidate| is_executable_file(candidate))
 }
 
 fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -2300,31 +2292,57 @@ fn notify_worktree_setup_warning(
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
-    let notification = notification.clone();
-    // Dispatch on a dedicated thread: notify_rust's show() blocks on its own
-    // async runtime, and doing that from a tokio worker panics ("Cannot start
-    // a runtime from within a runtime"), killing the connection task that
-    // carried the request. The thread also keeps config disk I/O off the
-    // server runtime. Dispatch is fire-and-forget either way (errors only
-    // reach stderr), so callers lose nothing by not joining.
-    std::thread::spawn(move || {
-        let config = match config::load_config() {
-            Ok(config) => config,
-            Err(err) => {
-                // Surface the underlying cause so a misconfigured custom command or
-                // a corrupted config.toml is debuggable rather than silently
-                // turning into "default behavior with no custom command".
-                eprintln!("Falling back to default notification settings: {err}");
-                forktty_core::AppConfig::default()
-            }
-        };
-        for error in dispatch_notification(&config, &notification) {
+    let dispatcher = NOTIFICATION_DISPATCHER.get_or_init(spawn_notification_dispatcher);
+    match dispatcher.try_send(notification.clone()) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(_)) => {
             eprintln!(
-                "Failed to dispatch {} notification: {}",
-                error.channel, error.message
+                "Dropping desktop notification dispatch because the bounded dispatch queue is full"
             );
         }
-    });
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            eprintln!("Dropping desktop notification dispatch because the dispatch worker stopped");
+        }
+    }
+}
+
+fn spawn_notification_dispatcher() -> mpsc::SyncSender<forktty_core::NotificationItem> {
+    let (sender, receiver) = mpsc::sync_channel(NOTIFICATION_DISPATCH_QUEUE_CAPACITY);
+    // notify_rust's show() blocks on its own async runtime, and doing that from
+    // a tokio worker panics ("Cannot start a runtime from within a runtime"),
+    // killing the connection task that carried the request. Use one dedicated
+    // blocking worker with a bounded queue so repeated socket notifications
+    // cannot create unbounded native threads.
+    if let Err(err) = std::thread::Builder::new()
+        .name("forktty-notification-dispatch".to_string())
+        .spawn(move || {
+            for notification in receiver {
+                dispatch_notification_from_worker(&notification);
+            }
+        })
+    {
+        eprintln!("Failed to start desktop notification dispatch worker: {err}");
+    }
+    sender
+}
+
+fn dispatch_notification_from_worker(notification: &forktty_core::NotificationItem) {
+    let config = match config::load_config() {
+        Ok(config) => config,
+        Err(err) => {
+            // Surface the underlying cause so a misconfigured custom command or
+            // a corrupted config.toml is debuggable rather than silently
+            // turning into "default behavior with no custom command".
+            eprintln!("Falling back to default notification settings: {err}");
+            forktty_core::AppConfig::default()
+        }
+    };
+    for error in dispatch_notification(&config, notification) {
+        eprintln!(
+            "Failed to dispatch {} notification: {}",
+            error.channel, error.message
+        );
+    }
 }
 
 async fn open_worktree_workspace(
@@ -2364,6 +2382,9 @@ fn rollback_created_worktree_after_spawn_failure(
     info: &worktree::WorktreeInfo,
     spawn_error: String,
 ) -> String {
+    if !info.created {
+        return spawn_error;
+    }
     match worktree::remove(cwd, &info.worktree_name, true) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(
@@ -2558,6 +2579,32 @@ fn close_terminal_surface_if_present(
     }
 }
 
+fn forget_terminal_surface_if_present(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), String> {
+    match state.terminal.forget_surface(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn close_replacement_terminal_surface_if_present(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), String> {
+    match state.terminal.close(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(close_err) => {
+            let close_err = close_err.to_string();
+            if let Err(forget_err) = forget_terminal_surface_if_present(state, surface_id) {
+                return Err(format!("{close_err}; forget failed: {forget_err}"));
+            }
+            Err(close_err)
+        }
+    }
+}
+
 fn close_terminal_surfaces_if_present(
     state: &SocketAppState,
     surface_ids: &[String],
@@ -2592,16 +2639,6 @@ fn evict_hook_session_targets_for_surfaces(
         targets.remove_surface(surface_id);
     }
     Ok(())
-}
-
-fn forget_terminal_surface_if_present(
-    state: &SocketAppState,
-    surface_id: &str,
-) -> Result<(), String> {
-    match state.terminal.forget_surface(surface_id) {
-        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
-        Err(err) => Err(err.to_string()),
-    }
 }
 
 fn rollback_workspace_creation(
@@ -3804,26 +3841,6 @@ fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
     }
 }
 
-fn agent_kind_from_permission_status_key(key: &str) -> Option<AgentKind> {
-    let mut parts = key.split(':');
-    if parts.next()? != "agent" {
-        return None;
-    }
-    let provider = parts.next()?;
-    if parts.next()? != "permission" || parts.next().is_some() {
-        return None;
-    }
-    match provider {
-        "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
-        "codex" => Some(AgentKind::Codex),
-        "antigravity" | "agy" => Some(AgentKind::Antigravity),
-        "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
-        "gemini" => Some(AgentKind::Gemini),
-        "custom" => Some(AgentKind::Custom),
-        _ => None,
-    }
-}
-
 fn is_supported_status_color(color: &str) -> bool {
     matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || is_hex_status_color(color)
 }
@@ -3986,6 +4003,7 @@ fn prepare_hook_session_targets(
     let Some(session_id) = optional_non_blank_string_param(params, "hook_session_id")? else {
         return Ok(HookSessionEndGuard::none(state));
     };
+    ensure_max_text_size("hook_session_id", session_id)?;
     let session_id = session_id.to_string();
     let event_name = optional_non_blank_string_param(params, "hook_event_name")?;
     let evict_on_return = event_name == Some("session-end");
@@ -4698,7 +4716,7 @@ mod tests {
         HeadlessTerminalBackend, TerminalBackend, TerminalError, TerminalSurfaceState,
     };
     use git2::Repository;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
@@ -4890,7 +4908,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_request_resumes_claude_from_persisted_session_cwd() {
+    fn spawn_request_ignores_persisted_bypass_permission_mode() {
         let surface = forktty_core::Surface {
             id: "surface-agent".to_string(),
             workspace_id: "workspace-1".to_string(),
@@ -4918,11 +4936,7 @@ mod tests {
         assert_eq!(request.shell, "claude");
         assert_eq!(
             request.args,
-            vec![
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1",
-            ]
+            vec!["--resume".to_string(), "claude-session-1".to_string()]
         );
         assert_eq!(request.cwd, PathBuf::from("/tmp/forktty-project"));
     }
@@ -5212,6 +5226,97 @@ mod tests {
 
         fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
             Err(TerminalError::Backend("close failed".to_string()))
+        }
+
+        fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[derive(Debug)]
+    struct DirtyOnCloseBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+        active_children: Mutex<BTreeSet<String>>,
+        dirty_on_close: PathBuf,
+    }
+
+    impl DirtyOnCloseBackend {
+        fn new(initial: TerminalSurfaceState, dirty_on_close: PathBuf) -> Self {
+            let mut surfaces = BTreeMap::new();
+            let mut active_children = BTreeSet::new();
+            active_children.insert(initial.surface_id.clone());
+            surfaces.insert(initial.surface_id.clone(), initial);
+            Self {
+                surfaces: Mutex::new(surfaces),
+                active_children: Mutex::new(active_children),
+                dirty_on_close,
+            }
+        }
+
+        fn active_children(&self) -> BTreeSet<String> {
+            self.active_children.lock().unwrap().clone()
+        }
+    }
+
+    impl TerminalBackend for DirtyOnCloseBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.active_children
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(request.surface_id.clone());
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            fs::write(&self.dirty_on_close, "dirty\n")
+                .map_err(|err| TerminalError::Backend(err.to_string()))?;
+            self.active_children
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id);
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
         }
 
         fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
@@ -6627,6 +6732,7 @@ mod tests {
         let (state, _backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
         let oversized = "x".repeat(MAX_METADATA_TEXT_BYTES + 1);
 
         for (method, params, expected_field) in [
@@ -6649,6 +6755,17 @@ mod tests {
                 "notification.create",
                 json!({"workspace_id": workspace_id, "title": oversized, "body": "body"}),
                 "title",
+            ),
+            (
+                "notification.create",
+                json!({
+                    "workspace_id": workspace_id,
+                    "surface_id": surface_id,
+                    "hook_session_id": oversized,
+                    "title": "Prompt",
+                    "body": "body"
+                }),
+                "hook_session_id",
             ),
         ] {
             let error = dispatch(&state, method, params).await.unwrap_err();
@@ -7818,7 +7935,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hook_permission_mode_is_preserved_for_claude_resume() {
+    async fn hook_permission_mode_does_not_change_claude_resume_argv() {
         let (state, backend) = test_state();
         let (workspace_id, source_surface_id) = {
             let model = state.model.lock().unwrap();
@@ -7863,12 +7980,7 @@ mod tests {
         let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
         assert_eq!(
             health[0]["argv"],
-            json!([
-                "claude",
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1"
-            ])
+            json!(["claude", "--resume", "claude-session-1"])
         );
 
         let resumed = dispatch(
@@ -7882,25 +7994,16 @@ mod tests {
         let resumed_surface_id = resumed["surface"]["id"].as_str().unwrap();
         assert_eq!(
             resumed["argv"],
-            json!([
-                "claude",
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1"
-            ])
+            json!(["claude", "--resume", "claude-session-1"])
         );
         assert_eq!(
             backend.spawn_args(resumed_surface_id).unwrap(),
-            vec![
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1",
-            ]
+            vec!["--resume", "claude-session-1"]
         );
     }
 
     #[tokio::test]
-    async fn hook_permission_mode_is_preserved_for_codex_resume() {
+    async fn hook_permission_mode_does_not_change_codex_resume_argv() {
         let (state, _backend) = test_state();
         let (workspace_id, source_surface_id) = {
             let model = state.model.lock().unwrap();
@@ -7952,14 +8055,7 @@ mod tests {
 
         assert_eq!(
             resumed["argv"],
-            json!([
-                "codex",
-                "resume",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "-C",
-                "/tmp",
-                "codex-session-1"
-            ])
+            json!(["codex", "resume", "-C", "/tmp", "codex-session-1"])
         );
     }
 
@@ -8238,6 +8334,55 @@ mod tests {
             .list_workspaces()
             .iter()
             .all(|workspace| workspace.git_branch != branch_name));
+    }
+
+    #[tokio::test]
+    async fn worktree_create_preserves_existing_worktree_when_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/existing-spawn-rollback-{}", std::process::id());
+        let created = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            "../forktty-worktrees/{name}",
+        )
+        .unwrap();
+        let existing_path = created.path.clone();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+        let state = SocketAppState::new(
+            model.clone(),
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        assert!(Path::new(&existing_path).exists());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_ok());
+        let worktrees = worktree::list(repo_dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].branch, branch_name);
     }
 
     #[tokio::test]
@@ -8570,6 +8715,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn worktree_remove_last_workspace_closes_replacement_when_finish_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/socket-remove-finish-{}", std::process::id());
+        let info = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            &worktree_layout(),
+        )
+        .unwrap();
+        let worktree_cwd = PathBuf::from(&info.path);
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_worktree_workspace(
+                &info.branch,
+                &worktree_cwd,
+                &info.branch,
+                &info.worktree_name,
+            )
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(DirtyOnCloseBackend::new(
+            TerminalSurfaceState {
+                surface_id: surface_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: worktree_cwd.clone(),
+                shell: "/bin/sh".to_string(),
+                cols: 80,
+                rows: 24,
+            },
+            worktree_cwd.join("dirty-after-close.txt"),
+        ));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.remove",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("uncommitted changes"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["id"], workspace.id);
+        let backend_surfaces = backend.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, surface_id);
+        assert_eq!(backend.active_children(), BTreeSet::from([surface_id]));
+    }
+
+    #[tokio::test]
     async fn worktree_socket_rejects_unopened_repo_cwd() {
         let open_repo = make_temp_repo();
         let unopened_repo = make_temp_repo();
@@ -8779,7 +8984,11 @@ mod tests {
     /// adversarial params: the socket accepts NDJSON from any local client,
     /// so no params shape may panic the server (errors are fine).
     #[tokio::test]
+    #[serial_test::serial]
     async fn dispatch_never_panics_on_adversarial_params() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let _data_env = EnvGuard::set("XDG_DATA_HOME", data_dir.path().to_str().unwrap());
+
         let fixed = [
             Value::Null,
             json!({}),
@@ -10606,6 +10815,34 @@ mod tests {
             backend.spawn_args(surface_id).unwrap(),
             vec!["user@example.com"]
         );
+    }
+
+    #[test]
+    fn bootstrap_default_workspace_creates_new_workspace_if_none_exists() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        assert!(model.lock().unwrap().active_workspace().is_none());
+
+        bootstrap_default_workspace(&state, PathBuf::from("/foo/bar")).unwrap();
+
+        let m = model.lock().unwrap();
+        let workspace = m.active_workspace().unwrap();
+        assert_eq!(workspace.working_dir, PathBuf::from("/foo/bar"));
+
+        let surfaces = m.list_surfaces(Some(&workspace.id));
+        assert_eq!(surfaces.len(), 1);
+        let surface_id = &surfaces[0].id;
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert_eq!(shell, "/bin/sh");
     }
 
     #[test]
