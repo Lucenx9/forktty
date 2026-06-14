@@ -306,7 +306,6 @@ mod tests {
                 saved_userprofile,
             }
         }
-
     }
 
     impl<'a> Drop for EnvGuard<'a> {
