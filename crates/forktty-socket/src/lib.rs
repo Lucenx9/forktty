@@ -18,7 +18,7 @@ use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt}
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -57,10 +57,16 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// response to a slow reader still gets through.
 const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
+/// Pending desktop notification dispatch jobs. Dispatch can block in
+/// notify-rust/custom commands, so keep a small bounded queue rather than
+/// spawning one OS thread per socket request.
+const NOTIFICATION_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_DISPATCHER: OnceLock<mpsc::SyncSender<forktty_core::NotificationItem>> =
+    OnceLock::new();
 
 /// Methods advertised by `system.capabilities`. Every entry except
 /// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
@@ -2290,31 +2296,57 @@ fn notify_worktree_setup_warning(
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
-    let notification = notification.clone();
-    // Dispatch on a dedicated thread: notify_rust's show() blocks on its own
-    // async runtime, and doing that from a tokio worker panics ("Cannot start
-    // a runtime from within a runtime"), killing the connection task that
-    // carried the request. The thread also keeps config disk I/O off the
-    // server runtime. Dispatch is fire-and-forget either way (errors only
-    // reach stderr), so callers lose nothing by not joining.
-    std::thread::spawn(move || {
-        let config = match config::load_config() {
-            Ok(config) => config,
-            Err(err) => {
-                // Surface the underlying cause so a misconfigured custom command or
-                // a corrupted config.toml is debuggable rather than silently
-                // turning into "default behavior with no custom command".
-                eprintln!("Falling back to default notification settings: {err}");
-                forktty_core::AppConfig::default()
-            }
-        };
-        for error in dispatch_notification(&config, &notification) {
+    let dispatcher = NOTIFICATION_DISPATCHER.get_or_init(spawn_notification_dispatcher);
+    match dispatcher.try_send(notification.clone()) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(_)) => {
             eprintln!(
-                "Failed to dispatch {} notification: {}",
-                error.channel, error.message
+                "Dropping desktop notification dispatch because the bounded dispatch queue is full"
             );
         }
-    });
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            eprintln!("Dropping desktop notification dispatch because the dispatch worker stopped");
+        }
+    }
+}
+
+fn spawn_notification_dispatcher() -> mpsc::SyncSender<forktty_core::NotificationItem> {
+    let (sender, receiver) = mpsc::sync_channel(NOTIFICATION_DISPATCH_QUEUE_CAPACITY);
+    // notify_rust's show() blocks on its own async runtime, and doing that from
+    // a tokio worker panics ("Cannot start a runtime from within a runtime"),
+    // killing the connection task that carried the request. Use one dedicated
+    // blocking worker with a bounded queue so repeated socket notifications
+    // cannot create unbounded native threads.
+    if let Err(err) = std::thread::Builder::new()
+        .name("forktty-notification-dispatch".to_string())
+        .spawn(move || {
+            for notification in receiver {
+                dispatch_notification_from_worker(&notification);
+            }
+        })
+    {
+        eprintln!("Failed to start desktop notification dispatch worker: {err}");
+    }
+    sender
+}
+
+fn dispatch_notification_from_worker(notification: &forktty_core::NotificationItem) {
+    let config = match config::load_config() {
+        Ok(config) => config,
+        Err(err) => {
+            // Surface the underlying cause so a misconfigured custom command or
+            // a corrupted config.toml is debuggable rather than silently
+            // turning into "default behavior with no custom command".
+            eprintln!("Falling back to default notification settings: {err}");
+            forktty_core::AppConfig::default()
+        }
+    };
+    for error in dispatch_notification(&config, notification) {
+        eprintln!(
+            "Failed to dispatch {} notification: {}",
+            error.channel, error.message
+        );
+    }
 }
 
 async fn open_worktree_workspace(
