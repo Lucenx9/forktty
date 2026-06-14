@@ -4,6 +4,9 @@
 //! sqlite runs in WAL mode so a concurrent reader and writer do not block.
 
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
@@ -345,11 +348,14 @@ impl BookmarkStore {
             .path
             .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         let result = (|| -> Result<(), HistoryError> {
-            let mut tmp_file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(PRIVATE_FILE_MODE);
+            let mut tmp_file = options
                 .open(&tmp)
                 .map_err(|e| HistoryError::Io(e.to_string()))?;
+            set_private_permissions(&tmp)?;
             std::io::Write::write_all(&mut tmp_file, &bytes)
                 .map_err(|e| HistoryError::Io(e.to_string()))?;
             tmp_file
@@ -364,11 +370,44 @@ impl BookmarkStore {
     }
 }
 
+#[cfg(unix)]
+const PRIVATE_FILE_MODE: u32 = 0o600;
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), HistoryError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(PRIVATE_FILE_MODE);
+    let mut file = options
+        .open(path)
+        .map_err(|err| HistoryError::Io(err.to_string()))?;
+    set_private_permissions(path)?;
+    std::io::Write::write_all(&mut file, bytes).map_err(|err| HistoryError::Io(err.to_string()))?;
+    file.sync_all()
+        .map_err(|err| HistoryError::Io(err.to_string()))?;
+    set_private_permissions(path)
+}
+
+fn set_private_permissions(path: &Path) -> Result<(), HistoryError> {
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 fn backup_malformed_bookmarks(path: &Path, bytes: &[u8]) {
     let backup = reserve_unique_backup_path(path, "json.bak");
     if std::fs::rename(path, &backup).is_err() {
-        let _ = std::fs::write(&backup, bytes);
+        let _ = write_private_file(&backup, bytes);
         let _ = std::fs::remove_file(path);
+    } else {
+        let _ = set_private_permissions(&backup);
     }
 }
 
@@ -559,6 +598,11 @@ mod tests {
         assert!(matches!(err, HistoryError::Io(_)));
     }
 
+    #[cfg(unix)]
+    fn file_mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
     fn bm_store() -> (tempfile::TempDir, BookmarkStore) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bookmarks.json");
@@ -619,6 +663,32 @@ mod tests {
         assert_eq!(b2.list().len(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_save_forces_owner_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+
+        let mut b = BookmarkStore::open(&path).unwrap();
+        b.add("https://persist.test/?token=secret", "P").unwrap();
+
+        assert_eq!(file_mode(&path), PRIVATE_FILE_MODE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_save_replaces_world_readable_file_with_owner_only_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        std::fs::write(&path, "[]").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut b = BookmarkStore::open(&path).unwrap();
+        b.add("https://persist.test/?token=secret", "P").unwrap();
+
+        assert_eq!(file_mode(&path), PRIVATE_FILE_MODE);
+    }
+
     #[test]
     fn bookmark_malformed_file_starts_fresh_and_backs_up() {
         let dir = tempfile::tempdir().unwrap();
@@ -629,6 +699,9 @@ mod tests {
         // Original bytes moved alongside as a .bak so future opens do not repeat recovery.
         let bak = path.with_extension("json.bak");
         assert!(bak.exists());
+        assert_eq!(std::fs::read(&bak).unwrap(), b"{ this is not valid json");
+        #[cfg(unix)]
+        assert_eq!(file_mode(&bak), PRIVATE_FILE_MODE);
         assert!(!path.exists());
     }
 
