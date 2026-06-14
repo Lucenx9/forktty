@@ -6,8 +6,13 @@ use forktty_core::{ProfileId, ProfileMeta};
 
 use crate::model::{ImportDestination, ImportEntry, ImportMode, ImportPlan, SourceProfile};
 
-fn normalized(name: &str) -> String {
-    name.trim().to_lowercase()
+fn normalized<'a>(name: &'a str) -> std::borrow::Cow<'a, str> {
+    let trimmed = name.trim();
+    if trimmed.chars().any(|c| c.is_uppercase()) {
+        std::borrow::Cow::Owned(trimmed.to_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(trimmed)
+    }
 }
 
 /// First destination whose display name matches `source_name` (trimmed, case-insensitive).
@@ -31,13 +36,13 @@ fn next_create_name(base: &str, taken: &std::collections::HashSet<String>) -> St
     } else {
         trimmed
     };
-    if !taken.contains(&normalized(resolved)) {
+    if !taken.contains(normalized(resolved).as_ref()) {
         return resolved.to_string();
     }
     let mut suffix = 2;
     loop {
         let candidate = format!("{resolved} ({suffix})");
-        if !taken.contains(&normalized(&candidate)) {
+        if !taken.contains(normalized(&candidate).as_ref()) {
             return candidate;
         }
         suffix += 1;
@@ -79,7 +84,7 @@ pub fn resolve_separate_profiles_plan(
 ) -> ImportPlan {
     let mut reserved: std::collections::HashSet<String> = destinations
         .iter()
-        .map(|d| normalized(&d.display_name))
+        .map(|d| normalized(&d.display_name).into_owned())
         .collect();
     let entries = selected
         .iter()
@@ -89,7 +94,7 @@ pub fn resolve_separate_profiles_plan(
                 ImportDestination::Existing(id)
             } else {
                 let name = next_create_name(&s.display_name, &reserved);
-                reserved.insert(normalized(&name));
+                reserved.insert(normalized(&name).into_owned());
                 ImportDestination::Create(name)
             };
             ImportEntry {
@@ -141,7 +146,7 @@ mod tests {
         let names: Vec<_> = plan
             .entries
             .iter()
-            .map(|e| e.sources[0].display_name.clone())
+            .map(|e| e.sources[0].display_name.as_str())
             .collect();
         assert_eq!(names, vec!["You", "austin"]);
     }
