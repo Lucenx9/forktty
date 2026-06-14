@@ -1667,9 +1667,10 @@ mod tests {
         // Advance the worktree's branch ahead of the base checkout.
         commit_file(Path::new(&info.path), "feature.txt", "from worktree\n");
 
-        // Pass the worktree's own directory as the repo path. Before the fix
-        // this resolved to the worktree (whose HEAD is the branch itself),
-        // producing a self-merge that always reported "Already up to date".
+        // Pass the worktree's own directory as the repo path. This must resolve
+        // to the base checkout to avoid resolving to the worktree itself (whose
+        // HEAD is the branch itself), which would produce a self-merge that
+        // always reports "Already up to date".
         let result = merge(&info.path, &info.worktree_name).unwrap();
 
         assert!(
