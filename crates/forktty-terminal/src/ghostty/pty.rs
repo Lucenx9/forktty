@@ -617,6 +617,25 @@ mod tests {
     }
 
     #[test]
+    fn pty_os_resize_works() {
+        let request =
+            test_spawn_request_for_shell("/bin/sh").with_args(["-c", "read _; stty size"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        session
+            .resize(PtySize {
+                cols: 120,
+                rows: 40,
+            })
+            .unwrap();
+        session.write_all(b"\n").unwrap();
+        let out = session
+            .read_until(b"40 120\n", Duration::from_secs(2))
+            .unwrap();
+        let out_str = String::from_utf8_lossy(&out);
+        assert!(out_str.contains("40 120"), "output: {:?}", out_str);
+    }
+
+    #[test]
     fn pty_resize_tracks_requested_size() {
         let request = test_spawn_request_for_shell("/bin/sh").with_args(["-lc", "sleep 1"]);
         let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
