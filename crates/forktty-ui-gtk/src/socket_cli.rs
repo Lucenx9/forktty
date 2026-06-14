@@ -7119,13 +7119,17 @@ impl<'a> HookActionBuilder<'a> {
         ]
     }
 
+    fn clear_status(&self, key: &str) -> (String, Value) {
+        let mut clear = self.target.clone();
+        clear.insert("key".to_string(), Value::String(key.to_string()));
+        (
+            "metadata.clear_status".to_string(),
+            add_hook_metadata(clear, self.spec, self.event, self.payload, self.order),
+        )
+    }
+
     fn handle_stop(&self) -> Vec<(String, Value)> {
-        let mut clear_permission = self.target.clone();
-        clear_permission.insert(
-            "key".to_string(),
-            Value::String(self.permission_key.clone()),
-        );
-        vec![
+        let mut actions = vec![
             self.log(
                 "info",
                 if self.message.is_empty() {
@@ -7135,17 +7139,16 @@ impl<'a> HookActionBuilder<'a> {
                 },
             ),
             self.status("Ready", "green", self.event),
-            (
-                "metadata.clear_status".to_string(),
-                add_hook_metadata(
-                    clear_permission,
-                    self.spec,
-                    self.event,
-                    self.payload,
-                    self.order,
-                ),
-            ),
-        ]
+        ];
+        if !self
+            .spec
+            .hook_entries
+            .iter()
+            .any(|entry| entry.hook_event_name == "session-end")
+        {
+            actions.push(self.clear_status(&self.permission_key));
+        }
+        actions
     }
 
     fn handle_teammate_idle(&self) -> Vec<(String, Value)> {
@@ -7163,29 +7166,10 @@ impl<'a> HookActionBuilder<'a> {
     }
 
     fn handle_session_end(&self) -> Vec<(String, Value)> {
-        let mut clear = self.target.clone();
-        clear.insert("key".to_string(), Value::String(self.key.clone()));
-        let mut clear_permission = self.target.clone();
-        clear_permission.insert(
-            "key".to_string(),
-            Value::String(self.permission_key.clone()),
-        );
         vec![
             self.log("info", format!("{} session ended", self.spec.label)),
-            (
-                "metadata.clear_status".to_string(),
-                add_hook_metadata(clear, self.spec, self.event, self.payload, self.order),
-            ),
-            (
-                "metadata.clear_status".to_string(),
-                add_hook_metadata(
-                    clear_permission,
-                    self.spec,
-                    self.event,
-                    self.payload,
-                    self.order,
-                ),
-            ),
+            self.clear_status(&self.key),
+            self.clear_status(&self.permission_key),
         ]
     }
 
@@ -9226,7 +9210,22 @@ mod tests {
     }
 
     #[test]
-    fn stop_clears_permission_status() {
+    fn stop_preserves_permission_status_when_session_end_hook_exists() {
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "stop",
+            &json!({ "session_id": "sess-claude-stop" }),
+            "11",
+        );
+        assert_eq!(actions.len(), 2);
+        for (method, params) in &actions {
+            assert_ne!(method, "metadata.clear_status");
+            assert_ne!(params["key"], "agent:claude:permission");
+        }
+    }
+
+    #[test]
+    fn stop_clears_permission_status_when_no_session_end_hook_exists() {
         let actions = build_hook_actions(
             agent_spec("codex").unwrap(),
             "stop",
