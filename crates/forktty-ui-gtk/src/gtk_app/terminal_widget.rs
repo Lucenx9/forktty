@@ -1719,7 +1719,12 @@ fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String
 /// The text currently on screen, joined across soft wraps and right-trimmed.
 fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFrame) -> String {
     let rows = frame.rows.iter().map(|row| {
-        let text: String = row.cells.iter().map(|cell| cell.text.as_str()).collect();
+        let text: String = row
+            .cells
+            .iter()
+            .filter(|cell| !cell.invisible)
+            .map(|cell| cell.text.as_str())
+            .collect();
         (text, row.wrapped)
     });
     join_rows_honoring_wrap(rows).trim_end().to_string()
@@ -1759,6 +1764,7 @@ fn selection_text_from_frame(
         let (from, to) = selection_cols_for_row(start, end, row_idx, row.cells.len())?;
         let text: String = row.cells[from..to]
             .iter()
+            .filter(|cell| !cell.invisible)
             .map(|cell| cell.text.as_str())
             .collect();
         Some((text, row.wrapped))
@@ -2409,6 +2415,13 @@ mod selection_tests {
         );
     }
 
+    #[test]
+    fn viewport_text_omits_invisible_cells() {
+        let frame = frame_for_lines(b"safe \x1b[8mhidden\x1b[0mtext");
+
+        assert_eq!(viewport_text_from_frame(&frame), "safe text");
+    }
+
     // Regression for the Fedora SIGABRT: wheel scroll over a pane with mouse
     // tracking off used to double-borrow the runtime RefCell (the match held
     // the write_mouse RefMut across the viewport-scroll re-borrow), and the
@@ -2708,6 +2721,19 @@ mod selection_tests {
         );
 
         assert_eq!(text, "alpha");
+    }
+
+    #[test]
+    fn selection_text_omits_invisible_cells() {
+        let frame = frame_for_lines(b"safe \x1b[8mhidden\x1b[0mtext");
+
+        let text = selection_text_from_frame(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 15 },
+        );
+
+        assert_eq!(text, "safe text");
     }
 
     #[test]

@@ -1,6 +1,5 @@
 use super::{events::GhosttyEvent, metadata::MetadataParser};
 use libghostty_vt::{
-    fmt::{Format, Formatter, FormatterOptions},
     focus::Event as GhosttyFocusEvent,
     key::{
         Action as GhosttyKeyAction, Encoder as GhosttyKeyEncoder, Event as GhosttyKeyEvent,
@@ -512,7 +511,7 @@ impl GhosttyCore {
     /// line `i` of the dump corresponds to grid row `i` counted from the top
     /// of the scrollback; only trailing blank rows may be omitted.
     pub fn full_text(&self) -> Result<String> {
-        self.format_plain_text(false, false)
+        self.visible_grid_text(false)
     }
 
     /// Like [`Self::full_text`], but soft-wrapped rows are joined back into
@@ -520,7 +519,7 @@ impl GhosttyCore {
     /// point. This is what a select-all copy wants: pasting the result back
     /// into a shell must not split a wrapped command across lines.
     pub fn full_text_unwrapped(&self) -> Result<String> {
-        self.format_plain_text(false, true)
+        self.visible_grid_text(true)
     }
 
     pub fn viewport_position(&self) -> Result<TerminalViewportPosition> {
@@ -755,16 +754,54 @@ impl GhosttyCore {
         };
     }
 
-    fn format_plain_text(&self, trim: bool, unwrap: bool) -> Result<String> {
-        let mut formatter = Formatter::new(
-            &self.terminal,
-            FormatterOptions::new()
-                .with_format(Format::Plain)
-                .with_trim(trim)
-                .with_unwrap(unwrap),
-        )?;
-        let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
-        Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
+    fn visible_grid_text(&self, unwrap: bool) -> Result<String> {
+        let cols = self.terminal.cols()?;
+        let rows = self.terminal.total_rows()?;
+        let mut grid_rows = Vec::with_capacity(rows);
+
+        for row in 0..rows {
+            let mut text = String::new();
+            let mut wrapped = false;
+            for col in 0..cols {
+                let grid_ref = self.terminal.grid_ref(Point::Screen(PointCoordinate {
+                    x: col,
+                    y: row as u32,
+                }))?;
+                if col == 0 {
+                    wrapped = grid_ref.row()?.is_wrapped()?;
+                }
+                if grid_ref.style()?.invisible {
+                    continue;
+                }
+                let mut graphemes = ['\0'; 16];
+                let len = match grid_ref.graphemes(&mut graphemes) {
+                    Ok(len) => len,
+                    Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                        let mut graphemes = vec!['\0'; required];
+                        let len = grid_ref.graphemes(&mut graphemes)?;
+                        text.extend(graphemes[..len].iter());
+                        continue;
+                    }
+                    Err(err) => return Err(err),
+                };
+                text.extend(graphemes[..len].iter());
+            }
+            grid_rows.push((text.trim_end().to_string(), wrapped));
+        }
+
+        let Some(last_text_row) = grid_rows.iter().rposition(|(text, _)| !text.is_empty()) else {
+            return Ok(String::new());
+        };
+
+        let mut output = String::new();
+        for (index, (text, wrapped)) in grid_rows.iter().take(last_text_row + 1).enumerate() {
+            output.push_str(text);
+            if index < last_text_row && (!unwrap || !wrapped) {
+                output.push('\n');
+            }
+        }
+
+        Ok(output)
     }
 }
 
@@ -1634,6 +1671,21 @@ mod tests {
 
         assert_eq!(frame.rows[0].cells[0].text, "s");
         assert!(frame.rows[0].cells[0].invisible);
+    }
+
+    #[test]
+    fn full_text_omits_invisible_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"safe\x1b[8m; rm -rf /\x1b[0m text").unwrap();
+
+        assert_eq!(core.full_text().unwrap(), "safe text");
+        assert_eq!(core.full_text_unwrapped().unwrap(), "safe text");
     }
 
     #[test]
