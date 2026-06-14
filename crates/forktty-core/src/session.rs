@@ -302,6 +302,7 @@ fn ensure_session_parent_dir(parent: &Path) -> Result<(), SessionError> {
                 Err(err) => return Err(err.into()),
             }
         }
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
     }
     #[cfg(not(unix))]
     {
@@ -954,6 +955,25 @@ mod tests {
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_lock_hardens_existing_parent_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("state").join("forktty");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();
+        let path = parent.join("session.lock");
+
+        let _lock = acquire_session_lock_at(&path).expect("lock");
+
+        assert_eq!(
+            fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+            0o700
         );
     }
 
