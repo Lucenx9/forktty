@@ -1168,6 +1168,49 @@ mod tests {
     }
 
     #[test]
+    fn finish_rejects_worktree_dirtied_after_prepare() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "dirty-later", "nested").unwrap();
+        let prepared = prepare_remove(dir.path().to_str().unwrap(), "dirty-later").unwrap();
+
+        fs::write(Path::new(&info.path).join("late-dirty.txt"), "dirty").unwrap();
+
+        let result = prepared.finish(true);
+        assert!(matches!(result, Err(WorktreeError::WorktreeDirty(_))));
+        assert!(Path::new(&info.path).exists());
+    }
+
+    #[test]
+    fn finish_succeeds_if_worktree_directory_removed_after_prepare() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "remove-dir-early", "nested").unwrap();
+        let prepared = prepare_remove(dir.path().to_str().unwrap(), "remove-dir-early").unwrap();
+
+        fs::remove_dir_all(&info.path).unwrap();
+
+        prepared.finish(true).unwrap();
+
+        let stale = list(dir.path().to_str().unwrap()).unwrap();
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn finish_fails_if_worktree_pruned_before_finish() {
+        let dir = make_repo();
+        let _info = create(dir.path().to_str().unwrap(), "prune-early", "nested").unwrap();
+        let prepared = prepare_remove(dir.path().to_str().unwrap(), "prune-early").unwrap();
+
+        let repo = Repository::open(dir.path()).unwrap();
+        let wt = repo.find_worktree("prune-early").unwrap();
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true).working_tree(true);
+        wt.prune(Some(&mut opts)).unwrap();
+
+        let result = prepared.finish(true);
+        assert!(matches!(result, Err(WorktreeError::NotFound(_))));
+    }
+
+    #[test]
     fn create_lists_and_removes_sibling_worktree() {
         let parent = tempfile::tempdir().unwrap();
         let repo_dir = parent.path().join("repo");
