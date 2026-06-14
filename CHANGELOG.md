@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Security
+- Terminal smooth-scroll handling now rejects non-finite deltas and caps per-event line replay, preventing oversized synthetic scroll events from monopolizing the UI thread while mouse tracking is active.
 - Browser automation now injects and evaluates its driver in an isolated WebKit script world, preventing visited pages from detecting or tampering with `window.__forktty`.
 - Chromium cookie import now verifies the version-24+ encrypted host digest before accepting decrypted values, rejecting malformed or cross-host cookie rows.
 - Agent resume PTY spawns now resolve bare provider commands using only absolute `PATH` entries before applying the recorded session cwd, preventing relative/empty `PATH` entries from executing project-local binaries during restore or resume.
@@ -20,6 +21,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Browser imports now copy temporary SQLite databases and WAL/SHM sidecars into a private `0700` directory with newly-created `0600` files, preventing local temp-file races from exposing browser data.
 - Browser-feature socket dispatch fuzz tests now isolate `XDG_DATA_HOME`, preventing adversarial method sweeps from clearing a developer's real browser history.
 - `forktty events` now mirrors lag notices to stderr regardless of the JSON object key order used by the socket server.
 - Browser import planning now lowercases Unicode titlecase profile names before matching and de-duplicating destinations, preventing duplicate-looking profile creation.
