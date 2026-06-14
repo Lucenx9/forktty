@@ -523,6 +523,15 @@ impl GhosttyCore {
         self.format_plain_text(false, true)
     }
 
+    /// Plain-text dump for clipboard select-all: scrollback plus screen,
+    /// soft-wrapped rows rejoined, with invisible/spacer cells omitted.
+    pub fn visible_full_text_unwrapped(&self) -> Result<String> {
+        let rows = self.visible_screen_rows()?;
+        Ok(join_rows_honoring_wrap(rows.into_iter())
+            .trim_end()
+            .to_string())
+    }
+
     pub fn viewport_position(&self) -> Result<TerminalViewportPosition> {
         let scrollbar = self.terminal.scrollbar()?;
         Ok(TerminalViewportPosition {
@@ -769,6 +778,73 @@ impl GhosttyCore {
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
+
+    fn visible_screen_rows(&self) -> Result<Vec<(String, bool)>> {
+        let cols = self.terminal.cols()?;
+        let total_rows = self.terminal.total_rows()?;
+        let mut rows = Vec::with_capacity(total_rows);
+        for y in 0..total_rows {
+            let wrapped = if cols == 0 {
+                false
+            } else {
+                self.terminal
+                    .grid_ref(Point::Screen(PointCoordinate { x: 0, y: y as u32 }))?
+                    .row()?
+                    .is_wrapped()?
+            };
+            let mut text = String::new();
+            for x in 0..cols {
+                let grid_ref = self
+                    .terminal
+                    .grid_ref(Point::Screen(PointCoordinate { x, y: y as u32 }))?;
+                let style = grid_ref.style()?;
+                let cell = grid_ref.cell()?;
+                if style.invisible
+                    || matches!(cell.wide()?, CellWide::SpacerTail | CellWide::SpacerHead)
+                {
+                    continue;
+                }
+                push_grid_ref_graphemes(&grid_ref, &mut text)?;
+            }
+            rows.push((text, wrapped));
+        }
+        Ok(rows)
+    }
+}
+
+fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String {
+    let mut out = String::new();
+    let mut rows = rows.peekable();
+    while let Some((text, wrapped)) = rows.next() {
+        let has_next = rows.peek().is_some();
+        if wrapped && has_next {
+            out.push_str(&text);
+        } else {
+            out.push_str(text.trim_end());
+            if has_next {
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn push_grid_ref_graphemes(
+    grid_ref: &libghostty_vt::screen::GridRef<'_>,
+    out: &mut String,
+) -> Result<()> {
+    let mut buf = vec!['\0'; 4];
+    let len = loop {
+        match grid_ref.graphemes(&mut buf) {
+            Ok(len) => break len,
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                buf.resize(required, '\0');
+            }
+            Err(err) => return Err(err),
+        }
+    };
+    out.extend(buf[..len].iter().copied());
+    Ok(())
 }
 
 const HYPERLINK_URI_INITIAL_BUFFER_BYTES: usize = 1024;
@@ -1869,6 +1945,27 @@ mod tests {
                 .lines()
                 .collect::<Vec<_>>(),
             ["abcdefghijklmno", "tail"]
+        );
+    }
+
+    #[test]
+    fn visible_full_text_unwrapped_omits_invisible_cells_in_scrollback() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"safe \x1b[8mSECRET\x1b[0mtext\r\nnext\r\nbottom")
+            .unwrap();
+
+        assert_eq!(
+            core.visible_full_text_unwrapped()
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["safe text", "next", "bottom"]
         );
     }
 
