@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[derive(Error, Debug)]
 pub enum SessionError {
@@ -156,13 +156,15 @@ pub fn acquire_session_lock() -> Result<SessionLock, SessionError> {
 
 fn acquire_session_lock_at(path: &Path) -> Result<SessionLock, SessionError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_session_parent_dir(parent)?;
     }
     let mut file = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
+        .mode(0o600)
         .open(path)?;
+    apply_session_permissions(path)?;
     match file.try_lock() {
         Ok(()) => {
             // Record the owner pid so a refused second instance can name it.
@@ -914,6 +916,45 @@ mod tests {
         }
         drop(lock);
         acquire_session_lock_at(&path).expect("relock after drop");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_lock_creates_private_parent_and_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("state").join("forktty");
+        let path = parent.join("session.lock");
+
+        let _lock = acquire_session_lock_at(&path).expect("lock");
+
+        assert_eq!(
+            fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_lock_hardens_existing_lock_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.lock");
+        fs::write(&path, b"stale pid\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let _lock = acquire_session_lock_at(&path).expect("lock");
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
