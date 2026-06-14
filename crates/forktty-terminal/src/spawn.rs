@@ -495,7 +495,12 @@ mod tests {
                 "{stripped} must be stripped"
             );
         }
-        for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH", "OTHER_VAR"] {
+        for kept in [
+            "FORKTTY_APPIMAGE",
+            "FORKTTY_APPIMAGE_DIR",
+            "PATH",
+            "OTHER_VAR",
+        ] {
             assert!(!is_appimage_runtime_env(kept), "{kept} must survive");
         }
     }
