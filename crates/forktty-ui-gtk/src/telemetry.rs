@@ -6,15 +6,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[allow(dead_code)]
 const TELEMETRY_ENDPOINT: &str = "https://forktty-site.vercel.app/api/telemetry/ping";
+#[allow(dead_code)]
 const TELEMETRY_STAMP_FILE: &str = "telemetry-ping.json";
+#[allow(dead_code)]
 const HTTP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 struct TelemetryStamp {
     last_ping_date: String,
 }
 
+#[allow(dead_code)]
 pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
     if !config.telemetry.anonymous_ping || !valid_endpoint(TELEMETRY_ENDPOINT) {
         return;
@@ -37,12 +42,14 @@ pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
     });
 }
 
+#[allow(dead_code)]
 fn telemetry_stamp_path() -> Option<PathBuf> {
     dirs::state_dir()
         .or_else(dirs::data_local_dir)
         .map(|base| base.join("forktty").join(TELEMETRY_STAMP_FILE))
 }
 
+#[allow(dead_code)]
 fn now_unix_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -50,6 +57,7 @@ fn now_unix_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+#[allow(dead_code)]
 fn utc_date_from_unix_seconds(seconds: i64) -> String {
     Utc.timestamp_opt(seconds, 0)
         .single()
@@ -58,10 +66,12 @@ fn utc_date_from_unix_seconds(seconds: i64) -> String {
         .to_string()
 }
 
+#[allow(dead_code)]
 fn ping_due(enabled: bool, last_ping_date: Option<&str>, today: &str) -> bool {
     enabled && last_ping_date != Some(today)
 }
 
+#[allow(dead_code)]
 fn daily_ping_payload(version: &str, date: &str) -> Value {
     json!({
         "schema": 1,
@@ -72,12 +82,14 @@ fn daily_ping_payload(version: &str, date: &str) -> Value {
     })
 }
 
+#[allow(dead_code)]
 fn read_last_ping_date(path: &Path) -> Option<String> {
     let bytes = fs::read(path).ok()?;
     let stamp = serde_json::from_slice::<TelemetryStamp>(&bytes).ok()?;
     Some(stamp.last_ping_date)
 }
 
+#[allow(dead_code)]
 fn record_ping_attempt(path: &Path, date: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
@@ -107,6 +119,7 @@ fn record_ping_attempt(path: &Path, date: &str) -> std::io::Result<()> {
     result
 }
 
+#[allow(dead_code)]
 fn send_daily_ping(endpoint: &str, version: &str, date: &str) -> Result<(), String> {
     if !valid_endpoint(endpoint) {
         return Err("telemetry endpoint must use https".to_string());
@@ -132,6 +145,7 @@ fn send_daily_ping(endpoint: &str, version: &str, date: &str) -> Result<(), Stri
     }
 }
 
+#[allow(dead_code)]
 fn valid_endpoint(endpoint: &str) -> bool {
     endpoint.starts_with("https://")
 }
