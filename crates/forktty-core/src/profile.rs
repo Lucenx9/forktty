@@ -3,6 +3,8 @@
 //! each `Browser` surface carries a `ProfileId`.
 
 use std::fmt;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -174,10 +176,20 @@ impl ProfileStore {
             .path
             .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         let result = (|| -> Result<(), ProfileError> {
-            let mut tmp_file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut open_options = std::fs::OpenOptions::new();
+            open_options.write(true).create_new(true);
+            #[cfg(unix)]
+            let mode = std::fs::metadata(&self.path)
+                .map(|metadata| metadata.permissions().mode() & 0o777)
+                .unwrap_or(0o600);
+            #[cfg(unix)]
+            open_options.mode(0o600);
+            let mut tmp_file = open_options
                 .open(&tmp_path)
+                .map_err(|e| ProfileError::Io(e.to_string()))?;
+            #[cfg(unix)]
+            tmp_file
+                .set_permissions(std::fs::Permissions::from_mode(mode))
                 .map_err(|e| ProfileError::Io(e.to_string()))?;
             std::io::Write::write_all(&mut tmp_file, &bytes)
                 .map_err(|e| ProfileError::Io(e.to_string()))?;
@@ -367,6 +379,21 @@ mod tests {
             Err(ProfileError::InvalidInput(_))
         ));
         assert_eq!(store.list().len(), 1); // nothing persisted
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_preserves_existing_file_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.json");
+        std::fs::write(&path, serde_json::to_vec(&vec![default_meta()]).unwrap()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let mut store = ProfileStore::load(path.clone()).unwrap();
+        store.create("Work").unwrap();
+
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
