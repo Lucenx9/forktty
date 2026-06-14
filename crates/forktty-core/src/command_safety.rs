@@ -35,12 +35,15 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
             | "csh"
             | "dash"
             | "fish"
+            | "hush"
             | "ksh"
+            | "lksh"
             | "mksh"
             | "oksh"
             | "posh"
             | "pwsh"
             | "rbash"
+            | "rksh"
             | "tcsh"
             | "xonsh"
             | "yash"
@@ -218,8 +221,14 @@ mod tests {
     #[test]
     fn shell_trampoline_detects_common_shells() {
         assert!(is_shell_trampoline("/bin/sh", &["-c"]));
+        assert!(is_shell_trampoline("/bin/ash", &["-c"]));
         assert!(is_shell_trampoline("/usr/bin/bash", &["-c"]));
         assert!(is_shell_trampoline("/bin/rbash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/lksh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/mksh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/pwsh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/rbash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/yash", &["-c"]));
         assert!(is_shell_trampoline("/usr/bin/zsh", &["-c"]));
         assert!(is_shell_trampoline("/opt/homebrew/bin/tcsh", &["-c"]));
     }
@@ -312,6 +321,10 @@ mod tests {
             "/usr/bin/ssh",
             &["-c", "aes128-ctr", "host"]
         ));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/mosh",
+            &["--ssh=ssh -p 2222", "host"]
+        ));
         assert!(!is_shell_trampoline("/usr/bin/mosh", &["-c", "256"]));
     }
 
@@ -326,6 +339,10 @@ mod tests {
     #[test]
     fn validate_worktree_name_accepts_and_trims() {
         assert_eq!(validate_worktree_name(" feature/x ").unwrap(), "feature/x");
+        assert_eq!(
+            validate_worktree_name(&"x".repeat(255)).unwrap(),
+            "x".repeat(255)
+        );
     }
 
     #[test]
@@ -360,11 +377,31 @@ mod tests {
     fn validate_worktree_name_rejects_unsafe_inputs() {
         assert_eq!(validate_worktree_name(""), Err(WorktreeNameError::Empty));
         assert_eq!(
+            validate_worktree_name("   \t  "),
+            Err(WorktreeNameError::Empty)
+        );
+        assert_eq!(
             validate_worktree_name("../escape"),
             Err(WorktreeNameError::UnsafeSegment)
         );
         assert_eq!(
             validate_worktree_name("feature//empty"),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("/feature"),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("feature/"),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("feature/."),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("."),
             Err(WorktreeNameError::UnsafeSegment)
         );
         assert_eq!(
@@ -377,6 +414,10 @@ mod tests {
         );
         assert_eq!(
             validate_worktree_name("feature\nname"),
+            Err(WorktreeNameError::UnsupportedCharacters)
+        );
+        assert_eq!(
+            validate_worktree_name("feature\0name"),
             Err(WorktreeNameError::UnsupportedCharacters)
         );
         assert_eq!(
