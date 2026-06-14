@@ -6,7 +6,7 @@ use forktty_core::{
     AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError,
     BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
     NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
-    MAX_BROWSER_SCRIPT_BYTES,
+    MAX_BROWSER_SCRIPT_BYTES, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use serde_json::{json, Value};
@@ -31,7 +31,6 @@ const MAX_TERMINAL_TEXT_BYTES: usize = 512 * 1024;
 const DEFAULT_CAPTURE_TAIL_LINES: usize = 80;
 const MAX_CAPTURE_TAIL_LINES: usize = 5_000;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
-const MAX_BROWSER_URL_BYTES: usize = 8_192;
 const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
