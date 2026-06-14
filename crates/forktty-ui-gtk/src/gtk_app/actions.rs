@@ -179,9 +179,9 @@ pub(super) fn install_actions(
             // Read-modify-write of the config file off the main thread; the
             // toggle itself must not wait on disk.
             std::thread::spawn(move || {
-                let mut next = config::load_config().unwrap_or_default();
-                next.appearance.sidebar_visible = visible;
-                if let Err(err) = config::save_config(&next) {
+                if let Err(err) = config::update_config(|next| {
+                    next.appearance.sidebar_visible = visible;
+                }) {
                     eprintln!("forktty: failed to persist sidebar_visible: {err}");
                 }
             });
