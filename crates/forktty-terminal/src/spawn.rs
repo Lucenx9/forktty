@@ -486,14 +486,16 @@ mod tests {
             "APPDIR",
             "ARGV0",
             "OWD",
+            "DESKTOPINTEGRATION",
             "APPIMAGE_EXTRACT_AND_RUN",
+            "APPIMAGE_TEST",
         ] {
             assert!(
                 is_appimage_runtime_env(stripped),
                 "{stripped} must be stripped"
             );
         }
-        for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH"] {
+        for kept in ["FORKTTY_APPIMAGE", "FORKTTY_APPIMAGE_DIR", "PATH", "OTHER_VAR"] {
             assert!(!is_appimage_runtime_env(kept), "{kept} must survive");
         }
     }
