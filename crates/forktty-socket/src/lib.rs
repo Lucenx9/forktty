@@ -8729,7 +8729,11 @@ mod tests {
     /// adversarial params: the socket accepts NDJSON from any local client,
     /// so no params shape may panic the server (errors are fine).
     #[tokio::test]
+    #[serial_test::serial]
     async fn dispatch_never_panics_on_adversarial_params() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let _data_env = EnvGuard::set("XDG_DATA_HOME", data_dir.path().to_str().unwrap());
+
         let fixed = [
             Value::Null,
             json!({}),
