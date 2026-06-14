@@ -1,6 +1,8 @@
 use super::*;
 use forktty_terminal::ghostty::core::TerminalViewportPosition;
 
+const MAX_SEARCH_MATCHES: usize = 10_000;
+
 /// One occurrence of the search query in the scrollback text dump. Cell
 /// columns are intentionally not stored: the highlight is recomputed from the
 /// rendered frame after scrolling, so wide cells and spacers stay correct.
@@ -18,6 +20,7 @@ pub(super) struct SearchMatch {
 pub(super) struct SearchStatus {
     pub(super) current: usize,
     pub(super) total: usize,
+    pub(super) capped: bool,
 }
 
 impl SearchStatus {
@@ -25,6 +28,15 @@ impl SearchStatus {
         Self {
             current: 0,
             total: 0,
+            capped: false,
+        }
+    }
+
+    pub(super) fn label(&self) -> String {
+        if self.capped {
+            format!("{}/{}+", self.current, self.total)
+        } else {
+            format!("{}/{}", self.current, self.total)
         }
     }
 }
@@ -39,6 +51,7 @@ pub(super) struct SearchCache {
     pub(super) text: String,
     pub(super) query: String,
     pub(super) matches: Vec<SearchMatch>,
+    pub(super) capped: bool,
 }
 
 fn chars_eq_ignore_case(a: char, b: char) -> bool {
@@ -53,12 +66,13 @@ fn chars_eq_ignore_case(a: char, b: char) -> bool {
     a.to_lowercase().eq(b.to_lowercase())
 }
 
-/// Start indices of the non-overlapping case-insensitive occurrences of
-/// `needle` in `haystack`.
-fn char_match_starts(haystack: &[char], needle: &[char]) -> Vec<usize> {
-    let mut starts = Vec::new();
+fn for_each_char_match_start(
+    haystack: &[char],
+    needle: &[char],
+    mut visit: impl FnMut(usize) -> bool,
+) {
     if needle.is_empty() {
-        return starts;
+        return;
     }
     let mut index = 0;
     while index + needle.len() <= haystack.len() {
@@ -67,22 +81,45 @@ fn char_match_starts(haystack: &[char], needle: &[char]) -> Vec<usize> {
             .zip(needle)
             .all(|(a, b)| chars_eq_ignore_case(*a, *b));
         if matched {
-            starts.push(index);
+            if !visit(index) {
+                return;
+            }
             index += needle.len();
         } else {
             index += 1;
         }
     }
+}
+
+/// Start indices of the non-overlapping case-insensitive occurrences of
+/// `needle` in `haystack`.
+fn char_match_starts(haystack: &[char], needle: &[char]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    for_each_char_match_start(haystack, needle, |index| {
+        starts.push(index);
+        true
+    });
     starts
 }
 
-/// All case-insensitive matches of `query` in `text`, in reading order.
-/// `text` is a full scrollback dump (potentially tens of MB), so the scan
-/// reuses one haystack buffer instead of allocating per line.
-pub(super) fn find_matches(text: &str, query: &str) -> Vec<SearchMatch> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SearchMatches {
+    pub(super) matches: Vec<SearchMatch>,
+    pub(super) capped: bool,
+}
+
+/// Case-insensitive matches of `query` in `text`, in reading order, capped to
+/// a bounded number of stored results. Terminal output is untrusted and a
+/// repetitive full scrollback can contain millions of hits for a short query;
+/// bounding the match list keeps search memory/CPU proportional and prevents a
+/// user-initiated search from exhausting the GTK process.
+pub(super) fn find_matches(text: &str, query: &str) -> SearchMatches {
     let needle: Vec<char> = query.chars().collect();
     if needle.is_empty() {
-        return Vec::new();
+        return SearchMatches {
+            matches: Vec::new(),
+            capped: false,
+        };
     }
     let mut matches = Vec::new();
     let mut haystack: Vec<char> = Vec::new();
@@ -94,11 +131,28 @@ pub(super) fn find_matches(text: &str, query: &str) -> Vec<SearchMatch> {
         }
         haystack.clear();
         haystack.extend(content.chars());
-        for (occurrence, _) in char_match_starts(&haystack, &needle).iter().enumerate() {
+        let mut occurrence = 0;
+        let mut capped = false;
+        for_each_char_match_start(&haystack, &needle, |_| {
+            if matches.len() == MAX_SEARCH_MATCHES {
+                capped = true;
+                return false;
+            }
             matches.push(SearchMatch { line, occurrence });
+            occurrence += 1;
+            true
+        });
+        if capped {
+            return SearchMatches {
+                matches,
+                capped: true,
+            };
         }
     }
-    matches
+    SearchMatches {
+        matches,
+        capped: false,
+    }
 }
 
 /// The next (or previous) match index, wrapping around. A stale `current`
@@ -198,7 +252,7 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
             } else {
                 widget.search_step(&query, forward)
             };
-            count.set_label(&format!("{}/{}", status.current, status.total));
+            count.set_label(&status.label());
             if status.total == 0 && !query.is_empty() {
                 entry.add_css_class("error");
             } else {
@@ -296,6 +350,7 @@ mod tests {
 
     fn matches(text: &str, query: &str) -> Vec<(usize, usize)> {
         find_matches(text, query)
+            .matches
             .into_iter()
             .map(|m| (m.line, m.occurrence))
             .collect()
@@ -328,6 +383,15 @@ mod tests {
         assert_eq!(matches("naïve", "ï"), vec![(0, 0)]);
         assert_eq!(matches("橋x", "x"), vec![(0, 0)]);
         assert_eq!(matches("abc", "ä"), vec![]);
+    }
+
+    #[test]
+    fn find_matches_caps_repetitive_scrollback_hits() {
+        let text = "a\n".repeat(MAX_SEARCH_MATCHES + 1);
+        let found = find_matches(&text, "a");
+
+        assert_eq!(found.matches.len(), MAX_SEARCH_MATCHES);
+        assert!(found.capped);
     }
 
     #[test]
@@ -446,7 +510,7 @@ mod tests {
             eprintln!("full_text: {:?} ({} bytes)", t.elapsed(), text.len());
 
             let t = std::time::Instant::now();
-            let matches = find_matches(&text, "lorem");
+            let matches = find_matches(&text, "lorem").matches;
             eprintln!(
                 "find_matches(lorem): {:?} ({} hits)",
                 t.elapsed(),
@@ -454,7 +518,7 @@ mod tests {
             );
 
             let t = std::time::Instant::now();
-            let matches = find_matches(&text, "zzz_no_hit");
+            let matches = find_matches(&text, "zzz_no_hit").matches;
             eprintln!(
                 "find_matches(no hit): {:?} ({} hits)",
                 t.elapsed(),
@@ -479,7 +543,7 @@ mod tests {
             .feed_pty_bytes(b"needle\r\ntwo\r\nthree\r\nfour")
             .unwrap();
 
-        let found = find_matches(&runtime.full_text(), "Needle");
+        let found = find_matches(&runtime.full_text(), "Needle").matches;
         assert_eq!(
             found,
             vec![SearchMatch {
