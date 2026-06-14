@@ -1,14 +1,16 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
-    command_safety::{is_executable_file, is_valid_ssh_host},
-    config, dispatch_notification, normalize_agent_status, validate_worktree_name, worktree,
-    AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError,
-    BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
-    NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
-    MAX_BROWSER_SCRIPT_BYTES,
+    command_safety::is_valid_ssh_host, config, dispatch_notification, normalize_agent_status,
+    validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
+    AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
+    JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
+    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_SCRIPT_BYTES,
 };
-use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
+use forktty_terminal::{
+    spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
+    TerminalTextCapture,
+};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
@@ -18,7 +20,7 @@ use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt}
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -57,10 +59,16 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// response to a slow reader still gets through.
 const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
+/// Pending desktop notification dispatch jobs. Dispatch can block in
+/// notify-rust/custom commands, so keep a small bounded queue rather than
+/// spawning one OS thread per socket request.
+const NOTIFICATION_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_DISPATCHER: OnceLock<mpsc::SyncSender<forktty_core::NotificationItem>> =
+    OnceLock::new();
 
 /// Methods advertised by `system.capabilities`. Every entry except
 /// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
@@ -2098,7 +2106,7 @@ fn agent_resume_readiness(
     let argv = std::iter::once(command.program.clone())
         .chain(command.args.iter().cloned())
         .collect::<Vec<_>>();
-    let executable = resolve_program_on_path(&command.program, path);
+    let executable = resolve_child_program(&command.program, path);
     let executable_value = executable
         .as_ref()
         .map(|path| Value::String(path.to_string_lossy().into_owned()))
@@ -2111,16 +2119,6 @@ fn agent_resume_readiness(
         executable_value,
         argv,
     )
-}
-
-fn resolve_program_on_path(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
-    let program_path = Path::new(program);
-    if program_path.components().count() > 1 || program_path.is_absolute() {
-        return is_executable_file(program_path).then(|| program_path.to_path_buf());
-    }
-    std::env::split_paths(path?)
-        .map(|dir| dir.join(program))
-        .find(|candidate| is_executable_file(candidate))
 }
 
 fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -2293,31 +2291,57 @@ fn notify_worktree_setup_warning(
 }
 
 fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
-    let notification = notification.clone();
-    // Dispatch on a dedicated thread: notify_rust's show() blocks on its own
-    // async runtime, and doing that from a tokio worker panics ("Cannot start
-    // a runtime from within a runtime"), killing the connection task that
-    // carried the request. The thread also keeps config disk I/O off the
-    // server runtime. Dispatch is fire-and-forget either way (errors only
-    // reach stderr), so callers lose nothing by not joining.
-    std::thread::spawn(move || {
-        let config = match config::load_config() {
-            Ok(config) => config,
-            Err(err) => {
-                // Surface the underlying cause so a misconfigured custom command or
-                // a corrupted config.toml is debuggable rather than silently
-                // turning into "default behavior with no custom command".
-                eprintln!("Falling back to default notification settings: {err}");
-                forktty_core::AppConfig::default()
-            }
-        };
-        for error in dispatch_notification(&config, &notification) {
+    let dispatcher = NOTIFICATION_DISPATCHER.get_or_init(spawn_notification_dispatcher);
+    match dispatcher.try_send(notification.clone()) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(_)) => {
             eprintln!(
-                "Failed to dispatch {} notification: {}",
-                error.channel, error.message
+                "Dropping desktop notification dispatch because the bounded dispatch queue is full"
             );
         }
-    });
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            eprintln!("Dropping desktop notification dispatch because the dispatch worker stopped");
+        }
+    }
+}
+
+fn spawn_notification_dispatcher() -> mpsc::SyncSender<forktty_core::NotificationItem> {
+    let (sender, receiver) = mpsc::sync_channel(NOTIFICATION_DISPATCH_QUEUE_CAPACITY);
+    // notify_rust's show() blocks on its own async runtime, and doing that from
+    // a tokio worker panics ("Cannot start a runtime from within a runtime"),
+    // killing the connection task that carried the request. Use one dedicated
+    // blocking worker with a bounded queue so repeated socket notifications
+    // cannot create unbounded native threads.
+    if let Err(err) = std::thread::Builder::new()
+        .name("forktty-notification-dispatch".to_string())
+        .spawn(move || {
+            for notification in receiver {
+                dispatch_notification_from_worker(&notification);
+            }
+        })
+    {
+        eprintln!("Failed to start desktop notification dispatch worker: {err}");
+    }
+    sender
+}
+
+fn dispatch_notification_from_worker(notification: &forktty_core::NotificationItem) {
+    let config = match config::load_config() {
+        Ok(config) => config,
+        Err(err) => {
+            // Surface the underlying cause so a misconfigured custom command or
+            // a corrupted config.toml is debuggable rather than silently
+            // turning into "default behavior with no custom command".
+            eprintln!("Falling back to default notification settings: {err}");
+            forktty_core::AppConfig::default()
+        }
+    };
+    for error in dispatch_notification(&config, notification) {
+        eprintln!(
+            "Failed to dispatch {} notification: {}",
+            error.channel, error.message
+        );
+    }
 }
 
 async fn open_worktree_workspace(
@@ -2357,6 +2381,9 @@ fn rollback_created_worktree_after_spawn_failure(
     info: &worktree::WorktreeInfo,
     spawn_error: String,
 ) -> String {
+    if !info.created {
+        return spawn_error;
+    }
     match worktree::remove(cwd, &info.worktree_name, true) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(
@@ -8301,6 +8328,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn worktree_create_preserves_existing_worktree_when_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/existing-spawn-rollback-{}", std::process::id());
+        let created = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            "../forktty-worktrees/{name}",
+        )
+        .unwrap();
+        let existing_path = created.path.clone();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+        let state = SocketAppState::new(
+            model.clone(),
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        assert!(Path::new(&existing_path).exists());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_ok());
+        let worktrees = worktree::list(repo_dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].branch, branch_name);
+    }
+
+    #[tokio::test]
     async fn surface_close_removes_model_surface_when_backend_already_missing() {
         let (state, backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -10700,6 +10776,34 @@ mod tests {
             backend.spawn_args(surface_id).unwrap(),
             vec!["user@example.com"]
         );
+    }
+
+    #[test]
+    fn bootstrap_default_workspace_creates_new_workspace_if_none_exists() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        assert!(model.lock().unwrap().active_workspace().is_none());
+
+        bootstrap_default_workspace(&state, PathBuf::from("/foo/bar")).unwrap();
+
+        let m = model.lock().unwrap();
+        let workspace = m.active_workspace().unwrap();
+        assert_eq!(workspace.working_dir, PathBuf::from("/foo/bar"));
+
+        let surfaces = m.list_surfaces(Some(&workspace.id));
+        assert_eq!(surfaces.len(), 1);
+        let surface_id = &surfaces[0].id;
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert_eq!(shell, "/bin/sh");
     }
 
     #[test]
