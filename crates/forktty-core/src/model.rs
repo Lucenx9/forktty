@@ -958,7 +958,7 @@ impl WorkspaceModel {
     /// Update a browser surface's URL. Same-URL navigation is a successful no-op.
     /// Returns false for terminals, SSH surfaces, or missing ids.
     pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
-        let Some(url) = validated_browser_url(url) else {
+        let Some(url) = validated_committed_browser_url(url) else {
             return false;
         };
         match self.surfaces.get_mut(surface_id) {
@@ -2226,6 +2226,19 @@ pub fn validated_browser_url(input: &str) -> Option<String> {
         None
     } else {
         Some(url)
+    }
+}
+
+/// Size-check a URL already committed by the browser engine.
+///
+/// Unlike user-entered URLs, committed URLs may be non-hierarchical WebKit
+/// values such as `about:blank`, `data:...`, or `blob:...`; preserve them.
+fn validated_committed_browser_url(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_BROWSER_URL_BYTES {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -4371,6 +4384,30 @@ mod tests {
                 profile: crate::profile::ProfileId::default(),
             }
         );
+    }
+
+    #[test]
+    fn set_surface_url_preserves_committed_non_hierarchical_urls() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let browser = model
+            .open_browser(
+                &ws.id,
+                "https://a.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+
+        assert!(model.set_surface_url(&browser.id, "about:blank"));
+        assert_eq!(
+            model.surface(&browser.id).unwrap().kind,
+            SurfaceKind::Browser {
+                url: "about:blank".to_string(),
+                profile: crate::profile::ProfileId::default(),
+            }
+        );
+        assert_eq!(model.surface(&browser.id).unwrap().title, "browser");
     }
 
     #[test]
