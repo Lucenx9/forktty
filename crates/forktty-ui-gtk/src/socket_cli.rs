@@ -5450,34 +5450,71 @@ const HOOK_TIMEOUT_MS = {timeout};
 const MAX_INPUT_BYTES = {max_input_bytes};
 const MAX_SANITIZE_DEPTH = 32;
 const MAX_SANITIZE_ITEMS = 128;
+const MAX_SANITIZE_NODES = 4096;
 const textEncoder = new TextEncoder();
 
 function utf8Len(value) {{
   return textEncoder.encode(value).length;
 }}
 
+function makeBudget() {{
+  return {{ remaining: Math.floor(MAX_INPUT_BYTES / 2), nodes: MAX_SANITIZE_NODES, truncated: false }};
+}}
+
+function takeNode(budget, overhead = 1) {{
+  if (budget.remaining <= 0 || budget.nodes <= 0) {{
+    budget.truncated = true;
+    return false;
+  }}
+  budget.nodes -= 1;
+  budget.remaining -= Math.max(1, overhead);
+  if (budget.remaining < 0) {{
+    budget.truncated = true;
+    return false;
+  }}
+  return true;
+}}
+
+function takeBytes(budget, bytes) {{
+  budget.remaining -= Math.max(1, bytes);
+  if (budget.remaining < 0) {{
+    budget.truncated = true;
+    return false;
+  }}
+  return true;
+}}
+
+function truncateString(value, budget) {{
+  const bytes = utf8Len(value);
+  if (bytes <= budget.remaining) {{
+    budget.remaining -= bytes;
+    return value;
+  }}
+  let out = "";
+  for (const ch of value) {{
+    const chBytes = utf8Len(ch);
+    if (budget.remaining < chBytes) break;
+    out += ch;
+    budget.remaining -= chBytes;
+  }}
+  budget.truncated = true;
+  return `${{out}}[forktty:truncated]`;
+}}
+
 function sanitizeJson(value, budget, depth = 0) {{
-  if (budget.remaining <= 0) return "[forktty:truncated]";
+  if (!takeNode(budget)) return "[forktty:truncated]";
   if (value === null || value === undefined) return value ?? null;
   const kind = typeof value;
   if (kind === "string") {{
-    const bytes = utf8Len(value);
-    if (bytes <= budget.remaining) {{
-      budget.remaining -= bytes;
-      return value;
-    }}
-    let out = "";
-    for (const ch of value) {{
-      const chBytes = utf8Len(ch);
-      if (budget.remaining < chBytes) break;
-      out += ch;
-      budget.remaining -= chBytes;
-    }}
-    budget.truncated = true;
-    return `${{out}}[forktty:truncated]`;
+    return truncateString(value, budget);
   }}
-  if (kind === "number" || kind === "boolean") return value;
-  if (kind === "bigint") return String(value);
+  if (kind === "number" || kind === "boolean") {{
+    takeBytes(budget, utf8Len(String(value)));
+    return value;
+  }}
+  if (kind === "bigint") {{
+    return truncateString(String(value), budget);
+  }}
   if (kind !== "object") return `[forktty:${{kind}}]`;
   if (depth >= MAX_SANITIZE_DEPTH) {{
     budget.truncated = true;
@@ -5499,8 +5536,12 @@ function sanitizeJson(value, budget, depth = 0) {{
   let count = 0;
   for (const key in value) {{
     if (!Object.prototype.propertyIsEnumerable.call(value, key)) continue;
-    if (count >= MAX_SANITIZE_ITEMS || budget.remaining <= 0) {{
+    if (count >= MAX_SANITIZE_ITEMS || budget.remaining <= 0 || budget.nodes <= 0) {{
       budget.truncated = true;
+      out.forktty_truncated = "object fields";
+      break;
+    }}
+    if (!takeBytes(budget, utf8Len(key) + 3)) {{
       out.forktty_truncated = "object fields";
       break;
     }}
@@ -5511,7 +5552,7 @@ function sanitizeJson(value, budget, depth = 0) {{
 }}
 
 function cloneJson(value) {{
-  const budget = {{ remaining: Math.floor(MAX_INPUT_BYTES / 2), truncated: false }};
+  const budget = makeBudget();
   const cloned = sanitizeJson(value ?? {{}}, budget);
   if (budget.truncated && cloned && typeof cloned === "object" && !Array.isArray(cloned)) {{
     cloned.forktty_note = "opencode payload truncated before forwarding";
@@ -5520,7 +5561,7 @@ function cloneJson(value) {{
 }}
 
 function hookInput(body) {{
-  const budget = {{ remaining: Math.floor(MAX_INPUT_BYTES / 2), truncated: false }};
+  const budget = makeBudget();
   const sanitized = sanitizeJson(body ?? {{}}, budget);
   if (budget.truncated && sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)) {{
     sanitized.forktty_note = "opencode payload truncated before forwarding";
@@ -9514,6 +9555,8 @@ mod tests {
                 assert!(opencode.contains("hooks\", \"opencode\""));
                 assert!(opencode.contains("\"tool.execute.before\""));
                 assert!(opencode.contains("const MAX_INPUT_BYTES = 1048576"));
+                assert!(opencode.contains("const MAX_SANITIZE_NODES = 4096"));
+                assert!(opencode.contains("function makeBudget"));
                 assert!(opencode.contains("function sanitizeJson"));
                 assert!(opencode.contains("input: hookInput(body)"));
 
