@@ -4096,6 +4096,9 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
     let mut summaries = Vec::new();
     for plan in plans {
         let mut backup_path = None;
+        if plan.spec.key == "antigravity" && !dry_run {
+            ensure_private_antigravity_hook_dirs()?;
+        }
         if plan.changed && !dry_run {
             let write_path = hook_config_write_path(&plan.config_path)?;
             ensure_parent_dir(&write_path)?;
@@ -5556,6 +5559,28 @@ fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {
 fn ensure_parent_dir(path: &Path) -> CliResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+fn ensure_private_antigravity_hook_dirs() -> CliResult<()> {
+    for dir in [antigravity_config_dir(), antigravity_scripts_dir()] {
+        fs::create_dir_all(&dir)?;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        let meta = fs::metadata(&dir)?;
+        if !meta.is_dir() {
+            return Err(CliError::new(format!(
+                "antigravity hooks setup: {} is not a directory",
+                dir.display()
+            )));
+        }
+        let mode = meta.permissions().mode();
+        if mode & 0o022 != 0 {
+            return Err(CliError::new(format!(
+                "antigravity hooks setup: refusing group/world-writable hook directory {}",
+                dir.display()
+            )));
+        }
     }
     Ok(())
 }
@@ -10188,6 +10213,37 @@ mod tests {
             }
             let replanned = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
             assert!(!replanned.changed);
+        });
+    }
+
+    #[test]
+    fn antigravity_setup_hardens_config_and_wrapper_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().display().to_string();
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let config_dir = antigravity_config_dir();
+            let scripts_dir = antigravity_scripts_dir();
+            fs::create_dir_all(&scripts_dir).unwrap();
+            fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o777)).unwrap();
+            fs::set_permissions(&scripts_dir, fs::Permissions::from_mode(0o777)).unwrap();
+
+            handle_hooks_setup(&test_context(), strings(&["antigravity"])).unwrap();
+
+            assert_eq!(
+                fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&scripts_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            for event in ["before-model", "pre-tool", "post-tool"] {
+                let script_path = antigravity_script_path(event);
+                assert_eq!(
+                    fs::metadata(script_path).unwrap().permissions().mode() & 0o777,
+                    0o700
+                );
+            }
         });
     }
 
