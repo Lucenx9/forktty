@@ -672,6 +672,9 @@ pub(super) fn rollback_created_worktree_after_spawn_failure(
     info: &worktree::WorktreeInfo,
     spawn_error: String,
 ) -> String {
+    if !info.created {
+        return spawn_error;
+    }
     match worktree::remove(cwd, &info.worktree_name, true) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(

@@ -25,7 +25,7 @@ use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const MAX_SQLITE_COPY_BYTES: u64 = 512 * 1024 * 1024;
@@ -101,16 +101,21 @@ fn read_via_copy<T, F>(src: &Path, default: T, f: F) -> Result<T, ImportError>
 where
     F: FnOnce(&Path) -> Result<T, ImportError>,
 {
-    let tmp_dir = tempfile::Builder::new()
-        .prefix("forktty-import-")
-        .tempdir()
-        .map_err(ImportError::from)?;
+    let tmp_dir = private_import_tempdir()?;
     let tmp_db = tmp_dir.path().join("database.sqlite");
     if !copy_regular_file_bounded(src, &tmp_db)? {
         return Ok(default);
     }
     copy_sqlite_sidecars(src, &tmp_db)?;
     f(&tmp_db)
+}
+
+fn private_import_tempdir() -> Result<tempfile::TempDir, ImportError> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("forktty-import-");
+    #[cfg(unix)]
+    builder.permissions(std::fs::Permissions::from_mode(0o700));
+    builder.tempdir().map_err(ImportError::from)
 }
 
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
@@ -456,6 +461,16 @@ mod tests {
             result.is_err(),
             "corrupt places.sqlite should propagate an error, not return empty"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_import_tempdir_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = private_import_tempdir().unwrap();
+        let mode = dir.path().metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[test]
