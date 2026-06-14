@@ -300,11 +300,10 @@ impl TerminalRuntime {
         self.core.full_text().unwrap_or_default()
     }
 
-    /// Like [`Self::full_text`], but soft-wrapped rows are joined into their
-    /// logical line (no break at the wrap point); used by select-all copy so
-    /// pasting a wrapped command back into a shell does not split it.
-    pub(super) fn full_text_unwrapped(&self) -> String {
-        self.core.full_text_unwrapped().unwrap_or_default()
+    /// Select-all clipboard text: soft-wrapped rows joined and invisible
+    /// terminal cells omitted.
+    pub(super) fn visible_full_text_unwrapped(&self) -> String {
+        self.core.visible_full_text_unwrapped().unwrap_or_default()
     }
 
     /// Changes whenever [`Self::full_text`] may have changed; viewport

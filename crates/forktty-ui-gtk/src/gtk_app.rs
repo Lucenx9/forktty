@@ -60,6 +60,7 @@ const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
     "Symbols Nerd Font Mono",
 ];
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
+const TERMINAL_METADATA_NOTIFICATION_INTERVAL: Duration = Duration::from_secs(10);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
 const PANED_RATIO_MAX_FRAMES: u8 = 30;
 const SESSION_RESIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(250);

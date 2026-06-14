@@ -6,8 +6,8 @@ use super::terminal_geometry::{
 use super::terminal_links::{is_safe_terminal_uri, url_at_point};
 use super::*;
 use forktty_terminal::ghostty::core::{
-    TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
-    TerminalMouseSize,
+    TerminalCell, TerminalCellWidth, TerminalMouseAction, TerminalMouseButton, TerminalMouseInput,
+    TerminalMousePosition, TerminalMouseSize,
 };
 use forktty_terminal::ghostty::events::GhosttyEvent;
 
@@ -1071,24 +1071,28 @@ impl GhosttyTerminalWidget {
         match cache_slot.as_mut() {
             Some(cache) if cache.generation == generation && cache.query == query => {}
             Some(cache) if cache.generation == generation => {
-                cache.matches = find_matches(&cache.text, query);
+                let found = find_matches(&cache.text, query);
+                cache.matches = found.matches;
+                cache.capped = found.capped;
                 cache.query = query.to_string();
             }
             _ => {
                 let text = self.runtime.borrow().full_text();
-                let matches = find_matches(&text, query);
+                let found = find_matches(&text, query);
                 *cache_slot = Some(SearchCache {
                     generation,
                     text,
                     query: query.to_string(),
-                    matches,
+                    matches: found.matches,
+                    capped: found.capped,
                 });
             }
         }
-        let matches = &cache_slot
+        let cache = cache_slot
             .as_ref()
-            .expect("search cache was just populated")
-            .matches;
+            .expect("search cache was just populated");
+        let matches = &cache.matches;
+        let capped = cache.capped;
         let Some(index) = step_match_index(self.search_index.get(), matches.len(), forward) else {
             drop(cache_slot);
             self.search_reset();
@@ -1104,6 +1108,7 @@ impl GhosttyTerminalWidget {
         SearchStatus {
             current: index + 1,
             total,
+            capped,
         }
     }
 
@@ -1719,7 +1724,7 @@ fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String
 /// The text currently on screen, joined across soft wraps and right-trimmed.
 fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFrame) -> String {
     let rows = frame.rows.iter().map(|row| {
-        let text: String = row.cells.iter().map(|cell| cell.text.as_str()).collect();
+        let text: String = row.cells.iter().map(cell_clipboard_text).collect();
         (text, row.wrapped)
     });
     join_rows_honoring_wrap(rows).trim_end().to_string()
@@ -1759,11 +1764,24 @@ fn selection_text_from_frame(
         let (from, to) = selection_cols_for_row(start, end, row_idx, row.cells.len())?;
         let text: String = row.cells[from..to]
             .iter()
-            .map(|cell| cell.text.as_str())
+            .map(cell_clipboard_text)
             .collect();
         Some((text, row.wrapped))
     });
     join_rows_honoring_wrap(rows)
+}
+
+fn cell_clipboard_text(cell: &TerminalCell) -> &str {
+    if cell.invisible
+        || matches!(
+            cell.width,
+            TerminalCellWidth::SpacerTail | TerminalCellWidth::SpacerHead
+        )
+    {
+        ""
+    } else {
+        cell.text.as_str()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2305,7 +2323,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             selection.clear();
             // Select-all covers the whole scrollback, like other terminals,
             // joining soft-wrapped rows so a wrapped command pastes as one line.
-            selection.select_text(self.runtime.borrow().full_text_unwrapped());
+            selection.select_text(self.runtime.borrow().visible_full_text_unwrapped());
         }
         self.copy_text();
     }
@@ -2438,6 +2456,19 @@ mod selection_tests {
     }
 
     #[test]
+    fn selection_text_omits_invisible_cells() {
+        let frame = frame_for_lines(b"echo OK\x1b[8m; hidden-cmd\x1b[0m");
+
+        let text = selection_text_from_frame(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 19 },
+        );
+
+        assert_eq!(text, "echo OK");
+    }
+
+    #[test]
     fn viewport_text_joins_soft_wrapped_rows_without_a_newline() {
         let frame = frame_for_lines(b"abcdefghijklmnopqrstuvwxyz\r\nshort");
 
@@ -2445,6 +2476,13 @@ mod selection_tests {
             viewport_text_from_frame(&frame),
             "abcdefghijklmnopqrstuvwxyz\nshort"
         );
+    }
+
+    #[test]
+    fn viewport_text_omits_invisible_cells() {
+        let frame = frame_for_lines(b"safe\x1b[8mSECRET\x1b[0m text");
+
+        assert_eq!(viewport_text_from_frame(&frame), "safe text");
     }
 
     // Regression for the Fedora SIGABRT: wheel scroll over a pane with mouse

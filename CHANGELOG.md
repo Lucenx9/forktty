@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Security
+- Stop hooks now preserve agent permission-mode warnings when the provider has a later session-end cleanup, while providers without session-end hooks still clear the warning on final stop.
 - Terminal smooth-scroll handling now rejects non-finite deltas and caps per-event line replay, preventing oversized synthetic scroll events from monopolizing the UI thread while mouse tracking is active.
 - Browser automation now injects and evaluates its driver in an isolated WebKit script world, preventing visited pages from detecting or tampering with `window.__forktty`.
 - Chromium cookie import now verifies the version-24+ encrypted host digest before accepting decrypted values, rejecting malformed or cross-host cookie rows.
@@ -22,6 +23,14 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser import is now limited to the in-app Settings workflow and is no longer advertised or accepted over the socket/CLI automation boundary, preventing local socket clients from using ForkTTY to read external browser profile data.
+- Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
+- MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.
+- Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
+- Terminal-originated OSC 9/basic OSC 99 notifications are now rate-limited per surface, preventing untrusted terminal output from spamming desktop notifications or repeatedly spawning `notification_command`.
+- Session locking now creates and hardens the state directory and lock file with private permissions, preventing other local users from reading or pre-locking `session.lock` to block startup.
+- Atomic profile metadata saves now preserve an existing `profiles.json` file mode on Unix when ownership matches, and drop group/other bits when replacing with a temp inode owned by a different uid or gid.
+- Browser history databases and SQLite WAL/SHM sidecars are now created with owner-only file permissions inside owner-only profile directories.
+- Bookmark files and corrupt-bookmark backups are now saved with owner-only permissions to avoid exposing sensitive URLs to other local users.
 - Stale Ghostty event batches from an old pane spawn are now discarded before they can mark a restarted pane not ready, overwrite its terminal status, or emit stale notifications.
 - Browser imports now copy temporary SQLite databases and WAL/SHM sidecars into a private `0700` directory with newly-created `0600` files, preventing local temp-file races from exposing browser data.
 - Browser-feature socket dispatch fuzz tests now isolate `XDG_DATA_HOME`, preventing adversarial method sweeps from clearing a developer's real browser history.
@@ -38,6 +47,7 @@ All notable changes to ForkTTY are documented here.
 - Notification commands using SSH/mosh options that contain `-c` are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
 - Worktree and workspace rollback paths now close spawned replacement terminals instead of only forgetting bookkeeping entries, preventing untracked terminal processes after cleanup failures.
 - OSC 8 hyperlink lookup now caps URI buffers at 8 KiB and fails closed for larger terminal-provided targets, avoiding attacker-controlled memory growth when resolving links.
+- Panic logs are now created in a private state directory with owner-only file permissions, and older permissive logs are rotated before new panic entries are written.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
 - Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.
 - Large PTY writes now keep waiting after `poll()` reports no writable fd before the per-write deadline, instead of treating the poll timeout as readiness.
@@ -69,6 +79,7 @@ All notable changes to ForkTTY are documented here.
 - Re-running `worktree.create` for a branch that already has a ForkTTY-supported linked worktree now reopens that worktree instead of failing on the already-created branch, recovering the crash window between Git worktree registration and ForkTTY session persistence.
 - Concurrent nested worktree creation now serializes updates to `.git/info/exclude`, keeping the `.worktrees/` entry idempotent.
 - Closing a non-last tab now keeps the model locked through backend close and model removal, so concurrent UI/socket closes cannot observe a half-closed surface.
+- Terminal copy, mouse selection, and Select All now omit invisible terminal cells, so escape-hidden text cannot be copied to the clipboard.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
