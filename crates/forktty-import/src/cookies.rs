@@ -5,6 +5,7 @@ use std::path::Path;
 
 use aes::cipher::{block_padding::Pkcs7, BlockModeDecrypt, KeyIvInit};
 use rusqlite::{types::ValueRef, Connection, OpenFlags};
+use sha2::{Digest, Sha256};
 
 use crate::model::{BrowserFamily, ImportedCookie};
 
@@ -80,6 +81,7 @@ fn decrypt_chromium_cookie_value(
     blob: &[u8],
     keys: &ChromiumCookieKeys,
     db_version: Option<i64>,
+    host_key: &str,
 ) -> Option<String> {
     let prefix = blob.get(0..3)?;
     let key = match prefix {
@@ -90,12 +92,14 @@ fn decrypt_chromium_cookie_value(
     let pt = decrypt_chromium_value_bytes(blob, key)?;
 
     // Chromium cookie DB version 24+ prepends SHA256(host_key) to the encrypted
-    // plaintext. The digest is arbitrary bytes and often invalid UTF-8, so trying
-    // to decode the full plaintext would skip otherwise valid modern cookies.
-    if db_version.is_some_and(|version| version >= 24) && pt.len() >= 32 {
-        if let Ok(value) = String::from_utf8(pt[32..].to_vec()) {
-            return Some(value);
+    // plaintext. The digest is an integrity check; reject the cookie if the
+    // plaintext is too short or if the digest is not bound to this row's host.
+    if db_version.is_some_and(|version| version >= 24) {
+        let (host_digest, value) = pt.split_at_checked(32)?;
+        if host_digest != Sha256::digest(host_key.as_bytes()).as_slice() {
+            return None;
         }
+        return String::from_utf8(value.to_vec()).ok();
     }
 
     String::from_utf8(pt).ok()
@@ -214,7 +218,7 @@ pub fn read_chromium_cookies_with_keys(
         let value = if enc.is_empty() {
             plain
         } else {
-            match decrypt_chromium_cookie_value(&enc, keys, db_version) {
+            match decrypt_chromium_cookie_value(&enc, keys, db_version, &host) {
                 Some(v) => v,
                 None => {
                     skipped += 1;
@@ -288,6 +292,37 @@ mod tests {
 
     fn make_v10_blob(key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
         make_chromium_blob(b"v10", key, plaintext)
+    }
+
+    #[test]
+    fn decrypt_chromium_value_test_pure_deterministic() {
+        let key = chromium_v10_key();
+        let plaintext = b"pure_deterministic_test";
+        let blob = make_v10_blob(&key, plaintext);
+        let decoded = decrypt_chromium_value(&blob, &key).unwrap();
+        assert_eq!(decoded, "pure_deterministic_test");
+
+        // Edge case: empty blob
+        assert!(decrypt_chromium_value(b"", &key).is_none());
+
+        // Edge case: malformed version prefix
+        let mut malformed_prefix = blob.clone();
+        malformed_prefix[0..3].copy_from_slice(b"v99");
+        assert!(decrypt_chromium_value(&malformed_prefix, &key).is_none());
+
+        // Edge case: valid prefix but invalid length (not a multiple of block size 16)
+        let invalid_length = &blob[0..blob.len() - 1];
+        assert!(decrypt_chromium_value(invalid_length, &key).is_none());
+
+        // Edge case: valid length but invalid padding/decryption
+        let mut invalid_cipher = blob.clone();
+        invalid_cipher[5] ^= 0xFF; // corrupt ciphertext
+        assert!(decrypt_chromium_value(&invalid_cipher, &key).is_none());
+
+        // Edge case: decryption succeeds but bytes are invalid UTF-8
+        let invalid_utf8_plaintext = b"\xFF\xFF\xFF";
+        let invalid_utf8_blob = make_v10_blob(&key, invalid_utf8_plaintext);
+        assert!(decrypt_chromium_value(&invalid_utf8_blob, &key).is_none());
     }
 
     #[test]
@@ -372,11 +407,11 @@ mod tests {
     }
 
     #[test]
-    fn read_chromium_cookies_strips_modern_host_hash_prefix() {
+    fn read_chromium_cookies_strips_valid_modern_host_hash_prefix() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("Cookies");
         let key = chromium_v10_key();
-        let mut plaintext = vec![0xff; 32];
+        let mut plaintext = Sha256::digest(b".a.test").to_vec();
         plaintext.extend_from_slice(b"tok");
         let blob = make_v10_blob(&key, &plaintext);
         let conn = rusqlite::Connection::open(&db).unwrap();
@@ -398,6 +433,36 @@ mod tests {
         assert_eq!(skipped, 0);
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].value, "tok");
+    }
+
+    #[test]
+    fn read_chromium_cookies_rejects_invalid_modern_host_hash_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("Cookies");
+        let key = chromium_v10_key();
+        let mut plaintext = vec![0xff; 32];
+        plaintext.extend_from_slice(b"tok");
+        let blob = make_v10_blob(&key, &plaintext);
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+             INSERT INTO meta VALUES ('version','24');
+             CREATE TABLE cookies (
+                 host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+                 path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cookies VALUES ('.a.test','sid','',?1,'/',0,0,0)",
+            rusqlite::params![blob],
+        )
+        .unwrap();
+        drop(conn);
+
+        let (cookies, skipped) = read_chromium_cookies(&db, &key).unwrap();
+
+        assert!(cookies.is_empty());
+        assert_eq!(skipped, 1);
     }
 
     #[test]
