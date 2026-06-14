@@ -21,6 +21,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Command palette shortcut searches such as `ctrl shift c` now match the intended shortcut instead of treating the key token as a fuzzy match against modifier text on earlier commands.
+- Retrying Worktree Create for an already-linked branch no longer deletes that existing worktree and branch if terminal spawning fails.
 - Sidebar visibility persistence now rebases onto the latest config under a process-wide update lock, avoiding stale background saves that could overwrite newer settings-dialog changes.
 - Malformed browser bookmark files are now moved aside after backup so repeated opens cannot create unbounded backup copies.
 - `forktty doctor` once again exits 2 whenever the diagnostics report contains warnings, preserving the documented health-check behavior even without `--strict`.
