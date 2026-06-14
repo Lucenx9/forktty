@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
+- Atomic profile metadata saves now preserve an existing `profiles.json` file mode on Unix when ownership matches, and drop group/other bits when replacing with a temp inode owned by a different uid or gid.
 - Browser history databases and SQLite WAL/SHM sidecars are now created with owner-only file permissions inside owner-only profile directories.
 - Bookmark files and corrupt-bookmark backups are now saved with owner-only permissions to avoid exposing sensitive URLs to other local users.
 - Stale Ghostty event batches from an old pane spawn are now discarded before they can mark a restarted pane not ready, overwrite its terminal status, or emit stale notifications.
