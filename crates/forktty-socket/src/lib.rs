@@ -862,9 +862,10 @@ pub async fn dispatch(
                 }
                 if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
                     let mut err = err;
-                    if let Err(cleanup_err) =
-                        close_terminal_surface_if_present(state, &replacement.focused_surface_id)
-                    {
+                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
+                        state,
+                        &replacement.focused_surface_id,
+                    ) {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
                     if let Err(rollback_err) =
@@ -892,7 +893,7 @@ pub async fn dispatch(
                         previous_active_id,
                     )?;
                     if rolled_back {
-                        if let Err(cleanup_err) = close_terminal_surface_if_present(
+                        if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
                             state,
                             &replacement.focused_surface_id,
                         ) {
@@ -1054,9 +1055,10 @@ pub async fn dispatch(
                 }
                 if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
                     let mut err = err;
-                    if let Err(cleanup_err) =
-                        close_terminal_surface_if_present(state, &replacement.focused_surface_id)
-                    {
+                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
+                        state,
+                        &replacement.focused_surface_id,
+                    ) {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
                     if let Err(rollback_err) =
@@ -1068,9 +1070,10 @@ pub async fn dispatch(
                 }
                 if let Err(err) = finish_removal_blocking(removal, false).await {
                     let mut err = err.to_string();
-                    if let Err(cleanup_err) =
-                        close_terminal_surface_if_present(state, &replacement.focused_surface_id)
-                    {
+                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
+                        state,
+                        &replacement.focused_surface_id,
+                    ) {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
                     if let Err(rollback_err) =
@@ -1102,7 +1105,7 @@ pub async fn dispatch(
                         previous_active_id,
                     )?;
                     if rolled_back {
-                        if let Err(cleanup_err) = close_terminal_surface_if_present(
+                        if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
                             state,
                             &replacement.focused_surface_id,
                         ) {
@@ -1548,7 +1551,7 @@ pub async fn dispatch(
                 if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
                     let mut err = err;
                     if let Err(cleanup_err) =
-                        close_terminal_surface_if_present(state, &replacement.id)
+                        close_replacement_terminal_surface_if_present(state, &replacement.id)
                     {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
@@ -1566,7 +1569,7 @@ pub async fn dispatch(
                     (surface, replacement_in_model)
                 };
                 if surface.is_err() || !replacement_in_model {
-                    close_terminal_surface_if_present(state, &replacement.id)?;
+                    close_replacement_terminal_surface_if_present(state, &replacement.id)?;
                 }
                 let surface = surface?;
                 evict_hook_session_targets_for_surface(state, surface_id)?;
@@ -2545,6 +2548,32 @@ fn close_terminal_surface_if_present(
     match state.terminal.close(surface_id) {
         Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
         Err(err) => Err(err.to_string()),
+    }
+}
+
+fn forget_terminal_surface_if_present(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), String> {
+    match state.terminal.forget_surface(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn close_replacement_terminal_surface_if_present(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), String> {
+    match state.terminal.close(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(close_err) => {
+            let close_err = close_err.to_string();
+            if let Err(forget_err) = forget_terminal_surface_if_present(state, surface_id) {
+                return Err(format!("{close_err}; forget failed: {forget_err}"));
+            }
+            Err(close_err)
+        }
     }
 }
 
