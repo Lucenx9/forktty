@@ -16,13 +16,22 @@ struct TelemetryStamp {
 }
 
 pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
+    maybe_start_anonymous_ping_with(config, telemetry_stamp_path(), now_unix_seconds(), true);
+}
+
+fn maybe_start_anonymous_ping_with(
+    config: &forktty_core::AppConfig,
+    stamp_path: Option<PathBuf>,
+    now_seconds: i64,
+    dispatch_ping: bool,
+) {
     if !config.telemetry.anonymous_ping || !valid_endpoint(TELEMETRY_ENDPOINT) {
         return;
     }
-    let Some(stamp_path) = telemetry_stamp_path() else {
+    let Some(stamp_path) = stamp_path else {
         return;
     };
-    let today = utc_date_from_unix_seconds(now_unix_seconds());
+    let today = utc_date_from_unix_seconds(now_seconds);
     let last_ping_date = read_last_ping_date(&stamp_path);
     if !ping_due(true, last_ping_date.as_deref(), &today) {
         return;
@@ -31,8 +40,7 @@ pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
         return;
     }
 
-    #[cfg(test)]
-    if std::env::var("FORKTTY_TEST_DISABLE_PING").is_ok() {
+    if !dispatch_ping {
         return;
     }
 
@@ -43,11 +51,6 @@ pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
 }
 
 fn telemetry_stamp_path() -> Option<PathBuf> {
-    #[cfg(test)]
-    if let Ok(path) = std::env::var("FORKTTY_TEST_TELEMETRY_DIR") {
-        return Some(PathBuf::from(path).join(TELEMETRY_STAMP_FILE));
-    }
-
     dirs::state_dir()
         .or_else(dirs::data_local_dir)
         .map(|base| base.join("forktty").join(TELEMETRY_STAMP_FILE))
@@ -203,83 +206,57 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_maybe_start_anonymous_ping_disabled() {
-        let _env = scopeguard::guard((), |_| {
-            std::env::remove_var("FORKTTY_TEST_TELEMETRY_DIR");
-            std::env::remove_var("FORKTTY_TEST_DISABLE_PING");
-        });
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("FORKTTY_TEST_TELEMETRY_DIR", dir.path());
-        std::env::set_var("FORKTTY_TEST_DISABLE_PING", "1");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
 
         let mut config = forktty_core::AppConfig::default();
         config.telemetry.anonymous_ping = false;
 
-        maybe_start_anonymous_ping(&config);
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), 1_780_000_000, false);
 
-        let stamp_path = dir.path().join("telemetry-ping.json");
         assert!(!stamp_path.exists());
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_maybe_start_anonymous_ping_enabled() {
-        let _env = scopeguard::guard((), |_| {
-            std::env::remove_var("FORKTTY_TEST_TELEMETRY_DIR");
-            std::env::remove_var("FORKTTY_TEST_DISABLE_PING");
-        });
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("FORKTTY_TEST_TELEMETRY_DIR", dir.path());
-        std::env::set_var("FORKTTY_TEST_DISABLE_PING", "1");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+        let now = 1_780_000_000;
 
         let mut config = forktty_core::AppConfig::default();
         config.telemetry.anonymous_ping = true;
 
-        maybe_start_anonymous_ping(&config);
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), now, false);
 
-        let stamp_path = dir.path().join("telemetry-ping.json");
         assert!(stamp_path.exists());
         let date = read_last_ping_date(&stamp_path).unwrap();
-        assert_eq!(date, utc_date_from_unix_seconds(now_unix_seconds()));
+        assert_eq!(date, utc_date_from_unix_seconds(now));
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_maybe_start_anonymous_ping_updates_if_old() {
-        let _env = scopeguard::guard((), |_| {
-            std::env::remove_var("FORKTTY_TEST_TELEMETRY_DIR");
-            std::env::remove_var("FORKTTY_TEST_DISABLE_PING");
-        });
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("FORKTTY_TEST_TELEMETRY_DIR", dir.path());
-        std::env::set_var("FORKTTY_TEST_DISABLE_PING", "1");
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+        let now = 1_780_000_000;
 
-        let stamp_path = dir.path().join("telemetry-ping.json");
         record_ping_attempt(&stamp_path, "1999-01-01").expect("record stamp");
 
         let mut config = forktty_core::AppConfig::default();
         config.telemetry.anonymous_ping = true;
 
-        maybe_start_anonymous_ping(&config);
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), now, false);
 
         let date = read_last_ping_date(&stamp_path).unwrap();
-        assert_eq!(date, utc_date_from_unix_seconds(now_unix_seconds()));
+        assert_eq!(date, utc_date_from_unix_seconds(now));
     }
 
     #[test]
-    #[serial_test::serial]
     fn test_maybe_start_anonymous_ping_skips_if_recently_pinged() {
-        let _env = scopeguard::guard((), |_| {
-            std::env::remove_var("FORKTTY_TEST_TELEMETRY_DIR");
-            std::env::remove_var("FORKTTY_TEST_DISABLE_PING");
-        });
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("FORKTTY_TEST_TELEMETRY_DIR", dir.path());
-        std::env::set_var("FORKTTY_TEST_DISABLE_PING", "1");
-
-        let stamp_path = dir.path().join("telemetry-ping.json");
-        let today = utc_date_from_unix_seconds(now_unix_seconds());
+        let stamp_path = dir.path().join(TELEMETRY_STAMP_FILE);
+        let now = 1_780_000_000;
+        let today = utc_date_from_unix_seconds(now);
 
         let custom_json = json!({
             "last_ping_date": today,
@@ -294,7 +271,7 @@ mod tests {
         let mut config = forktty_core::AppConfig::default();
         config.telemetry.anonymous_ping = true;
 
-        maybe_start_anonymous_ping(&config);
+        maybe_start_anonymous_ping_with(&config, Some(stamp_path.clone()), now, false);
 
         let bytes = fs::read(&stamp_path).unwrap();
         let stamp: Value = serde_json::from_slice(&bytes).unwrap();
