@@ -579,7 +579,8 @@ mod tests {
 
     #[test]
     fn pty_os_resize_works() {
-        let request = test_spawn_request_for_shell("/bin/sh").with_args(["-c", "sleep 0.1; stty size"]);
+        let request =
+            test_spawn_request_for_shell("/bin/sh").with_args(["-c", "sleep 0.1; stty size"]);
         let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
         session
             .resize(PtySize {
