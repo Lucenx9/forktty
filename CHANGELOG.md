@@ -20,6 +20,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Ctrl+keypad Home/End/PageUp/PageDown are now reserved for tab-navigation accelerators like their non-keypad equivalents instead of being consumed by terminal input handling.
 - Retrying Worktree Create for an already-linked branch no longer deletes that existing worktree and branch if terminal spawning fails.
 - Sidebar visibility persistence now rebases onto the latest config under a process-wide update lock, avoiding stale background saves that could overwrite newer settings-dialog changes.
 - Malformed browser bookmark files are now moved aside after backup so repeated opens cannot create unbounded backup copies.
