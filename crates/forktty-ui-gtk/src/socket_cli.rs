@@ -100,7 +100,6 @@ const BROWSER_HELP_TEXT: &str = "\
   forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
   forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
   forktty browser fill <surface-id> <ref> <value>  Set an input's value by snapshot ref
-  forktty browser eval <surface-id> <script>       Run JavaScript (use --json for the result)
   forktty browser back <surface-id>                Navigate back in history
   forktty browser forward <surface-id>             Navigate forward in history
   forktty browser reload <surface-id>              Reload the current page
@@ -2702,7 +2701,6 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "snapshot" => browser_surface_cmd(context, rest, "browser.snapshot", "snapshot", None),
         "click" => browser_click(context, rest),
         "fill" => browser_fill(context, rest),
-        "eval" => browser_eval(context, rest),
         "back" => browser_surface_cmd(
             context,
             rest,
@@ -2876,31 +2874,6 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         json!({"surface_id": surface_id, "ref": reference, "value": value}),
     )?;
     print_result_or_json(context, "Filled", result)
-}
-
-#[cfg(any(feature = "browser", test))]
-fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &[], "browser eval")?;
-    let (surface_id, script) = match parsed.positionals.as_slice() {
-        [s, sc] => (
-            required_trimmed_arg(Some(s), "browser eval requires <surface-id> <script>")?,
-            required_non_blank_arg(Some(sc), "browser eval requires <surface-id> <script>")?
-                .to_string(),
-        ),
-        [_, _, extra, ..] => {
-            return Err(CliError::new(format!(
-                "browser eval: unexpected argument '{extra}'"
-            )))
-        }
-        _ => return Err(CliError::new("browser eval requires <surface-id> <script>")),
-    };
-    let result = send_socket_request(
-        &context.socket_path,
-        "browser.eval",
-        json!({"surface_id": surface_id, "script": script}),
-    )?;
-    print_result_or_json(context, "Evaluated", result)
 }
 
 #[cfg(any(feature = "browser", test))]
@@ -11328,10 +11301,6 @@ mod tests {
                 "browser click requires <surface-id> <ref>",
             ),
             (
-                strings(&["eval", "s9", "   "]),
-                "browser eval requires <surface-id> <script>",
-            ),
-            (
                 strings(&["profile", "create", "   "]),
                 "browser profile create requires a <name>",
             ),
@@ -11549,27 +11518,6 @@ mod tests {
         assert_eq!(request["params"]["surface_id"], "s9");
         assert_eq!(request["params"]["ref"], "e3");
         assert_eq!(request["params"]["value"], "hello world");
-    }
-
-    #[test]
-    fn browser_eval_sends_script() {
-        let request = with_socket_response(
-            |req| {
-                json!({
-                    "id": req["id"],
-                    "ok": true,
-                    "result": "ForkTTY",
-                })
-                .to_string()
-            },
-            |socket_path| {
-                let ctx = ctx_for(socket_path);
-                handle_browser(&ctx, strings(&["eval", "s9", "document.title"])).unwrap();
-            },
-        );
-        assert_eq!(request["method"], "browser.eval");
-        assert_eq!(request["params"]["surface_id"], "s9");
-        assert_eq!(request["params"]["script"], "document.title");
     }
 
     #[test]
