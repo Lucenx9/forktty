@@ -1302,9 +1302,31 @@ fn terminal_area_geometry(
 ) {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
     let padding = terminal_content_padding(area);
-    let content_width = terminal_content_size(area.allocated_width(), padding.left, padding.right);
-    let content_height =
-        terminal_content_size(area.allocated_height(), padding.top, padding.bottom);
+    let (grid, cells) = terminal_area_grid(
+        area.allocated_width(),
+        area.allocated_height(),
+        padding,
+        cell_width,
+        cell_height,
+    );
+    (grid, padding, cell_width, cell_height, cells)
+}
+
+/// Pure core of [`terminal_area_geometry`]: the grid origin and `(cols, rows)`
+/// for an allocation, given its CSS padding and cell size. The drawn grid lives
+/// in the content box (GTK hands the draw function the CSS-padding-stripped
+/// content dimensions), so this strips the padding exactly once and feeds the
+/// content size to [`terminal_grid_geometry`] — the same input the renderer
+/// uses, which is what keeps pointer mapping aligned with the drawn cells.
+fn terminal_area_grid(
+    allocated_width: i32,
+    allocated_height: i32,
+    padding: TerminalContentPadding,
+    cell_width: i32,
+    cell_height: i32,
+) -> (TerminalGridGeometry, (u16, u16)) {
+    let content_width = terminal_content_size(allocated_width, padding.left, padding.right);
+    let content_height = terminal_content_size(allocated_height, padding.top, padding.bottom);
     let (cols, rows) =
         terminal_grid_cells_for_allocation(content_width, content_height, cell_width, cell_height);
     let grid = terminal_grid_geometry(
@@ -1315,7 +1337,7 @@ fn terminal_area_geometry(
         cell_width,
         cell_height,
     );
-    (grid, padding, cell_width, cell_height, (cols, rows))
+    (grid, (cols, rows))
 }
 
 fn terminal_mouse_input_for_area(
@@ -3123,6 +3145,29 @@ mod mouse_tests {
     fn terminal_content_size_excludes_css_padding_for_mouse_coordinates() {
         assert_eq!(terminal_content_size(100, 12, 12), 76);
         assert_eq!(terminal_content_size(10, 12, 12), 1);
+    }
+
+    #[test]
+    fn terminal_area_grid_strips_css_padding_once_and_matches_draw_path() {
+        // `.ghostty-terminal { padding: 10px 12px; }`, a 800x480 allocation and
+        // a 10x20 cell. This exercises the real runtime helper (not a
+        // hand-built geometry), so it would catch the mouse path stripping the
+        // CSS padding twice or feeding the full allocation — either of which
+        // shifts the origin away from what the renderer draws.
+        let padding = TerminalContentPadding {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        };
+        let (grid, (cols, rows)) = terminal_area_grid(800, 480, padding, 10, 20);
+
+        // The renderer (`draw_frame`) receives GTK's content-area dimensions
+        // (CSS padding already applied) and builds the grid from
+        // `terminal_grid_geometry` on those. With a single strip the mouse path
+        // lands on the same inner-gutter origin and cell count.
+        assert_eq!((grid.origin_x, grid.origin_y), (8, 10));
+        assert_eq!((cols, rows), (76, 22));
     }
 
     #[test]
