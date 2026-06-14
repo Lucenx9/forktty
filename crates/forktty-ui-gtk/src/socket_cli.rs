@@ -11617,7 +11617,7 @@ mod tests {
             ),
             (
                 strings(&["eval", "s9", "   "]),
-                "browser eval requires <surface-id> <script>",
+                "browser eval requires <surface-id> and <script> or --script-file",
             ),
             (
                 strings(&["profile", "create", "   "]),
