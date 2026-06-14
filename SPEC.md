@@ -311,7 +311,10 @@ The `browser` cargo feature builds WebKitGTK6 panes alongside Ghostty panes.
 Browser surfaces are part of `WorkspaceModel` and carry a URL plus a
 `ProfileId`. The socket can open/navigate browser surfaces and, when a
 GTK browser command channel is available, run snapshot/click/fill/eval and
-back/forward/reload operations against the live WebView.
+back/forward/reload operations against the live WebView. JavaScript-backed
+automation runs in ForkTTY's isolated WebKit script world rather than the
+page's default script world, so visited pages cannot observe or replace the
+automation driver global.
 
 Browser profile metadata is stored in:
 

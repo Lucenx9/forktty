@@ -82,13 +82,24 @@ pub(super) fn attach_terminal_signal_handlers(
         match pump_widget.pump_pty_events() {
             Ok(events) if events.is_empty() => {}
             Ok(events) => {
-                let mut child_exited = false;
+                let child_exited = events
+                    .iter()
+                    .any(|event| matches!(event, GhosttyEvent::ChildExit { .. }));
+                if child_exited
+                    && !child_exit_matches_current_spawn(
+                        &events,
+                        &mut pump_surface_pids.borrow_mut(),
+                        &pump_surface_id,
+                        spawn_token,
+                    )
+                {
+                    return glib::ControlFlow::Break;
+                }
                 let visual_bell = events
                     .iter()
                     .any(|event| matches!(event, GhosttyEvent::Bell));
                 for event in &events {
                     if matches!(event, GhosttyEvent::ChildExit { .. }) {
-                        child_exited = true;
                         if let Some(state) = &pump_state {
                             match state.terminal.mark_surface_not_ready(&pump_surface_id) {
                                 Ok(()) | Err(TerminalError::NotFound(_)) => {}
@@ -97,11 +108,6 @@ pub(super) fn attach_terminal_signal_handlers(
                                 ),
                             }
                         }
-                        let _ = remove_surface_pid_for_spawn(
-                            &mut pump_surface_pids.borrow_mut(),
-                            &pump_surface_id,
-                            spawn_token,
-                        );
                     }
                 }
                 if visual_bell {
@@ -127,6 +133,22 @@ pub(super) fn attach_terminal_signal_handlers(
         }
         glib::ControlFlow::Continue
     });
+}
+
+#[cfg(feature = "gtk-ghostty")]
+fn child_exit_matches_current_spawn(
+    events: &[GhosttyEvent],
+    surface_pids: &mut BTreeMap<String, SurfacePid>,
+    surface_id: &str,
+    spawn_token: u64,
+) -> bool {
+    if !events
+        .iter()
+        .any(|event| matches!(event, GhosttyEvent::ChildExit { .. }))
+    {
+        return true;
+    }
+    remove_surface_pid_for_spawn(surface_pids, surface_id, spawn_token)
 }
 
 pub(super) fn surface_status_key(surface_id: &str) -> String {
@@ -324,6 +346,36 @@ mod ghostty_tests {
     ) {
         let mut limiter = TerminalMetadataNotificationLimiter::default();
         apply_ghostty_events_to_model(model, workspace_id, surface_id, events, &mut limiter);
+    }
+
+    #[test]
+    fn child_exit_batch_rejects_stale_spawn_tokens() {
+        let mut pids = BTreeMap::from([(
+            "surface-1".to_string(),
+            SurfacePid {
+                pid: 123,
+                spawn_token: 2,
+            },
+        )]);
+        let events = [
+            GhosttyEvent::TitleChanged("stale title".to_string()),
+            GhosttyEvent::ChildExit { status: 0 },
+        ];
+
+        assert!(!child_exit_matches_current_spawn(
+            &events,
+            &mut pids,
+            "surface-1",
+            1
+        ));
+        assert_eq!(pids["surface-1"].spawn_token, 2);
+        assert!(child_exit_matches_current_spawn(
+            &events,
+            &mut pids,
+            "surface-1",
+            2
+        ));
+        assert!(!pids.contains_key("surface-1"));
     }
 
     #[test]
