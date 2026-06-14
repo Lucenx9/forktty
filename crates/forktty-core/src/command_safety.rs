@@ -300,6 +300,10 @@ mod tests {
     #[test]
     fn validate_worktree_name_accepts_and_trims() {
         assert_eq!(validate_worktree_name(" feature/x ").unwrap(), "feature/x");
+        assert_eq!(
+            validate_worktree_name(&"x".repeat(255)).unwrap(),
+            "x".repeat(255)
+        );
     }
 
     #[test]
@@ -334,11 +338,31 @@ mod tests {
     fn validate_worktree_name_rejects_unsafe_inputs() {
         assert_eq!(validate_worktree_name(""), Err(WorktreeNameError::Empty));
         assert_eq!(
+            validate_worktree_name("   \t  "),
+            Err(WorktreeNameError::Empty)
+        );
+        assert_eq!(
             validate_worktree_name("../escape"),
             Err(WorktreeNameError::UnsafeSegment)
         );
         assert_eq!(
             validate_worktree_name("feature//empty"),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("/feature"),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("feature/"),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("feature/."),
+            Err(WorktreeNameError::UnsafeSegment)
+        );
+        assert_eq!(
+            validate_worktree_name("."),
             Err(WorktreeNameError::UnsafeSegment)
         );
         assert_eq!(
@@ -351,6 +375,10 @@ mod tests {
         );
         assert_eq!(
             validate_worktree_name("feature\nname"),
+            Err(WorktreeNameError::UnsupportedCharacters)
+        );
+        assert_eq!(
+            validate_worktree_name("feature\0name"),
             Err(WorktreeNameError::UnsupportedCharacters)
         );
         assert_eq!(
