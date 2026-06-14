@@ -3300,6 +3300,21 @@ async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> 
     }))
 }
 
+async fn browser_import_preflight_sources(
+    sources: &[forktty_import::SourceProfile],
+    include: BrowserImportSelection,
+) -> Result<(), DispatchError> {
+    for source in sources {
+        forktty_import::ImportEngine::read_source_async_with_selection(
+            source,
+            include.read_selection(),
+        )
+        .await
+        .map_err(|err| DispatchError::Other(err.to_string()))?;
+    }
+    Ok(())
+}
+
 fn resolve_profile_value_in_store(
     store: &forktty_core::ProfileStore,
     value: &Value,
@@ -3517,6 +3532,7 @@ async fn browser_import_run(
 
     for entry in plan.entries {
         let sources = entry.sources;
+        browser_import_preflight_sources(&sources, include).await?;
         let (profile_id, display_name, created) = {
             let _profile_store_guard = state
                 .profile_store_lock
@@ -10107,6 +10123,17 @@ mod tests {
             }
         }
 
+        fn write_firefox_profiles_ini(home: &Path, names: &[&str]) {
+            let mut profiles_ini = String::new();
+            for (index, name) in names.iter().enumerate() {
+                profiles_ini.push_str(&format!(
+                    "[Profile{index}]\nName={name}\nPath={name}\nDefault={}\n",
+                    usize::from(index == 0)
+                ));
+            }
+            fs::write(home.join(".mozilla/firefox/profiles.ini"), profiles_ini).unwrap();
+        }
+
         #[tokio::test]
         #[serial_test::serial]
         async fn browser_import_discover_preview_and_run_imports_history_bookmarks() {
@@ -10337,6 +10364,45 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|profile| { profile["display_name"] == json!("Should Roll Back") }));
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn browser_import_run_does_not_partially_write_existing_profile_on_later_read_error()
+        {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = tmp.path().join("home");
+            fs::create_dir_all(&home).unwrap();
+            let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+            let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+            let valid = create_firefox_import_source(&home, "valid");
+            let corrupt = create_corrupt_firefox_import_source(&home, "corrupt");
+            write_firefox_profiles_ini(&home, &["valid", "corrupt"]);
+            let (state, _backend) = test_state();
+
+            let err = dispatch(
+                &state,
+                "browser.import.run",
+                json!({
+                    "sources": [
+                        browser_import_source_id(&valid),
+                        browser_import_source_id(&corrupt)
+                    ],
+                    "destination": {"kind": "existing", "profile": "Default"}
+                }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code(), "error");
+
+            let history = dispatch(&state, "browser.history.list", json!({}))
+                .await
+                .unwrap();
+            assert!(history.as_array().unwrap().is_empty());
+            let bookmarks = dispatch(&state, "browser.bookmark.list", json!({}))
+                .await
+                .unwrap();
+            assert!(bookmarks.as_array().unwrap().is_empty());
         }
 
         #[tokio::test]
