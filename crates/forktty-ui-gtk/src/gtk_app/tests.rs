@@ -2528,11 +2528,16 @@ fn settings_change_rebases_onto_externally_modified_config() {
     // While the Settings dialog is open, an external save (e.g. the F9
     // sidebar toggle) can change other fields; a dialog save must apply only
     // its own field on top of the latest config instead of reverting them.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
     let mut base = config::AppConfig::default();
+    base.general.shell = "/bin/sh".to_string();
     base.appearance.sidebar_visible = !base.appearance.sidebar_visible;
     let external_sidebar = base.appearance.sidebar_visible;
+    config::save_config_to_path(&path, &base).unwrap();
 
-    let next = rebased_settings_config(&base, |config| config.appearance.font_size = 18);
+    let next =
+        config::update_config_at_path(&path, |config| config.appearance.font_size = 18).unwrap();
 
     assert_eq!(next.appearance.font_size, 18);
     assert_eq!(next.appearance.sidebar_visible, external_sidebar);
@@ -2540,10 +2545,15 @@ fn settings_change_rebases_onto_externally_modified_config() {
 
 #[test]
 fn settings_change_preserves_telemetry_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
     let mut base = config::AppConfig::default();
+    base.general.shell = "/bin/sh".to_string();
     base.telemetry.anonymous_ping = false;
+    config::save_config_to_path(&path, &base).unwrap();
 
-    let next = rebased_settings_config(&base, |config| config.appearance.font_size = 18);
+    let next =
+        config::update_config_at_path(&path, |config| config.appearance.font_size = 18).unwrap();
 
     assert!(!next.telemetry.anonymous_ping);
 }
