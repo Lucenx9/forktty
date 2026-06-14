@@ -1951,4 +1951,125 @@ mod tests {
         assert!(frame.rows[1].wrapped);
         assert!(!frame.rows[2].wrapped);
     }
+
+    fn scanner_xorshift(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    /// Build a pseudo-random byte buffer biased toward a scanner's structural
+    /// bytes, so inputs actually reach the parser states instead of staying in
+    /// the ground state.
+    fn scanner_random_bytes(rng: &mut u64, pool: &[u8], max_len: usize) -> Vec<u8> {
+        let len = (scanner_xorshift(rng) as usize) % (max_len + 1);
+        (0..len)
+            .map(|_| {
+                let roll = scanner_xorshift(rng);
+                if roll.is_multiple_of(4) {
+                    (roll >> 8) as u8
+                } else {
+                    pool[(roll >> 8) as usize % pool.len()]
+                }
+            })
+            .collect()
+    }
+
+    /// Deterministic randomized sweep: malformed/truncated input must never
+    /// panic for any tail-gating offset, and gating the entire buffer (every
+    /// sequence is "old") must detect nothing.
+    #[test]
+    fn theme_reset_scanner_random_input_never_panics() {
+        const POOL: &[u8] = &[
+            0x1b, b']', b'1', b'0', b'4', b';', b'#', b'?', 0x07, b'\\', b'a', 0xff,
+        ];
+        let mut rng = 0x7e57_2026_0610_beefu64;
+        for _ in 0..5_000 {
+            let bytes = scanner_random_bytes(&mut rng, POOL, 256);
+            let plen = (scanner_xorshift(&mut rng) as usize) % (bytes.len() + 1);
+            // Must not panic for an arbitrary gating offset.
+            let _ = scan_osc_theme_reset_sequences(&bytes, plen);
+            // A sequence terminator is always at an index < len, so gating with
+            // previous_tail_len == len can never re-detect anything.
+            assert!(
+                !scan_osc_theme_reset_sequences(&bytes, bytes.len()).any(),
+                "full-tail gate detected a reset for {bytes:?}"
+            );
+        }
+    }
+
+    /// The tail gate keeps a sequence iff its terminator lands in the new
+    /// region (`terminator_index >= previous_tail_len`); pins the off-by-one.
+    #[test]
+    fn theme_reset_gating_respects_terminator_index() {
+        let prefix = b"plain-noise-no-esc";
+        let seq = b"\x1b]111\x07";
+        let suffix = b"trailing-noise";
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(prefix);
+        bytes.extend_from_slice(seq);
+        bytes.extend_from_slice(suffix);
+        let terminator_index = prefix.len() + seq.len() - 1;
+        for plen in 0..=bytes.len() {
+            let detected = scan_osc_theme_reset_sequences(&bytes, plen).background;
+            assert_eq!(detected, terminator_index >= plen, "plen={plen}");
+        }
+    }
+
+    /// A later explicit set in the same window overrides an earlier reset, but
+    /// a color *query* (`;?`) does not. Generalizes the same-chunk fix.
+    #[test]
+    fn theme_reset_is_overridden_by_a_later_set_but_not_a_query() {
+        let reset = b"\x1b]111\x07".as_slice();
+        let set = b"\x1b]11;#abcdef\x07".as_slice();
+        let query = b"\x1b]11;?\x07".as_slice();
+        let concat = |a: &[u8], b: &[u8]| [a, b].concat();
+
+        // reset then set: the application's set wins, so no re-seed.
+        assert!(!scan_osc_theme_reset_sequences(&concat(reset, set), 0).background);
+        // set then reset: the reset wins, so re-seed.
+        assert!(scan_osc_theme_reset_sequences(&concat(set, reset), 0).background);
+        // reset then query: a query changes nothing, so the reset still wins.
+        assert!(scan_osc_theme_reset_sequences(&concat(reset, query), 0).background);
+    }
+
+    /// Deterministic randomized sweep: the private-mode scanner must never
+    /// panic on arbitrary input.
+    #[test]
+    fn private_mode_scanner_random_input_never_panics() {
+        const POOL: &[u8] = &[
+            0x1b, b'[', b'?', b'1', b'0', b'4', b'2', b';', b'h', b'l', b'a', 0xff,
+        ];
+        let mut rng = 0x1234_2026_0610_cafeu64;
+        for _ in 0..5_000 {
+            let bytes = scanner_random_bytes(&mut rng, POOL, 256);
+            let mut focus = false;
+            let mut bracketed = false;
+            scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        }
+    }
+
+    /// Focus reporting (1004) and bracketed paste (2004) are tracked
+    /// independently, embedded in noise, with the last enable/disable winning.
+    #[test]
+    fn private_mode_scanner_tracks_combined_modes_in_noise() {
+        let mut bytes = b"noise\x00".to_vec();
+        bytes.extend_from_slice(b"\x1b[?1004h");
+        bytes.extend_from_slice(b"junk");
+        bytes.extend_from_slice(b"\x1b[?2004h");
+        let mut focus = false;
+        let mut bracketed = false;
+        scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        assert!(focus);
+        assert!(bracketed);
+
+        // A later disable of focus reporting wins; bracketed paste stays on.
+        bytes.extend_from_slice(b"\x1b[?1004l");
+        let mut focus = false;
+        let mut bracketed = false;
+        scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        assert!(!focus);
+        assert!(bracketed);
+    }
 }
