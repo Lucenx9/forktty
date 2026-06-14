@@ -197,10 +197,10 @@ pub(super) fn install_actions(
     app.set_accels_for_action("app.split-horizontal", &["<Control><Shift>H"]);
     app.set_accels_for_action("app.split-vertical", &[SPLIT_VERTICAL_ACCEL]);
     app.set_accels_for_action("app.new-tab", &["<Control><Shift>T"]);
-    app.set_accels_for_action("app.previous-tab", &[PREVIOUS_TAB_ACCEL]);
-    app.set_accels_for_action("app.next-tab", &[NEXT_TAB_ACCEL]);
-    app.set_accels_for_action("app.first-tab", &[FIRST_TAB_ACCEL]);
-    app.set_accels_for_action("app.last-tab", &[LAST_TAB_ACCEL]);
+    app.set_accels_for_action("app.previous-tab", &[PREVIOUS_TAB_ACCEL, PREVIOUS_TAB_KP_ACCEL]);
+    app.set_accels_for_action("app.next-tab", &[NEXT_TAB_ACCEL, NEXT_TAB_KP_ACCEL]);
+    app.set_accels_for_action("app.first-tab", &[FIRST_TAB_ACCEL, FIRST_TAB_KP_ACCEL]);
+    app.set_accels_for_action("app.last-tab", &[LAST_TAB_ACCEL, LAST_TAB_KP_ACCEL]);
     app.set_accels_for_action("app.new-workspace", &["<Control><Shift>N"]);
     app.set_accels_for_action("app.open-workspace", &["<Control><Shift>O"]);
     app.set_accels_for_action("app.command-palette", &["<Control><Shift>P"]);
