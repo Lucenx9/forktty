@@ -5576,14 +5576,21 @@ fn ensure_private_antigravity_hook_dirs() -> CliResult<()> {
         antigravity_scripts_dir(),
     ] {
         fs::create_dir_all(&dir)?;
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
-        let meta = fs::metadata(&dir)?;
-        if !meta.is_dir() {
+        let link_meta = fs::symlink_metadata(&dir)?;
+        if link_meta.file_type().is_symlink() {
+            return Err(CliError::new(format!(
+                "antigravity hooks setup: refusing symlinked hook directory {}",
+                dir.display()
+            )));
+        }
+        if !link_meta.is_dir() {
             return Err(CliError::new(format!(
                 "antigravity hooks setup: {} is not a directory",
                 dir.display()
             )));
         }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        let meta = fs::symlink_metadata(&dir)?;
         let mode = meta.permissions().mode();
         if mode & 0o022 != 0 {
             return Err(CliError::new(format!(
@@ -10472,6 +10479,29 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[test]
+    fn antigravity_setup_rejects_symlinked_hook_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let target = dir.path().join("target");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o777)).unwrap();
+        std::os::unix::fs::symlink(&target, home.join(".gemini")).unwrap();
+        let home = home.display().to_string();
+
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let err = handle_hooks_setup(&test_context(), strings(&["antigravity"]))
+                .expect_err("symlinked Antigravity hook root must be rejected");
+            assert!(err.message.contains("refusing symlinked hook directory"));
+        });
+
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o777
+        );
     }
 
     #[test]
