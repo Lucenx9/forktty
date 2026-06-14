@@ -351,7 +351,7 @@ Notification sources:
 - explicit socket/hook `notification.create`;
 - ForkTTY hook `precmd`, `preexec`, and `postexec` termprops;
 - ForkTTY progress termprops;
-- Ghostty OSC 9 and basic OSC 99 terminal notifications;
+- Ghostty OSC 9 and basic OSC 99 terminal notifications, rate-limited per surface;
 - Ghostty bell;
 - Ghostty child exit;
 - bounded visible-tail prompt fallback for common agent prompts.
