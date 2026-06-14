@@ -863,7 +863,7 @@ pub async fn dispatch(
                 if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
                     let mut err = err;
                     if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
+                        close_terminal_surface_if_present(state, &replacement.focused_surface_id)
                     {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
@@ -892,7 +892,7 @@ pub async fn dispatch(
                         previous_active_id,
                     )?;
                     if rolled_back {
-                        if let Err(cleanup_err) = forget_terminal_surface_if_present(
+                        if let Err(cleanup_err) = close_terminal_surface_if_present(
                             state,
                             &replacement.focused_surface_id,
                         ) {
@@ -1055,7 +1055,7 @@ pub async fn dispatch(
                 if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
                     let mut err = err;
                     if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
+                        close_terminal_surface_if_present(state, &replacement.focused_surface_id)
                     {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
@@ -1069,7 +1069,7 @@ pub async fn dispatch(
                 if let Err(err) = finish_removal_blocking(removal, false).await {
                     let mut err = err.to_string();
                     if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.focused_surface_id)
+                        close_terminal_surface_if_present(state, &replacement.focused_surface_id)
                     {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
@@ -1102,7 +1102,7 @@ pub async fn dispatch(
                         previous_active_id,
                     )?;
                     if rolled_back {
-                        if let Err(cleanup_err) = forget_terminal_surface_if_present(
+                        if let Err(cleanup_err) = close_terminal_surface_if_present(
                             state,
                             &replacement.focused_surface_id,
                         ) {
@@ -1548,7 +1548,7 @@ pub async fn dispatch(
                 if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
                     let mut err = err;
                     if let Err(cleanup_err) =
-                        forget_terminal_surface_if_present(state, &replacement.id)
+                        close_terminal_surface_if_present(state, &replacement.id)
                     {
                         err = format!("{err}; replacement cleanup failed: {cleanup_err}");
                     }
@@ -1566,7 +1566,7 @@ pub async fn dispatch(
                     (surface, replacement_in_model)
                 };
                 if surface.is_err() || !replacement_in_model {
-                    forget_terminal_surface_if_present(state, &replacement.id)?;
+                    close_terminal_surface_if_present(state, &replacement.id)?;
                 }
                 let surface = surface?;
                 evict_hook_session_targets_for_surface(state, surface_id)?;
@@ -2582,16 +2582,6 @@ fn evict_hook_session_targets_for_surfaces(
         targets.remove_surface(surface_id);
     }
     Ok(())
-}
-
-fn forget_terminal_surface_if_present(
-    state: &SocketAppState,
-    surface_id: &str,
-) -> Result<(), String> {
-    match state.terminal.forget_surface(surface_id) {
-        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
-        Err(err) => Err(err.to_string()),
-    }
 }
 
 fn rollback_workspace_creation(
@@ -4661,7 +4651,7 @@ mod tests {
         HeadlessTerminalBackend, TerminalBackend, TerminalError, TerminalSurfaceState,
     };
     use git2::Repository;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
@@ -5171,6 +5161,97 @@ mod tests {
 
         fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
             Err(TerminalError::Backend("close failed".to_string()))
+        }
+
+        fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .values()
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[derive(Debug)]
+    struct DirtyOnCloseBackend {
+        surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+        active_children: Mutex<BTreeSet<String>>,
+        dirty_on_close: PathBuf,
+    }
+
+    impl DirtyOnCloseBackend {
+        fn new(initial: TerminalSurfaceState, dirty_on_close: PathBuf) -> Self {
+            let mut surfaces = BTreeMap::new();
+            let mut active_children = BTreeSet::new();
+            active_children.insert(initial.surface_id.clone());
+            surfaces.insert(initial.surface_id.clone(), initial);
+            Self {
+                surfaces: Mutex::new(surfaces),
+                active_children: Mutex::new(active_children),
+                dirty_on_close,
+            }
+        }
+
+        fn active_children(&self) -> BTreeSet<String> {
+            self.active_children.lock().unwrap().clone()
+        }
+    }
+
+    impl TerminalBackend for DirtyOnCloseBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.active_children
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(request.surface_id.clone());
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .insert(
+                    request.surface_id.clone(),
+                    TerminalSurfaceState {
+                        surface_id: request.surface_id,
+                        workspace_id: request.workspace_id,
+                        cwd: request.cwd,
+                        shell: request.shell,
+                        cols: 80,
+                        rows: 24,
+                    },
+                );
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            fs::write(&self.dirty_on_close, "dirty\n")
+                .map_err(|err| TerminalError::Backend(err.to_string()))?;
+            self.active_children
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id);
+            self.surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .remove(surface_id)
+                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+            Ok(())
         }
 
         fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
@@ -8517,6 +8598,66 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn worktree_remove_last_workspace_closes_replacement_when_finish_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/socket-remove-finish-{}", std::process::id());
+        let info = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            &worktree_layout(),
+        )
+        .unwrap();
+        let worktree_cwd = PathBuf::from(&info.path);
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_worktree_workspace(
+                &info.branch,
+                &worktree_cwd,
+                &info.branch,
+                &info.worktree_name,
+            )
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(DirtyOnCloseBackend::new(
+            TerminalSurfaceState {
+                surface_id: surface_id.clone(),
+                workspace_id: workspace.id.clone(),
+                cwd: worktree_cwd.clone(),
+                shell: "/bin/sh".to_string(),
+                cols: 80,
+                rows: 24,
+            },
+            worktree_cwd.join("dirty-after-close.txt"),
+        ));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.remove",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("uncommitted changes"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        assert_eq!(workspaces.as_array().unwrap().len(), 1);
+        assert_eq!(workspaces[0]["id"], workspace.id);
+        let backend_surfaces = backend.surfaces().unwrap();
+        assert_eq!(backend_surfaces.len(), 1);
+        assert_eq!(backend_surfaces[0].surface_id, surface_id);
+        assert_eq!(backend.active_children(), BTreeSet::from([surface_id]));
     }
 
     #[tokio::test]
