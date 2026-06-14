@@ -2,7 +2,8 @@ use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use crate::{AppConfig, NotificationItem, NotificationKind};
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::process::Child;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +17,7 @@ pub struct NotificationDispatchError {
 /// command per emission, with one OS thread per spawn.
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
+const CUSTOM_COMMAND_REAPER_QUEUE_CAPACITY: usize = 8;
 const DESKTOP_ENTRY_ID: &str = "dev.forktty.forktty";
 
 type DedupeKey = (
@@ -129,7 +131,7 @@ fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<
         ));
     }
 
-    let mut child = std::process::Command::new(program)
+    let child = std::process::Command::new(program)
         .args(args)
         .env("FORKTTY_NOTIFICATION_ID", &notification.id)
         .env("FORKTTY_NOTIFICATION_TITLE", &notification.title)
@@ -149,10 +151,44 @@ fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<
         .spawn()
         .map_err(|err| err.to_string())?;
 
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    enqueue_custom_command_child(custom_command_reaper(), child)
+}
+
+fn custom_command_reaper() -> &'static mpsc::SyncSender<Child> {
+    static REAPER: OnceLock<mpsc::SyncSender<Child>> = OnceLock::new();
+    REAPER.get_or_init(|| {
+        let (sender, receiver) = mpsc::sync_channel::<Child>(CUSTOM_COMMAND_REAPER_QUEUE_CAPACITY);
+        if let Err(err) = std::thread::Builder::new()
+            .name("forktty-notification-command-reaper".to_string())
+            .spawn(move || {
+                for mut child in receiver {
+                    let _ = child.wait();
+                }
+            })
+        {
+            eprintln!("Failed to start notification command reaper: {err}");
+        }
+        sender
+    })
+}
+
+fn enqueue_custom_command_child(
+    sender: &mpsc::SyncSender<Child>,
+    child: Child,
+) -> Result<(), String> {
+    match sender.try_send(child) {
+        Ok(()) => Ok(()),
+        Err(mpsc::TrySendError::Full(mut child)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err("notification_command wait queue is full".to_string())
+        }
+        Err(mpsc::TrySendError::Disconnected(mut child)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err("notification_command waiter is unavailable".to_string())
+        }
+    }
 }
 
 fn notification_kind_name(notification: &NotificationItem) -> &'static str {
@@ -275,5 +311,22 @@ mod tests {
         );
 
         assert!(dispatch_notification(&config, &notification).is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn custom_command_child_is_killed_when_reaper_queue_is_full() {
+        if !Path::new("/bin/sleep").exists() {
+            return;
+        }
+        let (sender, _receiver) = mpsc::sync_channel(0);
+        let child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+
+        let error = enqueue_custom_command_child(&sender, child).unwrap_err();
+
+        assert!(error.contains("wait queue is full"));
     }
 }
