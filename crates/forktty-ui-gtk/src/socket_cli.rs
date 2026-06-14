@@ -4082,6 +4082,13 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
             "hooks setup: forktty executable path must be absolute",
         ));
     }
+    if !dry_run {
+        for spec in &agents {
+            if spec.key == "antigravity" {
+                ensure_private_antigravity_hook_dirs()?;
+            }
+        }
+    }
 
     let mut plans = Vec::new();
     for spec in agents {
@@ -4096,9 +4103,6 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
     let mut summaries = Vec::new();
     for plan in plans {
         let mut backup_path = None;
-        if plan.spec.key == "antigravity" && !dry_run {
-            ensure_private_antigravity_hook_dirs()?;
-        }
         if plan.changed && !dry_run {
             let write_path = hook_config_write_path(&plan.config_path)?;
             ensure_parent_dir(&write_path)?;
@@ -4909,8 +4913,12 @@ fn gemini_mcp_config_path() -> PathBuf {
 // Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
 // (verified against agy 1.0.3; the workspace-level .agents/hooks.json is
 // intentionally not managed so hooks work from any project).
+fn antigravity_root_dir() -> PathBuf {
+    home_dir().join(".gemini")
+}
+
 fn antigravity_config_dir() -> PathBuf {
-    home_dir().join(".gemini/config")
+    antigravity_root_dir().join("config")
 }
 
 fn antigravity_config_path() -> PathBuf {
@@ -5564,7 +5572,11 @@ fn ensure_parent_dir(path: &Path) -> CliResult<()> {
 }
 
 fn ensure_private_antigravity_hook_dirs() -> CliResult<()> {
-    for dir in [antigravity_config_dir(), antigravity_scripts_dir()] {
+    for dir in [
+        antigravity_root_dir(),
+        antigravity_config_dir(),
+        antigravity_scripts_dir(),
+    ] {
         fs::create_dir_all(&dir)?;
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
         let meta = fs::metadata(&dir)?;
@@ -10221,14 +10233,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().display().to_string();
         with_env(&[("HOME", Some(home.as_str()))], || {
+            let root_dir = antigravity_root_dir();
             let config_dir = antigravity_config_dir();
             let scripts_dir = antigravity_scripts_dir();
             fs::create_dir_all(&scripts_dir).unwrap();
+            fs::set_permissions(&root_dir, fs::Permissions::from_mode(0o777)).unwrap();
             fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o777)).unwrap();
             fs::set_permissions(&scripts_dir, fs::Permissions::from_mode(0o777)).unwrap();
 
             handle_hooks_setup(&test_context(), strings(&["antigravity"])).unwrap();
 
+            assert_eq!(
+                fs::metadata(&root_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
             assert_eq!(
                 fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777,
                 0o700
