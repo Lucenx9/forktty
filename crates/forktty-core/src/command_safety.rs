@@ -14,8 +14,8 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Returns true when `program` + `args` look like `sh -c <something>`.
 ///
-/// Accepted shell basenames cover the common POSIX shells plus csh/tcsh and
-/// xonsh. `-c` is detected
+/// Accepted shell basenames cover the common POSIX shells plus known shells
+/// with less common names (`tcsh`, `xonsh`, `pwsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
 /// (`-lc`, `-xc`); scanning stops at the first non-flag argument or at `--`.
 /// A leading `env` (with its flags and `VAR=val` assignments) is unwrapped so
@@ -30,7 +30,24 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     }
     let is_shell = matches!(
         basename,
-        "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh" | "csh" | "tcsh" | "xonsh"
+        "sh" | "ash"
+            | "bash"
+            | "csh"
+            | "dash"
+            | "fish"
+            | "hush"
+            | "ksh"
+            | "lksh"
+            | "mksh"
+            | "oksh"
+            | "posh"
+            | "pwsh"
+            | "rbash"
+            | "rksh"
+            | "tcsh"
+            | "xonsh"
+            | "yash"
+            | "zsh"
     );
     if !is_shell {
         return false;
@@ -204,7 +221,13 @@ mod tests {
     #[test]
     fn shell_trampoline_detects_common_shells() {
         assert!(is_shell_trampoline("/bin/sh", &["-c"]));
+        assert!(is_shell_trampoline("/bin/ash", &["-c"]));
         assert!(is_shell_trampoline("/usr/bin/bash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/lksh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/mksh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/pwsh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/rbash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/yash", &["-c"]));
         assert!(is_shell_trampoline("/usr/bin/zsh", &["-c"]));
         assert!(is_shell_trampoline("/opt/homebrew/bin/tcsh", &["-c"]));
     }
@@ -297,6 +320,7 @@ mod tests {
             "/usr/bin/mosh",
             &["--ssh=ssh -p 2222", "host"]
         ));
+        assert!(!is_shell_trampoline("/usr/bin/mosh", &["-c", "256"]));
     }
 
     #[test]
