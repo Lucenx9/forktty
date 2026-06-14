@@ -23,6 +23,8 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Agent HUD terminal-tail polling now formats only the bounded tail rows instead of dumping the full scrollback each second, preventing noisy agents from freezing the GTK UI while the HUD is open.
+- Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
+- Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
 - MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.
 - Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
 - Terminal-originated OSC 9/basic OSC 99 notifications are now rate-limited per surface, preventing untrusted terminal output from spamming desktop notifications or repeatedly spawning `notification_command`.
