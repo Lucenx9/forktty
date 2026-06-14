@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- `forktty doctor` now accepts `--hooks`, `--socket`, and `--packaging` scopes for running only the relevant local diagnostics.
 - First launch now shows a one-time welcome dialog: an informed (default-on) telemetry toggle linking to the privacy notice, and a one-click "Set up agent integration" button that runs `hooks setup` and `mcp setup`. The first anonymous ping is deferred until this dialog is dismissed, so the toggle is always seen before any data leaves the machine; the welcome is recorded in `$XDG_STATE_HOME/forktty/welcome-seen.json` and the update check is skipped on that first launch.
 - The GTK app now sends at most one anonymous daily usage ping when `telemetry.anonymous_ping = true` (the default). The payload contains only schema/kind/app/version/date, can be disabled in Settings or config, and crash uploads remain unimplemented.
 - The GTK app now checks GitHub Releases at most once per day when `updates.auto_check = true`, shows update availability in-app, opens the release page for non-AppImage installs, and can self-update writable AppImages after explicit confirmation by downloading the AppImage plus `SHA256SUMS`, verifying SHA256, and atomically replacing the current file.
