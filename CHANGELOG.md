@@ -83,7 +83,7 @@ All notable changes to ForkTTY are documented here.
 - Claude Code session-start context now includes the same concise ForkTTY tool-use policy as the MCP operating guide: use ForkTTY for panes, agents, worktrees, status, or cross-surface text, but avoid tool calls for ordinary single-repo edits.
 
 ### Fixed
-- Agent resume now preserves hook-reported `bypassPermissions` mode for Claude Code and Codex sessions: Claude resumes with `--dangerously-skip-permissions`, and Codex/yolo resumes with `--dangerously-bypass-approvals-and-sandbox`.
+- Agent resume now treats hook-reported permission modes as display-only metadata, so forged or stale `bypassPermissions` hook/status updates cannot add dangerous Claude Code or Codex resume flags.
 - Copying a soft-wrapped line (a long command or paragraph the terminal wrapped to fit the width) no longer inserts a spurious newline at each wrap point: selection copy, the no-selection viewport copy, and select-all now rejoin soft-wrapped rows into their logical line, so pasting a wrapped command back into a shell runs it as one line instead of splitting it.
 - Selecting text by clicking an unfocused terminal pane no longer leaves the selection stuck following the pointer: the focus gesture claiming that first click used to cancel the selection drag without a release, stranding the `selecting` flag, so the highlight kept extending on every mouse move with no button held. The drag now finalizes on gesture cancel and whenever button 1 is no longer physically down.
 - Dragging a left-click selection in an agent pane (deferred local drag) no longer aborts the app with a `RefCell already borrowed` panic in the motion handler.
