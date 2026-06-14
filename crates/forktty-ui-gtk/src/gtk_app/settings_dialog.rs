@@ -1443,17 +1443,6 @@ pub(super) fn browser_import_run_summary(value: &Value) -> String {
     )
 }
 
-// Applies a single settings change on top of `base`, leaving every other
-// field of `base` intact.
-pub(super) fn rebased_settings_config<F: FnOnce(&mut config::AppConfig)>(
-    base: &config::AppConfig,
-    apply_change: F,
-) -> config::AppConfig {
-    let mut next = base.clone();
-    apply_change(&mut next);
-    next
-}
-
 pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
     dialog: &adw::ToastOverlay,
     current: &Rc<RefCell<config::AppConfig>>,
