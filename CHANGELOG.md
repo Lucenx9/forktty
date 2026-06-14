@@ -21,6 +21,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser import planning now lowercases Unicode titlecase profile names before matching and de-duplicating destinations, preventing duplicate-looking profile creation.
+- Ctrl+keypad Home/End/PageUp/PageDown are now reserved for tab-navigation accelerators like their non-keypad equivalents instead of being consumed by terminal input handling.
 - Retrying Worktree Create for an already-linked branch no longer deletes that existing worktree and branch if terminal spawning fails.
 - Sidebar visibility persistence now rebases onto the latest config under a process-wide update lock, avoiding stale background saves that could overwrite newer settings-dialog changes.
 - Malformed browser bookmark files are now moved aside after backup so repeated opens cannot create unbounded backup copies.
