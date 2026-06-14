@@ -3516,17 +3516,7 @@ async fn browser_import_run(
     let mut entries_json = Vec::new();
 
     for entry in plan.entries {
-        let mut source_data = Vec::new();
-        for source in entry.sources {
-            let data = forktty_import::ImportEngine::read_source_async_with_selection(
-                &source,
-                include.read_selection(),
-            )
-            .await
-            .map_err(|err| DispatchError::Other(err.to_string()))?;
-            source_data.push((source, data));
-        }
-
+        let sources = entry.sources;
         let (profile_id, display_name, created) = {
             let _profile_store_guard = state
                 .profile_store_lock
@@ -3538,7 +3528,7 @@ async fn browser_import_run(
         let entry_result: Result<
             (Value, BrowserImportCounts, BrowserImportCounts, usize),
             DispatchError,
-        > = (|| {
+        > = async {
             let history_store = if include.history {
                 Some(
                     forktty_core::HistoryStore::for_profile(profile_id)
@@ -3561,7 +3551,13 @@ async fn browser_import_run(
             let mut entry_unsupported_cookies = 0usize;
             let mut entry_sources = Vec::new();
 
-            for (source, data) in source_data {
+            for source in sources {
+                let data = forktty_import::ImportEngine::read_source_async_with_selection(
+                    &source,
+                    include.read_selection(),
+                )
+                .await
+                .map_err(|err| DispatchError::Other(err.to_string()))?;
                 let read_counts = browser_import_counts_from_data(&data, include);
                 entry_read.add(read_counts);
                 entry_sources.push(browser_import_profile_json(&source));
@@ -3607,7 +3603,8 @@ async fn browser_import_run(
                 entry_written,
                 entry_unsupported_cookies,
             ))
-        })();
+        }
+        .await;
 
         let (entry_json, entry_read, entry_written, entry_unsupported_cookies) = match entry_result
         {
