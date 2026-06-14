@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn pty_os_resize_works() {
         let request =
-            test_spawn_request_for_shell("/bin/sh").with_args(["-c", "sleep 0.1; stty size"]);
+            test_spawn_request_for_shell("/bin/sh").with_args(["-c", "read _; stty size"]);
         let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
         session
             .resize(PtySize {
@@ -588,7 +588,10 @@ mod tests {
                 rows: 40,
             })
             .unwrap();
-        let out = session.read_until(b"\n", Duration::from_secs(2)).unwrap();
+        session.write_all(b"\n").unwrap();
+        let out = session
+            .read_until(b"40 120\n", Duration::from_secs(2))
+            .unwrap();
         let out_str = String::from_utf8_lossy(&out);
         assert!(out_str.contains("40 120"), "output: {:?}", out_str);
     }
