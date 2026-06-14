@@ -16,6 +16,7 @@ forktty — Linux-native multi-agent terminal
 USAGE:
     forktty                 Launch the GTK app (default).
     forktty doctor          Print a local diagnostics report and exit.
+                           Options: --json, --strict, --hooks, --socket, --packaging.
     forktty hooks setup     Install Codex, Claude Code, Gemini, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty mcp             Run the ForkTTY MCP stdio server.
@@ -38,7 +39,16 @@ pub enum CliAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoctorScope {
+    All,
+    Hooks,
+    Socket,
+    Packaging,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DoctorOptions {
+    pub scope: DoctorScope,
     pub json: bool,
     pub strict: bool,
 }
@@ -191,11 +201,11 @@ pub fn print_help() {
 /// values forktty would itself resolve on launch. It does not connect
 /// to the socket, spawn shells, or touch the network.
 pub fn run_doctor(options: DoctorOptions) -> i32 {
-    let report = collect_report();
+    let report = collect_report(options.scope);
     if options.json {
-        println!("{}", format_report_json(&report));
+        println!("{}", format_report_json(&report, options.scope));
     } else {
-        print!("{}", format_report(&report));
+        print!("{}", format_report(&report, options.scope));
     }
     doctor_exit_code(&report, options)
 }
@@ -210,6 +220,7 @@ fn doctor_exit_code(report: &DoctorReport, options: DoctorOptions) -> i32 {
 
 fn parse_doctor_options(args: &[OsString]) -> Result<DoctorOptions, String> {
     let mut options = DoctorOptions {
+        scope: DoctorScope::All,
         json: false,
         strict: false,
     };
@@ -220,6 +231,17 @@ fn parse_doctor_options(args: &[OsString]) -> Result<DoctorOptions, String> {
         match flag {
             "--json" => options.json = true,
             "--strict" => options.strict = true,
+            "--hooks" | "--socket" | "--packaging" => {
+                if options.scope != DoctorScope::All {
+                    return Err("cannot combine scoped doctor flags".to_string());
+                }
+                options.scope = match flag {
+                    "--hooks" => DoctorScope::Hooks,
+                    "--socket" => DoctorScope::Socket,
+                    "--packaging" => DoctorScope::Packaging,
+                    _ => unreachable!(),
+                };
+            }
             // `forktty doctor --socket <path>` is the wrong order for the
             // socket/hook doctor: a leading global flag routes to it instead.
             other if is_socket_cli_global_option(other) => {
@@ -291,87 +313,136 @@ impl DoctorReport {
     }
 }
 
-fn collect_report() -> DoctorReport {
+fn collect_report(scope: DoctorScope) -> DoctorReport {
     let mut warnings = Vec::new();
 
     let config_path = forktty_core::config::config_path().ok();
-    let config = describe_config_path(config_path.clone());
-    append_path_error_warning(&mut warnings, &config);
-    append_launch_quarantine_warnings(
-        &mut warnings,
-        &config,
-        DOCTOR_MAX_CONFIG_SIZE_BYTES,
-        "Config",
-    );
 
-    // Match the directories the app actually uses, so doctor diagnoses the
-    // same paths that get read/written on launch.
+    let config = if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        let state = describe_config_path(config_path.clone());
+        append_path_error_warning(&mut warnings, &state);
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_CONFIG_SIZE_BYTES,
+            "Config",
+        );
+        state
+    } else {
+        describe_config_path(None)
+    };
+
     let data_root = dirs::data_local_dir().map(|d| d.join("forktty"));
-    let data_dir = describe_followed_path("data dir", data_root.clone());
     let state_root = dirs::state_dir()
         .or_else(dirs::data_local_dir)
         .map(|d| d.join("forktty"));
-    let state_dir = describe_followed_path("state dir", state_root.clone());
     let session_path = state_root.as_ref().map(|d| d.join("session-v2.json"));
-    let session = describe_session_path(session_path);
-    append_path_error_warning(&mut warnings, &data_dir);
-    append_storage_dir_warning(&mut warnings, &data_dir, "browser data");
-    append_path_error_warning(&mut warnings, &state_dir);
-    append_storage_dir_warning(&mut warnings, &state_dir, "session state");
-    append_path_error_warning(&mut warnings, &session);
-    append_launch_quarantine_warnings(
-        &mut warnings,
-        &session,
-        DOCTOR_MAX_SESSION_SIZE_BYTES,
-        "Session",
-    );
 
-    let socket = socket_path_from_env(std::env::var("FORKTTY_SOCKET_PATH").ok());
-    let socket_parent_path = socket.parent().map(PathBuf::from);
-    let socket_parent = describe_followed_path("socket dir", socket_parent_path);
-    let socket_state = describe_path("forktty.sock", Some(socket));
-    append_path_error_warning(&mut warnings, &socket_parent);
-    append_path_error_warning(&mut warnings, &socket_state);
-    append_socket_parent_warning(&mut warnings, &socket_parent);
-    append_socket_path_warning(&mut warnings, &socket_state);
-    if let Some(mode) = socket_parent.mode {
-        let world_perms = mode & 0o077;
-        if world_perms != 0 && socket_parent.exists {
-            warnings.push(format!(
-                "socket parent {} has group/other permissions ({:04o}); expected owner-only.",
-                socket_parent
-                    .path
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default(),
-                mode & 0o777
-            ));
-        }
-    }
-
-    let (shell, shell_executable, config_warning) = resolve_shell(config_path.as_deref());
-    if let Some(warning) = config_warning {
-        warnings.push(warning);
-    }
-    if let Some(ref s) = shell {
-        if !shell_executable {
-            warnings.push(format!(
-                "configured shell {s} is not an executable file; ForkTTY will fall back to a default."
-            ));
-        }
+    let data_dir = if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        let state = describe_followed_path("data dir", data_root.clone());
+        append_path_error_warning(&mut warnings, &state);
+        append_storage_dir_warning(&mut warnings, &state, "browser data");
+        state
     } else {
-        warnings.push("no shell could be resolved from config or $SHELL.".to_string());
+        describe_followed_path("data dir", None)
+    };
+
+    let state_dir = if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        let state = describe_followed_path("state dir", state_root.clone());
+        append_path_error_warning(&mut warnings, &state);
+        append_storage_dir_warning(&mut warnings, &state, "session state");
+        state
+    } else {
+        describe_followed_path("state dir", None)
+    };
+
+    let session = if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        let state = describe_session_path(session_path);
+        append_path_error_warning(&mut warnings, &state);
+        append_launch_quarantine_warnings(
+            &mut warnings,
+            &state,
+            DOCTOR_MAX_SESSION_SIZE_BYTES,
+            "Session",
+        );
+        state
+    } else {
+        describe_session_path(None)
+    };
+
+    let (socket_parent, socket_state) = if matches!(scope, DoctorScope::All | DoctorScope::Socket) {
+        let socket = socket_path_from_env(std::env::var("FORKTTY_SOCKET_PATH").ok());
+        let socket_parent_path = socket.parent().map(PathBuf::from);
+        let socket_parent = describe_followed_path("socket dir", socket_parent_path);
+        let socket_state = describe_path("forktty.sock", Some(socket));
+        append_path_error_warning(&mut warnings, &socket_parent);
+        append_path_error_warning(&mut warnings, &socket_state);
+        append_socket_parent_warning(&mut warnings, &socket_parent);
+        append_socket_path_warning(&mut warnings, &socket_state);
+        if let Some(mode) = socket_parent.mode {
+            let world_perms = mode & 0o077;
+            if world_perms != 0 && socket_parent.exists {
+                warnings.push(format!(
+                    "socket parent {} has group/other permissions ({:04o}); expected owner-only.",
+                    socket_parent
+                        .path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                    mode & 0o777
+                ));
+            }
+        }
+        (socket_parent, socket_state)
+    } else {
+        (
+            describe_followed_path("socket dir", None),
+            describe_path("forktty.sock", None),
+        )
+    };
+
+    let mut shell = None;
+    let mut shell_executable = false;
+    if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        let (s, exec, config_warning) = resolve_shell(config_path.as_deref());
+        shell = s;
+        shell_executable = exec;
+        if let Some(warning) = config_warning {
+            warnings.push(warning);
+        }
+        if let Some(ref sh) = shell {
+            if !shell_executable {
+                warnings.push(format!(
+                    "configured shell {sh} is not an executable file; ForkTTY will fall back to a default."
+                ));
+            }
+        } else {
+            warnings.push("no shell could be resolved from config or $SHELL.".to_string());
+        }
     }
 
-    let telemetry_anonymous_ping = resolve_telemetry_anonymous_ping(config_path.as_deref());
-    let hooks = collect_hooks();
-    append_hook_warnings(&mut warnings, &hooks);
-    append_appimage_runtime_warnings(
-        &mut warnings,
-        cfg!(feature = "gtk-ghostty"),
-        std::env::var_os("APPIMAGE"),
-        std::env::var_os("APPDIR"),
-    );
+    let telemetry_anonymous_ping = if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        resolve_telemetry_anonymous_ping(config_path.as_deref())
+    } else {
+        false
+    };
+
+    let hooks = if matches!(scope, DoctorScope::All | DoctorScope::Hooks) {
+        let h = collect_hooks();
+        append_hook_warnings(&mut warnings, &h);
+        h
+    } else {
+        Vec::new()
+    };
+
+    if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        append_appimage_runtime_warnings(
+            &mut warnings,
+            cfg!(feature = "gtk-ghostty"),
+            std::env::var_os("APPIMAGE"),
+            std::env::var_os("APPDIR"),
+        );
+    }
 
     DoctorReport {
         version: VERSION,
@@ -855,60 +926,79 @@ fn env_path_or_home(
     home.map(|h| h.join(fallback_dir))
 }
 
-fn format_report(report: &DoctorReport) -> String {
+fn format_report(report: &DoctorReport, scope: DoctorScope) -> String {
     let mut out = String::new();
-    out.push_str(&format!("forktty {} doctor report\n", report.version));
-    out.push_str(&format!(
-        "  built with gtk-ghostty feature: {}\n",
-        report.feature_gtk_ghostty
-    ));
-    out.push('\n');
 
-    out.push_str("Paths:\n");
-    out.push_str(&format_path(&report.config));
-    out.push_str(&format_path(&report.data_dir));
-    out.push_str(&format_path(&report.state_dir));
-    out.push_str(&format_path(&report.session));
-    out.push_str(&format_path(&report.socket_parent));
-    out.push_str(&format_path(&report.socket));
-    out.push('\n');
-
-    out.push_str("Shell:\n");
-    match &report.shell {
-        Some(shell) => out.push_str(&format!(
-            "  {} ({})\n",
-            shell,
-            if report.shell_executable {
-                "executable"
-            } else {
-                "NOT executable"
-            }
-        )),
-        None => out.push_str("  (not configured and $SHELL is empty)\n"),
-    }
-    out.push('\n');
-
-    out.push_str("Telemetry:\n");
-    out.push_str(&format!(
-        "  anonymous daily ping: {}\n",
-        if report.telemetry_anonymous_ping {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    ));
-    out.push('\n');
-
-    out.push_str("Agent hook configs:\n");
-    for hook in &report.hooks {
+    if matches!(scope, DoctorScope::All) {
+        out.push_str(&format!("forktty {} doctor report\n", report.version));
         out.push_str(&format!(
-            "  {:<7} {}  [{}]\n",
-            hook.agent,
-            hook.path.display(),
-            hook.status_label()
+            "  built with gtk-ghostty feature: {}\n",
+            report.feature_gtk_ghostty
         ));
+        out.push('\n');
     }
-    out.push('\n');
+
+    if matches!(
+        scope,
+        DoctorScope::All | DoctorScope::Packaging | DoctorScope::Socket
+    ) {
+        out.push_str("Paths:\n");
+        if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+            out.push_str(&format_path(&report.config));
+            out.push_str(&format_path(&report.data_dir));
+            out.push_str(&format_path(&report.state_dir));
+            out.push_str(&format_path(&report.session));
+        }
+        if matches!(scope, DoctorScope::All | DoctorScope::Socket) {
+            out.push_str(&format_path(&report.socket_parent));
+            out.push_str(&format_path(&report.socket));
+        }
+        out.push('\n');
+    }
+
+    if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        out.push_str("Shell:\n");
+        match &report.shell {
+            Some(shell) => out.push_str(&format!(
+                "  {} ({})\n",
+                shell,
+                if report.shell_executable {
+                    "executable"
+                } else {
+                    "NOT executable"
+                }
+            )),
+            None => out.push_str("  (not configured and $SHELL is empty)\n"),
+        }
+        out.push('\n');
+
+        out.push_str("Telemetry:\n");
+        out.push_str(&format!(
+            "  anonymous daily ping: {}\n",
+            if report.telemetry_anonymous_ping {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ));
+        out.push('\n');
+    }
+
+    if matches!(scope, DoctorScope::All | DoctorScope::Hooks) {
+        out.push_str("Agent hook configs:\n");
+        if report.hooks.is_empty() && scope == DoctorScope::Hooks {
+            out.push_str("  (none)\n");
+        }
+        for hook in &report.hooks {
+            out.push_str(&format!(
+                "  {:<7} {}  [{}]\n",
+                hook.agent,
+                hook.path.display(),
+                hook.status_label()
+            ));
+        }
+        out.push('\n');
+    }
 
     if report.warnings.is_empty() {
         out.push_str("No warnings.\n");
@@ -921,7 +1011,7 @@ fn format_report(report: &DoctorReport) -> String {
     out
 }
 
-fn format_report_json(report: &DoctorReport) -> String {
+fn format_report_json(report: &DoctorReport, scope: DoctorScope) -> String {
     let hooks: Vec<_> = report
         .hooks
         .iter()
@@ -936,24 +1026,54 @@ fn format_report_json(report: &DoctorReport) -> String {
             })
         })
         .collect();
-    json!({
-        "version": report.version,
-        "feature_gtk_ghostty": report.feature_gtk_ghostty,
-        "config": path_state_json(&report.config),
-        "data_dir": path_state_json(&report.data_dir),
-        "state_dir": path_state_json(&report.state_dir),
-        "session": path_state_json(&report.session),
-        "socket_parent": path_state_json(&report.socket_parent),
-        "socket": path_state_json(&report.socket),
-        "shell": report.shell,
-        "shell_executable": report.shell_executable,
-        "telemetry": {
-            "anonymous_ping": report.telemetry_anonymous_ping,
-        },
-        "hooks": hooks,
-        "warnings": report.warnings,
-    })
-    .to_string()
+
+    let mut map = serde_json::Map::new();
+
+    if matches!(scope, DoctorScope::All) {
+        map.insert("version".to_string(), json!(report.version));
+        map.insert(
+            "feature_gtk_ghostty".to_string(),
+            json!(report.feature_gtk_ghostty),
+        );
+    }
+
+    if matches!(scope, DoctorScope::All | DoctorScope::Packaging) {
+        map.insert(
+            "feature_gtk_ghostty".to_string(),
+            json!(report.feature_gtk_ghostty),
+        );
+        map.insert("config".to_string(), path_state_json(&report.config));
+        map.insert("data_dir".to_string(), path_state_json(&report.data_dir));
+        map.insert("state_dir".to_string(), path_state_json(&report.state_dir));
+        map.insert("session".to_string(), path_state_json(&report.session));
+        map.insert("shell".to_string(), json!(report.shell));
+        map.insert(
+            "shell_executable".to_string(),
+            json!(report.shell_executable),
+        );
+        map.insert(
+            "telemetry".to_string(),
+            json!({
+                "anonymous_ping": report.telemetry_anonymous_ping,
+            }),
+        );
+    }
+
+    if matches!(scope, DoctorScope::All | DoctorScope::Socket) {
+        map.insert(
+            "socket_parent".to_string(),
+            path_state_json(&report.socket_parent),
+        );
+        map.insert("socket".to_string(), path_state_json(&report.socket));
+    }
+
+    if matches!(scope, DoctorScope::All | DoctorScope::Hooks) {
+        map.insert("hooks".to_string(), json!(hooks));
+    }
+
+    map.insert("warnings".to_string(), json!(report.warnings));
+
+    serde_json::Value::Object(map).to_string()
 }
 
 fn path_state_json(state: &PathState) -> serde_json::Value {
@@ -1039,6 +1159,7 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "doctor"]),
             CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::All,
                 json: false,
                 strict: false
             })
@@ -1050,9 +1171,50 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "doctor", "--json", "--strict"]),
             CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::All,
                 json: true,
                 strict: true
             })
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--json"]),
+            CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::All,
+                json: true,
+                strict: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_scoped_doctor_flags() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--hooks"]),
+            CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::Hooks,
+                json: false,
+                strict: false
+            })
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--socket", "--json"]),
+            CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::Socket,
+                json: true,
+                strict: false
+            })
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--packaging"]),
+            CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::Packaging,
+                json: false,
+                strict: false
+            })
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "doctor", "--hooks", "--packaging"]),
+            CliAction::Unknown("cannot combine scoped doctor flags".to_string())
         );
     }
 
@@ -1187,7 +1349,6 @@ mod tests {
     #[test]
     fn doctor_rejects_socket_cli_globals_with_a_pointer_to_the_socket_doctor() {
         for args in [
-            vec!["forktty", "doctor", "--socket", "/run/forktty.sock"],
             vec!["forktty", "doctor", "--socket=/run/forktty.sock"],
             vec!["forktty", "doctor", "--verbose"],
             vec!["forktty", "doctor", "--debug"],
@@ -1215,6 +1376,7 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "doctor", "--json"]),
             CliAction::Doctor(DoctorOptions {
+                scope: DoctorScope::All,
                 json: true,
                 strict: false
             })
@@ -1223,8 +1385,8 @@ mod tests {
 
     #[test]
     fn doctor_report_includes_socket_and_config() {
-        let report = collect_report();
-        let rendered = format_report(&report);
+        let report = collect_report(DoctorScope::All);
+        let rendered = format_report(&report, DoctorScope::All);
         assert!(rendered.contains("config.toml"));
         assert!(rendered.contains("forktty.sock"));
         assert!(rendered.contains("Agent hook configs"));
@@ -1232,17 +1394,42 @@ mod tests {
 
     #[test]
     fn doctor_json_output_is_parseable() {
-        let rendered = format_report_json(&collect_report());
+        let rendered = format_report_json(&collect_report(DoctorScope::All), DoctorScope::All);
         let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
         assert!(parsed.get("warnings").is_some());
         assert!(parsed.get("config").is_some());
     }
 
     #[test]
+    fn doctor_scoped_json_output_is_parseable() {
+        let rendered = format_report_json(&collect_report(DoctorScope::Hooks), DoctorScope::Hooks);
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
+        assert!(parsed.get("hooks").is_some());
+        assert!(parsed.get("config").is_none());
+
+        let rendered_sock =
+            format_report_json(&collect_report(DoctorScope::Socket), DoctorScope::Socket);
+        let parsed_sock: serde_json::Value =
+            serde_json::from_str(&rendered_sock).expect("valid json");
+        assert!(parsed_sock.get("socket").is_some());
+        assert!(parsed_sock.get("config").is_none());
+        assert!(parsed_sock.get("hooks").is_none());
+
+        let rendered_pkg = format_report_json(
+            &collect_report(DoctorScope::Packaging),
+            DoctorScope::Packaging,
+        );
+        let parsed_pkg: serde_json::Value =
+            serde_json::from_str(&rendered_pkg).expect("valid json");
+        assert!(parsed_pkg.get("config").is_some());
+        assert!(parsed_pkg.get("socket").is_none());
+    }
+
+    #[test]
     fn doctor_reports_gtk_ghostty_and_libghostty_runtime() {
         let report = minimal_doctor_report(true);
 
-        let text = format_report(&report);
+        let text = format_report(&report, DoctorScope::All);
 
         assert!(text.contains("built with gtk-ghostty feature: true"));
         assert!(text.contains("forktty test doctor report"));
@@ -1253,9 +1440,10 @@ mod tests {
         let mut report = minimal_doctor_report(true);
         report.telemetry_anonymous_ping = false;
 
-        let text = format_report(&report);
+        let text = format_report(&report, DoctorScope::All);
         let json: serde_json::Value =
-            serde_json::from_str(&format_report_json(&report)).expect("valid json");
+            serde_json::from_str(&format_report_json(&report, DoctorScope::All))
+                .expect("valid json");
 
         assert!(text.contains("Telemetry:"));
         assert!(text.contains("anonymous daily ping: disabled"));
@@ -1302,6 +1490,7 @@ mod tests {
             doctor_exit_code(
                 &clean,
                 DoctorOptions {
+                    scope: DoctorScope::All,
                     json: false,
                     strict: true
                 }
@@ -1314,6 +1503,7 @@ mod tests {
             doctor_exit_code(
                 &warn,
                 DoctorOptions {
+                    scope: DoctorScope::All,
                     json: true,
                     strict: true
                 }
