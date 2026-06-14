@@ -20,6 +20,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- `forktty events` now mirrors lag notices to stderr regardless of the JSON object key order used by the socket server.
 - Browser import planning now lowercases Unicode titlecase profile names before matching and de-duplicating destinations, preventing duplicate-looking profile creation.
 - Command palette shortcut searches such as `ctrl shift c` now match the intended shortcut instead of treating the key token as a fuzzy match against modifier text on earlier commands.
 - Ctrl+keypad Home/End/PageUp/PageDown are now reserved for tab-navigation accelerators like their non-keypad equivalents instead of being consumed by terminal input handling.
