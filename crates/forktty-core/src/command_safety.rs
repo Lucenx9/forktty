@@ -14,8 +14,8 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Returns true when `program` + `args` look like `sh -c <something>`.
 ///
-/// Accepted shell basenames cover the common POSIX shells plus anything ending
-/// in `sh` (so `tcsh`, `csh`, `xonsh`, etc. are caught too). `-c` is detected
+/// Accepted shell basenames cover the common POSIX shells plus known shells
+/// with less common names (`tcsh`, `xonsh`, `pwsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
 /// (`-lc`, `-xc`); scanning stops at the first non-flag argument or at `--`.
 /// A leading `env` (with its flags and `VAR=val` assignments) is unwrapped so
@@ -28,8 +28,23 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     if basename == "env" {
         return env_invokes_shell_trampoline(args);
     }
-    let is_shell = matches!(basename, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh")
-        || basename.ends_with("sh");
+    let is_shell = matches!(
+        basename,
+        "sh" | "ash"
+            | "bash"
+            | "csh"
+            | "dash"
+            | "fish"
+            | "ksh"
+            | "mksh"
+            | "oksh"
+            | "posh"
+            | "pwsh"
+            | "tcsh"
+            | "xonsh"
+            | "yash"
+            | "zsh"
+    );
     if !is_shell {
         return false;
     }
@@ -287,6 +302,11 @@ mod tests {
         assert!(!is_shell_trampoline("/bin/sh", &["--", "-c"]));
         assert!(!is_shell_trampoline("/bin/bash", &["-l"]));
         assert!(!is_shell_trampoline("/usr/bin/notify-send", &["-c"]));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/ssh",
+            &["-c", "aes128-ctr", "host"]
+        ));
+        assert!(!is_shell_trampoline("/usr/bin/mosh", &["-c", "256"]));
     }
 
     #[test]
