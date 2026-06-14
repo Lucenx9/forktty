@@ -8,7 +8,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -664,10 +664,7 @@ fn download_asset_to_file(
     if !(200..=299).contains(&status) {
         return Err(UpdateInstallError::Http(status));
     }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target)?;
+    let mut file = create_private_update_file(target)?;
     let mut reader = response
         .body_mut()
         .with_config()
@@ -676,6 +673,14 @@ fn download_asset_to_file(
     io::copy(&mut reader, &mut file)?;
     file.sync_all()?;
     Ok(())
+}
+
+fn create_private_update_file(target: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(target)
 }
 
 fn update_temp_path(target: &AppImageTarget, asset_name: &str) -> PathBuf {
