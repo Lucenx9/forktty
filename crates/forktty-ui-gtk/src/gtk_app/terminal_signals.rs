@@ -82,12 +82,20 @@ pub(super) fn attach_terminal_signal_handlers(
             Ok(events) if events.is_empty() => {}
             Ok(events) => {
                 let mut child_exited = false;
+                let mut model_events = Vec::with_capacity(events.len());
                 let visual_bell = events
                     .iter()
                     .any(|event| matches!(event, GhosttyEvent::Bell));
                 for event in &events {
                     if matches!(event, GhosttyEvent::ChildExit { .. }) {
                         child_exited = true;
+                        if !remove_surface_pid_for_spawn(
+                            &mut pump_surface_pids.borrow_mut(),
+                            &pump_surface_id,
+                            spawn_token,
+                        ) {
+                            continue;
+                        }
                         if let Some(state) = &pump_state {
                             match state.terminal.mark_surface_not_ready(&pump_surface_id) {
                                 Ok(()) | Err(TerminalError::NotFound(_)) => {}
@@ -96,12 +104,8 @@ pub(super) fn attach_terminal_signal_handlers(
                                 ),
                             }
                         }
-                        let _ = remove_surface_pid_for_spawn(
-                            &mut pump_surface_pids.borrow_mut(),
-                            &pump_surface_id,
-                            spawn_token,
-                        );
                     }
+                    model_events.push(event.clone());
                 }
                 if visual_bell {
                     pump_widget.flash_visual_bell();
@@ -110,7 +114,7 @@ pub(super) fn attach_terminal_signal_handlers(
                     &pump_model,
                     &pump_workspace_id,
                     &pump_surface_id,
-                    &events,
+                    &model_events,
                 );
                 if child_exited {
                     // The child is gone and pump_pty drained its final output;
