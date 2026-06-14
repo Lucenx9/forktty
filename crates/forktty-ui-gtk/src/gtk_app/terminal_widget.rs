@@ -1071,24 +1071,28 @@ impl GhosttyTerminalWidget {
         match cache_slot.as_mut() {
             Some(cache) if cache.generation == generation && cache.query == query => {}
             Some(cache) if cache.generation == generation => {
-                cache.matches = find_matches(&cache.text, query);
+                let found = find_matches(&cache.text, query);
+                cache.matches = found.matches;
+                cache.capped = found.capped;
                 cache.query = query.to_string();
             }
             _ => {
                 let text = self.runtime.borrow().full_text();
-                let matches = find_matches(&text, query);
+                let found = find_matches(&text, query);
                 *cache_slot = Some(SearchCache {
                     generation,
                     text,
                     query: query.to_string(),
-                    matches,
+                    matches: found.matches,
+                    capped: found.capped,
                 });
             }
         }
-        let matches = &cache_slot
+        let cache = cache_slot
             .as_ref()
-            .expect("search cache was just populated")
-            .matches;
+            .expect("search cache was just populated");
+        let matches = &cache.matches;
+        let capped = cache.capped;
         let Some(index) = step_match_index(self.search_index.get(), matches.len(), forward) else {
             drop(cache_slot);
             self.search_reset();
@@ -1104,6 +1108,7 @@ impl GhosttyTerminalWidget {
         SearchStatus {
             current: index + 1,
             total,
+            capped,
         }
     }
 
