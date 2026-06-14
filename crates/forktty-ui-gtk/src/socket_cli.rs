@@ -6605,409 +6605,559 @@ fn permission_mode_color(spec: &AgentSpec, mode: &str) -> &'static str {
     }
 }
 
+struct HookActionBuilder<'a> {
+    spec: &'a AgentSpec,
+    event: &'a str,
+    payload: &'a Value,
+    order: &'a str,
+    target: Map<String, Value>,
+    key: String,
+    message: String,
+    permission_key: String,
+    permission_mode: Option<String>,
+}
+
+impl<'a> HookActionBuilder<'a> {
+    fn new(spec: &'a AgentSpec, event: &'a str, payload: &'a Value, order: &'a str) -> Self {
+        let target = hook_target_params();
+        let key = format!("agent:{}", spec.key);
+        let message = sanitize_for_terminal(&extract_hook_message(payload));
+        let permission_key = format!("agent:{}:permission", spec.key);
+        let permission_mode = extract_hook_permission_mode(payload);
+
+        Self {
+            spec,
+            event,
+            payload,
+            order,
+            target,
+            key,
+            message,
+            permission_key,
+            permission_mode,
+        }
+    }
+
+    fn log(&self, level: &str, message: String) -> (String, Value) {
+        let mut params = self.target.clone();
+        params.insert("level".to_string(), Value::String(level.to_string()));
+        params.insert("message".to_string(), Value::String(message));
+        ("metadata.log".to_string(), Value::Object(params))
+    }
+
+    fn status(&self, value: &str, color: &str, event_name: &str) -> (String, Value) {
+        let mut params = self.target.clone();
+        params.insert("key".to_string(), Value::String(self.key.clone()));
+        params.insert(
+            "label".to_string(),
+            Value::String(self.spec.label.to_string()),
+        );
+        params.insert("value".to_string(), Value::String(value.to_string()));
+        params.insert("color".to_string(), Value::String(color.to_string()));
+        (
+            "metadata.set_status".to_string(),
+            add_hook_metadata(params, self.spec, event_name, self.payload, self.order),
+        )
+    }
+
+    fn permission_status(&self, mode: &str, event_name: &str) -> (String, Value) {
+        let mut params = self.target.clone();
+        params.insert(
+            "key".to_string(),
+            Value::String(self.permission_key.clone()),
+        );
+        params.insert(
+            "label".to_string(),
+            Value::String(format!("{} mode", self.spec.label)),
+        );
+        params.insert("value".to_string(), Value::String(mode.to_string()));
+        params.insert(
+            "color".to_string(),
+            Value::String(permission_mode_color(self.spec, mode).to_string()),
+        );
+        (
+            "metadata.set_status".to_string(),
+            add_hook_metadata(params, self.spec, event_name, self.payload, self.order),
+        )
+    }
+
+    fn with_permission(
+        &self,
+        mut actions: Vec<(String, Value)>,
+        event_name: &str,
+    ) -> Vec<(String, Value)> {
+        if let Some(mode) = self.permission_mode.as_deref() {
+            actions.push(self.permission_status(mode, event_name));
+        }
+        actions
+    }
+
+    fn handle_session_start(&self) -> Vec<(String, Value)> {
+        let source = extract_hook_source(self.payload)
+            .map(|source| format!(" ({source})"))
+            .unwrap_or_default();
+        self.with_permission(
+            vec![
+                self.log(
+                    "info",
+                    format!("{} session started{source}", self.spec.label),
+                ),
+                self.status("Ready", "green", self.event),
+            ],
+            self.event,
+        )
+    }
+
+    fn handle_prompt_submit(&self) -> Vec<(String, Value)> {
+        self.with_permission(
+            vec![
+                self.log("info", format!("{} prompt submitted", self.spec.label)),
+                self.status("Running", "blue", self.event),
+            ],
+            self.event,
+        )
+    }
+
+    fn handle_notification(&self) -> Vec<(String, Value)> {
+        let mut note = self.target.clone();
+        note.insert(
+            "title".to_string(),
+            Value::String(format!("{} needs input", self.spec.label)),
+        );
+        note.insert(
+            "body".to_string(),
+            Value::String(if self.message.is_empty() {
+                format!("{} reported a prompt or attention event.", self.spec.label)
+            } else {
+                self.message.clone()
+            }),
+        );
+        note.insert("kind".to_string(), Value::String("prompt".to_string()));
+        vec![
+            self.log(
+                "warn",
+                if self.message.is_empty() {
+                    format!("{} requested attention", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Needs input", "yellow", self.event),
+            ("notification.create".to_string(), Value::Object(note)),
+        ]
+    }
+
+    fn handle_permission_request(&self) -> Vec<(String, Value)> {
+        let body = if self.message.is_empty() {
+            format!("{} requested permission.", self.spec.label)
+        } else {
+            self.message.clone()
+        };
+        let mut note = self.target.clone();
+        note.insert(
+            "title".to_string(),
+            Value::String(format!("{} permission required", self.spec.label)),
+        );
+        note.insert("body".to_string(), Value::String(body));
+        note.insert("kind".to_string(), Value::String("prompt".to_string()));
+        vec![
+            self.log(
+                "warn",
+                if self.message.is_empty() {
+                    format!("{} requested permission", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Permission required", "yellow", self.event),
+            ("notification.create".to_string(), Value::Object(note)),
+        ]
+    }
+
+    fn handle_permission_denied(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "warn",
+                if self.message.is_empty() {
+                    format!("{} permission denied", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Permission denied", "yellow", self.event),
+        ]
+    }
+
+    fn handle_failure(&self) -> Vec<(String, Value)> {
+        let body = if self.message.is_empty() {
+            format!("{} reported a failure.", self.spec.label)
+        } else {
+            self.message.clone()
+        };
+        let mut note = self.target.clone();
+        note.insert(
+            "title".to_string(),
+            Value::String(format!("{} error", self.spec.label)),
+        );
+        note.insert("body".to_string(), Value::String(body));
+        note.insert("kind".to_string(), Value::String("error".to_string()));
+        vec![
+            self.log(
+                "error",
+                if self.message.is_empty() {
+                    format!("{} reported a failure", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Error", "red", self.event),
+            ("notification.create".to_string(), Value::Object(note)),
+        ]
+    }
+
+    fn handle_basic_info(&self) -> Vec<(String, Value)> {
+        vec![self.log(
+            "info",
+            if self.message.is_empty() {
+                format!("{} reported {}", self.spec.label, self.event)
+            } else {
+                self.message.clone()
+            },
+        )]
+    }
+
+    fn handle_prompt_expansion(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log("info", format!("{} prompt expansion", self.spec.label)),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_before_model(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log("info", format!("{} model request started", self.spec.label)),
+            self.status("Thinking", "blue", self.event),
+        ]
+    }
+
+    fn handle_after_model(&self) -> Vec<(String, Value)> {
+        vec![self.log(
+            "info",
+            if self.message.is_empty() {
+                format!("{} model response received", self.spec.label)
+            } else {
+                self.message.clone()
+            },
+        )]
+    }
+
+    fn handle_before_tool_selection(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log("info", format!("{} selecting tools", self.spec.label)),
+            self.status("Selecting tool", "blue", self.event),
+        ]
+    }
+
+    fn handle_pre_tool(&self) -> Vec<(String, Value)> {
+        let tool = extract_hook_tool_name(self.payload);
+        let value = tool
+            .as_ref()
+            .map(|tool| format!("Running {tool}"))
+            .unwrap_or_else(|| "Running tool".to_string());
+        vec![
+            self.log(
+                "info",
+                tool.map(|tool| format!("{} running {tool}", self.spec.label))
+                    .unwrap_or_else(|| format!("{} running tool", self.spec.label)),
+            ),
+            self.status(&value, "blue", self.event),
+        ]
+    }
+
+    fn handle_post_tool(&self) -> Vec<(String, Value)> {
+        let tool = extract_hook_tool_name(self.payload).unwrap_or_else(|| "tool".to_string());
+        let is_error = extract_hook_tool_error(self.payload);
+        let mut actions = vec![self.log(
+            if is_error { "error" } else { "info" },
+            if is_error {
+                format!("{} {tool} reported an error", self.spec.label)
+            } else {
+                format!("{} finished {tool}", self.spec.label)
+            },
+        )];
+        if is_error {
+            let mut note = self.target.clone();
+            note.insert(
+                "title".to_string(),
+                Value::String(format!("{} tool error", self.spec.label)),
+            );
+            note.insert(
+                "body".to_string(),
+                Value::String(format!("{tool} returned an error response.")),
+            );
+            note.insert("kind".to_string(), Value::String("error".to_string()));
+            actions.push(("notification.create".to_string(), Value::Object(note)));
+        }
+        actions
+    }
+
+    fn handle_post_tool_batch(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} finished tool batch", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_subagent_start(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} subagent started", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Subagent running", "blue", self.event),
+        ]
+    }
+
+    fn handle_subagent_stop(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} subagent finished", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_task_created(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} task created", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_task_completed(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} task completed", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_elicitation(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "warn",
+                if self.message.is_empty() {
+                    format!("{} elicitation requested", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Needs input", "yellow", self.event),
+        ]
+    }
+
+    fn handle_elicitation_result(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} received {}", self.spec.label, self.event)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_pre_compact(&self) -> Vec<(String, Value)> {
+        let trigger = extract_hook_compact_trigger(self.payload);
+        let trigger_msg = trigger
+            .as_ref()
+            .map(|trigger| format!(" ({trigger})"))
+            .unwrap_or_default();
+        let mut note = self.target.clone();
+        note.insert(
+            "title".to_string(),
+            Value::String(format!("{} compacting context", self.spec.label)),
+        );
+        note.insert(
+            "body".to_string(),
+            Value::String(
+                trigger
+                    .map(|trigger| format!("Context compaction triggered: {trigger}."))
+                    .unwrap_or_else(|| "Context compaction in progress.".to_string()),
+            ),
+        );
+        note.insert("kind".to_string(), Value::String("info".to_string()));
+        vec![
+            self.log(
+                "warn",
+                format!("{} context compacting{trigger_msg}", self.spec.label),
+            ),
+            self.status("Compacting", "yellow", self.event),
+            ("notification.create".to_string(), Value::Object(note)),
+        ]
+    }
+
+    fn handle_post_compact(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} context compacted", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_stop(&self) -> Vec<(String, Value)> {
+        let mut clear_permission = self.target.clone();
+        clear_permission.insert(
+            "key".to_string(),
+            Value::String(self.permission_key.clone()),
+        );
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} stopped", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Ready", "green", self.event),
+            (
+                "metadata.clear_status".to_string(),
+                add_hook_metadata(
+                    clear_permission,
+                    self.spec,
+                    self.event,
+                    self.payload,
+                    self.order,
+                ),
+            ),
+        ]
+    }
+
+    fn handle_teammate_idle(&self) -> Vec<(String, Value)> {
+        vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} teammate idle", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Running", "blue", self.event),
+        ]
+    }
+
+    fn handle_session_end(&self) -> Vec<(String, Value)> {
+        let mut clear = self.target.clone();
+        clear.insert("key".to_string(), Value::String(self.key.clone()));
+        let mut clear_permission = self.target.clone();
+        clear_permission.insert(
+            "key".to_string(),
+            Value::String(self.permission_key.clone()),
+        );
+        vec![
+            self.log("info", format!("{} session ended", self.spec.label)),
+            (
+                "metadata.clear_status".to_string(),
+                add_hook_metadata(clear, self.spec, self.event, self.payload, self.order),
+            ),
+            (
+                "metadata.clear_status".to_string(),
+                add_hook_metadata(
+                    clear_permission,
+                    self.spec,
+                    self.event,
+                    self.payload,
+                    self.order,
+                ),
+            ),
+        ]
+    }
+
+    fn build(self) -> Vec<(String, Value)> {
+        match self.event {
+            "session-start" => self.handle_session_start(),
+            "prompt-submit" => self.handle_prompt_submit(),
+            "notification" => self.handle_notification(),
+            "permission-request" => self.handle_permission_request(),
+            "permission-denied" => self.handle_permission_denied(),
+            "stop-failure" | "post-tool-failure" => self.handle_failure(),
+            "setup"
+            | "config-change"
+            | "instructions-loaded"
+            | "cwd-changed"
+            | "file-changed"
+            | "worktree-create"
+            | "worktree-remove" => self.handle_basic_info(),
+            "prompt-expansion" => self.handle_prompt_expansion(),
+            "before-model" => self.handle_before_model(),
+            "after-model" => self.handle_after_model(),
+            "before-tool-selection" => self.handle_before_tool_selection(),
+            "pre-tool" => self.handle_pre_tool(),
+            "post-tool" => self.handle_post_tool(),
+            "post-tool-batch" => self.handle_post_tool_batch(),
+            "subagent-start" => self.handle_subagent_start(),
+            "subagent-stop" => self.handle_subagent_stop(),
+            "task-created" => self.handle_task_created(),
+            "task-completed" => self.handle_task_completed(),
+            "elicitation" => self.handle_elicitation(),
+            "elicitation-result" | "permission-replied" => self.handle_elicitation_result(),
+            "pre-compact" => self.handle_pre_compact(),
+            "post-compact" => self.handle_post_compact(),
+            "stop" => self.handle_stop(),
+            "teammate-idle" => self.handle_teammate_idle(),
+            "session-end" => self.handle_session_end(),
+            _ => Vec::new(),
+        }
+    }
+}
+
 fn build_hook_actions(
     spec: &AgentSpec,
     event: &str,
     payload: &Value,
     order: &str,
 ) -> Vec<(String, Value)> {
-    let target = hook_target_params();
-    let key = format!("agent:{}", spec.key);
-    let message = sanitize_for_terminal(&extract_hook_message(payload));
-    let log = |level: &str, message: String| {
-        let mut params = target.clone();
-        params.insert("level".to_string(), Value::String(level.to_string()));
-        params.insert("message".to_string(), Value::String(message));
-        ("metadata.log".to_string(), Value::Object(params))
-    };
-    let status = |value: &str, color: &str, event_name: &str| {
-        let mut params = target.clone();
-        params.insert("key".to_string(), Value::String(key.clone()));
-        params.insert("label".to_string(), Value::String(spec.label.to_string()));
-        params.insert("value".to_string(), Value::String(value.to_string()));
-        params.insert("color".to_string(), Value::String(color.to_string()));
-        (
-            "metadata.set_status".to_string(),
-            add_hook_metadata(params, spec, event_name, payload, order),
-        )
-    };
-    let permission_key = format!("agent:{}:permission", spec.key);
-    let permission_status = |mode: &str, event_name: &str| {
-        let mut params = target.clone();
-        params.insert("key".to_string(), Value::String(permission_key.clone()));
-        params.insert(
-            "label".to_string(),
-            Value::String(format!("{} mode", spec.label)),
-        );
-        params.insert("value".to_string(), Value::String(mode.to_string()));
-        params.insert(
-            "color".to_string(),
-            Value::String(permission_mode_color(spec, mode).to_string()),
-        );
-        (
-            "metadata.set_status".to_string(),
-            add_hook_metadata(params, spec, event_name, payload, order),
-        )
-    };
-    let permission_mode = extract_hook_permission_mode(payload);
-    let with_permission = |mut actions: Vec<(String, Value)>, event_name: &str| {
-        if let Some(mode) = permission_mode.as_deref() {
-            actions.push(permission_status(mode, event_name));
-        }
-        actions
-    };
-    match event {
-        "session-start" => {
-            let source = extract_hook_source(payload)
-                .map(|source| format!(" ({source})"))
-                .unwrap_or_default();
-            with_permission(
-                vec![
-                    log("info", format!("{} session started{source}", spec.label)),
-                    status("Ready", "green", event),
-                ],
-                event,
-            )
-        }
-        "prompt-submit" => with_permission(
-            vec![
-                log("info", format!("{} prompt submitted", spec.label)),
-                status("Running", "blue", event),
-            ],
-            event,
-        ),
-        "notification" => {
-            let mut note = target.clone();
-            note.insert(
-                "title".to_string(),
-                Value::String(format!("{} needs input", spec.label)),
-            );
-            note.insert(
-                "body".to_string(),
-                Value::String(if message.is_empty() {
-                    format!("{} reported a prompt or attention event.", spec.label)
-                } else {
-                    message.clone()
-                }),
-            );
-            note.insert("kind".to_string(), Value::String("prompt".to_string()));
-            vec![
-                log(
-                    "warn",
-                    if message.is_empty() {
-                        format!("{} requested attention", spec.label)
-                    } else {
-                        message
-                    },
-                ),
-                status("Needs input", "yellow", event),
-                ("notification.create".to_string(), Value::Object(note)),
-            ]
-        }
-        "permission-request" => {
-            let body = if message.is_empty() {
-                format!("{} requested permission.", spec.label)
-            } else {
-                message.clone()
-            };
-            let mut note = target.clone();
-            note.insert(
-                "title".to_string(),
-                Value::String(format!("{} permission required", spec.label)),
-            );
-            note.insert("body".to_string(), Value::String(body));
-            note.insert("kind".to_string(), Value::String("prompt".to_string()));
-            vec![
-                log(
-                    "warn",
-                    if message.is_empty() {
-                        format!("{} requested permission", spec.label)
-                    } else {
-                        message
-                    },
-                ),
-                status("Permission required", "yellow", event),
-                ("notification.create".to_string(), Value::Object(note)),
-            ]
-        }
-        "permission-denied" => vec![
-            log(
-                "warn",
-                if message.is_empty() {
-                    format!("{} permission denied", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Permission denied", "yellow", event),
-        ],
-        "stop-failure" | "post-tool-failure" => {
-            let body = if message.is_empty() {
-                format!("{} reported a failure.", spec.label)
-            } else {
-                message.clone()
-            };
-            let mut note = target.clone();
-            note.insert(
-                "title".to_string(),
-                Value::String(format!("{} error", spec.label)),
-            );
-            note.insert("body".to_string(), Value::String(body));
-            note.insert("kind".to_string(), Value::String("error".to_string()));
-            vec![
-                log(
-                    "error",
-                    if message.is_empty() {
-                        format!("{} reported a failure", spec.label)
-                    } else {
-                        message
-                    },
-                ),
-                status("Error", "red", event),
-                ("notification.create".to_string(), Value::Object(note)),
-            ]
-        }
-        "setup"
-        | "config-change"
-        | "instructions-loaded"
-        | "cwd-changed"
-        | "file-changed"
-        | "worktree-create"
-        | "worktree-remove" => vec![log(
-            "info",
-            if message.is_empty() {
-                format!("{} reported {event}", spec.label)
-            } else {
-                message
-            },
-        )],
-        "prompt-expansion" => vec![
-            log("info", format!("{} prompt expansion", spec.label)),
-            status("Running", "blue", event),
-        ],
-        "before-model" => vec![
-            log("info", format!("{} model request started", spec.label)),
-            status("Thinking", "blue", event),
-        ],
-        "after-model" => vec![log(
-            "info",
-            if message.is_empty() {
-                format!("{} model response received", spec.label)
-            } else {
-                message
-            },
-        )],
-        "before-tool-selection" => vec![
-            log("info", format!("{} selecting tools", spec.label)),
-            status("Selecting tool", "blue", event),
-        ],
-        "pre-tool" => {
-            let tool = extract_hook_tool_name(payload);
-            let value = tool
-                .as_ref()
-                .map(|tool| format!("Running {tool}"))
-                .unwrap_or_else(|| "Running tool".to_string());
-            vec![
-                log(
-                    "info",
-                    tool.map(|tool| format!("{} running {tool}", spec.label))
-                        .unwrap_or_else(|| format!("{} running tool", spec.label)),
-                ),
-                status(&value, "blue", event),
-            ]
-        }
-        "post-tool" => {
-            let tool = extract_hook_tool_name(payload).unwrap_or_else(|| "tool".to_string());
-            let is_error = extract_hook_tool_error(payload);
-            let mut actions = vec![log(
-                if is_error { "error" } else { "info" },
-                if is_error {
-                    format!("{} {tool} reported an error", spec.label)
-                } else {
-                    format!("{} finished {tool}", spec.label)
-                },
-            )];
-            if is_error {
-                let mut note = target.clone();
-                note.insert(
-                    "title".to_string(),
-                    Value::String(format!("{} tool error", spec.label)),
-                );
-                note.insert(
-                    "body".to_string(),
-                    Value::String(format!("{tool} returned an error response.")),
-                );
-                note.insert("kind".to_string(), Value::String("error".to_string()));
-                actions.push(("notification.create".to_string(), Value::Object(note)));
-            }
-            actions
-        }
-        "post-tool-batch" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} finished tool batch", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "subagent-start" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} subagent started", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Subagent running", "blue", event),
-        ],
-        "subagent-stop" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} subagent finished", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "task-created" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} task created", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "task-completed" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} task completed", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "elicitation" => vec![
-            log(
-                "warn",
-                if message.is_empty() {
-                    format!("{} elicitation requested", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Needs input", "yellow", event),
-        ],
-        "elicitation-result" | "permission-replied" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} received {event}", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "pre-compact" => {
-            let trigger = extract_hook_compact_trigger(payload);
-            let trigger_msg = trigger
-                .as_ref()
-                .map(|trigger| format!(" ({trigger})"))
-                .unwrap_or_default();
-            let mut note = target.clone();
-            note.insert(
-                "title".to_string(),
-                Value::String(format!("{} compacting context", spec.label)),
-            );
-            note.insert(
-                "body".to_string(),
-                Value::String(
-                    trigger
-                        .map(|trigger| format!("Context compaction triggered: {trigger}."))
-                        .unwrap_or_else(|| "Context compaction in progress.".to_string()),
-                ),
-            );
-            note.insert("kind".to_string(), Value::String("info".to_string()));
-            vec![
-                log(
-                    "warn",
-                    format!("{} context compacting{trigger_msg}", spec.label),
-                ),
-                status("Compacting", "yellow", event),
-                ("notification.create".to_string(), Value::Object(note)),
-            ]
-        }
-        "post-compact" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} context compacted", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "stop" => {
-            let mut clear_permission = target.clone();
-            clear_permission.insert("key".to_string(), Value::String(permission_key.clone()));
-            vec![
-                log(
-                    "info",
-                    if message.is_empty() {
-                        format!("{} stopped", spec.label)
-                    } else {
-                        message
-                    },
-                ),
-                status("Ready", "green", event),
-                (
-                    "metadata.clear_status".to_string(),
-                    add_hook_metadata(clear_permission, spec, event, payload, order),
-                ),
-            ]
-        }
-        "teammate-idle" => vec![
-            log(
-                "info",
-                if message.is_empty() {
-                    format!("{} teammate idle", spec.label)
-                } else {
-                    message
-                },
-            ),
-            status("Running", "blue", event),
-        ],
-        "session-end" => {
-            let mut clear = target.clone();
-            clear.insert("key".to_string(), Value::String(key));
-            let mut clear_permission = target.clone();
-            clear_permission.insert("key".to_string(), Value::String(permission_key));
-            vec![
-                log("info", format!("{} session ended", spec.label)),
-                (
-                    "metadata.clear_status".to_string(),
-                    add_hook_metadata(clear, spec, event, payload, order),
-                ),
-                (
-                    "metadata.clear_status".to_string(),
-                    add_hook_metadata(clear_permission, spec, event, payload, order),
-                ),
-            ]
-        }
-        _ => Vec::new(),
-    }
+    HookActionBuilder::new(spec, event, payload, order).build()
 }
 
 struct HookEnrichments {
