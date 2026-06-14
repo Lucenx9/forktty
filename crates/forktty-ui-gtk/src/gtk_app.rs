@@ -28,7 +28,7 @@ use libloading::Library;
 #[cfg(feature = "browser")]
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::CString;
 use std::io::Read;
 use std::path::{Path, PathBuf};

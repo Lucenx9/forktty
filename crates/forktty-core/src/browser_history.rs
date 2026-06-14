@@ -521,6 +521,37 @@ mod tests {
         assert_eq!(h.search("a.test", 10).unwrap().len(), 1);
     }
 
+    #[test]
+    fn open_creates_missing_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("nested")
+            .join("dirs")
+            .join("history.sqlite");
+        assert!(!path.parent().unwrap().exists());
+
+        let h = HistoryStore::open(&path).unwrap();
+        assert!(path.parent().unwrap().exists());
+        h.record_visit("https://a.test/", "A").unwrap();
+        assert_eq!(h.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn open_returns_error_for_invalid_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("just_a_file.txt");
+        std::fs::write(&file_path, b"data").unwrap();
+
+        // Try to open a db where a parent component is a file
+        let path = file_path.join("history.sqlite");
+        let err = match HistoryStore::open(&path) {
+            Err(e) => e,
+            Ok(_) => panic!("expected open to fail because parent is a file"),
+        };
+        assert!(matches!(err, HistoryError::Io(_)));
+    }
+
     fn bm_store() -> (tempfile::TempDir, BookmarkStore) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bookmarks.json");
@@ -554,6 +585,19 @@ mod tests {
         assert!(b.list().is_empty());
         // Removing a missing url returns false, not an error.
         assert!(!b.remove("https://nope.test/").unwrap());
+    }
+
+    #[test]
+    fn bookmark_remove_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        {
+            let mut b = BookmarkStore::open(&path).unwrap();
+            b.add("https://persist.test/", "P").unwrap();
+            assert!(b.remove("https://persist.test/").unwrap());
+        }
+        let b2 = BookmarkStore::open(&path).unwrap();
+        assert!(b2.list().is_empty());
     }
 
     #[test]
