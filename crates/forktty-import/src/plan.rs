@@ -141,7 +141,7 @@ mod tests {
         let names: Vec<_> = plan
             .entries
             .iter()
-            .map(|e| e.sources[0].display_name.clone())
+            .map(|e| e.sources[0].display_name.as_str())
             .collect();
         assert_eq!(names, vec!["You", "austin"]);
     }
@@ -181,6 +181,31 @@ mod tests {
         assert_eq!(
             plan.entries[1].destination,
             ImportDestination::Create("Work (2)".to_string())
+        );
+    }
+
+    #[test]
+    fn separate_plan_reuses_existing_unicode_titlecase_destination() {
+        let work_id = ProfileId::new();
+        let plan = resolve_separate_profiles_plan(&[src("ǅ", true)], &[dest("ǆ", work_id)]);
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(
+            plan.entries[0].destination,
+            ImportDestination::Existing(work_id)
+        );
+    }
+
+    #[test]
+    fn separate_plan_deduplicates_unicode_titlecase_create_names() {
+        let plan = resolve_separate_profiles_plan(&[src("ǅ", true), src("ǆ", false)], &[]);
+        assert_eq!(plan.entries.len(), 2);
+        assert_eq!(
+            plan.entries[0].destination,
+            ImportDestination::Create("ǅ".to_string())
+        );
+        assert_eq!(
+            plan.entries[1].destination,
+            ImportDestination::Create("ǆ (2)".to_string())
         );
     }
 
