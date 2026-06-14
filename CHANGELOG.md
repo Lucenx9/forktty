@@ -13,6 +13,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - AppImage self-updates now create downloaded replacement files with owner-only permissions before checksum verification, closing a local same-group temp-file tampering window under permissive umasks.
+- OSC 8 hyperlink lookup now caps URI buffers at 8 KiB and fails closed for larger terminal-provided targets, avoiding attacker-controlled memory growth when resolving links.
 - Notification commands using SSH's own `-c` option are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
 - Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.

@@ -675,7 +675,7 @@ fn download_asset_to_file(
     Ok(())
 }
 
-fn create_private_update_file(target: &Path) -> io::Result<fs::File> {
+pub(super) fn create_private_update_file(target: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
