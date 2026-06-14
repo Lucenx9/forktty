@@ -16,6 +16,7 @@ forktty — Linux-native multi-agent terminal
 USAGE:
     forktty                 Launch the GTK app (default).
     forktty doctor          Print a local diagnostics report and exit.
+                           Options: --json, --strict, --hooks, --socket, --packaging.
     forktty hooks setup     Install Codex, Claude Code, Gemini, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty mcp             Run the ForkTTY MCP stdio server.
