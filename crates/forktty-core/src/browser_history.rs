@@ -524,7 +524,11 @@ mod tests {
     #[test]
     fn open_creates_missing_parent_directories() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("dirs").join("history.sqlite");
+        let path = dir
+            .path()
+            .join("nested")
+            .join("dirs")
+            .join("history.sqlite");
         assert!(!path.parent().unwrap().exists());
 
         let h = HistoryStore::open(&path).unwrap();
