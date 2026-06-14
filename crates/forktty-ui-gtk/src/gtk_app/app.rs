@@ -930,8 +930,8 @@ pub(super) fn repair_restored_workspace_paths(
     repaired
 }
 
-fn restored_surface_dirs(data: &session::SessionData) -> BTreeMap<String, PathBuf> {
-    let mut dirs = BTreeMap::new();
+fn restored_surface_dirs(data: &session::SessionData) -> HashMap<String, PathBuf> {
+    let mut dirs = HashMap::new();
     for workspace in &data.workspaces {
         collect_restored_surface_dirs(&workspace.pane_tree, &workspace.working_dir, &mut dirs);
     }
@@ -941,7 +941,7 @@ fn restored_surface_dirs(data: &session::SessionData) -> BTreeMap<String, PathBu
 fn collect_restored_surface_dirs(
     node: &PaneNode,
     workspace_dir: &Path,
-    dirs: &mut BTreeMap<String, PathBuf>,
+    dirs: &mut HashMap<String, PathBuf>,
 ) {
     match node {
         PaneNode::Leaf { tabs, .. } => {
