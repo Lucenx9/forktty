@@ -51,6 +51,9 @@ fn set_accessible_button_text(button: &gtk::Button, label: &str, shortcut: Optio
     }
 }
 
+/// The isolated WebKit script world used for ForkTTY browser automation.
+const AUTOMATION_WORLD: &str = "forktty-automation";
+
 /// The scripting driver injected into every page (SP2).
 pub const DRIVER_JS: &str = include_str!("driver.js");
 
@@ -255,10 +258,11 @@ impl BrowserPaneWidget {
             let content_manager = web_view
                 .user_content_manager()
                 .expect("WebView always has a default UserContentManager");
-            let script = UserScript::new(
+            let script = UserScript::for_world(
                 DRIVER_JS,
                 UserContentInjectedFrames::TopFrame,
                 UserScriptInjectionTime::Start,
+                AUTOMATION_WORLD,
                 &[],
                 &[],
             );
@@ -537,42 +541,52 @@ impl BrowserPaneWidget {
     pub fn prepare_close(&self) {
         self.web_view.stop_loading();
     }
+}
 
-    /// Run JavaScript in the page, delivering the JSON-serialized result (or an
-    /// error) to `on_done`. `on_done` runs on the GTK main thread once the GIO
+fn map_js_result(result: Result<Option<String>, String>) -> Result<String, BrowserCmdError> {
+    match result {
+        Ok(Some(s)) => {
+            if s.len() >= forktty_core::MAX_BROWSER_RESULT_BYTES {
+                Err(BrowserCmdError::TooLarge)
+            } else {
+                Ok(s)
+            }
+        }
+        Ok(None) => Ok("null".to_string()),
+        Err(msg) => {
+            if msg.contains("ref-not-found") {
+                Err(BrowserCmdError::RefNotFound)
+            } else if msg.contains("ref-not-interactable") {
+                Err(BrowserCmdError::ElementNotInteractable)
+            } else {
+                Err(BrowserCmdError::JsError(msg))
+            }
+        }
+    }
+}
+
+impl BrowserPaneWidget {
+    /// Run JavaScript in ForkTTY's isolated automation world, delivering the
+    /// JSON-serialized result (or an error) to `on_done`. `on_done` runs on the GTK
     /// async call settles.
     pub fn run_js<F>(&self, js: &str, on_done: F)
     where
         F: FnOnce(Result<String, BrowserCmdError>) + 'static,
     {
         use webkit6::gio::Cancellable;
-        self.web_view
-            .evaluate_javascript(js, None, None, Cancellable::NONE, move |result| {
-                let mapped = match result {
-                    Ok(value) => match value.to_json(0) {
-                        Some(s) => {
-                            let s = s.to_string();
-                            if s.len() >= forktty_core::MAX_BROWSER_RESULT_BYTES {
-                                Err(BrowserCmdError::TooLarge)
-                            } else {
-                                Ok(s)
-                            }
-                        }
-                        None => Ok("null".to_string()),
-                    },
-                    Err(err) => {
-                        let msg = err.to_string();
-                        if msg.contains("ref-not-found") {
-                            Err(BrowserCmdError::RefNotFound)
-                        } else if msg.contains("ref-not-interactable") {
-                            Err(BrowserCmdError::ElementNotInteractable)
-                        } else {
-                            Err(BrowserCmdError::JsError(msg))
-                        }
-                    }
+        self.web_view.evaluate_javascript(
+            js,
+            Some(AUTOMATION_WORLD),
+            None,
+            Cancellable::NONE,
+            move |result| {
+                let mapped_input = match result {
+                    Ok(value) => Ok(value.to_json(0).map(|s| s.to_string())),
+                    Err(err) => Err(err.to_string()),
                 };
-                on_done(mapped);
-            });
+                on_done(map_js_result(mapped_input));
+            },
+        );
     }
 }
 
@@ -593,6 +607,7 @@ mod tests {
 
     #[test]
     fn driver_script_is_present() {
+        assert_eq!(AUTOMATION_WORLD, "forktty-automation");
         assert!(DRIVER_JS.contains("window.__forktty"));
         assert!(DRIVER_JS.contains("snapshot"));
         assert!(DRIVER_JS.contains("return root;"));
@@ -650,6 +665,48 @@ mod tests {
         assert_eq!(
             browser_pane_shortcut(Key::Left, ModifierType::empty()),
             None
+        );
+    }
+
+    #[test]
+    fn map_js_result_handles_valid_string() {
+        let result = map_js_result(Ok(Some(String::from("\"hello\""))));
+        assert_eq!(result, Ok(String::from("\"hello\"")));
+    }
+
+    #[test]
+    fn map_js_result_handles_none_as_null() {
+        let result = map_js_result(Ok(None));
+        assert_eq!(result, Ok(String::from("null")));
+    }
+
+    #[test]
+    fn map_js_result_handles_too_large_string() {
+        let large_string = "a".repeat(forktty_core::MAX_BROWSER_RESULT_BYTES);
+        let result = map_js_result(Ok(Some(large_string)));
+        assert_eq!(result, Err(BrowserCmdError::TooLarge));
+    }
+
+    #[test]
+    fn map_js_result_handles_ref_not_found_error() {
+        let result = map_js_result(Err(String::from("WebKitError: ref-not-found for element")));
+        assert_eq!(result, Err(BrowserCmdError::RefNotFound));
+    }
+
+    #[test]
+    fn map_js_result_handles_element_not_interactable_error() {
+        let result = map_js_result(Err(String::from("WebKitError: ref-not-interactable")));
+        assert_eq!(result, Err(BrowserCmdError::ElementNotInteractable));
+    }
+
+    #[test]
+    fn map_js_result_handles_generic_js_error() {
+        let result = map_js_result(Err(String::from("TypeError: undefined is not a function")));
+        assert_eq!(
+            result,
+            Err(BrowserCmdError::JsError(String::from(
+                "TypeError: undefined is not a function"
+            )))
         );
     }
 

@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[derive(Error, Debug)]
 pub enum SessionError {
@@ -156,13 +156,15 @@ pub fn acquire_session_lock() -> Result<SessionLock, SessionError> {
 
 fn acquire_session_lock_at(path: &Path) -> Result<SessionLock, SessionError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_session_parent_dir(parent)?;
     }
     let mut file = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
+        .mode(0o600)
         .open(path)?;
+    apply_session_permissions(path)?;
     match file.try_lock() {
         Ok(()) => {
             // Record the owner pid so a refused second instance can name it.
@@ -300,6 +302,7 @@ fn ensure_session_parent_dir(parent: &Path) -> Result<(), SessionError> {
                 Err(err) => return Err(err.into()),
             }
         }
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
     }
     #[cfg(not(unix))]
     {
@@ -685,14 +688,14 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         }
         let mut workspace_leaf_ids = Vec::new();
         collect_pane_surface_ids(&workspace.pane_tree, &mut workspace_leaf_ids);
-        if !workspace_leaf_ids.contains(&workspace.focused_surface_id) {
+        if !workspace_leaf_ids.contains(&workspace.focused_surface_id.as_str()) {
             return Err(SessionError::InvalidData(format!(
                 "workspace {} focused surface id is not present",
                 workspace.id
             )));
         }
         for surface_id in workspace_leaf_ids {
-            if !surface_ids.insert(surface_id.clone()) {
+            if !surface_ids.insert(surface_id) {
                 return Err(SessionError::InvalidData(format!(
                     "duplicate pane surface id: {surface_id}"
                 )));
@@ -712,7 +715,7 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
                 surface.id
             )));
         }
-        if !surface_ids.contains(&surface.id) {
+        if !surface_ids.contains(surface.id.as_str()) {
             return Err(SessionError::InvalidData(format!(
                 "persisted surface id is not present in pane tree: {}",
                 surface.id
@@ -808,12 +811,10 @@ fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, Sess
     }
 }
 
-fn collect_pane_surface_ids(node: &PaneNode, ids: &mut Vec<String>) {
+fn collect_pane_surface_ids<'a>(node: &'a PaneNode, ids: &mut Vec<&'a str>) {
     match node {
         PaneNode::Leaf { tabs, .. } => {
-            for tab in tabs {
-                ids.push(tab.clone());
-            }
+            ids.extend(tabs.iter().map(|s| s.as_str()));
         }
         PaneNode::Split { children, .. } => {
             for child in children {
@@ -914,6 +915,64 @@ mod tests {
         }
         drop(lock);
         acquire_session_lock_at(&path).expect("relock after drop");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_lock_creates_private_parent_and_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("state").join("forktty");
+        let path = parent.join("session.lock");
+
+        let _lock = acquire_session_lock_at(&path).expect("lock");
+
+        assert_eq!(
+            fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_lock_hardens_existing_lock_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.lock");
+        fs::write(&path, b"stale pid\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let _lock = acquire_session_lock_at(&path).expect("lock");
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_lock_hardens_existing_parent_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("state").join("forktty");
+        fs::create_dir_all(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();
+        let path = parent.join("session.lock");
+
+        let _lock = acquire_session_lock_at(&path).expect("lock");
+
+        assert_eq!(
+            fs::metadata(&parent).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[test]

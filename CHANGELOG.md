@@ -4,7 +4,17 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Stop hooks now preserve agent permission-mode warnings when the provider has a later session-end cleanup, while providers without session-end hooks still clear the warning on final stop.
+- Terminal smooth-scroll handling now rejects non-finite deltas and caps per-event line replay, preventing oversized synthetic scroll events from monopolizing the UI thread while mouse tracking is active.
+- Browser automation now injects and evaluates its driver in an isolated WebKit script world, preventing visited pages from detecting or tampering with `window.__forktty`.
+- Chromium cookie import now verifies the version-24+ encrypted host digest before accepting decrypted values, rejecting malformed or cross-host cookie rows.
+- Agent resume PTY spawns now resolve bare provider commands using only absolute `PATH` entries before applying the recorded session cwd, preventing relative/empty `PATH` entries from executing project-local binaries during restore or resume.
+- Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
+- Socket-triggered notification dispatch and custom notification command reaping now use bounded queues instead of spawning unbounded OS threads per `notification.create`, preventing a local client from exhausting threads by flooding notifications.
+
 ### Added
+- `forktty doctor` now accepts `--hooks`, `--socket`, and `--packaging` scopes for running only the relevant local diagnostics.
 - First launch now shows a one-time welcome dialog: an informed (default-on) telemetry toggle linking to the privacy notice, and a one-click "Set up agent integration" button that runs `hooks setup` and `mcp setup`. The first anonymous ping is deferred until this dialog is dismissed, so the toggle is always seen before any data leaves the machine; the welcome is recorded in `$XDG_STATE_HOME/forktty/welcome-seen.json` and the update check is skipped on that first launch.
 - The GTK app now sends at most one anonymous daily usage ping when `telemetry.anonymous_ping = true` (the default). The payload contains only schema/kind/app/version/date, can be disabled in Settings or config, and crash uploads remain unimplemented.
 - The GTK app now checks GitHub Releases at most once per day when `updates.auto_check = true`, shows update availability in-app, opens the release page for non-AppImage installs, and can self-update writable AppImages after explicit confirmation by downloading the AppImage plus `SHA256SUMS`, verifying SHA256, and atomically replacing the current file.
@@ -13,7 +23,28 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
-- Notification commands using SSH's own `-c` option are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
+- Terminal-originated OSC 9/basic OSC 99 notifications are now rate-limited per surface, preventing untrusted terminal output from spamming desktop notifications or repeatedly spawning `notification_command`.
+- Session locking now creates and hardens the state directory and lock file with private permissions, preventing other local users from reading or pre-locking `session.lock` to block startup.
+- Atomic profile metadata saves now preserve an existing `profiles.json` file mode on Unix when ownership matches, and drop group/other bits when replacing with a temp inode owned by a different uid or gid.
+- Browser history databases and SQLite WAL/SHM sidecars are now created with owner-only file permissions inside owner-only profile directories.
+- Bookmark files and corrupt-bookmark backups are now saved with owner-only permissions to avoid exposing sensitive URLs to other local users.
+- Stale Ghostty event batches from an old pane spawn are now discarded before they can mark a restarted pane not ready, overwrite its terminal status, or emit stale notifications.
+- Browser imports now copy temporary SQLite databases and WAL/SHM sidecars into a private `0700` directory with newly-created `0600` files, preventing local temp-file races from exposing browser data.
+- Browser-feature socket dispatch fuzz tests now isolate `XDG_DATA_HOME`, preventing adversarial method sweeps from clearing a developer's real browser history.
+- `forktty events` now mirrors lag notices to stderr regardless of the JSON object key order used by the socket server.
+- Browser import planning now lowercases Unicode titlecase profile names before matching and de-duplicating destinations, preventing duplicate-looking profile creation.
+- Command palette shortcut searches such as `ctrl shift c` now match the intended shortcut instead of treating the key token as a fuzzy match against modifier text on earlier commands.
+- Ctrl+keypad Home/End/PageUp/PageDown are now reserved for tab-navigation accelerators like their non-keypad equivalents instead of being consumed by terminal input handling.
+- Retrying Worktree Create for an already-linked branch no longer deletes that existing worktree and branch if terminal spawning fails.
+- Sidebar visibility persistence now rebases onto the latest config under a process-wide update lock, avoiding stale background saves that could overwrite newer settings-dialog changes.
+- Malformed browser bookmark files are now moved aside after backup so repeated opens cannot create unbounded backup copies.
+- `forktty doctor` once again exits 2 whenever the diagnostics report contains warnings, preserving the documented health-check behavior even without `--strict`.
+- Ctrl+click terminal links now open only `http://` and `https://` targets, blocking terminal-controlled `file://` and custom URI handlers.
+- AppImage self-updates now create downloaded replacement files with owner-only permissions before checksum verification, closing a local same-group temp-file tampering window under permissive umasks.
+- Notification commands using SSH/mosh options that contain `-c` are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
+- Worktree and workspace rollback paths now close spawned replacement terminals instead of only forgetting bookkeeping entries, preventing untracked terminal processes after cleanup failures.
+- OSC 8 hyperlink lookup now caps URI buffers at 8 KiB and fails closed for larger terminal-provided targets, avoiding attacker-controlled memory growth when resolving links.
+- Panic logs are now created in a private state directory with owner-only file permissions, and older permissive logs are rotated before new panic entries are written.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
 - Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.
 - Large PTY writes now keep waiting after `poll()` reports no writable fd before the per-write deadline, instead of treating the poll timeout as readiness.
@@ -45,6 +76,7 @@ All notable changes to ForkTTY are documented here.
 - Re-running `worktree.create` for a branch that already has a ForkTTY-supported linked worktree now reopens that worktree instead of failing on the already-created branch, recovering the crash window between Git worktree registration and ForkTTY session persistence.
 - Concurrent nested worktree creation now serializes updates to `.git/info/exclude`, keeping the `.worktrees/` entry idempotent.
 - Closing a non-last tab now keeps the model locked through backend close and model removal, so concurrent UI/socket closes cannot observe a half-closed surface.
+- Terminal copy, mouse selection, and Select All now omit invisible terminal cells, so escape-hidden text cannot be copied to the clipboard.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
@@ -82,7 +114,7 @@ All notable changes to ForkTTY are documented here.
 - Claude Code session-start context now includes the same concise ForkTTY tool-use policy as the MCP operating guide: use ForkTTY for panes, agents, worktrees, status, or cross-surface text, but avoid tool calls for ordinary single-repo edits.
 
 ### Fixed
-- Agent resume now preserves hook-reported `bypassPermissions` mode for Claude Code and Codex sessions: Claude resumes with `--dangerously-skip-permissions`, and Codex/yolo resumes with `--dangerously-bypass-approvals-and-sandbox`.
+- Agent resume now treats hook-reported permission modes as display-only metadata, so forged or stale `bypassPermissions` hook/status updates cannot add dangerous Claude Code or Codex resume flags.
 - Copying a soft-wrapped line (a long command or paragraph the terminal wrapped to fit the width) no longer inserts a spurious newline at each wrap point: selection copy, the no-selection viewport copy, and select-all now rejoin soft-wrapped rows into their logical line, so pasting a wrapped command back into a shell runs it as one line instead of splitting it.
 - Selecting text by clicking an unfocused terminal pane no longer leaves the selection stuck following the pointer: the focus gesture claiming that first click used to cancel the selection drag without a release, stranding the `selecting` flag, so the highlight kept extending on every mouse move with no button held. The drag now finalizes on gesture cancel and whenever button 1 is no longer physically down.
 - Dragging a left-click selection in an agent pane (deferred local drag) no longer aborts the app with a `RefCell already borrowed` panic in the motion handler.
