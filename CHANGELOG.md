@@ -34,6 +34,9 @@ All notable changes to ForkTTY are documented here.
 - A completed worktree merge whose post-commit cleanup fails is now reported as success instead of failure, avoiding a retry that would create a duplicate merge commit.
 - An agent hook event now still runs its later cleanup actions (clearing a stale status or permission marker) when an earlier action fails transiently, instead of stopping at the first error.
 - The `appearance.terminal_renderer` validation error message now lists `vte`, which is an accepted value.
+- Closing a terminal pane no longer risks freezing the UI: the dropped PTY session now reaps its killed child on a background thread instead of blocking the GTK main thread in `waitpid`, which a child stuck in uninterruptible sleep (D state on a dead NFS/FUSE mount) could otherwise wedge forever.
+- The PTY read loop now retries a read interrupted by a signal (`EINTR`) instead of surfacing it as a spurious error on every pump tick.
+- Large PTY writes now honor their overall deadline even when repeatedly interrupted by signals, instead of being able to retry indefinitely under a pathological signal rate.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
