@@ -210,8 +210,8 @@ pub fn run_doctor(options: DoctorOptions) -> i32 {
     doctor_exit_code(&report, options)
 }
 
-fn doctor_exit_code(report: &DoctorReport, options: DoctorOptions) -> i32 {
-    if options.strict && report.has_warnings() {
+fn doctor_exit_code(report: &DoctorReport, _options: DoctorOptions) -> i32 {
+    if report.has_warnings() {
         2
     } else {
         0
@@ -1516,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_strict_exit_code_depends_on_warnings() {
+    fn doctor_exit_code_depends_on_warnings() {
         let clean = minimal_doctor_report(false);
         assert_eq!(
             doctor_exit_code(
@@ -1531,6 +1531,17 @@ mod tests {
         );
         let mut warn = clean;
         warn.warnings.push("warn".to_string());
+        assert_eq!(
+            doctor_exit_code(
+                &warn,
+                DoctorOptions {
+                    scope: DoctorScope::All,
+                    json: false,
+                    strict: false
+                }
+            ),
+            2
+        );
         assert_eq!(
             doctor_exit_code(
                 &warn,
