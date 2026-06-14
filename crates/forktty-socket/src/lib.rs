@@ -1,14 +1,16 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
-    command_safety::{is_executable_file, is_valid_ssh_host},
-    config, dispatch_notification, normalize_agent_status, validate_worktree_name, worktree,
-    AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError,
-    BrowserCommand, BrowserOp, CmdResult, JsonRpcRequest, JsonRpcResponse, LogLevel,
-    NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel, WorkspaceSelector,
-    MAX_BROWSER_SCRIPT_BYTES,
+    command_safety::is_valid_ssh_host, config, dispatch_notification, normalize_agent_status,
+    validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
+    AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
+    JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
+    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_SCRIPT_BYTES,
 };
-use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
+use forktty_terminal::{
+    spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
+    TerminalTextCapture,
+};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
@@ -2101,7 +2103,7 @@ fn agent_resume_readiness(
     let argv = std::iter::once(command.program.clone())
         .chain(command.args.iter().cloned())
         .collect::<Vec<_>>();
-    let executable = resolve_program_on_path(&command.program, path);
+    let executable = resolve_child_program(&command.program, path);
     let executable_value = executable
         .as_ref()
         .map(|path| Value::String(path.to_string_lossy().into_owned()))
@@ -2114,16 +2116,6 @@ fn agent_resume_readiness(
         executable_value,
         argv,
     )
-}
-
-fn resolve_program_on_path(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
-    let program_path = Path::new(program);
-    if program_path.components().count() > 1 || program_path.is_absolute() {
-        return is_executable_file(program_path).then(|| program_path.to_path_buf());
-    }
-    std::env::split_paths(path?)
-        .map(|dir| dir.join(program))
-        .find(|candidate| is_executable_file(candidate))
 }
 
 fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
