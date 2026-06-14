@@ -1042,7 +1042,7 @@ impl GhosttyTerminalWidget {
             let total_lines = runtime
                 .viewport_position()
                 .map(|viewport| viewport.total)
-                .unwrap_or_else(|| tail_text.lines().count());
+                .unwrap_or_else(|_| tail_text.lines().count());
             return Ok(TerminalTextSnapshot::from_captured_text(
                 TerminalTextSnapshotParts {
                     surface_id: surface_id.to_string(),

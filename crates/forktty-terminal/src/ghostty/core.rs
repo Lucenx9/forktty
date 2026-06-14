@@ -536,9 +536,42 @@ impl GhosttyCore {
         if viewport.total == 0 {
             return Ok(String::new());
         }
-        let start_y = viewport.total.saturating_sub(lines) as u32;
-        let end_y = viewport.total.saturating_sub(1) as u32;
-        let end_x = self.render_state.cols()?.saturating_sub(1);
+        let Some(end_y) =
+            self.last_formatted_screen_row(viewport.total, lines.max(viewport.rows))?
+        else {
+            return Ok(String::new());
+        };
+        let start_y = (end_y as usize).saturating_add(1).saturating_sub(lines) as u32;
+        self.format_plain_text_selection(start_y, end_y, false, false)
+    }
+
+    fn last_formatted_screen_row(
+        &self,
+        total_rows: usize,
+        max_scan_rows: usize,
+    ) -> Result<Option<u32>> {
+        let scan_start = total_rows.saturating_sub(max_scan_rows);
+        for y in (scan_start..total_rows).rev() {
+            if self.screen_row_has_text(y as u32)? {
+                return Ok(Some(y as u32));
+            }
+        }
+        Ok(None)
+    }
+
+    fn screen_row_has_text(&self, y: u32) -> Result<bool> {
+        let text = self.format_plain_text_selection(y, y, false, false)?;
+        Ok(text.lines().any(|line| !line.trim_end().is_empty()))
+    }
+
+    fn format_plain_text_selection(
+        &self,
+        start_y: u32,
+        end_y: u32,
+        trim: bool,
+        unwrap: bool,
+    ) -> Result<String> {
+        let end_x = self.terminal.cols()?.saturating_sub(1);
         let start = self
             .terminal
             .grid_ref(Point::Screen(PointCoordinate { x: 0, y: start_y }))?;
@@ -550,8 +583,8 @@ impl GhosttyCore {
             &self.terminal,
             FormatterOptions::new()
                 .with_format(Format::Plain)
-                .with_trim(false)
-                .with_unwrap(false)
+                .with_trim(trim)
+                .with_unwrap(unwrap)
                 .with_selection(&selection),
         )?;
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
@@ -1869,6 +1902,23 @@ mod tests {
             ["three", "four"]
         );
         assert_eq!(core.tail_text(0).unwrap(), "");
+    }
+
+    #[test]
+    fn tail_text_starts_at_last_formatted_row_not_physical_bottom() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 4,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"first visible row").unwrap();
+
+        assert_eq!(
+            core.tail_text(2).unwrap().lines().collect::<Vec<_>>(),
+            ["first visi", "ble row"]
+        );
     }
 
     #[test]
