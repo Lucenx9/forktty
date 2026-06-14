@@ -35,11 +35,15 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
             | "csh"
             | "dash"
             | "fish"
+            | "hush"
             | "ksh"
+            | "lksh"
             | "mksh"
             | "oksh"
             | "posh"
             | "pwsh"
+            | "rbash"
+            | "rksh"
             | "tcsh"
             | "xonsh"
             | "yash"
@@ -217,7 +221,13 @@ mod tests {
     #[test]
     fn shell_trampoline_detects_common_shells() {
         assert!(is_shell_trampoline("/bin/sh", &["-c"]));
+        assert!(is_shell_trampoline("/bin/ash", &["-c"]));
         assert!(is_shell_trampoline("/usr/bin/bash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/lksh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/mksh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/pwsh", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/rbash", &["-c"]));
+        assert!(is_shell_trampoline("/usr/bin/yash", &["-c"]));
         assert!(is_shell_trampoline("/usr/bin/zsh", &["-c"]));
         assert!(is_shell_trampoline("/opt/homebrew/bin/tcsh", &["-c"]));
     }
@@ -305,6 +315,10 @@ mod tests {
         assert!(!is_shell_trampoline(
             "/usr/bin/ssh",
             &["-c", "aes128-ctr", "host"]
+        ));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/mosh",
+            &["--ssh=ssh -p 2222", "host"]
         ));
         assert!(!is_shell_trampoline("/usr/bin/mosh", &["-c", "256"]));
     }
