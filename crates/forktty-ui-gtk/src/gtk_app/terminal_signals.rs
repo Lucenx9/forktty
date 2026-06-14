@@ -166,6 +166,12 @@ pub(super) fn apply_ghostty_events_to_model(
                             if model.surface(surface_id).is_none() {
                                 continue;
                             }
+                            if !should_dispatch_terminal_metadata_notification(
+                                workspace_id,
+                                surface_id,
+                            ) {
+                                continue;
+                            }
                             let notification = model.create_notification(
                                 "Terminal notification",
                                 body,
@@ -282,6 +288,29 @@ fn osc99_metadata_value<'a>(metadata: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|(candidate, value)| (candidate == key).then_some(value))
 }
 
+fn should_dispatch_terminal_metadata_notification(workspace_id: &str, surface_id: &str) -> bool {
+    static RECENT_TERMINAL_METADATA_NOTIFICATIONS: OnceLock<Mutex<BTreeMap<String, Instant>>> =
+        OnceLock::new();
+
+    let now = Instant::now();
+    let recent = RECENT_TERMINAL_METADATA_NOTIFICATIONS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let Ok(mut recent) = recent.lock() else {
+        return false;
+    };
+
+    recent.retain(|_, last_seen| {
+        now.duration_since(*last_seen) < TERMINAL_METADATA_NOTIFICATION_INTERVAL
+    });
+    let key = format!("{workspace_id}\n{surface_id}");
+    if recent.get(&key).is_some_and(|last_seen| {
+        now.duration_since(*last_seen) < TERMINAL_METADATA_NOTIFICATION_INTERVAL
+    }) {
+        return false;
+    }
+    recent.insert(key, now);
+    true
+}
+
 #[cfg(all(test, feature = "gtk-ghostty"))]
 mod ghostty_tests {
     use super::*;
@@ -345,6 +374,36 @@ mod ghostty_tests {
             Some(surface_id.as_str())
         );
         assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc9_metadata_notifications_are_rate_limited_per_surface() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[
+                GhosttyEvent::Metadata(TerminalMetadataEvent::Osc9 {
+                    payload: "Build complete 1".to_string(),
+                }),
+                GhosttyEvent::Metadata(TerminalMetadataEvent::Osc9 {
+                    payload: "Build complete 2".to_string(),
+                }),
+            ],
+        );
+
+        let model = model.lock().unwrap();
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title, "Terminal notification");
+        assert_eq!(notifications[0].body, "Build complete 1");
     }
 
     #[test]
