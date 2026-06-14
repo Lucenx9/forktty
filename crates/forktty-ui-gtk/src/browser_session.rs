@@ -6,6 +6,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use webkit6::{CookiePersistentStorage, NetworkSession};
 
 /// Well-known directory id for the Default profile. A fixed UUID string so that
@@ -105,22 +108,7 @@ pub fn session_for(profile_id: &str) -> NetworkSession {
 fn build_persistent_session(profile_id: &str) -> Option<NetworkSession> {
     let root = data_root()?;
     let dirs = ProfileDirs::under(&root, profile_id);
-    std::fs::create_dir_all(&dirs.data)
-        .map_err(|e| {
-            eprintln!(
-                "forktty: cannot create browser data dir {:?}: {e}",
-                dirs.data
-            )
-        })
-        .ok()?;
-    std::fs::create_dir_all(&dirs.cache)
-        .map_err(|e| {
-            eprintln!(
-                "forktty: cannot create browser cache dir {:?}: {e}",
-                dirs.cache
-            )
-        })
-        .ok()?;
+    prepare_profile_dirs(&dirs).ok()?;
 
     let session = NetworkSession::new(Some(dirs.data.to_str()?), Some(dirs.cache.to_str()?));
     match (session.cookie_manager(), dirs.cookies_sqlite.to_str()) {
@@ -133,6 +121,70 @@ fn build_persistent_session(profile_id: &str) -> Option<NetworkSession> {
         ),
     }
     Some(session)
+}
+
+/// Create the profile directory tree and make it private before WebKit writes
+/// cookies, local storage, or cache entries into it.
+fn prepare_profile_dirs(dirs: &ProfileDirs) -> std::io::Result<()> {
+    create_private_dir_all(&dirs.data).map_err(|e| {
+        eprintln!(
+            "forktty: cannot create private browser data dir {:?}: {e}",
+            dirs.data
+        );
+        e
+    })?;
+    create_private_dir_all(&dirs.cache).map_err(|e| {
+        eprintln!(
+            "forktty: cannot create private browser cache dir {:?}: {e}",
+            dirs.cache
+        );
+        e
+    })?;
+    harden_existing_cookie_store(&dirs.cookies_sqlite).map_err(|e| {
+        eprintln!(
+            "forktty: cannot make browser cookie store private {:?}: {e}",
+            dirs.cookies_sqlite
+        );
+        e
+    })?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    for dir in private_profile_dirs(path) {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
+#[cfg(unix)]
+fn harden_existing_cookie_store(path: &Path) -> std::io::Result<()> {
+    if path.exists() {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn harden_existing_cookie_store(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn private_profile_dirs(path: &Path) -> Vec<&Path> {
+    path.ancestors()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
 }
 
 #[cfg(test)]
@@ -193,6 +245,20 @@ mod tests {
         assert_eq!(
             dirs.cookies_sqlite,
             std::path::Path::new("/tmp/ft-data/browser_profiles/abc/cookies.sqlite")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_profile_dirs_include_sensitive_profile_tree_only() {
+        let path = std::path::Path::new("/tmp/ft-data/browser_profiles/abc/data");
+        assert_eq!(
+            private_profile_dirs(path),
+            vec![
+                std::path::Path::new("/tmp/ft-data/browser_profiles"),
+                std::path::Path::new("/tmp/ft-data/browser_profiles/abc"),
+                std::path::Path::new("/tmp/ft-data/browser_profiles/abc/data"),
+            ]
         );
     }
 }
