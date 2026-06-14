@@ -3,7 +3,7 @@ use super::terminal_geometry::{
     terminal_content_pixels, terminal_grid_cells_for_allocation, terminal_grid_geometry,
     TerminalGridGeometry,
 };
-use super::terminal_links::url_at_point;
+use super::terminal_links::{is_safe_terminal_uri, url_at_point};
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
@@ -1930,7 +1930,7 @@ fn link_at_point(
         let uri = runtime
             .borrow()
             .hyperlink_uri_at(point.col as u16, point.row as u16)?;
-        if let Some(uri) = uri {
+        if let Some(uri) = uri.filter(|uri| is_safe_terminal_uri(uri)) {
             let mut from = point.col;
             while from > 0 && row.cells[from - 1].hyperlink {
                 from -= 1;
@@ -1959,6 +1959,10 @@ fn link_at_point(
 /// fire-and-forget (kept over `UriLauncher` to avoid raising the minimum
 /// GTK past what shipped hosts have): a failed launch reports nothing.
 fn open_terminal_link(drawing_area: &gtk::DrawingArea, uri: &str) {
+    if !is_safe_terminal_uri(uri) {
+        eprintln!("blocked unsafe terminal link URI: {uri}");
+        return;
+    }
     let window = drawing_area
         .root()
         .and_then(|root| root.downcast::<gtk::Window>().ok());
@@ -2960,6 +2964,33 @@ mod selection_tests {
 
         // Empty rows have no link
         assert!(link_at_point(&runtime, SelectionPoint { row: 2, col: 0 })
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn link_at_point_rejects_unsafe_terminal_uris() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 40, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(
+                b"\x1b]8;;file:///tmp/hidden\x1b\\click\x1b]8;;\x1b\\ file:///tmp/plain",
+            )
+            .unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+
+        assert!(link_at_point(&runtime, SelectionPoint { row: 0, col: 1 })
+            .unwrap()
+            .is_none());
+        assert!(link_at_point(&runtime, SelectionPoint { row: 0, col: 8 })
             .unwrap()
             .is_none());
     }
