@@ -141,7 +141,7 @@ mod tests {
         let names: Vec<_> = plan
             .entries
             .iter()
-            .map(|e| e.sources[0].display_name.clone())
+            .map(|e| e.sources[0].display_name.as_str())
             .collect();
         assert_eq!(names, vec!["You", "austin"]);
     }
