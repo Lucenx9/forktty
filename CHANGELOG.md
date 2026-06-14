@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
 - Terminal-originated OSC 9/basic OSC 99 notifications are now rate-limited per surface, preventing untrusted terminal output from spamming desktop notifications or repeatedly spawning `notification_command`.
 - Session locking now creates and hardens the state directory and lock file with private permissions, preventing other local users from reading or pre-locking `session.lock` to block startup.
 - Atomic profile metadata saves now preserve an existing `profiles.json` file mode on Unix when ownership matches, and drop group/other bits when replacing with a temp inode owned by a different uid or gid.
