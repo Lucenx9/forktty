@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
+
 ### Added
 - `forktty doctor` now accepts `--hooks`, `--socket`, and `--packaging` scopes for running only the relevant local diagnostics.
 - First launch now shows a one-time welcome dialog: an informed (default-on) telemetry toggle linking to the privacy notice, and a one-click "Set up agent integration" button that runs `hooks setup` and `mcp setup`. The first anonymous ping is deferred until this dialog is dismissed, so the toggle is always seen before any data leaves the machine; the welcome is recorded in `$XDG_STATE_HOME/forktty/welcome-seen.json` and the update check is skipped on that first launch.
@@ -14,6 +17,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Ctrl+click terminal links now open only `http://` and `https://` targets, blocking terminal-controlled `file://` and custom URI handlers.
+- AppImage self-updates now create downloaded replacement files with owner-only permissions before checksum verification, closing a local same-group temp-file tampering window under permissive umasks.
 - Notification commands using SSH/mosh options that contain `-c` are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
 - OSC 8 hyperlink lookup now caps URI buffers at 8 KiB and fails closed for larger terminal-provided targets, avoiding attacker-controlled memory growth when resolving links.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.

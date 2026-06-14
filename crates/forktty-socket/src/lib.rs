@@ -3956,6 +3956,7 @@ fn prepare_hook_session_targets(
     let Some(session_id) = optional_non_blank_string_param(params, "hook_session_id")? else {
         return Ok(HookSessionEndGuard::none(state));
     };
+    ensure_max_text_size("hook_session_id", session_id)?;
     let session_id = session_id.to_string();
     let event_name = optional_non_blank_string_param(params, "hook_event_name")?;
     let evict_on_return = event_name == Some("session-end");
@@ -6585,6 +6586,7 @@ mod tests {
         let (state, _backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
         let oversized = "x".repeat(MAX_METADATA_TEXT_BYTES + 1);
 
         for (method, params, expected_field) in [
@@ -6607,6 +6609,17 @@ mod tests {
                 "notification.create",
                 json!({"workspace_id": workspace_id, "title": oversized, "body": "body"}),
                 "title",
+            ),
+            (
+                "notification.create",
+                json!({
+                    "workspace_id": workspace_id,
+                    "surface_id": surface_id,
+                    "hook_session_id": oversized,
+                    "title": "Prompt",
+                    "body": "body"
+                }),
+                "hook_session_id",
             ),
         ] {
             let error = dispatch(&state, method, params).await.unwrap_err();
