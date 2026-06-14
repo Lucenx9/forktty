@@ -3,7 +3,7 @@ use super::terminal_geometry::{
     terminal_content_pixels, terminal_grid_cells_for_allocation, terminal_grid_geometry,
     TerminalGridGeometry,
 };
-use super::terminal_links::url_at_point;
+use super::terminal_links::{is_safe_terminal_uri, url_at_point};
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalCell, TerminalCellWidth, TerminalMouseAction, TerminalMouseButton, TerminalMouseInput,
@@ -1801,6 +1801,11 @@ const LINES_PER_WHEEL_UNIT: f64 = 3.0;
 /// made touchpads scroll tracking apps 3x faster than physical wheels.
 const WHEEL_PRESS_LINES: isize = 3;
 
+/// Maximum whole scroll lines consumed from one GTK callback. Synthetic or
+/// malformed smooth-scroll deltas can otherwise expand into huge per-press
+/// replay loops for mouse-tracking applications and monopolize the UI thread.
+const MAX_SCROLL_LINES_PER_EVENT: isize = 120;
+
 /// One scroll event's worth of consumption from the line accumulator.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ScrollEmission {
@@ -1817,6 +1822,13 @@ struct ScrollEmission {
 /// (3 lines) when forwarding presses to a mouse-tracking application. A
 /// direction flip drops the leftover so reversals respond immediately.
 fn accumulate_scroll_emission(remainder: f64, line_delta: f64, tracking: bool) -> ScrollEmission {
+    if !remainder.is_finite() || !line_delta.is_finite() {
+        return ScrollEmission {
+            presses: 0,
+            lines: 0,
+            remainder: 0.0,
+        };
+    }
     if line_delta == 0.0 {
         return ScrollEmission {
             presses: 0,
@@ -1827,16 +1839,38 @@ fn accumulate_scroll_emission(remainder: f64, line_delta: f64, tracking: bool) -
     let same_direction =
         remainder == 0.0 || remainder.is_sign_positive() == line_delta.is_sign_positive();
     let accumulated = if same_direction { remainder } else { 0.0 } + line_delta;
+    if !accumulated.is_finite() {
+        return ScrollEmission {
+            presses: 0,
+            lines: 0,
+            remainder: 0.0,
+        };
+    }
+
     let (presses, lines) = if tracking {
-        let presses = (accumulated / WHEEL_PRESS_LINES as f64).trunc() as isize;
+        let max_presses = MAX_SCROLL_LINES_PER_EVENT / WHEEL_PRESS_LINES;
+        let presses = (accumulated / WHEEL_PRESS_LINES as f64)
+            .trunc()
+            .clamp(-(max_presses as f64), max_presses as f64) as isize;
         (presses, presses * WHEEL_PRESS_LINES)
     } else {
-        (0, accumulated.trunc() as isize)
+        (
+            0,
+            accumulated.trunc().clamp(
+                -(MAX_SCROLL_LINES_PER_EVENT as f64),
+                MAX_SCROLL_LINES_PER_EVENT as f64,
+            ) as isize,
+        )
     };
+    let capped = accumulated.abs() >= MAX_SCROLL_LINES_PER_EVENT as f64;
     ScrollEmission {
         presses,
         lines,
-        remainder: accumulated - lines as f64,
+        remainder: if capped {
+            0.0
+        } else {
+            accumulated - lines as f64
+        },
     }
 }
 
@@ -1909,7 +1943,7 @@ fn link_at_point(
         let uri = runtime
             .borrow()
             .hyperlink_uri_at(point.col as u16, point.row as u16)?;
-        if let Some(uri) = uri {
+        if let Some(uri) = uri.filter(|uri| is_safe_terminal_uri(uri)) {
             let mut from = point.col;
             while from > 0 && row.cells[from - 1].hyperlink {
                 from -= 1;
@@ -1938,6 +1972,10 @@ fn link_at_point(
 /// fire-and-forget (kept over `UriLauncher` to avoid raising the minimum
 /// GTK past what shipped hosts have): a failed launch reports nothing.
 fn open_terminal_link(drawing_area: &gtk::DrawingArea, uri: &str) {
+    if !is_safe_terminal_uri(uri) {
+        eprintln!("blocked unsafe terminal link URI: {uri}");
+        return;
+    }
     let window = drawing_area
         .root()
         .and_then(|root| root.downcast::<gtk::Window>().ok());
@@ -2962,6 +3000,33 @@ mod selection_tests {
             .unwrap()
             .is_none());
     }
+
+    #[test]
+    fn link_at_point_rejects_unsafe_terminal_uris() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 40, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(
+                b"\x1b]8;;file:///tmp/hidden\x1b\\click\x1b]8;;\x1b\\ file:///tmp/plain",
+            )
+            .unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+
+        assert!(link_at_point(&runtime, SelectionPoint { row: 0, col: 1 })
+            .unwrap()
+            .is_none());
+        assert!(link_at_point(&runtime, SelectionPoint { row: 0, col: 8 })
+            .unwrap()
+            .is_none());
+    }
 }
 
 #[cfg(test)]
@@ -3129,6 +3194,40 @@ mod mouse_tests {
         }
         assert_eq!((presses, lines), (1, 3));
         assert_f64_eq(remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_caps_oversized_tracking_replay() {
+        let emission = accumulate_scroll_emission(0.0, 1_000_000.0, true);
+        assert_eq!(
+            (emission.presses, emission.lines),
+            (
+                MAX_SCROLL_LINES_PER_EVENT / WHEEL_PRESS_LINES,
+                MAX_SCROLL_LINES_PER_EVENT,
+            )
+        );
+        assert_f64_eq(emission.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_caps_oversized_viewport_scroll() {
+        let emission = accumulate_scroll_emission(0.0, -1_000_000.0, false);
+        assert_eq!(
+            (emission.presses, emission.lines),
+            (0, -MAX_SCROLL_LINES_PER_EVENT)
+        );
+        assert_f64_eq(emission.remainder, 0.0);
+    }
+
+    #[test]
+    fn scroll_emission_rejects_non_finite_deltas_and_remainders() {
+        let infinite_delta = accumulate_scroll_emission(0.0, f64::INFINITY, true);
+        assert_eq!((infinite_delta.presses, infinite_delta.lines), (0, 0));
+        assert_f64_eq(infinite_delta.remainder, 0.0);
+
+        let nan_remainder = accumulate_scroll_emission(f64::NAN, 1.0, false);
+        assert_eq!((nan_remainder.presses, nan_remainder.lines), (0, 0));
+        assert_f64_eq(nan_remainder.remainder, 0.0);
     }
 
     #[test]

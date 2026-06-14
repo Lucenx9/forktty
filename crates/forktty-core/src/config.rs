@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -116,6 +117,8 @@ pub const TERMINAL_THEME_CHOICES: &[&str] = &[
 
 const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
 
+static CONFIG_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
@@ -209,7 +212,57 @@ pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
     save_config_to_path(&config_path()?, config)
 }
 
+pub fn update_config<F>(update: F) -> Result<AppConfig, ConfigError>
+where
+    F: FnOnce(&mut AppConfig),
+{
+    update_config_at_path(&config_path()?, update)
+}
+
+pub fn update_config_at_path<F>(path: &Path, update: F) -> Result<AppConfig, ConfigError>
+where
+    F: FnOnce(&mut AppConfig),
+{
+    update_config_at_path_if_changed(path, update).map(|(config, _changed)| config)
+}
+
+pub fn update_config_if_changed<F>(update: F) -> Result<(AppConfig, bool), ConfigError>
+where
+    F: FnOnce(&mut AppConfig),
+{
+    update_config_at_path_if_changed(&config_path()?, update)
+}
+
+pub fn update_config_at_path_if_changed<F>(
+    path: &Path,
+    update: F,
+) -> Result<(AppConfig, bool), ConfigError>
+where
+    F: FnOnce(&mut AppConfig),
+{
+    let _guard = CONFIG_UPDATE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let mut next = load_config_from_path(path)?;
+    let previous = next.clone();
+    update(&mut next);
+    if next == previous {
+        return Ok((next, false));
+    }
+    save_config_to_path_unlocked(path, &next)?;
+    Ok((next, true))
+}
+
 pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), ConfigError> {
+    let _guard = CONFIG_UPDATE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    save_config_to_path_unlocked(path, config)
+}
+
+fn save_config_to_path_unlocked(path: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     validate_config(config)?;
     let write_path = config_write_path(path)?;
     if let Some(parent) = write_path.parent() {
@@ -1502,5 +1555,34 @@ mod tests {
         );
         let loaded = load_config_from_path(&path).unwrap();
         assert_eq!(loaded.general.shell, "/bin/sh");
+    }
+    #[test]
+    fn update_config_at_path_rebases_change_on_latest_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.appearance.sidebar_visible = true;
+        save_config_to_path(&path, &config).unwrap();
+
+        let updated_shell = ["/bin/bash", "/usr/bin/bash", "/usr/bin/env", "/bin/sh"]
+            .into_iter()
+            .find(|candidate| {
+                *candidate != config.general.shell && is_executable_file(Path::new(candidate))
+            })
+            .unwrap_or(&config.general.shell)
+            .to_string();
+        update_config_at_path(&path, |next| {
+            next.general.shell = updated_shell.clone();
+        })
+        .unwrap();
+        update_config_at_path(&path, |next| {
+            next.appearance.sidebar_visible = false;
+        })
+        .unwrap();
+
+        let loaded = load_config_from_path(&path).unwrap();
+        assert_eq!(loaded.general.shell, updated_shell);
+        assert!(!loaded.appearance.sidebar_visible);
     }
 }
