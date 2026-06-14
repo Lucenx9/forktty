@@ -6,6 +6,7 @@ use nix::{
     unistd::setsid,
 };
 use std::{
+    ffi::OsStr,
     fs::File,
     io::{self, Read, Write},
     os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
@@ -71,16 +72,27 @@ impl PtySession {
         let slave_stdout = duplicate_fd(&slave)?;
         let slave_stderr = slave;
 
-        let argv = crate::spawn::child_argv(request, crate::spawn::appimage_runtime_env_keys());
+        let mut argv = crate::spawn::child_argv(request, crate::spawn::appimage_runtime_env_keys());
+        let env = parse_env(crate::spawn::child_environment(request)).collect::<Vec<_>>();
+        let path = env
+            .iter()
+            .find_map(|(key, value)| (key == "PATH").then_some(OsStr::new(value)));
+        absolutize_env_wrapped_child_program(&mut argv, path)?;
         let (program, args) = argv
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty terminal argv"))?;
+        let program = crate::spawn::resolve_child_program(program, path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("terminal child program not found on absolute PATH entries: {program}"),
+            )
+        })?;
         let mut command = Command::new(program);
         command
             .args(args)
             .current_dir(crate::spawn::child_cwd(request))
             .env_clear()
-            .envs(parse_env(crate::spawn::child_environment(request)))
+            .envs(env)
             .stdin(Stdio::from(File::from(slave_stdin)))
             .stdout(Stdio::from(File::from(slave_stdout)))
             .stderr(Stdio::from(File::from(slave_stderr)));
@@ -296,6 +308,33 @@ fn write_all_timeout_error() -> io::Error {
         io::ErrorKind::TimedOut,
         "terminal child did not drain pty input before timeout",
     )
+}
+
+fn absolutize_env_wrapped_child_program(
+    argv: &mut [String],
+    path: Option<&OsStr>,
+) -> io::Result<()> {
+    let Some(env_command) = crate::spawn::env_command_path() else {
+        return Ok(());
+    };
+    if argv.first().map(String::as_str) != Some(env_command.as_str()) {
+        return Ok(());
+    }
+    let mut index = 1;
+    while argv.get(index).map(String::as_str) == Some("-u") {
+        index += 2;
+    }
+    let Some(program) = argv.get(index).cloned() else {
+        return Ok(());
+    };
+    let resolved = crate::spawn::resolve_child_program(&program, path).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("terminal child program not found on absolute PATH entries: {program}"),
+        )
+    })?;
+    argv[index] = resolved.to_string_lossy().into_owned();
+    Ok(())
 }
 
 fn parse_env(env: Vec<String>) -> impl Iterator<Item = (String, String)> {
@@ -575,6 +614,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn pty_os_resize_works() {
+        let request =
+            test_spawn_request_for_shell("/bin/sh").with_args(["-c", "read _; stty size"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        session
+            .resize(PtySize {
+                cols: 120,
+                rows: 40,
+            })
+            .unwrap();
+        session.write_all(b"\n").unwrap();
+        let out = session
+            .read_until(b"40 120\n", Duration::from_secs(2))
+            .unwrap();
+        let out_str = String::from_utf8_lossy(&out);
+        assert!(out_str.contains("40 120"), "output: {:?}", out_str);
     }
 
     #[test]
