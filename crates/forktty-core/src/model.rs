@@ -4828,10 +4828,7 @@ mod tests {
         let workspaces = model.list_workspaces();
         let workspace_ids: BTreeSet<_> = workspaces.iter().map(|ws| &ws.id).collect();
         let surfaces = model.list_surfaces(None);
-        let surface_ids: BTreeSet<_> = surfaces
-            .iter()
-            .map(|s| &s.id)
-            .collect();
+        let surface_ids: BTreeSet<_> = surfaces.iter().map(|s| &s.id).collect();
 
         for workspace in &workspaces {
             assert!(
