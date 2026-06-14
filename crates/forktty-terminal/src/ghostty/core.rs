@@ -14,6 +14,7 @@ use libghostty_vt::{
     paste,
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::{CellWide, Screen},
+    selection::Selection,
     style::RgbColor,
     terminal::{Point, PointCoordinate, ScrollViewport},
     RenderState, Terminal, TerminalOptions,
@@ -521,6 +522,40 @@ impl GhosttyCore {
     /// into a shell must not split a wrapped command across lines.
     pub fn full_text_unwrapped(&self) -> Result<String> {
         self.format_plain_text(false, true)
+    }
+
+    /// Plain-text dump of at most the last `lines` scrollable rows.
+    ///
+    /// Unlike [`Self::full_text`], this formats a bounded selection near the
+    /// bottom of the terminal instead of materializing the whole scrollback.
+    pub fn tail_text(&self, lines: usize) -> Result<String> {
+        if lines == 0 {
+            return Ok(String::new());
+        }
+        let viewport = self.viewport_position()?;
+        if viewport.total == 0 {
+            return Ok(String::new());
+        }
+        let start_y = viewport.total.saturating_sub(lines) as u32;
+        let end_y = viewport.total.saturating_sub(1) as u32;
+        let end_x = self.render_state.cols()?.saturating_sub(1);
+        let start = self
+            .terminal
+            .grid_ref(Point::Screen(PointCoordinate { x: 0, y: start_y }))?;
+        let end = self
+            .terminal
+            .grid_ref(Point::Screen(PointCoordinate { x: end_x, y: end_y }))?;
+        let selection = Selection::new(start, end, false);
+        let mut formatter = Formatter::new(
+            &self.terminal,
+            FormatterOptions::new()
+                .with_format(Format::Plain)
+                .with_trim(false)
+                .with_unwrap(false)
+                .with_selection(&selection),
+        )?;
+        let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
+        Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
 
     pub fn viewport_position(&self) -> Result<TerminalViewportPosition> {
@@ -1816,6 +1851,24 @@ mod tests {
 
         assert!(text.contains("one"));
         assert!(text.contains("three"));
+    }
+
+    #[test]
+    fn tail_text_formats_only_requested_scrollable_rows() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour").unwrap();
+
+        assert_eq!(
+            core.tail_text(2).unwrap().lines().collect::<Vec<_>>(),
+            ["three", "four"]
+        );
+        assert_eq!(core.tail_text(0).unwrap(), "");
     }
 
     #[test]

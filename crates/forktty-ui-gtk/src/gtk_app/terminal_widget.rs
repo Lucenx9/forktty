@@ -1037,6 +1037,25 @@ impl GhosttyTerminalWidget {
     ) -> Result<TerminalTextSnapshot, TerminalError> {
         let runtime = self.runtime.borrow();
         let size = runtime.size();
+        if let TerminalTextCapture::Tail { lines } = capture {
+            let tail_text = runtime.tail_text(lines);
+            let total_lines = runtime
+                .viewport_position()
+                .map(|viewport| viewport.total)
+                .unwrap_or_else(|| tail_text.lines().count());
+            return Ok(TerminalTextSnapshot::from_captured_text(
+                TerminalTextSnapshotParts {
+                    surface_id: surface_id.to_string(),
+                    scope: "tail".to_string(),
+                    text: tail_text,
+                    cols: size.cols,
+                    rows: size.rows,
+                    total_lines,
+                    max_bytes,
+                    truncate_from_end: true,
+                },
+            ));
+        }
         let full_text = runtime.full_text();
         if capture == TerminalTextCapture::Visible {
             let viewport = runtime.viewport_position()?;
