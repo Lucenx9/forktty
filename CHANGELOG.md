@@ -12,6 +12,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Shell-trampoline detection for `notification_command` no longer treats non-shell programs whose names end in `sh`, such as `ssh` and `mosh`, as shell wrappers.
 - Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
 - Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.
 - Large PTY writes now keep waiting after `poll()` reports no writable fd before the per-write deadline, instead of treating the poll timeout as readiness.
