@@ -6,6 +6,7 @@ use nix::{
     unistd::setsid,
 };
 use std::{
+    ffi::OsStr,
     fs::File,
     io::{self, Read, Write},
     os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
@@ -75,7 +76,7 @@ impl PtySession {
         let env = parse_env(crate::spawn::child_environment(request)).collect::<Vec<_>>();
         let path = env
             .iter()
-            .find_map(|(key, value)| (key == "PATH").then_some(value.as_ref()));
+            .find_map(|(key, value)| (key == "PATH").then_some(OsStr::new(value)));
         absolutize_env_wrapped_child_program(&mut argv, path)?;
         let (program, args) = argv
             .split_first()
@@ -309,7 +310,10 @@ fn write_all_timeout_error() -> io::Error {
     )
 }
 
-fn absolutize_env_wrapped_child_program(argv: &mut [String], path: Option<&str>) -> io::Result<()> {
+fn absolutize_env_wrapped_child_program(
+    argv: &mut [String],
+    path: Option<&OsStr>,
+) -> io::Result<()> {
     let Some(env_command) = crate::spawn::env_command_path() else {
         return Ok(());
     };
