@@ -280,6 +280,63 @@ pub fn discover() -> Vec<SourceBrowser> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
+    use std::sync::MutexGuard;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard<'a> {
+        _guard: MutexGuard<'a, ()>,
+        saved_home: Option<String>,
+        saved_userprofile: Option<String>,
+    }
+
+    impl<'a> EnvGuard<'a> {
+        fn new(temp_home: &Path) -> Self {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            let saved_home = std::env::var("HOME").ok();
+            let saved_userprofile = std::env::var("USERPROFILE").ok();
+
+            std::env::set_var("HOME", temp_home);
+            std::env::set_var("USERPROFILE", temp_home);
+
+            Self {
+                _guard,
+                saved_home,
+                saved_userprofile,
+            }
+        }
+
+        fn clear() -> Self {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            let saved_home = std::env::var("HOME").ok();
+            let saved_userprofile = std::env::var("USERPROFILE").ok();
+
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+
+            Self {
+                _guard,
+                saved_home,
+                saved_userprofile,
+            }
+        }
+    }
+
+    impl<'a> Drop for EnvGuard<'a> {
+        fn drop(&mut self) {
+            if let Some(ref h) = self.saved_home {
+                std::env::set_var("HOME", h);
+            } else {
+                std::env::remove_var("HOME");
+            }
+            if let Some(ref u) = self.saved_userprofile {
+                std::env::set_var("USERPROFILE", u);
+            } else {
+                std::env::remove_var("USERPROFILE");
+            }
+        }
+    }
 
     #[test]
     fn discover_firefox_reads_profiles_ini_names() {
@@ -455,5 +512,52 @@ mod tests {
         assert!(
             discover_chromium_family(BrowserFamily::Chrome, &dir.path().join("nope")).is_none()
         );
+    }
+
+    #[test]
+    fn discover_finds_all_browsers_in_home_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+
+        let _guard = EnvGuard::new(home);
+
+        // Set up Firefox
+        let ff_root = home.join(".mozilla/firefox");
+        fs::create_dir_all(ff_root.join("ff.default")).unwrap();
+        fs::write(ff_root.join("ff.default/cookies.sqlite"), b"x").unwrap();
+        fs::write(
+            ff_root.join("profiles.ini"),
+            "[Profile0]\nName=default\nPath=ff.default\nDefault=1\n",
+        )
+        .unwrap();
+
+        // Set up Chrome
+        let chrome_root = home.join(".config/google-chrome");
+        fs::create_dir_all(chrome_root.join("Default")).unwrap();
+        fs::write(chrome_root.join("Default/Cookies"), b"x").unwrap();
+
+        // Set up Brave
+        let brave_root = home.join(".config/BraveSoftware/Brave-Browser");
+        fs::create_dir_all(brave_root.join("Default")).unwrap();
+        fs::write(brave_root.join("Default/Cookies"), b"x").unwrap();
+
+        let browsers = discover();
+
+        assert_eq!(browsers.len(), 3);
+
+        let has_ff = browsers.iter().any(|b| b.family == BrowserFamily::Firefox);
+        let has_chrome = browsers.iter().any(|b| b.family == BrowserFamily::Chrome);
+        let has_brave = browsers.iter().any(|b| b.family == BrowserFamily::Brave);
+
+        assert!(has_ff);
+        assert!(has_chrome);
+        assert!(has_brave);
+    }
+
+    #[test]
+    fn discover_returns_empty_when_home_is_missing() {
+        let _guard = EnvGuard::clear();
+        let browsers = discover();
+        assert!(browsers.is_empty());
     }
 }
