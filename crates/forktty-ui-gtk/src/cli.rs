@@ -1180,7 +1180,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let invalid_utf8 = std::ffi::OsStr::from_bytes(&[0xFF, 0xFF, 0xFF]);
         assert_eq!(
-            parse::<_, &std::ffi::OsStr>(&[std::ffi::OsStr::new("forktty"), invalid_utf8]),
+            parse::<_, &std::ffi::OsStr>([std::ffi::OsStr::new("forktty"), invalid_utf8]),
             CliAction::Unknown("unknown argument: <non-utf8>".to_string())
         );
     }
@@ -1191,7 +1191,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let invalid_utf8 = std::ffi::OsStr::from_bytes(&[0xFF, 0xFF, 0xFF]);
         assert_eq!(
-            parse::<_, &std::ffi::OsStr>(&[
+            parse::<_, &std::ffi::OsStr>([
                 std::ffi::OsStr::new("forktty"),
                 std::ffi::OsStr::new("--version"),
                 invalid_utf8
