@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
 - Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
 - MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.
 - Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
