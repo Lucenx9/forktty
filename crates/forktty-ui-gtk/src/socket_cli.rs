@@ -1571,14 +1571,12 @@ fn warn_if_lagged(line: &str) {
     }
 }
 
-/// Dropped-event count if `line` is the server's lag notice. The prefix check
-/// is exact: event payloads embedding the same text in a string field arrive
-/// with escaped quotes, so they cannot match.
+/// Dropped-event count if `line` is the server's lag notice.
 fn lagged_dropped_count(line: &str) -> Option<u64> {
-    if !line.starts_with(r#"{"event":"lagged""#) {
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    if value.get("event").and_then(Value::as_str) != Some("lagged") {
         return None;
     }
-    let value = serde_json::from_str::<Value>(line).ok()?;
     Some(value.get("dropped").and_then(Value::as_u64).unwrap_or(0))
 }
 
@@ -7813,6 +7811,10 @@ mod tests {
         assert_eq!(
             lagged_dropped_count(r#"{"event":"lagged","dropped":15}"#),
             Some(15)
+        );
+        assert_eq!(
+            lagged_dropped_count(r#"{"dropped":7,"event":"lagged"}"#),
+            Some(7)
         );
         // A title that embeds the notice text arrives with escaped quotes.
         assert_eq!(
