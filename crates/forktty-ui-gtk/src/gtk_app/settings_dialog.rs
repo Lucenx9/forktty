@@ -1461,20 +1461,17 @@ pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
     apply_change: F,
     message: &str,
 ) -> bool {
-    // Rebase the dialog's single change onto a fresh disk read so saving the
-    // whole struct does not revert config edits made outside the dialog while
-    // it was open (e.g. the F9 sidebar toggle saves independently).
-    let base = config::load_config().unwrap_or_else(|_| current.borrow().clone());
-    let next = rebased_settings_config(&base, apply_change);
-    if next == base {
-        *current.borrow_mut() = next;
-        return true;
-    }
-    match config::save_config(&next) {
-        Ok(()) => {
+    // Rebase the dialog's single change onto a fresh disk read while holding
+    // the config update lock, so concurrent read-modify-write saves (such as
+    // the F9 sidebar toggle) cannot overwrite unrelated settings with a stale
+    // whole-file snapshot.
+    match config::update_config_if_changed(apply_change) {
+        Ok((next, changed)) => {
             *current.borrow_mut() = next.clone();
-            on_apply(&next);
-            dialog.add_toast(adw::Toast::new(message));
+            if changed {
+                on_apply(&next);
+                dialog.add_toast(adw::Toast::new(message));
+            }
             true
         }
         Err(err) => {
