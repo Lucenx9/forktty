@@ -719,17 +719,55 @@ pub(super) fn command_search_text(label: &str, shortcut: Option<&str>) -> Comman
 }
 
 fn shortcut_matches(shortcut: &str, query: &str) -> bool {
-    shortcut.contains(query)
-        || normalize_shortcut(shortcut, '+') == normalize_shortcut(query, '+')
-        || normalize_shortcut(shortcut, ' ').contains(&normalize_shortcut(query, ' '))
+    if shortcut.contains(query) {
+        return true;
+    }
+    let query_tokens = shortcut_tokens(query);
+    !query_tokens.is_empty()
+        && shortcut
+            .split('/')
+            .map(shortcut_tokens)
+            .any(|tokens| token_subsequence(&query_tokens, &tokens))
 }
 
-fn normalize_shortcut(value: &str, separator: char) -> String {
+fn shortcut_tokens(value: &str) -> Vec<String> {
     value
-        .split(|ch: char| ch == '+' || ch == '/' || ch.is_whitespace())
+        .split(|ch: char| ch == '+' || ch.is_whitespace())
         .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(&separator.to_string())
+        .flat_map(expand_shortcut_token)
+        .collect()
+}
+
+fn expand_shortcut_token(token: &str) -> Vec<String> {
+    for modifier in ["control", "ctrl", "shift", "alt", "super", "meta"] {
+        if let Some(rest) = token.strip_prefix(modifier) {
+            if !rest.is_empty() {
+                let normalized = if modifier == "control" {
+                    "ctrl"
+                } else {
+                    modifier
+                };
+                return vec![normalized.to_string(), rest.to_string()];
+            }
+        }
+    }
+    vec![token.to_string()]
+}
+
+fn token_subsequence(query: &[String], shortcut: &[String]) -> bool {
+    let mut query = query.iter();
+    let Some(mut current) = query.next() else {
+        return true;
+    };
+    for token in shortcut {
+        if token == current {
+            match query.next() {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+    }
+    false
 }
 
 pub(super) fn is_subsequence(needle: &str, haystack: &str) -> bool {
