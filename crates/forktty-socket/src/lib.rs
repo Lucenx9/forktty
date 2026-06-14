@@ -2378,6 +2378,9 @@ fn rollback_created_worktree_after_spawn_failure(
     info: &worktree::WorktreeInfo,
     spawn_error: String,
 ) -> String {
+    if !info.created {
+        return spawn_error;
+    }
     match worktree::remove(cwd, &info.worktree_name, true) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(
@@ -8215,6 +8218,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn worktree_create_preserves_existing_worktree_when_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/existing-spawn-rollback-{}", std::process::id());
+        let created = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            "../forktty-worktrees/{name}",
+        )
+        .unwrap();
+        let existing_path = created.path.clone();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+        let state = SocketAppState::new(
+            model.clone(),
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        assert!(Path::new(&existing_path).exists());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_ok());
+        let worktrees = worktree::list(repo_dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].branch, branch_name);
+    }
+
+    #[tokio::test]
     async fn surface_close_removes_model_surface_when_backend_already_missing() {
         let (state, backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -10554,6 +10606,34 @@ mod tests {
             backend.spawn_args(surface_id).unwrap(),
             vec!["user@example.com"]
         );
+    }
+
+    #[test]
+    fn bootstrap_default_workspace_creates_new_workspace_if_none_exists() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        assert!(model.lock().unwrap().active_workspace().is_none());
+
+        bootstrap_default_workspace(&state, PathBuf::from("/foo/bar")).unwrap();
+
+        let m = model.lock().unwrap();
+        let workspace = m.active_workspace().unwrap();
+        assert_eq!(workspace.working_dir, PathBuf::from("/foo/bar"));
+
+        let surfaces = m.list_surfaces(Some(&workspace.id));
+        assert_eq!(surfaces.len(), 1);
+        let surface_id = &surfaces[0].id;
+
+        let shell = backend.spawn_shell(surface_id).unwrap();
+        assert_eq!(shell, "/bin/sh");
     }
 
     #[test]
