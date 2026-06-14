@@ -1067,6 +1067,24 @@ fn appimage_target_rejects_extract_and_run_and_non_files() {
     assert_eq!(target.canonical_path, appimage.canonicalize().unwrap());
 }
 
+#[cfg(unix)]
+#[test]
+fn appimage_update_temp_file_is_owner_only_even_with_permissive_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let temp = dir.path().join(".forktty-update.tmp");
+    let previous_umask = unsafe { libc::umask(0) };
+    let result = create_private_update_file(&temp).map(|_| ());
+    unsafe {
+        libc::umask(previous_umask);
+    }
+    result.unwrap();
+
+    let mode = std::fs::metadata(&temp).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
 #[test]
 fn appimage_update_replaces_only_after_checksum_matches() {
     let dir = tempfile::tempdir().unwrap();
