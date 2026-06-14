@@ -6,8 +6,8 @@ use super::terminal_geometry::{
 use super::terminal_links::url_at_point;
 use super::*;
 use forktty_terminal::ghostty::core::{
-    TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
-    TerminalMouseSize,
+    TerminalCell, TerminalCellWidth, TerminalMouseAction, TerminalMouseButton, TerminalMouseInput,
+    TerminalMousePosition, TerminalMouseSize,
 };
 use forktty_terminal::ghostty::events::GhosttyEvent;
 
@@ -1719,7 +1719,7 @@ fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String
 /// The text currently on screen, joined across soft wraps and right-trimmed.
 fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFrame) -> String {
     let rows = frame.rows.iter().map(|row| {
-        let text: String = row.cells.iter().map(|cell| cell.text.as_str()).collect();
+        let text: String = row.cells.iter().map(cell_clipboard_text).collect();
         (text, row.wrapped)
     });
     join_rows_honoring_wrap(rows).trim_end().to_string()
@@ -1759,11 +1759,24 @@ fn selection_text_from_frame(
         let (from, to) = selection_cols_for_row(start, end, row_idx, row.cells.len())?;
         let text: String = row.cells[from..to]
             .iter()
-            .map(|cell| cell.text.as_str())
+            .map(cell_clipboard_text)
             .collect();
         Some((text, row.wrapped))
     });
     join_rows_honoring_wrap(rows)
+}
+
+fn cell_clipboard_text(cell: &TerminalCell) -> &str {
+    if cell.invisible
+        || matches!(
+            cell.width,
+            TerminalCellWidth::SpacerTail | TerminalCellWidth::SpacerHead
+        )
+    {
+        ""
+    } else {
+        cell.text.as_str()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2400,6 +2413,19 @@ mod selection_tests {
     }
 
     #[test]
+    fn selection_text_omits_invisible_cells() {
+        let frame = frame_for_lines(b"echo OK\x1b[8m; hidden-cmd\x1b[0m");
+
+        let text = selection_text_from_frame(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 19 },
+        );
+
+        assert_eq!(text, "echo OK");
+    }
+
+    #[test]
     fn viewport_text_joins_soft_wrapped_rows_without_a_newline() {
         let frame = frame_for_lines(b"abcdefghijklmnopqrstuvwxyz\r\nshort");
 
@@ -2407,6 +2433,13 @@ mod selection_tests {
             viewport_text_from_frame(&frame),
             "abcdefghijklmnopqrstuvwxyz\nshort"
         );
+    }
+
+    #[test]
+    fn viewport_text_omits_invisible_cells() {
+        let frame = frame_for_lines(b"safe\x1b[8mSECRET\x1b[0m text");
+
+        assert_eq!(viewport_text_from_frame(&frame), "safe text");
     }
 
     // Regression for the Fedora SIGABRT: wheel scroll over a pane with mouse

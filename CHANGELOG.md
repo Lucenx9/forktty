@@ -44,6 +44,7 @@ All notable changes to ForkTTY are documented here.
 - Re-running `worktree.create` for a branch that already has a ForkTTY-supported linked worktree now reopens that worktree instead of failing on the already-created branch, recovering the crash window between Git worktree registration and ForkTTY session persistence.
 - Concurrent nested worktree creation now serializes updates to `.git/info/exclude`, keeping the `.worktrees/` entry idempotent.
 - Closing a non-last tab now keeps the model locked through backend close and model removal, so concurrent UI/socket closes cannot observe a half-closed surface.
+- Terminal copy and mouse selection now omit invisible terminal cells, so escape-hidden text cannot be copied to the clipboard.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 
