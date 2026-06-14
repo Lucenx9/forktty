@@ -5,6 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Security
+- Terminal smooth-scroll handling now rejects non-finite deltas and caps per-event line replay, preventing oversized synthetic scroll events from monopolizing the UI thread while mouse tracking is active.
 - Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
 
 ### Added
