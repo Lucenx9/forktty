@@ -297,11 +297,24 @@ pub(super) fn show_settings_dialog(
         "Advanced",
         "Low-frequency actions that affect saved ForkTTY preferences.",
     );
+    let (privacy_section, privacy_list) =
+        settings_section("Privacy", "Controls optional network diagnostics.");
+    let anonymous_ping = adw::SwitchRow::builder()
+        .title("Anonymous daily ping")
+        .subtitle(
+            "Send one daily usage ping with app version and date; no install id or project data.",
+        )
+        .active(loaded.telemetry.anonymous_ping)
+        .build();
+    anonymous_ping.add_css_class("settings-row");
+    privacy_list.append(&anonymous_ping);
+    advanced_content.append(&privacy_section);
+
     let (advanced_section, advanced_list) =
         settings_section("Reset", "Restore saved preferences to their defaults.");
     let reset_row = settings_action_row(
         "Reset to defaults",
-        "Restore the default shell, appearance, workspace and notification preferences.",
+        "Restore the default shell, appearance, workspace, privacy, and notification preferences.",
     );
     let reset = gtk::Button::with_label("Reset");
     reset.add_css_class("destructive-action");
@@ -600,6 +613,24 @@ pub(super) fn show_settings_dialog(
             );
         }
     });
+    anonymous_ping.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.telemetry.anonymous_ping = row.is_active(),
+                "Telemetry preference updated.",
+            );
+        }
+    });
     reset.connect_clicked({
         let window = window.clone();
         let dialog = dialog.clone();
@@ -627,10 +658,11 @@ pub(super) fn show_settings_dialog(
             let notification_command_for_reset = notification_command.clone();
             let desktop_notifications_for_reset = desktop_notifications.clone();
             let notification_sound_for_reset = notification_sound.clone();
+            let anonymous_ping_for_reset = anonymous_ping.clone();
             show_destructive_confirmation(
                 &confirmation_parent,
                 "Reset Settings?",
-                "Restore ForkTTY settings to their default values. This changes the saved shell, appearance, workspace, and notification preferences.",
+                "Restore ForkTTY settings to their default values. This changes the saved shell, appearance, workspace, privacy, and notification preferences.",
                 "Reset Settings",
                 move || {
                     let defaults = config::AppConfig::default();
@@ -668,6 +700,7 @@ pub(super) fn show_settings_dialog(
                     notification_command_for_reset.remove_css_class("error");
                     desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
                     notification_sound_for_reset.set_active(defaults.notifications.sound);
+                    anonymous_ping_for_reset.set_active(defaults.telemetry.anonymous_ping);
                     suppress_updates_for_reset.set(false);
                     persist_settings_change(
                         &dialog_for_reset,

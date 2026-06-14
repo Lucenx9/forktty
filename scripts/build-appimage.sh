@@ -33,6 +33,7 @@ case "$(uname -m)" in
 esac
 
 APPIMAGE_PATH="$TARGET_DIR/forktty-${VERSION}-${APPIMAGE_ARCH}.AppImage"
+APPIMAGE_ZSYNC_PATH="$APPIMAGE_PATH.zsync"
 
 resolve_tool() {
   local env_name="$1"
@@ -267,6 +268,16 @@ if [[ -n "${APPIMAGE_RUNTIME_FILE:-}" ]]; then
   fi
   APPIMAGETOOL_ARGS=(--runtime-file "$APPIMAGE_RUNTIME_FILE" "${APPIMAGETOOL_ARGS[@]}")
 fi
+if [[ "${APPIMAGE_UPDATE_INFO:-0}" == "1" ]]; then
+  if ! command -v zsyncmake >/dev/null; then
+    echo "APPIMAGE_UPDATE_INFO=1 requires zsyncmake on PATH so appimagetool can emit .zsync metadata" >&2
+    exit 1
+  fi
+  APPIMAGETOOL_ARGS=(
+    -u "gh-releases-zsync|Lucenx9|forktty|latest|forktty-*-${APPIMAGE_ARCH}.AppImage.zsync"
+    "${APPIMAGETOOL_ARGS[@]}"
+  )
+fi
 
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$DESKTOP_FILE"
@@ -282,7 +293,7 @@ fi
 
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
 
-rm -rf "$APPDIR" "$APPIMAGE_PATH"
+rm -rf "$APPDIR" "$APPIMAGE_PATH" "$APPIMAGE_ZSYNC_PATH"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$APPDIR/usr/bin/forktty"
 install -Dm644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop"
 install -Dm644 "$ICON_FILE" "$APPDIR/usr/share/icons/hicolor/128x128/apps/forktty.png"
@@ -333,6 +344,10 @@ export ARCH="$APPIMAGE_ARCH"
 export VERSION="$VERSION"
 
 "$APPIMAGETOOL_TOOL" "${APPIMAGETOOL_ARGS[@]}"
+if [[ "${APPIMAGE_UPDATE_INFO:-0}" == "1" && ! -f "$APPIMAGE_ZSYNC_PATH" ]]; then
+  echo "Expected AppImage update metadata missing: $APPIMAGE_ZSYNC_PATH" >&2
+  exit 1
+fi
 sha256sum "$APPIMAGE_PATH" > "$APPIMAGE_PATH.sha256"
 
 echo "$APPIMAGE_PATH"

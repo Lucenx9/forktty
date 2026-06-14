@@ -127,9 +127,79 @@ window_mode = "normal"
 [notifications]
 desktop = true
 sound = true
+
+[updates]
+auto_check = true
+
+[telemetry]
+anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+
+## Updates
+
+When `updates.auto_check = true`, GTK startup checks GitHub Releases at most
+once every 24 hours by fetching:
+
+```text
+https://api.github.com/repos/Lucenx9/forktty/releases?per_page=10
+```
+
+The request uses HTTPS, a `ForkTTY/<version>` user agent, the GitHub JSON
+media type, and `X-GitHub-Api-Version`. The local stamp is updated for both
+success and failure; 403/429 responses honor `Retry-After` or
+`X-RateLimit-Reset` before the next attempt.
+
+Stable builds ignore prerelease releases. Prerelease builds consider newer
+prereleases and stable releases. Release assets are selected only from
+GitHub-provided asset names and `browser_download_url`; ForkTTY does not
+construct release download URLs.
+
+If the app is running from a writable, regular AppImage path exposed by
+`APPIMAGE` and not from `APPIMAGE_EXTRACT_AND_RUN=1`, ForkTTY can update in
+place after explicit user confirmation. It downloads the AppImage and
+`SHA256SUMS` into the target directory, verifies SHA256, chmods the temp file,
+fsyncs file and directory, then renames over the current AppImage and offers a
+restart. The old file remains intact until the final rename. Non-AppImage,
+read-only, extracted, or otherwise unsafe launches open the GitHub release page
+instead. External AppImage managers such as Gear Lever can continue to launch
+the same path; they may rescan their own metadata separately.
+
+## Telemetry
+
+When `telemetry.anonymous_ping = true`, GTK startup sends at most one anonymous
+usage ping per UTC day to:
+
+```text
+https://forktty-site.vercel.app/api/telemetry/ping
+```
+
+The request is a best-effort HTTPS POST with this JSON shape:
+
+```json
+{
+  "schema": 1,
+  "kind": "daily_ping",
+  "app": "forktty",
+  "version": "0.2.0-alpha.12",
+  "date": "2026-06-13"
+}
+```
+
+The payload contains no install id, rotating id, username, hostname, cwd,
+repository path, branch, shell, agent metadata, terminal buffer, socket payload,
+or crash data. CLI invocations and agent hooks do not send telemetry pings.
+The local stamp is stored under `$XDG_STATE_HOME/forktty/telemetry-ping.json`
+or the platform data fallback. Set `telemetry.anonymous_ping = false` to
+disable the ping.
+
+On the first launch a one-time welcome dialog presents the (default-on)
+telemetry toggle before any ping is sent; the startup ping is deferred until
+the dialog is dismissed, then sent only if the toggle is still enabled.
+Dismissing the dialog records `$XDG_STATE_HOME/forktty/welcome-seen.json` (or
+the platform data fallback) so it is not shown again, and the update check is
+skipped on that first launch.
 
 ## Socket API
 
@@ -168,16 +238,21 @@ Implemented categories:
 | System | `system.ping`, `system.capabilities` |
 | Agent | `agent.list`, `agent.health`, `agent.reclaim.plan`, `agent.resume` |
 | Workspace | `workspace.list`, `workspace.create`, `workspace.create_ssh`, `workspace.select`, `workspace.close` |
-| Surface | `surface.list`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
+| Surface | `surface.list`, `surface.read_text`, `surface.capture_tail`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
 | Pane | `pane.new_tab`, `pane.select_tab` |
 | Notification | `notification.create`, `notification.list`, `notification.clear` |
 | Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
 | Status | `status.summary` |
+| Topology | `topology.tree` |
 | Events | `events.subscribe` |
 | Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.eval`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`, `browser.import.discover`, `browser.import.preview`, `browser.import.run` |
 
-Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. All `worktree.*` methods validate their target path against the git repositories of currently open workspaces: this is a deliberate security boundary — a socket client (hook, MCP server, CLI) cannot drive git worktree operations on a repository the user never opened in ForkTTY, and a shell's mutable cwd is never treated as authorization. The rejection names the open workspace roots and the `forktty create-workspace` remedy. Surface-targeted writes, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Hook-originated metadata/notification requests that carry `hook_session_id` can use a bounded server-side session-to-surface cache when later hook requests lose their explicit `workspace_id`/`surface_id`; explicit targets always win, and stale cached surfaces are discarded instead of reviving closed panes. When a hook status targets a primary `agent:<provider>` key and carries `hook_session_id`, ForkTTY also persists `{agent, session_id, resume_cwd, lifecycle, last_activity_ms}` on that surface in `session-v2.json`; `resume_cwd` is the provider session cwd when `hook_session_cwd` names an existing absolute directory, with Antigravity deriving that value from the hook payload's `workspacePaths` because its wrapper scripts run from `~/.gemini/config`. Lifecycle is derived conservatively from hook events and normalized status values as `running`, `idle`, `needs_input`, `ended`, or `unknown`, and `last_activity_ms` is the Unix epoch millisecond when ForkTTY accepted the hook status. `agent.list` exposes those persisted bindings with workspace/surface/title/cwd context and accepts the same workspace selectors as `surface.list`. `agent.health` returns those bindings plus local resume readiness fields (`ready`, `reason`, `program`, `executable`, `argv`): it validates the provider/session pair with the same argv-only command builder used by resume and checks whether the provider executable is discoverable on the ForkTTY process PATH, without launching the provider or proving the remote/session id still exists. When a Codex binding has no persisted `resume_cwd`, health/resume/restore may infer one from Codex's local `$CODEX_HOME/sessions` or `~/.codex/sessions` `session_meta` JSONL if the matching session file and cwd still exist. `agent.reclaim.plan` is read-only and accepts the same workspace selectors plus optional `min_idle_ms` (default 600000). It returns `{policy, candidates, protected}`: candidates are persisted sessions whose lifecycle is `idle`, last activity is known and older than `min_idle_ms`, and local resume readiness is `ready`; protected rows include `protect_reason` such as `running`, `needs_input`, `ended`, `unknown_lifecycle`, `unknown_activity`, `recent_activity`, or `not_ready:<reason>`. The plan does not close panes, kill processes, or mark sessions suspended. `agent.resume` is an explicit operation that takes a source `surface_id` with a persisted agent session, creates a new tab, and spawns the provider through argv only (`codex resume -C <resume_cwd> <id>` when Codex has a persisted or inferred `resume_cwd`, otherwise `codex resume <id>`, `claude --resume <id>`, `gemini --resume <id>`, `opencode --session <id>`, or `agy --conversation <id>`). When `resume_cwd` is available, ForkTTY also uses it as the provider process cwd, which keeps providers without a cwd flag such as Claude Code in the recorded session directory. Restored terminal surfaces with a supported persisted agent session use the same argv-only resume command during session restore instead of spawning a plain shell. Hook-reported permission-mode status entries are display-only and do not add high-risk provider flags such as Claude Code `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox` to health, resume, or restore argv. Session ids used for resume are trimmed and rejected if empty, too long, flag-like, or control-character bearing; unsupported custom agents return `precondition_failed` from resume and `unsupported_agent` health rows. `status.summary` returns a derived read-only workspace summary containing workspace identity, persisted agent sessions, current status entries, and progress entries for statusline/HUD consumers. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+Request lines are capped at 1 MiB. `surface.send_text` additionally rejects `text` payloads larger than 256 KiB so a wedged PTY pipe cannot block the dispatch task. `surface.read_text` returns bounded terminal text for one surface (`scope: "visible"` by default, or `"all"` for full scrollback) and `surface.capture_tail` returns the last `lines` terminal lines (default 80, max 5000); both cap returned UTF-8 text to at most 512 KiB by default/upper bound and set `truncated` when text is byte-trimmed. `topology.tree` returns read-only workspace entries with pane trees and nested surface metadata, accepting the same workspace selectors as `surface.list`. All `worktree.*` methods validate their target path against the git repositories of currently open workspaces: this is a deliberate security boundary — a socket client (hook, MCP server, CLI) cannot drive git worktree operations on a repository the user never opened in ForkTTY, and a shell's mutable cwd is never treated as authorization. The rejection names the open workspace roots and the `forktty create-workspace` remedy. Surface-targeted writes, reads, notification targets, and explicit metadata workspace selectors are validated against the current workspace model, so stale workspace or surface ids return `not_found` instead of dispatching to dead panes. Hook-originated metadata/notification requests that carry `hook_session_id` can use a bounded server-side session-to-surface cache when later hook requests lose their explicit `workspace_id`/`surface_id`; explicit targets always win, and stale cached surfaces are discarded instead of reviving closed panes. When a hook status targets a primary `agent:<provider>` key and carries `hook_session_id`, ForkTTY also persists `{agent, session_id, resume_cwd, lifecycle, last_activity_ms}` on that surface in `session-v2.json`; `resume_cwd` is the provider session cwd when `hook_session_cwd` names an existing absolute directory, with Antigravity deriving that value from the hook payload's `workspacePaths` because its wrapper scripts run from `~/.gemini/config`. Lifecycle is derived conservatively from hook events and normalized status values as `running`, `idle`, `needs_input`, `ended`, or `unknown`, and `last_activity_ms` is the Unix epoch millisecond when ForkTTY accepted the hook status. `agent.list` exposes those persisted bindings with workspace/surface/title/cwd context and accepts the same workspace selectors as `surface.list`. `agent.health` returns those bindings plus local resume readiness fields (`ready`, `reason`, `program`, `executable`, `argv`): it validates the provider/session pair with the same argv-only command builder used by resume and checks whether the provider executable is discoverable on the ForkTTY process PATH, without launching the provider or proving the remote/session id still exists. When a Codex binding has no persisted `resume_cwd`, health/resume/restore may infer one from Codex's local `$CODEX_HOME/sessions` or `~/.codex/sessions` `session_meta` JSONL if the matching session file and cwd still exist. `agent.reclaim.plan` is read-only and accepts the same workspace selectors plus optional `min_idle_ms` (default 600000). It returns `{policy, candidates, protected}`: candidates are persisted sessions whose lifecycle is `idle`, last activity is known and older than `min_idle_ms`, and local resume readiness is `ready`; protected rows include `protect_reason` such as `running`, `needs_input`, `ended`, `unknown_lifecycle`, `unknown_activity`, `recent_activity`, or `not_ready:<reason>`. The plan does not close panes, kill processes, or mark sessions suspended. `agent.resume` is an explicit operation that takes a source `surface_id` with a persisted agent session, creates a new tab, and spawns the provider through argv only (`codex resume -C <resume_cwd> <id>` when Codex has a persisted or inferred `resume_cwd`, otherwise `codex resume <id>`, `claude --resume <id>`, `gemini --resume <id>`, `opencode --session <id>`, or `agy --conversation <id>`). When `resume_cwd` is available, ForkTTY also uses it as the provider process cwd, which keeps providers without a cwd flag such as Claude Code in the recorded session directory. Restored terminal surfaces with a supported persisted agent session use the same argv-only resume command during session restore instead of spawning a plain shell. Session ids used for resume are trimmed and rejected if empty, too long, flag-like, or control-character bearing; unsupported custom agents return `precondition_failed` from resume and `unsupported_agent` health rows. `status.summary` returns a derived read-only workspace summary containing workspace identity, persisted agent sessions, current status entries, and progress entries for statusline/HUD consumers. Socket paths are owner-private by default, stale sockets are removed only after probing, and an existing live ForkTTY socket prevents a second instance from taking over the path.
+
+Hook-reported permission-mode status entries are display-only metadata and do not add high-risk provider flags such as Claude Code `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox` to health, resume, or restore argv.
+
+Worktree and branch names are trimmed and rejected if empty, too long, flag-like, control-character bearing, backslash-containing, or path-traversing.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 
@@ -186,7 +261,7 @@ Error responses include a structured `code` field so clients can branch on outco
 | `method_not_found` | Unknown method name. |
 | `missing_param` | A required parameter is absent or has the wrong type. |
 | `not_found` | The referenced workspace, surface, worktree, or metadata entry does not exist. |
-| `payload_too_large` | The request line exceeds 1 MiB, or `surface.send_text` text exceeds 256 KiB. |
+| `payload_too_large` | The request line exceeds 1 MiB, `surface.send_text` text exceeds 256 KiB, or metadata text exceeds its method-specific limit. |
 | `conflict` | The operation is valid but blocked by current state, such as dirty worktrees or in-use browser profiles. |
 | `precondition_failed` | The request needs setup the caller can perform first: the worktree open-workspace boundary returns this, naming the remedy (`forktty create-workspace` / the `workspace_create` MCP tool). |
 
@@ -200,8 +275,10 @@ Error responses include a structured `code` field so clients can branch on outco
 
 `forktty mcp` runs a local Model Context Protocol server over stdio. It does
 not listen on a network port; each MCP tool call is validated and then bridged
-to the same owner-only Unix socket described above. The server exposes
-`workspace_list`, `surface_list`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_resume`, `status_summary`, `surface_split`, `surface_send_text`,
+to the same owner-only Unix socket described above. Oversized, invalid JSON,
+and invalid UTF-8 stdio messages return JSON-RPC `-32700` parse errors and do
+not end the stdio session. The server exposes
+`workspace_list`, `surface_list`, `topology_tree`, `surface_read_text`, `surface_capture_tail`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_resume`, `status_summary`, `surface_split`, `surface_send_text`,
 `surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
 `worktree_attach`, `worktree_remove`, `worktree_merge`,
 `notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the
@@ -212,9 +289,10 @@ The MCP server also declares `resources` and `prompts` capabilities. It exposes
 a read-only `forktty://agent/operating-guide` text resource and a
 `forktty_operating_guide` prompt with the same content. The guide tells agents
 to use ForkTTY tools for pane/workspace coordination, agent session discovery or
-resume, worktree management, visible status/notifications, and sending text to a
-different surface; ordinary code edits in the current repository should proceed
-without ForkTTY tool calls. The server's `initialize` instructions include the
+resume, worktree management, terminal read/capture, visible
+status/notifications, and sending text to a different surface; ordinary code
+edits in the current repository should proceed without ForkTTY tool calls. The
+server's `initialize` instructions include the
 same short policy and point at the resource/prompt for the full guide.
 
 `forktty mcp setup` registers this stdio server in verified user-scope MCP
@@ -254,7 +332,7 @@ Worktree operations use `git2` and avoid shelling out to git.
 Implemented operations:
 
 - list worktrees;
-- create worktree and branch;
+- create worktree and branch; if the requested branch already has a linked worktree in one of ForkTTY's supported layouts, `worktree.create` returns that existing worktree so a retry can recover after a crash between Git registration and ForkTTY session persistence;
 - attach existing branch/worktree;
 - remove worktree after dirty-state and metadata validation;
 - merge worktree branch with dirty-target/conflict checks and abort incomplete merges before returning failure;
@@ -280,8 +358,11 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
 ## Security Constraints
 
 - Local Linux desktop threat model; same-user processes are not treated as hostile isolation boundaries.
-- No telemetry, update checks, or product-service network calls. Optional
-  browser panes and optional PR lookup can make user-directed network requests.
+- No crash-reporting or product event-tracking network calls. The default
+  anonymous daily usage ping can be disabled with
+  `telemetry.anonymous_ping = false`; optional update checks query GitHub
+  Releases at most once per day and can be disabled. Optional browser panes
+  and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
 - `forktty mcp` is a local stdio bridge only; it opens no network listener and
   enforces the same Unix socket ownership boundary as the CLI.

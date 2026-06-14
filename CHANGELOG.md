@@ -5,6 +5,49 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- First launch now shows a one-time welcome dialog: an informed (default-on) telemetry toggle linking to the privacy notice, and a one-click "Set up agent integration" button that runs `hooks setup` and `mcp setup`. The first anonymous ping is deferred until this dialog is dismissed, so the toggle is always seen before any data leaves the machine; the welcome is recorded in `$XDG_STATE_HOME/forktty/welcome-seen.json` and the update check is skipped on that first launch.
+- The GTK app now sends at most one anonymous daily usage ping when `telemetry.anonymous_ping = true` (the default). The payload contains only schema/kind/app/version/date, can be disabled in Settings or config, and crash uploads remain unimplemented.
+- The GTK app now checks GitHub Releases at most once per day when `updates.auto_check = true`, shows update availability in-app, opens the release page for non-AppImage installs, and can self-update writable AppImages after explicit confirmation by downloading the AppImage plus `SHA256SUMS`, verifying SHA256, and atomically replacing the current file.
+- Release AppImages can now embed AppImage update information and ship a matching `.zsync` asset when `APPIMAGE_UPDATE_INFO=1` is used during packaging; release CI enables this and includes `.zsync` in `SHA256SUMS`.
+- Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
+
+### Fixed
+- Notification commands using SSH's own `-c` option are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
+- Terminal text snapshot truncation now treats a zero-byte internal limit as an empty, truncated result instead of disabling truncation.
+- Terminal spawning now preserves non-UTF-8 working-directory bytes on Unix instead of converting the cwd through lossy UTF-8.
+- Large PTY writes now keep waiting after `poll()` reports no writable fd before the per-write deadline, instead of treating the poll timeout as readiness.
+- PTY `read_until` now reports `TimedOut` when the requested bytes do not arrive before its deadline.
+- Metadata OSC parsing now aborts an unterminated OSC string on a bare `ESC`, so OSC 9 notifications and OSC 99 agent metadata that follow in the same PTY chunk are no longer swallowed.
+- The Worktree dialog no longer overwrites a typed Create/Attach branch name when the asynchronous existing-worktree list finishes loading.
+- Agent HUD Resume buttons are re-enabled after a failed resume attempt instead of staying disabled until the HUD is reopened.
+- Releasing a terminal text selection after wheel-scrolling mid-drag now preserves the scroll-compensated selection endpoint unless the pointer actually moved.
+- Bad config/session quarantine paths are now reserved atomically before rename, avoiding races between simultaneous ForkTTY instances.
+- Update checks now strip only one leading `v` from GitHub release tags, so malformed tags like `vv1.2.3` are ignored instead of parsed as `1.2.3`.
+- Worktree and branch names now reject leading dashes and control characters before reaching git APIs.
+- OSC 8 hyperlink lookup now retries with a large enough buffer for long multibyte UTF-8 URIs.
+- The MCP stdio server now returns a JSON-RPC parse error and continues after an invalid UTF-8 line instead of ending the session.
+- Custom terminal theme colors are now re-applied when an OSC color reset (`OSC 104`/`110`/`111`) follows an aborted OSC sequence in the same output chunk; previously the reset was swallowed as payload of the aborted sequence and the pane kept the wrong colors.
+- The MCP stdio server now reads incoming messages through a bounded buffer, so an oversized message is rejected at the 1 MiB limit without first allocating the entire message in memory.
+- Clicking an unfocused terminal pane now focuses it *and* lets the same click start a text selection (or reach the application), instead of swallowing the first click so the drag was lost and had to be repeated.
+- Scrolling the wheel or touchpad while dragging a selection now keeps the drag anchored to the same text, like drag-autoscroll already did, instead of silently dropping the in-progress selection; a finished selection is still cleared when the viewport scrolls.
+- A terminal color reset (`OSC 110`/`111`/`104`) immediately followed by an explicit color set in the same output chunk now keeps the application's color, instead of clobbering it with the re-seeded theme color.
+- Hook/MCP socket requests no longer reject a parameter sent as an explicit JSON `null` (e.g. `hook_session_id: null`) with a type error; `null` is now treated as absent, matching the numeric parameter handling.
+- A completed worktree merge whose post-commit cleanup fails is now reported as success instead of failure, avoiding a retry that would create a duplicate merge commit.
+- An agent hook event now still runs its later cleanup actions (clearing a stale status or permission marker) when an earlier action fails transiently, instead of stopping at the first error.
+- The `appearance.terminal_renderer` validation error message now lists `vte`, which is an accepted value.
+- Closing a terminal pane no longer risks freezing the UI: the dropped PTY session now reaps its killed child on a background thread instead of blocking the GTK main thread in `waitpid`, which a child stuck in uninterruptible sleep (D state on a dead NFS/FUSE mount) could otherwise wedge forever.
+- The PTY read loop now retries a read interrupted by a signal (`EINTR`) instead of surfacing it as a spurious error on every pump tick.
+- Large PTY writes now honor their overall deadline even when repeatedly interrupted by signals, instead of being able to retry indefinitely under a pathological signal rate.
+- Socket `surface.read_text`/`surface.capture_tail` no longer block a tokio worker thread while waiting for the GTK main loop: the wait is offloaded via `block_in_place`, so many concurrent read requests (as agent hooks issue) can no longer starve the socket server and stall every other request.
+- Removing a worktree now deletes its working-tree directory before deregistering it from git, so a failed directory removal leaves a recoverable (git-pruneable) registration instead of stranding the directory permanently with no way for git to find it.
+- A failed fast-forward merge rollback now logs the underlying ref-reset/HEAD-restore errors instead of silently discarding them, making a wedged repository diagnosable.
+- Re-running `worktree.create` for a branch that already has a ForkTTY-supported linked worktree now reopens that worktree instead of failing on the already-created branch, recovering the crash window between Git worktree registration and ForkTTY session persistence.
+- Concurrent nested worktree creation now serializes updates to `.git/info/exclude`, keeping the `.worktrees/` entry idempotent.
+- Closing a non-last tab now keeps the model locked through backend close and model removal, so concurrent UI/socket closes cannot observe a half-closed surface.
+
+## [0.2.0-alpha.12] - 2026-06-13
+
+### Added
 - Terminal panes now show terse toasts for copy/paste failures and flash an accent border for visual bell events.
 - Terminal panes now show a minimal overlay scrollback indicator while viewing history.
 - Terminal content now has balanced 6px inner padding so text does not touch pane edges.
@@ -22,7 +65,11 @@ All notable changes to ForkTTY are documented here.
 - `agent.resume`, `forktty resume-agent`, and MCP `agent_resume` now resume a persisted Codex, Claude Code, Gemini, OpenCode, or Antigravity session in a new ForkTTY tab using provider-specific argv-only commands.
 - Restored terminal surfaces with a persisted supported agent session now respawn through the provider's argv-only resume command instead of opening a plain shell after a ForkTTY restart; Codex sessions with a persisted hook cwd, or a cwd found in Codex's local `session_meta` JSONL, use `codex resume -C <cwd> <id>` to avoid Codex's resume-directory prompt when the pane cwd differs from the session cwd, and providers without a cwd flag such as Claude Code are spawned with the recorded cwd as their process directory.
 - `status.summary`, `forktty statusline`, and MCP `status_summary` now provide a compact read-only workspace summary with persisted agent sessions, status entries, and progress entries for agent statusline/HUD integrations.
+- The GTK app now has an Agent HUD in the titlebar and command palette, showing persisted agent sessions across workspaces with lifecycle, last activity, cwd/session context, needs-input highlighting, focus, and resume actions.
+- The Agent HUD updates live while open (one-second model re-snapshot that rebuilds rows only when they changed), shows each agent's last terminal output line refreshed in place (generation-gated so idle agents cost nothing), and its rows are keyboard-activatable — Enter or a click on a row focuses that agent's pane.
+- Agent HUD needs-input rows now show what the agent is actually waiting on (the hook prompt message, e.g. a permission request) instead of the raw terminal tail, and gain an inline reply entry that types the answer (plus Enter) straight into the agent's terminal without leaving the HUD; the list never rebuilds while a reply is being typed.
 - The MCP server now exposes a `forktty://agent/operating-guide` resource and a `forktty_operating_guide` prompt, plus matching initialize instructions, so agents can discover when ForkTTY tools are useful and when to keep working normally.
+- `surface.read_text`, `surface.capture_tail`, `topology.tree`, CLI `forktty read-screen`/`capture-tail`/`tree`, and MCP `surface_read_text`/`surface_capture_tail`/`topology_tree` now give agents read-only terminal inspection primitives before they focus or drive another pane.
 - `forktty --json hooks doctor <agent>` and `forktty --json hooks test <agent>` are now a stable machine-readable API (documented in SPEC.md): versioned report with an overall `ok`, per-method `{method, ok, error?}` results for `hooks test` (which keeps running after a failed method instead of aborting, so cleanup still happens and the report is complete), and exit code 0/1 reflecting overall health for CI gating. The Codex trust state stays a first-class field of the doctor report.
 - The worktree open-workspace boundary rejection now carries the structured error code `precondition_failed` (documented in SPEC.md), and MCP tool errors with a known recovery carry machine-readable `remedy` and `suggested_tool` fields in `structuredContent` — the boundary error points at `workspace_create`, so an agent can recover without parsing prose.
 

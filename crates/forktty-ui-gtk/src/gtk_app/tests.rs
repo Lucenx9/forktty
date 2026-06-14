@@ -149,6 +149,77 @@ impl TerminalBackend for CloseFailsBackend {
     }
 }
 
+#[derive(Debug)]
+struct CloseObservesModelLockBackend {
+    surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+    model: Arc<Mutex<WorkspaceModel>>,
+    observed_model_unlocked: Mutex<bool>,
+}
+
+impl CloseObservesModelLockBackend {
+    fn new(model: Arc<Mutex<WorkspaceModel>>) -> Self {
+        Self {
+            surfaces: Mutex::new(BTreeMap::new()),
+            model,
+            observed_model_unlocked: Mutex::new(false),
+        }
+    }
+
+    fn observed_model_unlocked(&self) -> bool {
+        *self.observed_model_unlocked.lock().unwrap()
+    }
+}
+
+impl TerminalBackend for CloseObservesModelLockBackend {
+    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        self.surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .insert(
+                request.surface_id.clone(),
+                TerminalSurfaceState {
+                    surface_id: request.surface_id,
+                    workspace_id: request.workspace_id,
+                    cwd: request.cwd,
+                    shell: request.shell,
+                    cols: 80,
+                    rows: 24,
+                },
+            );
+        Ok(())
+    }
+
+    fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        if self.model.try_lock().is_ok() {
+            *self.observed_model_unlocked.lock().unwrap() = true;
+        }
+        self.surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(())
+    }
+
+    fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+        Ok(self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .values()
+            .cloned()
+            .collect())
+    }
+}
+
 #[test]
 fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
@@ -772,6 +843,256 @@ fn restored_agent_surface_respawns_with_resume_command() {
 }
 
 #[test]
+fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
+    let mut model = WorkspaceModel::new();
+    let main = model.create_workspace("main", "/tmp/project");
+    let codex_surface = main.focused_surface_id.clone();
+    assert!(model.set_surface_title(&codex_surface, "Codex session".to_string()));
+    assert!(model.set_surface_agent_session(
+        &codex_surface,
+        forktty_core::AgentKind::Codex,
+        "019ebd1f-870e-7053-9765-11facbd295d2",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &codex_surface,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+    assert!(model.set_surface_agent_session_last_activity_ms(&codex_surface, 1_700_000_000_000,));
+    // Idle Codex has produced output the user has not looked at yet.
+    assert!(model.mark_surface_unread(&codex_surface, true));
+
+    let review = model.create_workspace("review", "/tmp/review");
+    let claude_surface = review.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &claude_surface,
+        forktty_core::AgentKind::ClaudeCode,
+        "a5643754-0a80-45bd-b591-c402dfdf16e1",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &claude_surface,
+        forktty_core::AgentSessionLifecycle::NeedsInput,
+    ));
+    assert!(model.set_surface_agent_session_permission_mode(&claude_surface, "bypassPermissions"));
+    assert!(model.set_surface_agent_session_last_activity_ms(&claude_surface, 1_700_000_120_000,));
+    // The waiting agent's latest prompt notification becomes its attention
+    // hint; prompt notifications on non-waiting agents must not surface.
+    model.create_notification(
+        "Claude needs input",
+        "An older request",
+        NotificationKind::Prompt,
+        Some(review.id.clone()),
+        Some(claude_surface.clone()),
+    );
+    model.create_notification(
+        "Claude needs input",
+        "Claude needs your permission to use Bash",
+        NotificationKind::Prompt,
+        Some(review.id.clone()),
+        Some(claude_surface.clone()),
+    );
+    model.create_notification(
+        "Codex prompt",
+        "Stale codex prompt",
+        NotificationKind::Prompt,
+        None,
+        Some(codex_surface.clone()),
+    );
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].agent_label, "Claude");
+    assert_eq!(rows[0].workspace_name, "review");
+    assert_eq!(rows[0].lifecycle_label, "Needs input");
+    assert!(rows[0].needs_input);
+    assert_eq!(
+        rows[0].permission_mode.as_deref(),
+        Some("bypassPermissions")
+    );
+    assert_eq!(rows[0].session_short, "a5643754");
+    assert_eq!(rows[0].last_activity_label, "3m ago");
+    assert!(rows[0].can_resume);
+    assert_eq!(
+        rows[0].attention_hint.as_deref(),
+        Some("Claude needs your permission to use Bash")
+    );
+
+    assert_eq!(rows[1].agent_label, "Codex");
+    assert_eq!(rows[1].surface_title, "Codex session");
+    assert_eq!(rows[1].lifecycle_label, "Idle");
+    assert_eq!(rows[1].last_activity_label, "5m ago");
+    // Idle: the stale prompt notification must not become a hint.
+    assert_eq!(rows[1].attention_hint, None);
+    // The unread output flag rides through to the row.
+    assert!(rows[1].unread);
+}
+
+#[test]
+fn agent_hud_floats_unread_within_lifecycle_group() {
+    let mut model = WorkspaceModel::new();
+    // Two idle agents in the same lifecycle group; only the second is unread,
+    // yet "alpha" would sort first by workspace name. Unread must win.
+    let seen = model.create_workspace("alpha", "/tmp/alpha");
+    let seen_surface = seen.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &seen_surface,
+        forktty_core::AgentKind::Codex,
+        "11111111-0000-0000-0000-000000000000",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &seen_surface,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+
+    let unseen = model.create_workspace("zeta", "/tmp/zeta");
+    let unseen_surface = unseen.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &unseen_surface,
+        forktty_core::AgentKind::Codex,
+        "22222222-0000-0000-0000-000000000000",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &unseen_surface,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+    assert!(model.mark_surface_unread(&unseen_surface, true));
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].workspace_name, "zeta");
+    assert!(rows[0].unread);
+    assert_eq!(rows[1].workspace_name, "alpha");
+    assert!(!rows[1].unread);
+}
+
+#[test]
+fn agent_hud_tail_picks_last_nonempty_line() {
+    assert_eq!(
+        last_nonempty_line("running tests\n3 passed   \n\n  \n").as_deref(),
+        Some("3 passed")
+    );
+    // Leading whitespace is kept (indentation is meaningful in output),
+    // trailing whitespace is trimmed.
+    assert_eq!(
+        last_nonempty_line("a\n  indented tail  \n").as_deref(),
+        Some("  indented tail")
+    );
+    assert_eq!(last_nonempty_line(""), None);
+    assert_eq!(last_nonempty_line("\n   \n\t\n"), None);
+}
+
+#[test]
+fn agent_hud_focuses_existing_agent_surface() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (first_surface, second_surface) = {
+        let mut model = model.lock().unwrap();
+        let first = model.create_workspace("main", "/tmp/main");
+        let first_surface = first.focused_surface_id.clone();
+        let second = model.create_workspace("review", "/tmp/review");
+        let second_surface = second.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &second_surface,
+            forktty_core::AgentKind::ClaudeCode,
+            "claude-session",
+        ));
+        model
+            .select_workspace(WorkspaceSelector::Id(&first.id))
+            .unwrap();
+        (first_surface, second_surface)
+    };
+
+    assert!(open_agent_surface(&state, &second_surface, None));
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace().unwrap().focused_surface_id,
+        second_surface
+    );
+    assert_ne!(
+        model.active_workspace().unwrap().focused_surface_id,
+        first_surface
+    );
+}
+
+#[test]
+fn update_stamp_waits_24h_and_honors_rate_limit_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let stamp = dir.path().join("update-check.json");
+    let now = 1_800_000_000_000;
+
+    assert!(update_check_due_at(&stamp, now));
+    record_update_attempt_at(&stamp, now, Some(now + 3_600_000)).unwrap();
+
+    assert!(!update_check_due_at(&stamp, now + 3_599_999));
+    assert!(!update_check_due_at(&stamp, now + 3_600_000));
+    assert!(update_check_due_at(&stamp, now + 86_400_000 + 1));
+}
+
+#[test]
+fn update_rate_limit_deadline_prefers_retry_after_then_reset_header() {
+    let now = 1_800_000_000_000;
+
+    assert_eq!(
+        rate_limit_retry_after_ms(429, Some("120"), Some("0"), Some("1800000300"), now),
+        Some(now + 120_000)
+    );
+    assert_eq!(
+        rate_limit_retry_after_ms(403, None, Some("0"), Some("1800000300"), now),
+        Some(1_800_000_300_000)
+    );
+    assert_eq!(
+        rate_limit_retry_after_ms(500, Some("120"), Some("0"), Some("1800000300"), now),
+        None
+    );
+}
+
+#[test]
+fn appimage_target_rejects_extract_and_run_and_non_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let appimage = dir.path().join("ForkTTY.AppImage");
+    std::fs::write(&appimage, b"old").unwrap();
+
+    assert!(appimage_target_from_env(Some(&appimage), Some("1")).is_none());
+    assert!(appimage_target_from_env(Some(dir.path()), None).is_none());
+
+    let target = appimage_target_from_env(Some(&appimage), None).expect("valid appimage target");
+    assert_eq!(target.canonical_path, appimage.canonicalize().unwrap());
+}
+
+#[test]
+fn appimage_update_replaces_only_after_checksum_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("ForkTTY.AppImage");
+    let temp = dir.path().join(".forktty-update.tmp");
+    std::fs::write(&target, b"old image").unwrap();
+    std::fs::write(&temp, b"new image").unwrap();
+
+    let wrong = "0000000000000000000000000000000000000000000000000000000000000000  forktty-new-x86_64.AppImage\n";
+    let err =
+        replace_appimage_with_verified_temp(&target, &temp, "forktty-new-x86_64.AppImage", wrong)
+            .unwrap_err();
+    assert!(err.to_string().contains("checksum"));
+    assert_eq!(std::fs::read(&target).unwrap(), b"old image");
+
+    std::fs::write(&temp, b"new image").unwrap();
+    let digest = sha256_hex(b"new image");
+    let sums = format!("{digest}  forktty-new-x86_64.AppImage\n");
+    replace_appimage_with_verified_temp(&target, &temp, "forktty-new-x86_64.AppImage", &sums)
+        .unwrap();
+
+    assert_eq!(std::fs::read(&target).unwrap(), b"new image");
+    assert!(!temp.exists());
+}
+
+#[test]
 fn collect_panes_counts_panes_not_tabs() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
@@ -1205,6 +1526,47 @@ fn close_tab_surface_closes_model_and_backend_for_non_last_tab() {
     let backend_surfaces = terminal.surfaces().unwrap();
     assert_eq!(backend_surfaces.len(), 1);
     assert_eq!(backend_surfaces[0].surface_id, first_surface_id);
+}
+
+#[test]
+fn close_tab_surface_holds_model_lock_while_closing_backend() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(CloseObservesModelLockBackend::new(model.clone()));
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, first_surface_id, second_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        let first_surface_id = workspace.focused_surface_id.clone();
+        let second = model.add_tab(&first_surface_id).unwrap();
+        (workspace.id, first_surface_id, second.id)
+    };
+    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
+        terminal
+            .spawn(SpawnRequest::for_surface(
+                &surface,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            ))
+            .unwrap();
+    }
+
+    assert!(close_tab_surface(&state, &second_surface_id));
+
+    assert!(
+        !terminal.observed_model_unlocked(),
+        "backend close observed the model lock open before model close"
+    );
+    let model = model.lock().unwrap();
+    assert!(model.surface(&first_surface_id).is_some());
+    assert!(model.surface(&second_surface_id).is_none());
 }
 
 #[test]
@@ -2014,23 +2376,23 @@ fn browser_import_dialog_params_builds_include_and_destination() {
 }
 
 #[test]
-fn terminal_focus_click_claims_when_terminal_needs_focus() {
-    assert!(!terminal_focus_click_should_claim(
+fn terminal_focus_click_focuses_when_terminal_needs_focus() {
+    assert!(!terminal_focus_click_should_focus(
         true,
         Some("pane-1"),
         "pane-1"
     ));
-    assert!(terminal_focus_click_should_claim(
+    assert!(terminal_focus_click_should_focus(
         false,
         Some("pane-1"),
         "pane-1"
     ));
-    assert!(terminal_focus_click_should_claim(
+    assert!(terminal_focus_click_should_focus(
         true,
         Some("pane-2"),
         "pane-1"
     ));
-    assert!(!terminal_focus_click_should_claim(true, None, "pane-1"));
+    assert!(!terminal_focus_click_should_focus(true, None, "pane-1"));
 }
 
 #[test]
@@ -2116,6 +2478,16 @@ fn settings_change_rebases_onto_externally_modified_config() {
 
     assert_eq!(next.appearance.font_size, 18);
     assert_eq!(next.appearance.sidebar_visible, external_sidebar);
+}
+
+#[test]
+fn settings_change_preserves_telemetry_config() {
+    let mut base = config::AppConfig::default();
+    base.telemetry.anonymous_ping = false;
+
+    let next = rebased_settings_config(&base, |config| config.appearance.font_size = 18);
+
+    assert!(!next.telemetry.anonymous_ping);
 }
 
 #[test]

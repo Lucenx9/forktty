@@ -120,6 +120,18 @@ impl TerminalController {
                     eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
                 }
             }
+            GtkTerminalCommand::ReadText {
+                surface_id,
+                capture,
+                max_bytes,
+                reply,
+            } => {
+                let result = self.widgets.get(&surface_id).map_or_else(
+                    || Err(TerminalError::NotReady(surface_id.clone())),
+                    |widget| widget.read_text(&surface_id, capture, max_bytes),
+                );
+                let _ = reply.send(result);
+            }
             GtkTerminalCommand::Resize {
                 surface_id,
                 cols,
@@ -378,6 +390,38 @@ impl TerminalController {
             return false;
         };
         widget.reset_and_clear();
+        true
+    }
+
+    /// The last non-empty line of `surface_id`'s terminal output plus the
+    /// content generation it was read at. `known` short-circuits the read —
+    /// which costs a full scrollback dump — when the generation has not
+    /// moved; the agent HUD polls this once per second per agent.
+    pub(super) fn surface_tail_line(
+        &self,
+        surface_id: &str,
+        known: Option<&AgentTailEntry>,
+    ) -> Option<AgentTailEntry> {
+        let widget = self.widgets.get(surface_id)?;
+        let generation = widget.content_generation();
+        if let Some((known_generation, line)) = known {
+            if *known_generation == generation {
+                return Some((generation, line.clone()));
+            }
+        }
+        let snapshot = widget
+            .read_text(surface_id, TerminalTextCapture::Tail { lines: 8 }, 4096)
+            .ok()?;
+        Some((generation, last_nonempty_line(&snapshot.text)))
+    }
+
+    /// Writes `text` to `surface_id`'s terminal as if typed (the caller adds
+    /// any trailing `\r`). `false` when the pane has no live widget.
+    pub(super) fn send_text_to_surface(&self, surface_id: &str, text: &str) -> bool {
+        let Some(widget) = self.widgets.get(surface_id) else {
+            return false;
+        };
+        widget.send_text(text);
         true
     }
 

@@ -614,13 +614,14 @@ impl GhosttyCore {
             Err(_) => return Ok(None),
         };
         let mut buf = vec![0u8; 1024];
-        let len = match grid_ref.hyperlink_uri(&mut buf) {
-            Ok(len) => len,
-            Err(libghostty_vt::Error::OutOfSpace { required }) => {
-                buf = vec![0u8; required];
-                grid_ref.hyperlink_uri(&mut buf)?
+        let len = loop {
+            match grid_ref.hyperlink_uri(&mut buf) {
+                Ok(len) => break len,
+                Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                    buf = vec![0u8; hyperlink_uri_retry_buffer_len(buf.len(), required)];
+                }
+                Err(err) => return Err(err),
             }
-            Err(err) => return Err(err),
         };
         if len == 0 {
             return Ok(None);
@@ -767,6 +768,12 @@ impl GhosttyCore {
     }
 }
 
+fn hyperlink_uri_retry_buffer_len(current_len: usize, required: usize) -> usize {
+    required
+        .saturating_mul(4)
+        .max(current_len.saturating_add(1))
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct TerminalThemeResets {
     foreground: bool,
@@ -829,6 +836,7 @@ fn scan_osc_theme_reset_sequences(bytes: &[u8], previous_tail_len: usize) -> Ter
         let mut end = params_start;
         let mut terminator_start = None;
         let mut sequence_end = None;
+        let mut aborted_at = None;
         while end < bytes.len() {
             match bytes[end] {
                 0x07 => {
@@ -841,21 +849,45 @@ fn scan_osc_theme_reset_sequences(bytes: &[u8], previous_tail_len: usize) -> Ter
                     sequence_end = Some(end + 1);
                     break;
                 }
+                // A bare ESC aborts an OSC string and starts a new sequence;
+                // rescan from it or a reset following an aborted OSC would be
+                // swallowed as payload. An ESC as the final byte stays
+                // unterminated instead: it may be the first half of an ST
+                // split across feed chunks.
+                0x1b if end + 1 < bytes.len() => {
+                    aborted_at = Some(end);
+                    break;
+                }
                 _ => end += 1,
             }
         }
 
+        if let Some(aborted_at) = aborted_at {
+            index = aborted_at;
+            continue;
+        }
         let (Some(terminator_start), Some(sequence_end)) = (terminator_start, sequence_end) else {
             break;
         };
         if sequence_end >= previous_tail_len {
             let params = &bytes[params_start..terminator_start];
+            // A later explicit color *set* in the same scan window overrides an
+            // earlier reset, so the application's color wins instead of being
+            // clobbered by the re-seeded theme color. Queries (`...;?`) report
+            // the current color without changing it, so they are not sets.
+            let is_query = params.ends_with(b"?");
             if params == b"110" {
                 resets.foreground = true;
             } else if params == b"111" {
                 resets.background = true;
             } else if params == b"104" || params.starts_with(b"104;") {
                 resets.palette = true;
+            } else if !is_query && params.starts_with(b"10;") {
+                resets.foreground = false;
+            } else if !is_query && params.starts_with(b"11;") {
+                resets.background = false;
+            } else if !is_query && params.starts_with(b"4;") {
+                resets.palette = false;
             }
         }
         index = sequence_end + 1;
@@ -1454,6 +1486,32 @@ mod tests {
     }
 
     #[test]
+    fn core_keeps_app_background_set_after_reset_in_same_chunk() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        // A reset immediately followed by an explicit set in the same chunk:
+        // the application's set must survive, not be clobbered by the re-seeded
+        // theme background.
+        core.feed(b"\x1b]111\x07\x1b]11;#abcdef\x07").unwrap();
+
+        assert_eq!(
+            core.render_frame().unwrap().background,
+            TerminalRgb {
+                red: 0xab,
+                green: 0xcd,
+                blue: 0xef,
+            }
+        );
+    }
+
+    #[test]
     fn core_reset_reapplies_theme_colors_and_clears_mode_mirrors() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 20,
@@ -1474,6 +1532,33 @@ mod tests {
         // RIS cleared DECSET 2004 in the terminal; the mirror must follow or
         // safe pastes would stay bracketed forever.
         assert_eq!(core.paste_bytes("plain").unwrap(), b"plain");
+    }
+
+    #[test]
+    fn scan_osc_theme_resets_detects_reset_after_aborted_osc() {
+        // A bare ESC aborts an OSC string; the reset that follows must not be
+        // swallowed as payload of the aborted sequence.
+        let resets = scan_osc_theme_reset_sequences(b"\x1b]4;1;rgb:aa/bb/cc\x1b]111\x07", 0);
+
+        assert!(resets.background);
+        assert!(!resets.foreground);
+        assert!(!resets.palette);
+    }
+
+    #[test]
+    fn core_reapplies_theme_background_after_osc_111_following_aborted_osc() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let colors = test_theme_colors();
+        core.apply_theme_colors(&colors).unwrap();
+
+        core.feed(b"\x1b]4;1;rgb:01/02/03\x1b]111\x07").unwrap();
+
+        assert_eq!(core.render_frame().unwrap().background, colors.background);
     }
 
     #[test]
@@ -1827,6 +1912,30 @@ mod tests {
     }
 
     #[test]
+    fn core_hyperlink_uri_at_retries_multibyte_uris_until_they_fit() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        let uri = format!("https://example.test/{}", "é".repeat(600));
+        core.feed(format!("\x1b]8;;{uri}\x1b\\link\x1b]8;;\x1b\\").as_bytes())
+            .unwrap();
+
+        assert_eq!(
+            core.hyperlink_uri_at(0, 0).unwrap().as_deref(),
+            Some(uri.as_str())
+        );
+    }
+
+    #[test]
+    fn hyperlink_uri_retry_buffer_allows_utf8_worst_case() {
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 600), 2400);
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 0), 1025);
+    }
+
+    #[test]
     fn core_render_frame_reports_soft_wrapped_rows() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 10,
@@ -1841,5 +1950,126 @@ mod tests {
         assert!(frame.rows[0].wrapped);
         assert!(frame.rows[1].wrapped);
         assert!(!frame.rows[2].wrapped);
+    }
+
+    fn scanner_xorshift(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    /// Build a pseudo-random byte buffer biased toward a scanner's structural
+    /// bytes, so inputs actually reach the parser states instead of staying in
+    /// the ground state.
+    fn scanner_random_bytes(rng: &mut u64, pool: &[u8], max_len: usize) -> Vec<u8> {
+        let len = (scanner_xorshift(rng) as usize) % (max_len + 1);
+        (0..len)
+            .map(|_| {
+                let roll = scanner_xorshift(rng);
+                if roll.is_multiple_of(4) {
+                    (roll >> 8) as u8
+                } else {
+                    pool[(roll >> 8) as usize % pool.len()]
+                }
+            })
+            .collect()
+    }
+
+    /// Deterministic randomized sweep: malformed/truncated input must never
+    /// panic for any tail-gating offset, and gating the entire buffer (every
+    /// sequence is "old") must detect nothing.
+    #[test]
+    fn theme_reset_scanner_random_input_never_panics() {
+        const POOL: &[u8] = &[
+            0x1b, b']', b'1', b'0', b'4', b';', b'#', b'?', 0x07, b'\\', b'a', 0xff,
+        ];
+        let mut rng = 0x7e57_2026_0610_beefu64;
+        for _ in 0..5_000 {
+            let bytes = scanner_random_bytes(&mut rng, POOL, 256);
+            let plen = (scanner_xorshift(&mut rng) as usize) % (bytes.len() + 1);
+            // Must not panic for an arbitrary gating offset.
+            let _ = scan_osc_theme_reset_sequences(&bytes, plen);
+            // A sequence terminator is always at an index < len, so gating with
+            // previous_tail_len == len can never re-detect anything.
+            assert!(
+                !scan_osc_theme_reset_sequences(&bytes, bytes.len()).any(),
+                "full-tail gate detected a reset for {bytes:?}"
+            );
+        }
+    }
+
+    /// The tail gate keeps a sequence iff its terminator lands in the new
+    /// region (`terminator_index >= previous_tail_len`); pins the off-by-one.
+    #[test]
+    fn theme_reset_gating_respects_terminator_index() {
+        let prefix = b"plain-noise-no-esc";
+        let seq = b"\x1b]111\x07";
+        let suffix = b"trailing-noise";
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(prefix);
+        bytes.extend_from_slice(seq);
+        bytes.extend_from_slice(suffix);
+        let terminator_index = prefix.len() + seq.len() - 1;
+        for plen in 0..=bytes.len() {
+            let detected = scan_osc_theme_reset_sequences(&bytes, plen).background;
+            assert_eq!(detected, terminator_index >= plen, "plen={plen}");
+        }
+    }
+
+    /// A later explicit set in the same window overrides an earlier reset, but
+    /// a color *query* (`;?`) does not. Generalizes the same-chunk fix.
+    #[test]
+    fn theme_reset_is_overridden_by_a_later_set_but_not_a_query() {
+        let reset = b"\x1b]111\x07".as_slice();
+        let set = b"\x1b]11;#abcdef\x07".as_slice();
+        let query = b"\x1b]11;?\x07".as_slice();
+        let concat = |a: &[u8], b: &[u8]| [a, b].concat();
+
+        // reset then set: the application's set wins, so no re-seed.
+        assert!(!scan_osc_theme_reset_sequences(&concat(reset, set), 0).background);
+        // set then reset: the reset wins, so re-seed.
+        assert!(scan_osc_theme_reset_sequences(&concat(set, reset), 0).background);
+        // reset then query: a query changes nothing, so the reset still wins.
+        assert!(scan_osc_theme_reset_sequences(&concat(reset, query), 0).background);
+    }
+
+    /// Deterministic randomized sweep: the private-mode scanner must never
+    /// panic on arbitrary input.
+    #[test]
+    fn private_mode_scanner_random_input_never_panics() {
+        const POOL: &[u8] = &[
+            0x1b, b'[', b'?', b'1', b'0', b'4', b'2', b';', b'h', b'l', b'a', 0xff,
+        ];
+        let mut rng = 0x1234_2026_0610_cafeu64;
+        for _ in 0..5_000 {
+            let bytes = scanner_random_bytes(&mut rng, POOL, 256);
+            let mut focus = false;
+            let mut bracketed = false;
+            scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        }
+    }
+
+    /// Focus reporting (1004) and bracketed paste (2004) are tracked
+    /// independently, embedded in noise, with the last enable/disable winning.
+    #[test]
+    fn private_mode_scanner_tracks_combined_modes_in_noise() {
+        let mut bytes = b"noise\x00".to_vec();
+        bytes.extend_from_slice(b"\x1b[?1004h");
+        bytes.extend_from_slice(b"junk");
+        bytes.extend_from_slice(b"\x1b[?2004h");
+        let mut focus = false;
+        let mut bracketed = false;
+        scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        assert!(focus);
+        assert!(bracketed);
+
+        // A later disable of focus reporting wins; bracketed paste stays on.
+        bytes.extend_from_slice(b"\x1b[?1004l");
+        let mut focus = false;
+        let mut bracketed = false;
+        scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        assert!(!focus);
+        assert!(bracketed);
     }
 }

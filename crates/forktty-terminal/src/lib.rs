@@ -127,9 +127,142 @@ pub struct TerminalSurfaceState {
     pub rows: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalTextCapture {
+    Visible,
+    All,
+    Tail { lines: usize },
+}
+
+impl TerminalTextCapture {
+    fn scope(&self) -> &'static str {
+        match self {
+            TerminalTextCapture::Visible => "visible",
+            TerminalTextCapture::All => "all",
+            TerminalTextCapture::Tail { .. } => "tail",
+        }
+    }
+
+    fn truncates_from_end(&self) -> bool {
+        matches!(self, TerminalTextCapture::Tail { .. })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalTextSnapshot {
+    pub surface_id: SurfaceId,
+    pub scope: String,
+    pub text: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub total_lines: usize,
+    pub lines: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalTextSnapshotParts {
+    pub surface_id: SurfaceId,
+    pub scope: String,
+    pub text: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub total_lines: usize,
+    pub max_bytes: usize,
+    pub truncate_from_end: bool,
+}
+
+impl TerminalTextSnapshot {
+    pub fn from_text(
+        surface_id: impl Into<SurfaceId>,
+        text: impl Into<String>,
+        cols: u16,
+        rows: u16,
+        capture: TerminalTextCapture,
+        max_bytes: usize,
+    ) -> Self {
+        let scope = capture.scope().to_string();
+        let truncates_from_end = capture.truncates_from_end();
+        let source = text.into();
+        let total_lines = text_line_count(&source);
+        let captured = match capture {
+            TerminalTextCapture::Visible | TerminalTextCapture::All => source,
+            TerminalTextCapture::Tail { lines } => tail_text_lines(&source, lines),
+        };
+        Self::from_captured_text(TerminalTextSnapshotParts {
+            surface_id: surface_id.into(),
+            scope,
+            text: captured,
+            cols,
+            rows,
+            total_lines,
+            max_bytes,
+            truncate_from_end: truncates_from_end,
+        })
+    }
+
+    pub fn from_captured_text(parts: TerminalTextSnapshotParts) -> Self {
+        let (text, truncated) = truncate_text(parts.text, parts.max_bytes, parts.truncate_from_end);
+        let lines = text_line_count(&text);
+        Self {
+            surface_id: parts.surface_id,
+            scope: parts.scope,
+            text,
+            cols: parts.cols,
+            rows: parts.rows,
+            total_lines: parts.total_lines,
+            lines,
+            truncated,
+        }
+    }
+}
+
+fn text_line_count(text: &str) -> usize {
+    text.lines().count()
+}
+
+fn tail_text_lines(text: &str, lines: usize) -> String {
+    if lines == 0 || text.is_empty() {
+        return String::new();
+    }
+    let chunks = text.split_inclusive('\n').collect::<Vec<_>>();
+    let start = chunks.len().saturating_sub(lines);
+    chunks[start..].concat()
+}
+
+fn truncate_text(text: String, max_bytes: usize, from_end: bool) -> (String, bool) {
+    if max_bytes == 0 {
+        return (String::new(), !text.is_empty());
+    }
+    if text.len() <= max_bytes {
+        return (text, false);
+    }
+    if from_end {
+        let mut start = text.len().saturating_sub(max_bytes);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        (text[start..].to_string(), true)
+    } else {
+        let mut end = max_bytes.min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        (text[..end].to_string(), true)
+    }
+}
+
 pub trait TerminalBackend: Send + Sync {
     fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError>;
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
+    fn read_text(
+        &self,
+        surface_id: &str,
+        _capture: TerminalTextCapture,
+        _max_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalError> {
+        Err(TerminalError::NotReady(surface_id.to_string()))
+    }
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError>;
     fn close(&self, surface_id: &str) -> Result<(), TerminalError>;
     fn mark_surface_ready(&self, _surface_id: &str) -> Result<(), TerminalError> {
@@ -250,6 +383,29 @@ impl TerminalBackend for HeadlessTerminalBackend {
         Ok(())
     }
 
+    fn read_text(
+        &self,
+        surface_id: &str,
+        capture: TerminalTextCapture,
+        max_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalError> {
+        let surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(TerminalTextSnapshot::from_text(
+            surface_id,
+            surface.sent_text.concat(),
+            surface.state.cols,
+            surface.state.rows,
+            capture,
+            max_bytes,
+        ))
+    }
+
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
         let mut surfaces = self
             .surfaces
@@ -333,11 +489,58 @@ mod tests {
         assert!(!env.contains(&("TERM".to_string(), "dumb".to_string())));
         assert!(!env.contains(&("COLORTERM".to_string(), "8bit".to_string())));
         assert_eq!(backend.sent_text("surface-1").unwrap(), vec!["echo ok\n"]);
+        assert_eq!(
+            backend
+                .read_text("surface-1", TerminalTextCapture::Visible, 1024)
+                .unwrap()
+                .text,
+            "echo ok\n"
+        );
         backend.close("surface-1").unwrap();
         assert!(matches!(
             backend.sent_text("surface-1"),
             Err(TerminalError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn terminal_text_snapshot_zero_max_bytes_returns_empty_and_marks_truncated() {
+        let visible = TerminalTextSnapshot::from_text(
+            "surface-1",
+            "hello",
+            80,
+            24,
+            TerminalTextCapture::Visible,
+            0,
+        );
+        assert_eq!(visible.text, "");
+        assert!(visible.truncated);
+
+        let tail = TerminalTextSnapshot::from_text(
+            "surface-1",
+            "hello",
+            80,
+            24,
+            TerminalTextCapture::Tail { lines: 1 },
+            0,
+        );
+        assert_eq!(tail.text, "");
+        assert!(tail.truncated);
+    }
+
+    #[test]
+    fn terminal_text_snapshot_zero_max_bytes_empty_input_is_not_truncated() {
+        let snapshot = TerminalTextSnapshot::from_text(
+            "surface-1",
+            "",
+            80,
+            24,
+            TerminalTextCapture::Visible,
+            0,
+        );
+
+        assert_eq!(snapshot.text, "");
+        assert!(!snapshot.truncated);
     }
 
     #[test]

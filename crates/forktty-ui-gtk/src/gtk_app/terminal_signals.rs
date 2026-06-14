@@ -2,7 +2,7 @@ use super::*;
 #[cfg(feature = "gtk-ghostty")]
 use forktty_terminal::ghostty::events::{GhosttyEvent, TerminalMetadataEvent};
 
-pub(super) fn terminal_focus_click_should_claim(
+pub(super) fn terminal_focus_click_should_focus(
     terminal_has_focus: bool,
     model_focused_surface_id: Option<&str>,
     surface_id: &str,
@@ -39,7 +39,7 @@ pub(super) fn attach_terminal_signal_handlers(
     focus_click.set_button(gtk::gdk::BUTTON_PRIMARY);
     focus_click.set_propagation_phase(gtk::PropagationPhase::Capture);
     let widget_for_focus_click = widget.downgrade();
-    focus_click.connect_pressed(move |gesture, _n_press, _x, _y| {
+    focus_click.connect_pressed(move |_gesture, _n_press, _x, _y| {
         let Some(widget_for_focus_click) = widget_for_focus_click.upgrade() else {
             return;
         };
@@ -48,7 +48,7 @@ pub(super) fn attach_terminal_signal_handlers(
             .ok()
             .and_then(|model| model.active_workspace())
             .map(|workspace| workspace.focused_surface_id);
-        if !terminal_focus_click_should_claim(
+        if !terminal_focus_click_should_focus(
             widget_for_focus_click.has_focus(),
             model_focused_surface_id.as_deref(),
             &surface_id,
@@ -56,7 +56,10 @@ pub(super) fn attach_terminal_signal_handlers(
             return;
         }
 
-        gesture.set_state(gtk::EventSequenceState::Claimed);
+        // Focus is a side-effect only: claiming the sequence here would deny
+        // it to the selection gesture on the drawing area, so the first
+        // click+drag on an unfocused pane would only focus it and the drag
+        // would be lost.
         widget_for_focus_click.grab_focus();
         if let Ok(mut model) = focus_click_model.lock() {
             let _ = model.focus_surface(&surface_id);

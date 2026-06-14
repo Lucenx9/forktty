@@ -123,7 +123,14 @@ impl PtySession {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     poll_master_write_ready(self.master.as_fd(), deadline)?;
                 }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    // A retried write costs no time, but a pathological signal
+                    // rate could otherwise spin here forever; honor the same
+                    // deadline the WouldBlock path enforces via poll.
+                    if Instant::now() >= deadline {
+                        return Err(write_all_timeout_error());
+                    }
+                }
                 Err(err) => return Err(err),
             }
         }
@@ -150,6 +157,9 @@ impl PtySession {
                 {
                     break;
                 }
+                // A signal delivered mid-read surfaces as EINTR; retry rather
+                // than reporting a spurious error every pump tick (~16ms).
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
                 Err(err) => return Err(err),
             }
         }
@@ -174,7 +184,10 @@ impl PtySession {
             }
             thread::sleep(Duration::from_millis(10));
         }
-        Ok(out)
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "terminal output did not contain expected bytes before timeout",
+        ))
     }
 
     pub fn resize(&mut self, size: PtySize) -> io::Result<()> {
@@ -223,10 +236,26 @@ impl PtySession {
 
 impl Drop for PtySession {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+        if self.child.try_wait().ok().flatten().is_some() {
+            // Already exited and reaped by try_wait; nothing to do.
+            return;
         }
+        let _ = self.child.kill();
+        // Reap on a detached thread instead of blocking here: PtySession is
+        // dropped synchronously on the GTK main thread when a pane closes, and
+        // a child wedged in uninterruptible sleep (D state on a dead NFS/FUSE
+        // mount) would otherwise freeze the whole UI inside waitpid forever.
+        // SAFETY/correctness: the killed child is an unreaped zombie holding
+        // its pid, so the pid cannot be reused before we reap it, and std's
+        // Child::drop never waits, so this waitpid cannot double-reap.
+        let pid = self.child.id() as libc::pid_t;
+        thread::spawn(move || loop {
+            let mut status = 0;
+            let rc = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if rc != -1 || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                break;
+            }
+        });
     }
 }
 
@@ -254,6 +283,7 @@ fn poll_master_write_ready(fd: BorrowedFd<'_>, deadline: Instant) -> io::Result<
         }
         let mut fds = [PollFd::new(fd, PollFlags::POLLOUT)];
         match poll(&mut fds, PollTimeout::from(100u16)) {
+            Ok(0) => {}
             Ok(_) => return Ok(()),
             Err(nix::Error::EINTR) => {}
             Err(err) => return Err(io_error(err)),
@@ -418,6 +448,41 @@ mod tests {
     }
 
     #[test]
+    fn poll_master_write_ready_times_out_when_fd_stays_blocked() {
+        let (_read_fd, write_fd) = nix::unistd::pipe().unwrap();
+        set_nonblocking(&write_fd).unwrap();
+
+        let block = vec![0u8; 8192];
+        loop {
+            match nix::unistd::write(&write_fd, &block) {
+                Ok(_) => {}
+                Err(nix::Error::EAGAIN) => break,
+                Err(err) => panic!("unexpected pipe fill error: {err}"),
+            }
+        }
+
+        let err = poll_master_write_ready(
+            write_fd.as_fd(),
+            Instant::now() + Duration::from_millis(150),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn pty_read_until_times_out_when_needle_missing() {
+        let request =
+            test_spawn_request_for_shell("/bin/sh").with_args(["-lc", "printf partial; sleep 1"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        let err = session
+            .read_until(b"missing", Duration::from_millis(50))
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
     fn pty_write_all_retries_poll_interrupted_by_signal() {
         extern "C" fn ignore_signal(_: libc::c_int) {}
 
@@ -485,6 +550,31 @@ mod tests {
             output.contains(&expected),
             "child saw a truncated paste after EINTR: wc reported {output:?}, expected {expected} bytes"
         );
+    }
+
+    #[test]
+    fn pty_drop_reaps_running_child_without_leaving_a_zombie() {
+        // Drop kills a still-running child and reaps it on a background thread
+        // (so a child stuck in D state cannot freeze the caller). Once reaped,
+        // /proc/<pid> disappears; a leaked zombie would linger in state Z.
+        let request = test_spawn_request_for_shell("/bin/sleep").with_args(["30"]);
+        let session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+        let pid = session.child.id();
+        drop(session);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Err(_) => break,
+                Ok(stat) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "child not reaped after drop; still present: {stat}"
+                    );
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
     }
 
     #[test]

@@ -10,16 +10,16 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.11)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.12)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
 [Website](https://forktty-site.vercel.app/) ·
-[Download v0.2.0-alpha.11 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.11/forktty-0.2.0-alpha.11-x86_64.AppImage)
+[Download v0.2.0-alpha.12 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.12/forktty-0.2.0-alpha.12-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.11). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
+> **Status**: Early alpha (v0.2.0-alpha.12). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
   <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY with workspace sidebar, split terminal panes, active pane focus, and agent status notifications" width="960" />
@@ -30,17 +30,18 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, legacy Gemini CLI, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
-- **Local-first posture**: no telemetry, no update checks, no external service dependency, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution.
+- **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
 
 ## Install
 
 The fastest paths are the prebuilt artifacts from the
-[v0.2.0-alpha.11 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.11).
+[v0.2.0-alpha.12 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.12).
 Each release ships:
 
-- `forktty-0.2.0-alpha.11-x86_64.AppImage` — recommended portable Linux package.
-- `forktty_0.2.0.alpha.11_amd64.deb` — Debian/Ubuntu package.
-- `SHA256SUMS` — checksums for both artifacts.
+- `forktty-0.2.0-alpha.12-x86_64.AppImage` — recommended portable Linux package.
+- `forktty-0.2.0-alpha.12-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
+- `forktty_0.2.0.alpha.12_amd64.deb` — Debian/Ubuntu package.
+- `SHA256SUMS` — checksums for release artifacts.
 
 After downloading, verify checksums:
 
@@ -51,8 +52,8 @@ sha256sum -c SHA256SUMS
 ### AppImage
 
 ```bash
-chmod +x forktty-0.2.0-alpha.11-x86_64.AppImage
-./forktty-0.2.0-alpha.11-x86_64.AppImage
+chmod +x forktty-0.2.0-alpha.12-x86_64.AppImage
+./forktty-0.2.0-alpha.12-x86_64.AppImage
 ```
 
 The AppImage always ships the vendored libghostty-vt library and prefers the
@@ -67,19 +68,28 @@ most modern distros that ship a recent glibc, but it should
 still be tested on the target distro/desktop environment before being
 relied on.
 
+ForkTTY checks GitHub Releases for updates at most once per day by default.
+AppImage installs can update in place after confirmation: ForkTTY downloads
+the new AppImage and `SHA256SUMS`, verifies SHA256, then atomically replaces
+the current file. Non-AppImage installs open the release page instead. AppImage
+managers such as Gear Lever continue to work when they launch ForkTTY from a
+stable writable AppImage path; if ForkTTY sees an extracted, read-only, or
+otherwise unsafe path, it falls back to the release page and leaves the manager
+in control.
+
 If the AppImage launches but the GTK interface renders incorrectly, try
 an explicit GTK renderer from a terminal:
 
 ```bash
-GSK_RENDERER=ngl ./forktty-0.2.0-alpha.11-x86_64.AppImage
+GSK_RENDERER=ngl ./forktty-0.2.0-alpha.12-x86_64.AppImage
 ```
 
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo apt install ./forktty_0.2.0.alpha.11_amd64.deb
+sudo apt install ./forktty_0.2.0.alpha.12_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0.alpha.11_amd64.deb
+sudo dpkg -i forktty_0.2.0.alpha.12_amd64.deb
 sudo apt -f install
 ```
 
@@ -157,6 +167,10 @@ bash scripts/build-appimage.sh
 ./target/packaging/appimage/forktty-*-x86_64.AppImage
 ```
 
+Set `APPIMAGE_UPDATE_INFO=1` when building release-style AppImages with
+embedded update metadata; this requires `zsyncmake` on `PATH` and emits a
+matching `.zsync` file.
+
 ## First Run
 
 ### Check the environment
@@ -186,6 +200,7 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+T`: new tab in the focused pane
 - `Ctrl+Shift+W`: close pane
 - `Ctrl+B` or `F9`: toggle workspace sidebar
+- Agents: titlebar button or command palette
 - `Ctrl+Shift+M`: notifications
 - `F1`: keyboard shortcuts
 - `Ctrl+,`: settings
@@ -214,6 +229,9 @@ forktty agents --workspace-name main
 forktty agent-health --workspace-name main
 forktty resume-agent --surface-id <surface-id>
 forktty agent-reclaim-plan --workspace-name main --min-idle-ms 600000
+forktty read-screen --surface-id <surface-id>
+forktty capture-tail --surface-id <surface-id> --lines 80
+forktty tree --workspace-name main
 forktty split-surface --axis vertical
 forktty new-tab
 forktty send-text "cargo test\n"
@@ -228,7 +246,9 @@ forktty capabilities
 forktty events
 ```
 
-`forktty agents`, `forktty agent-health`, and `forktty statusline` include the
+The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
+sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
+`forktty agent-health`, and `forktty statusline` include the
 hook-derived agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or
 `unknown`) when a provider session id has been persisted. `forktty agents` and
 `forktty agent-health` also expose hook-derived `resume_cwd` and
@@ -284,9 +304,10 @@ forktty mcp remove gemini
 
 The MCP server is local-only: it opens no network listener and bridges validated
 tool calls to the owner-only ForkTTY Unix socket. It exposes workspace/surface
-inspection, persisted agent-session inspection and explicit resume into a new
-tab, compact status summaries, pane split/focus/send-text, worktree
-create/attach/remove/merge, notifications, and `status_set`.
+inspection, topology tree, terminal read/capture, persisted agent-session
+inspection and explicit resume into a new tab, compact status summaries, pane
+split/focus/send-text, worktree create/attach/remove/merge, notifications, and
+`status_set`.
 `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane.
@@ -369,7 +390,8 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
+- Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
 - Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events.
@@ -402,11 +424,21 @@ window_mode = "normal" # "normal" or "quake"
 [notifications]
 desktop = true
 sound = true
+
+[updates]
+auto_check = true
+
+[telemetry]
+anonymous_ping = true
 ```
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
 `scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
+
+`updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
+
+`telemetry.anonymous_ping = true` sends at most one GTK-startup ping per UTC day to `https://forktty-site.vercel.app/api/telemetry/ping`. The JSON body is limited to `schema`, `kind`, `app`, `version`, and `date`; it contains no install id, username, hostname, cwd, repository path, branch, shell, agent metadata, terminal buffer, socket payload, or crash data. Set it to `false` to disable the ping.
 
 See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 
@@ -427,7 +459,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
 - Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.
-- ForkTTY makes no telemetry, update-check, or product network calls. The shipped AppImage and `.deb` do not embed a browser runtime.
+- ForkTTY makes no crash-reporting or product event-tracking network calls. With `telemetry.anonymous_ping = true`, the GTK app sends one anonymous daily usage ping; set it to `false` to disable it. With `updates.auto_check = true`, the GTK app checks GitHub Releases at most once per day; browser panes and PR lookup remain optional/user-directed network paths. The shipped AppImage and `.deb` do not embed a browser runtime.
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
@@ -439,7 +471,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream; advanced OSC 99 features such as base64 payloads, update/close controls, activation reports, buttons, and full chunk aggregation remain partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback, and browser history/bookmark GTK address-bar integration are backlog items.
+- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback across restarts, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
 
 ## Troubleshooting

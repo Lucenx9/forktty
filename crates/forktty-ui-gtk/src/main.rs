@@ -3,6 +3,7 @@ mod cli;
 mod mcp_server;
 mod panic_log;
 mod socket_cli;
+mod telemetry;
 
 #[cfg(feature = "gtk-ghostty")]
 mod gtk_app;
@@ -47,8 +48,19 @@ fn launch_app() -> ExitCode {
 
 #[cfg(not(feature = "gtk-ghostty"))]
 fn launch_app() -> ExitCode {
-    println!(
+    eprintln!(
         "forktty-ui-gtk built without GTK/Ghostty. Rebuild with `--features gtk-ghostty` after installing GTK4, libadwaita, git, and Zig for the vendored libghostty-vt build."
     );
-    ExitCode::SUCCESS
+    ExitCode::FAILURE
+}
+
+#[cfg(test)]
+#[cfg(not(feature = "gtk-ghostty"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_app_without_gtk_ghostty_fails() {
+        assert_eq!(launch_app(), ExitCode::FAILURE);
+    }
 }

@@ -24,22 +24,29 @@ pub(crate) fn run_with_io<R: BufRead, W: Write>(
     mut writer: W,
     socket_path: PathBuf,
 ) -> CliResult<()> {
-    let mut line = String::new();
     loop {
-        line.clear();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            break;
-        }
-        if line.len() > MAX_MCP_MESSAGE_BYTES {
-            let response = jsonrpc_error(
-                Value::Null,
-                -32700,
-                format!("MCP message exceeds {MAX_MCP_MESSAGE_BYTES} byte limit"),
-            );
-            write_json_line(&mut writer, &response)?;
-            continue;
-        }
+        let line = match read_line_bounded(&mut reader, MAX_MCP_MESSAGE_BYTES)? {
+            BoundedLine::Eof => break,
+            BoundedLine::Oversized => {
+                let response = jsonrpc_error(
+                    Value::Null,
+                    -32700,
+                    format!("MCP message exceeds {MAX_MCP_MESSAGE_BYTES} byte limit"),
+                );
+                write_json_line(&mut writer, &response)?;
+                continue;
+            }
+            BoundedLine::InvalidUtf8(err) => {
+                let response = jsonrpc_error(
+                    Value::Null,
+                    -32700,
+                    format!("Parse error: invalid UTF-8: {err}"),
+                );
+                write_json_line(&mut writer, &response)?;
+                continue;
+            }
+            BoundedLine::Line(line) => line,
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -49,6 +56,52 @@ pub(crate) fn run_with_io<R: BufRead, W: Write>(
         }
     }
     Ok(())
+}
+
+enum BoundedLine {
+    Eof,
+    Line(String),
+    InvalidUtf8(std::string::FromUtf8Error),
+    Oversized,
+}
+
+/// Reads one `\n`-terminated line, buffering at most `max_bytes` (the
+/// trailing newline counts toward the limit, matching the previous
+/// `read_line` check). An oversized line is drained without being stored, so
+/// a misbehaving client cannot grow this process's memory with the message.
+fn read_line_bounded<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<BoundedLine> {
+    let mut buf = Vec::new();
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if buf.is_empty() && !oversized {
+                return Ok(BoundedLine::Eof);
+            }
+            break;
+        }
+        let newline = available.iter().position(|&b| b == b'\n');
+        let take = newline.map_or(available.len(), |pos| pos + 1);
+        if !oversized {
+            if buf.len() + take > max_bytes {
+                oversized = true;
+                buf = Vec::new();
+            } else {
+                buf.extend_from_slice(&available[..take]);
+            }
+        }
+        reader.consume(take);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if oversized {
+        return Ok(BoundedLine::Oversized);
+    }
+    Ok(match String::from_utf8(buf) {
+        Ok(line) => BoundedLine::Line(line),
+        Err(err) => BoundedLine::InvalidUtf8(err),
+    })
 }
 
 fn write_json_line(writer: &mut impl Write, response: &Value) -> CliResult<()> {
@@ -384,6 +437,17 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params: workspace_target_params(args, true)?,
             }
         }
+        "topology_tree" => {
+            reject_unexpected(
+                args,
+                &["workspace_id", "workspace_name", "worktree_name"],
+                name,
+            )?;
+            SocketCall {
+                method: "topology.tree",
+                params: workspace_target_params(args, true)?,
+            }
+        }
         "agent_list" => {
             reject_unexpected(
                 args,
@@ -481,6 +545,48 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             SocketCall {
                 method: "surface.send_text",
                 params: map_from_pairs([("surface_id", surface_id), ("text", text)]),
+            }
+        }
+        "surface_read_text" => {
+            reject_unexpected(args, &["surface_id", "scope", "max_bytes"], name)?;
+            let surface_id = optional_non_blank(args, "surface_id")?
+                .or_else(|| trimmed_env("FORKTTY_SURFACE_ID"))
+                .ok_or_else(|| {
+                    ToolCallError::validation(
+                        "surface_read_text requires surface_id or FORKTTY_SURFACE_ID",
+                    )
+                })?;
+            let mut params = map_from_pairs([("surface_id", surface_id)]);
+            if let Some(scope) = optional_enum(args, "scope", &["visible", "all"])? {
+                params.insert("scope".to_string(), Value::String(scope));
+            }
+            if let Some(max_bytes) = optional_u64(args, "max_bytes")? {
+                params.insert("max_bytes".to_string(), Value::Number(max_bytes.into()));
+            }
+            SocketCall {
+                method: "surface.read_text",
+                params,
+            }
+        }
+        "surface_capture_tail" => {
+            reject_unexpected(args, &["surface_id", "lines", "max_bytes"], name)?;
+            let surface_id = optional_non_blank(args, "surface_id")?
+                .or_else(|| trimmed_env("FORKTTY_SURFACE_ID"))
+                .ok_or_else(|| {
+                    ToolCallError::validation(
+                        "surface_capture_tail requires surface_id or FORKTTY_SURFACE_ID",
+                    )
+                })?;
+            let mut params = map_from_pairs([("surface_id", surface_id)]);
+            if let Some(lines) = optional_u64(args, "lines")? {
+                params.insert("lines".to_string(), Value::Number(lines.into()));
+            }
+            if let Some(max_bytes) = optional_u64(args, "max_bytes")? {
+                params.insert("max_bytes".to_string(), Value::Number(max_bytes.into()));
+            }
+            SocketCall {
+                method: "surface.capture_tail",
+                params,
             }
         }
         "surface_focus" => {
@@ -832,6 +938,7 @@ fn success_text(name: &str, result: &Value) -> String {
     match name {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
+        "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "agent_list" => "Listed ForkTTY agent sessions.".to_string(),
         "agent_health" => "Checked ForkTTY agent session readiness.".to_string(),
         "agent_reclaim_plan" => "Planned ForkTTY agent session reclaim candidates.".to_string(),
@@ -845,6 +952,8 @@ fn success_text(name: &str, result: &Value) -> String {
                 .unwrap_or("(unknown)")
         ),
         "surface_send_text" => "Sent text to the ForkTTY surface.".to_string(),
+        "surface_read_text" => "Read text from the ForkTTY surface.".to_string(),
+        "surface_capture_tail" => "Captured text tail from the ForkTTY surface.".to_string(),
         "surface_focus" => "Focused the ForkTTY surface.".to_string(),
         "worktree_list" => "Listed git worktrees.".to_string(),
         "worktree_status" => format!(
@@ -924,6 +1033,19 @@ fn tool_specs() -> Vec<ToolSpec> {
             name: "surface_list",
             annotations: read_only_annotations(),
             description: "List panes/surfaces in a workspace. Defaults to FORKTTY_WORKSPACE_ID when launched from a ForkTTY pane; omit targeting to inspect that pane's workspace.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "topology_tree",
+            annotations: read_only_annotations(),
+            description: "Return a read-only ForkTTY workspace/pane/surface tree with surfaces nested under each workspace. Use before targeting a different pane.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -1018,6 +1140,32 @@ fn tool_specs() -> Vec<ToolSpec> {
                 json!({
                     "surface_id": string_prop("Target terminal surface id; defaults from FORKTTY_SURFACE_ID."),
                     "text": string_prop("Literal text to send to the terminal."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "surface_read_text",
+            annotations: read_only_annotations(),
+            description: "Read text from a ForkTTY terminal surface. Defaults to visible screen text and FORKTTY_SURFACE_ID; use scope=all only when a bounded full scrollback read is needed.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "surface_id": string_prop("Target terminal surface id; defaults from FORKTTY_SURFACE_ID."),
+                    "scope": enum_prop("Text range to read.", &["visible", "all"]),
+                    "max_bytes": integer_prop("Maximum UTF-8 bytes to return; socket enforces its upper bound."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "surface_capture_tail",
+            annotations: read_only_annotations(),
+            description: "Capture the last N lines of a ForkTTY terminal surface, including scrollback. Defaults surface_id from FORKTTY_SURFACE_ID.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "surface_id": string_prop("Target terminal surface id; defaults from FORKTTY_SURFACE_ID."),
+                    "lines": integer_prop("Number of trailing lines to capture; defaults to 80."),
+                    "max_bytes": integer_prop("Maximum UTF-8 bytes to return; socket enforces its upper bound."),
                 }),
             ),
         },
@@ -1210,6 +1358,9 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert!(names.contains(&"workspace_list"));
+        assert!(names.contains(&"topology_tree"));
+        assert!(names.contains(&"surface_read_text"));
+        assert!(names.contains(&"surface_capture_tail"));
         assert!(names.contains(&"worktree_create"));
         assert!(names.contains(&"status_set"));
         assert!(tools.iter().any(|tool| {
@@ -1230,9 +1381,71 @@ mod tests {
         };
         assert!(tools.iter().all(|tool| tool["annotations"].is_object()));
         assert_eq!(annotation("workspace_list")["readOnlyHint"], true);
+        assert_eq!(annotation("surface_read_text")["readOnlyHint"], true);
+        assert_eq!(annotation("surface_capture_tail")["readOnlyHint"], true);
         assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
         assert_eq!(annotation("status_set")["idempotentHint"], true);
         assert_eq!(annotation("surface_send_text")["openWorldHint"], false);
+    }
+
+    #[test]
+    fn oversized_message_is_rejected_and_processing_continues() {
+        let mut input = vec![b'x'; MAX_MCP_MESSAGE_BYTES + 1];
+        input.push(b'\n');
+        input.extend_from_slice(
+            br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}
+"#,
+        );
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+        let responses = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["error"]["code"], -32700);
+        assert!(responses[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("byte limit"));
+        assert_eq!(responses[1]["id"], 1);
+        assert_eq!(responses[1]["result"]["serverInfo"]["name"], "forktty");
+    }
+
+    #[test]
+    fn invalid_utf8_message_is_rejected_and_processing_continues() {
+        let mut input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"".to_vec();
+        input.extend_from_slice(b"\xff}\n");
+        input.extend_from_slice(
+            br#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}
+"#,
+        );
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+        let responses = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["error"]["code"], -32700);
+        assert!(responses[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid UTF-8"));
+        assert_eq!(responses[1]["id"], 2);
+        assert_eq!(responses[1]["result"]["serverInfo"]["name"], "forktty");
     }
 
     #[test]
@@ -1271,7 +1484,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(resource_text.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, or sending text to another surface."
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, terminal read/capture, or sending text to another surface."
         ));
         assert!(resource_text.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
@@ -1285,6 +1498,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(prompt_text.contains("Read-only first"));
+        assert!(prompt_text.contains("surface_read_text"));
         assert!(prompt_text.contains("surface_send_text"));
     }
 
@@ -1387,6 +1601,37 @@ mod tests {
 
         assert_eq!(method, "status.summary");
         assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn topology_tree_tool_maps_to_socket_topology_tree() {
+        let (method, params) =
+            build_socket_call_for_test("topology_tree", json!({"workspace_id": "w1"})).unwrap();
+
+        assert_eq!(method, "topology.tree");
+        assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn surface_read_tools_map_to_socket_capture_methods() {
+        let (method, params) = build_socket_call_for_test(
+            "surface_read_text",
+            json!({"surface_id": "surface-1", "scope": "all", "max_bytes": 4096}),
+        )
+        .unwrap();
+        assert_eq!(method, "surface.read_text");
+        assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["scope"], "all");
+        assert_eq!(params["max_bytes"], 4096);
+
+        let (method, params) = build_socket_call_for_test(
+            "surface_capture_tail",
+            json!({"surface_id": "surface-1", "lines": 40}),
+        )
+        .unwrap();
+        assert_eq!(method, "surface.capture_tail");
+        assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["lines"], 40);
     }
 
     #[test]

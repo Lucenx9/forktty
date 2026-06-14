@@ -143,7 +143,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
-            libgtk-4-dev libadwaita-1-dev git appstream curl
+            libgtk-4-dev libadwaita-1-dev git appstream curl zsync
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -196,7 +196,7 @@ jobs:
           echo "APPIMAGE_RUNTIME_FILE=$PWD/$runtime_path" >> "$GITHUB_ENV"
 
       - name: Build AppImage
-        run: bash scripts/build-appimage.sh
+        run: APPIMAGE_UPDATE_INFO=1 bash scripts/build-appimage.sh
 
       - name: Smoke packaged artifacts
         run: |
@@ -218,7 +218,8 @@ jobs:
 
           deb_artifact="target/packaging/deb/forktty_${deb_version}_${deb_arch}.deb"
           appimage_artifact="target/packaging/appimage/forktty-${version}-${appimage_arch}.AppImage"
-          for artifact in "$deb_artifact" "$appimage_artifact"; do
+          appimage_zsync="${appimage_artifact}.zsync"
+          for artifact in "$deb_artifact" "$appimage_artifact" "$appimage_zsync"; do
             if [[ ! -f "$artifact" ]]; then
               echo "Expected artifact missing: $artifact" >&2
               exit 1
@@ -292,7 +293,8 @@ jobs:
 
           deb_artifact="target/packaging/deb/forktty_${deb_version}_${deb_arch}.deb"
           appimage_artifact="target/packaging/appimage/forktty-${version}-${appimage_arch}.AppImage"
-          for artifact in "$deb_artifact" "$appimage_artifact"; do
+          appimage_zsync="${appimage_artifact}.zsync"
+          for artifact in "$deb_artifact" "$appimage_artifact" "$appimage_zsync"; do
             if [[ ! -f "$artifact" ]]; then
               echo "Expected artifact missing: $artifact" >&2
               exit 1
@@ -304,13 +306,14 @@ jobs:
           deb_release_name="$(basename "$deb_artifact")"
           deb_release_name="${deb_release_name//\~/.}"
           cp "$appimage_artifact" target/packaging/release/
+          cp "$appimage_zsync" target/packaging/release/
           cp "$deb_artifact" "target/packaging/release/$deb_release_name"
 
       - name: Generate SHA256 checksums
         working-directory: target/packaging/release
         run: |
           shopt -s nullglob
-          artifacts=( *.AppImage *.deb )
+          artifacts=( *.AppImage *.AppImage.zsync *.deb )
           if [ ${#artifacts[@]} -eq 0 ]; then
             echo "No package artifacts found" >&2
             exit 1
@@ -325,6 +328,7 @@ jobs:
         run: |
           gh release upload "$REF_NAME" \
             target/packaging/release/*.AppImage \
+            target/packaging/release/*.AppImage.zsync \
             target/packaging/release/*.deb \
             target/packaging/release/SHA256SUMS \
             --clobber

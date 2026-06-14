@@ -244,6 +244,7 @@ struct DoctorReport {
     socket: PathState,
     shell: Option<String>,
     shell_executable: bool,
+    telemetry_anonymous_ping: bool,
     hooks: Vec<HookState>,
     warnings: Vec<String>,
 }
@@ -362,6 +363,7 @@ fn collect_report() -> DoctorReport {
         warnings.push("no shell could be resolved from config or $SHELL.".to_string());
     }
 
+    let telemetry_anonymous_ping = resolve_telemetry_anonymous_ping(config_path.as_deref());
     let hooks = collect_hooks();
     append_hook_warnings(&mut warnings, &hooks);
     append_appimage_runtime_warnings(
@@ -382,6 +384,7 @@ fn collect_report() -> DoctorReport {
         socket: socket_state,
         shell,
         shell_executable,
+        telemetry_anonymous_ping,
         hooks,
         warnings,
     }
@@ -724,6 +727,14 @@ fn resolve_shell_from_path(
     (resolved, executable, warning)
 }
 
+fn resolve_telemetry_anonymous_ping(config_path: Option<&Path>) -> bool {
+    config_path
+        .and_then(|path| forktty_core::config::load_config_from_path(path).ok())
+        .unwrap_or_default()
+        .telemetry
+        .anonymous_ping
+}
+
 fn is_executable_file(path: &Path) -> bool {
     if !path.is_absolute() {
         return false;
@@ -877,6 +888,17 @@ fn format_report(report: &DoctorReport) -> String {
     }
     out.push('\n');
 
+    out.push_str("Telemetry:\n");
+    out.push_str(&format!(
+        "  anonymous daily ping: {}\n",
+        if report.telemetry_anonymous_ping {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    ));
+    out.push('\n');
+
     out.push_str("Agent hook configs:\n");
     for hook in &report.hooks {
         out.push_str(&format!(
@@ -925,6 +947,9 @@ fn format_report_json(report: &DoctorReport) -> String {
         "socket": path_state_json(&report.socket),
         "shell": report.shell,
         "shell_executable": report.shell_executable,
+        "telemetry": {
+            "anonymous_ping": report.telemetry_anonymous_ping,
+        },
         "hooks": hooks,
         "warnings": report.warnings,
     })
@@ -1223,6 +1248,24 @@ mod tests {
         assert!(text.contains("forktty test doctor report"));
     }
 
+    #[test]
+    fn doctor_report_includes_telemetry_state() {
+        let mut report = minimal_doctor_report(true);
+        report.telemetry_anonymous_ping = false;
+
+        let text = format_report(&report);
+        let json: serde_json::Value =
+            serde_json::from_str(&format_report_json(&report)).expect("valid json");
+
+        assert!(text.contains("Telemetry:"));
+        assert!(text.contains("anonymous daily ping: disabled"));
+        assert_eq!(
+            json.pointer("/telemetry/anonymous_ping")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+    }
+
     fn minimal_doctor_report(feature_gtk_ghostty: bool) -> DoctorReport {
         let missing = |label| PathState {
             label,
@@ -1246,6 +1289,7 @@ mod tests {
             socket: missing("socket"),
             shell: None,
             shell_executable: false,
+            telemetry_anonymous_ping: true,
             hooks: Vec::new(),
             warnings: Vec::new(),
         }

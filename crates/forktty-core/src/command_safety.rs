@@ -14,8 +14,8 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Returns true when `program` + `args` look like `sh -c <something>`.
 ///
-/// Accepted shell basenames cover the common POSIX shells plus anything ending
-/// in `sh` (so `tcsh`, `csh`, `xonsh`, etc. are caught too). `-c` is detected
+/// Accepted shell basenames cover the common POSIX shells plus known shells
+/// with less common names (`tcsh`, `xonsh`, `pwsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
 /// (`-lc`, `-xc`); scanning stops at the first non-flag argument or at `--`.
 /// A leading `env` (with its flags and `VAR=val` assignments) is unwrapped so
@@ -28,8 +28,23 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     if basename == "env" {
         return env_invokes_shell_trampoline(args);
     }
-    let is_shell = matches!(basename, "sh" | "bash" | "dash" | "zsh" | "fish" | "ksh")
-        || basename.ends_with("sh");
+    let is_shell = matches!(
+        basename,
+        "sh" | "ash"
+            | "bash"
+            | "csh"
+            | "dash"
+            | "fish"
+            | "ksh"
+            | "mksh"
+            | "oksh"
+            | "posh"
+            | "pwsh"
+            | "tcsh"
+            | "xonsh"
+            | "yash"
+            | "zsh"
+    );
     if !is_shell {
         return false;
     }
@@ -148,9 +163,10 @@ pub fn is_valid_ssh_host(host: &str) -> bool {
 /// Returns a trimmed, validated worktree/branch name suitable for passing to
 /// `git worktree add` and to filesystem APIs.
 ///
-/// Rejects empty strings, names longer than 255 bytes, embedded NULs and
-/// backslashes, and any path segment that is empty, `.`, or `..`. The trimmed
-/// slice is borrowed from `name`, so callers can keep the original allocation.
+/// Rejects empty strings, names longer than 255 bytes, leading dashes, control
+/// characters, backslashes, and any path segment that is empty, `.`, or `..`.
+/// The trimmed slice is borrowed from `name`, so callers can keep the original
+/// allocation.
 pub fn validate_worktree_name(name: &str) -> Result<&str, WorktreeNameError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -159,7 +175,7 @@ pub fn validate_worktree_name(name: &str) -> Result<&str, WorktreeNameError> {
     if trimmed.len() > 255 {
         return Err(WorktreeNameError::TooLong);
     }
-    if trimmed.contains('\0') || trimmed.contains('\\') {
+    if trimmed.starts_with('-') || trimmed.contains('\\') || trimmed.chars().any(char::is_control) {
         return Err(WorktreeNameError::UnsupportedCharacters);
     }
     if trimmed
@@ -286,6 +302,11 @@ mod tests {
         assert!(!is_shell_trampoline("/bin/sh", &["--", "-c"]));
         assert!(!is_shell_trampoline("/bin/bash", &["-l"]));
         assert!(!is_shell_trampoline("/usr/bin/notify-send", &["-c"]));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/ssh",
+            &["-c", "aes128-ctr", "host"]
+        ));
+        assert!(!is_shell_trampoline("/usr/bin/mosh", &["-c", "256"]));
     }
 
     #[test]
@@ -342,6 +363,14 @@ mod tests {
         );
         assert_eq!(
             validate_worktree_name("feature\\windows"),
+            Err(WorktreeNameError::UnsupportedCharacters)
+        );
+        assert_eq!(
+            validate_worktree_name("-flag"),
+            Err(WorktreeNameError::UnsupportedCharacters)
+        );
+        assert_eq!(
+            validate_worktree_name("feature\nname"),
             Err(WorktreeNameError::UnsupportedCharacters)
         );
         assert_eq!(

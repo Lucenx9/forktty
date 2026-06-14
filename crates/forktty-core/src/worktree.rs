@@ -1,7 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -153,12 +153,19 @@ impl PreparedWorktreeRemoval {
                 Err(err) => return Err(err.into()),
             }
         }
-        let mut opts = git2::WorktreePruneOptions::new();
-        opts.valid(true).working_tree(true);
-        wt.prune(Some(&mut opts))?;
+        // Remove the working-tree directory before deregistering it from git.
+        // The reverse order is unrecoverable: if prune succeeds but
+        // remove_dir_all fails (a file locked by an agent, EBUSY, read-only
+        // mount), git has already forgotten the path mapping, so the retry hits
+        // NotFound and the directory is stranded forever. This order leaves at
+        // most an orphaned admin entry on failure, which `git worktree prune`
+        // recovers.
         if let Some(wt_path) = self.wt_path.filter(|path| path.exists()) {
             std::fs::remove_dir_all(&wt_path)?;
         }
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true).working_tree(true);
+        wt.prune(Some(&mut opts))?;
         if delete_branch && !self.branch.is_empty() {
             if let Ok(mut branch) = repo.find_branch(&self.branch, BranchType::Local) {
                 let _ = branch.delete();
@@ -175,6 +182,12 @@ pub fn create(
 ) -> Result<WorktreeInfo, WorktreeError> {
     let repo = open_repo(repo_path)?;
     let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
+    if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, branch_name)? {
+        let setup_warning = run_setup_hook_advisory(&existing_path);
+        let mut info = info(branch_name.to_string(), existing_path, existing_name);
+        info.setup_warning = setup_warning;
+        return Ok(info);
+    }
     let head_commit = repo
         .head()
         .map_err(WorktreeError::NoHead)?
@@ -758,7 +771,13 @@ fn finish_successful_merge(
     finalize_result: Result<(), WorktreeError>,
 ) -> Result<String, WorktreeError> {
     if let Err(err) = finalize_result {
-        abort_pending_merge(repo)?;
+        // The merge commit is already durable at this point; a failure while
+        // tidying up residual merge state must not turn the completed merge
+        // into a reported failure (which would prompt a retry and a duplicate
+        // merge commit). Best-effort cleanup, then report success.
+        if let Err(cleanup_err) = abort_pending_merge(repo) {
+            eprintln!("Worktree merge cleanup after finalization failure failed: {cleanup_err}");
+        }
         eprintln!("Recovered after completed worktree merge finalization failed: {err}");
     }
     Ok(format!("Merged '{branch_name}' into HEAD"))
@@ -770,9 +789,21 @@ fn restore_failed_fast_forward(
     original_head_oid: git2::Oid,
 ) -> Result<(), WorktreeError> {
     if let Ok(mut reference) = repo.find_reference(head_ref_name) {
-        let _ = reference.set_target(original_head_oid, "Rollback failed fast-forward merge");
+        if let Err(err) =
+            reference.set_target(original_head_oid, "Rollback failed fast-forward merge")
+        {
+            eprintln!(
+                "Failed to reset {head_ref_name} to its pre-merge commit during rollback: {err}"
+            );
+        }
     }
-    let _ = repo.set_head(head_ref_name);
+    if let Err(err) = repo.set_head(head_ref_name) {
+        eprintln!("Failed to restore HEAD to {head_ref_name} during fast-forward rollback: {err}");
+    }
+    // force_checkout_head still reconciles the working tree with whatever HEAD
+    // now points at, so a swallowed ref-reset above leaves a consistent (if
+    // unexpected) state rather than a split-brain tree; the logs above make a
+    // wedged rollback diagnosable.
     force_checkout_head(repo)
 }
 
@@ -888,8 +919,31 @@ fn ensure_local_exclude_for_worktree_path(
     }
     let mut file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
         .open(&exclude_path)?;
+    file.lock()?;
+    file.seek(SeekFrom::Start(0))?;
+    existing.clear();
+    {
+        let mut limited = (&mut file).take(MAX_EXCLUDE_BYTES + 1);
+        limited.read_to_string(&mut existing)?;
+    }
+    if existing.len() as u64 > MAX_EXCLUDE_BYTES {
+        return Err(WorktreeError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            ".git/info/exclude is too large",
+        )));
+    }
+    if existing
+        .lines()
+        .map(str::trim)
+        .any(|line| line == ".worktrees/" || line == "/.worktrees/")
+    {
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(0))?;
     if !existing.is_empty() && !existing.ends_with('\n') {
         writeln!(file)?;
     }
@@ -1079,6 +1133,19 @@ mod tests {
     }
 
     #[test]
+    fn create_returns_existing_worktree_for_existing_branch_registration() {
+        let dir = make_repo();
+        let first = create(dir.path().to_str().unwrap(), "feature/retry", "nested").unwrap();
+
+        let second = create(dir.path().to_str().unwrap(), "feature/retry", "nested").unwrap();
+
+        assert_eq!(second.branch, first.branch);
+        assert_eq!(second.path, first.path);
+        assert_eq!(second.worktree_name, first.worktree_name);
+        assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
+    }
+
+    #[test]
     fn prepare_remove_does_not_prune_until_finish() {
         let dir = make_repo();
         let info = create(
@@ -1170,6 +1237,42 @@ mod tests {
 
         let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert!(exclude.lines().any(|line| line.trim() == ".worktrees/"));
+    }
+
+    #[test]
+    fn local_exclude_update_waits_for_existing_file_lock() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&exclude_path)
+            .unwrap();
+        lock.lock().unwrap();
+
+        let repo_path = dir.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let repo = Repository::open(&repo_path).unwrap();
+            let result = ensure_local_exclude_for_worktree_path(
+                &repo,
+                &repo_path,
+                &repo_path.join(".worktrees/locked"),
+            );
+            tx.send(result).unwrap();
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "exclude update returned while another process-style file lock was held"
+        );
+        lock.unlock().unwrap();
+        rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+        worker.join().unwrap();
     }
 
     #[test]

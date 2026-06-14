@@ -403,6 +403,8 @@ impl GhosttyTerminalWidget {
                         LeftMousePressDecision::ForwardOrSelectIfUntracked
                     };
                     if matches!(left_decision, LeftMousePressDecision::DeferForLocalDrag) {
+                        autoscroll.pointer.set((x, y));
+                        autoscroll.scroll_compensated_head.set(false);
                         *pending_left_press.borrow_mut() =
                             Some(DeferredLeftPress { x, y, modifiers });
                         selection.borrow_mut().clear();
@@ -437,6 +439,8 @@ impl GhosttyTerminalWidget {
                             // A fresh gesture must not inherit a previous
                             // drag's pending autoscroll.
                             autoscroll.lines.set(0);
+                            autoscroll.pointer.set((x, y));
+                            autoscroll.scroll_compensated_head.set(false);
                             if n_press == 1 {
                                 clear_hover_link(&hover_link_for_click, &drawing_area);
                                 selection.begin_drag(selection_cell_for_position(
@@ -497,6 +501,7 @@ impl GhosttyTerminalWidget {
                 let any_button_pressed = any_button_pressed.clone();
                 let suppress_release = suppress_release.clone();
                 let pending_left_press = pending_left_press.clone();
+                let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 click.connect_released(move |gesture, _n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
@@ -517,7 +522,9 @@ impl GhosttyTerminalWidget {
                                 &renderer,
                                 x,
                                 y,
+                                should_extend_selection_on_release(&autoscroll, x, y),
                             );
+                            autoscroll.scroll_compensated_head.set(false);
                             return;
                         }
                         if let Some(pending) = pending_left_press.borrow_mut().take() {
@@ -619,10 +626,10 @@ impl GhosttyTerminalWidget {
                     };
                     if selection.borrow().is_selecting() {
                         // A broken pointer grab can swallow the button release
-                        // (e.g. the focus gesture claiming a click on an
-                        // unfocused pane cancels this one). If button 1 is no
-                        // longer physically down, finalize the selection rather
-                        // than let it trail the pointer with nothing driving it.
+                        // (e.g. another gesture claiming the sequence cancels
+                        // this one mid-drag). If button 1 is no longer
+                        // physically down, finalize the selection rather than
+                        // let it trail the pointer with nothing driving it.
                         if !controller
                             .current_event_state()
                             .contains(gtk::gdk::ModifierType::BUTTON1_MASK)
@@ -639,10 +646,11 @@ impl GhosttyTerminalWidget {
                                 x,
                                 y,
                             ));
+                        autoscroll.pointer.set((x, y));
+                        autoscroll.scroll_compensated_head.set(false);
                         // Steer drag-autoscroll: past the top/bottom edge a
                         // timer scrolls and keeps extending the selection
                         // until the pointer comes back inside.
-                        autoscroll.pointer.set((x, y));
                         let lines = autoscroll_lines_per_tick(
                             y,
                             f64::from(drawing_area.allocated_height()),
@@ -691,6 +699,8 @@ impl GhosttyTerminalWidget {
                             let mut selection = selection.borrow_mut();
                             selection.begin_drag(start);
                             selection.extend_drag(end);
+                            autoscroll.pointer.set((x, y));
+                            autoscroll.scroll_compensated_head.set(false);
                             drawing_area.queue_draw();
                         }
                         return;
@@ -756,6 +766,7 @@ impl GhosttyTerminalWidget {
                 let renderer = renderer.clone();
                 let drawing_area = drawing_area.downgrade();
                 let selection = selection.clone();
+                let autoscroll = autoscroll.clone();
                 let scroll_remainder = scroll_remainder.clone();
                 let scroll_remainder_for_scroll = scroll_remainder.clone();
                 let wayland_display = display_is_wayland();
@@ -804,12 +815,30 @@ impl GhosttyTerminalWidget {
                             drawing_area.queue_draw();
                             glib::Propagation::Stop
                         }
-                        Ok(ScrollRouting::ViewportScrolled(scrolled)) => {
-                            if scrolled {
-                                // Selection coordinates are viewport-relative;
-                                // scrolling would leave the highlight on the
-                                // wrong text.
-                                selection.borrow_mut().clear();
+                        Ok(ScrollRouting::ViewportScrolled(scrolled_rows)) => {
+                            if scrolled_rows != 0 {
+                                if selection.borrow().is_selecting() {
+                                    // Mid-drag the wheel behaves like
+                                    // drag-autoscroll: re-anchor the selection
+                                    // by the scrolled rows instead of silently
+                                    // dropping the drag.
+                                    if let Err(err) = compensate_selection_for_scroll(
+                                        &runtime,
+                                        &selection,
+                                        scrolled_rows,
+                                    ) {
+                                        eprintln!(
+                                            "Failed to re-anchor terminal selection after scroll: {err}"
+                                        );
+                                    } else {
+                                        autoscroll.scroll_compensated_head.set(true);
+                                    }
+                                } else {
+                                    // Selection coordinates are viewport-relative;
+                                    // scrolling would leave the highlight on the
+                                    // wrong text.
+                                    selection.borrow_mut().clear();
+                                }
                                 drawing_area.queue_draw();
                             }
                             glib::Propagation::Stop
@@ -992,6 +1021,42 @@ impl GhosttyTerminalWidget {
             eprintln!("Terminal runtime operation failed: {err}");
         }
         self.drawing_area.queue_draw();
+    }
+
+    /// Changes whenever terminal content may have changed; the agent HUD uses
+    /// it to skip re-reading the (full scrollback dump) tail while idle.
+    pub(super) fn content_generation(&self) -> u64 {
+        self.runtime.borrow().content_generation()
+    }
+
+    pub(super) fn read_text(
+        &self,
+        surface_id: &str,
+        capture: TerminalTextCapture,
+        max_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalError> {
+        let runtime = self.runtime.borrow();
+        let size = runtime.size();
+        let full_text = runtime.full_text();
+        if capture == TerminalTextCapture::Visible {
+            let viewport = runtime.viewport_position()?;
+            let visible_text = visible_text_from_full_text(&full_text, viewport.top, viewport.rows);
+            return Ok(TerminalTextSnapshot::from_captured_text(
+                TerminalTextSnapshotParts {
+                    surface_id: surface_id.to_string(),
+                    scope: "visible".to_string(),
+                    text: visible_text,
+                    cols: size.cols,
+                    rows: size.rows,
+                    total_lines: full_text.lines().count(),
+                    max_bytes,
+                    truncate_from_end: false,
+                },
+            ));
+        }
+        Ok(TerminalTextSnapshot::from_text(
+            surface_id, full_text, size.cols, size.rows, capture, max_bytes,
+        ))
     }
 
     /// Steps the scrollback search to the next (or previous) match of
@@ -1237,9 +1302,31 @@ fn terminal_area_geometry(
 ) {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
     let padding = terminal_content_padding(area);
-    let content_width = terminal_content_size(area.allocated_width(), padding.left, padding.right);
-    let content_height =
-        terminal_content_size(area.allocated_height(), padding.top, padding.bottom);
+    let (grid, cells) = terminal_area_grid(
+        area.allocated_width(),
+        area.allocated_height(),
+        padding,
+        cell_width,
+        cell_height,
+    );
+    (grid, padding, cell_width, cell_height, cells)
+}
+
+/// Pure core of [`terminal_area_geometry`]: the grid origin and `(cols, rows)`
+/// for an allocation, given its CSS padding and cell size. The drawn grid lives
+/// in the content box (GTK hands the draw function the CSS-padding-stripped
+/// content dimensions), so this strips the padding exactly once and feeds the
+/// content size to [`terminal_grid_geometry`] — the same input the renderer
+/// uses, which is what keeps pointer mapping aligned with the drawn cells.
+fn terminal_area_grid(
+    allocated_width: i32,
+    allocated_height: i32,
+    padding: TerminalContentPadding,
+    cell_width: i32,
+    cell_height: i32,
+) -> (TerminalGridGeometry, (u16, u16)) {
+    let content_width = terminal_content_size(allocated_width, padding.left, padding.right);
+    let content_height = terminal_content_size(allocated_height, padding.top, padding.bottom);
     let (cols, rows) =
         terminal_grid_cells_for_allocation(content_width, content_height, cell_width, cell_height);
     let grid = terminal_grid_geometry(
@@ -1250,7 +1337,7 @@ fn terminal_area_geometry(
         cell_width,
         cell_height,
     );
-    (grid, padding, cell_width, cell_height, (cols, rows))
+    (grid, (cols, rows))
 }
 
 fn terminal_mouse_input_for_area(
@@ -1409,10 +1496,13 @@ fn finish_selection_drag(
     renderer: &TerminalRenderer,
     x: f64,
     y: f64,
+    extend_on_release: bool,
 ) {
-    selection
-        .borrow_mut()
-        .extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+    if extend_on_release {
+        selection
+            .borrow_mut()
+            .extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+    }
     finalize_selection_drag(runtime, selection, drawing_area);
 }
 
@@ -1520,6 +1610,11 @@ struct SelectionAutoscroll {
     lines: Cell<isize>,
     pointer: Cell<(f64, f64)>,
     active: Cell<bool>,
+    scroll_compensated_head: Cell<bool>,
+}
+
+fn should_extend_selection_on_release(autoscroll: &SelectionAutoscroll, x: f64, y: f64) -> bool {
+    !autoscroll.scroll_compensated_head.get() || autoscroll.pointer.get() != (x, y)
 }
 
 /// Scrolls the viewport while a selection drag sits past the top or bottom
@@ -1570,8 +1665,8 @@ fn spawn_selection_autoscroll_timer(
 /// One drag-autoscroll step: scrolls the viewport by `lines` and re-anchors
 /// the in-progress selection by however many rows the core actually scrolled
 /// (the core clamps at the scrollback edges), so the highlight keeps covering
-/// the same text. This is what tells autoscroll apart from a user wheel
-/// scroll, which still clears the selection.
+/// the same text. A user wheel scroll mid-drag gets the same re-anchoring;
+/// only a *finished* selection is cleared when the viewport scrolls.
 fn autoscroll_selection_tick(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
@@ -1630,6 +1725,16 @@ fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFra
     join_rows_honoring_wrap(rows).trim_end().to_string()
 }
 
+fn visible_text_from_full_text(text: &str, top: usize, rows: usize) -> String {
+    if rows == 0 || text.is_empty() {
+        return String::new();
+    }
+    text.split_inclusive('\n')
+        .skip(top)
+        .take(rows)
+        .collect::<String>()
+}
+
 /// What a copy puts on the clipboard: the stored selection text when present
 /// (never touching the frame, so a render error cannot break copying a
 /// selection), otherwise the viewport text from `render`. With no selection,
@@ -1665,8 +1770,9 @@ fn selection_text_from_frame(
 enum ScrollRouting {
     /// The event was encoded and written to a mouse-tracking application.
     Forwarded,
-    /// Tracking is off; the viewport scrolled (or was already at its limit).
-    ViewportScrolled(bool),
+    /// Tracking is off; carries the rows the viewport actually moved (0 when
+    /// it was already at its limit), so the caller can re-anchor a selection.
+    ViewportScrolled(isize),
     /// Nothing to do (no line delta for this event).
     NotHandled,
 }
@@ -1853,18 +1959,49 @@ fn route_terminal_scroll(
             // scroll the viewport by the consumed-but-unforwarded lines.
             let forwarded_lines =
                 forwarded as isize * WHEEL_PRESS_LINES * emission.presses.signum();
-            let scrolled = runtime
-                .borrow_mut()
-                .scroll_viewport_lines(emission.lines - forwarded_lines);
-            return Ok(ScrollRouting::ViewportScrolled(scrolled?));
+            let scrolled = scroll_viewport_rows(runtime, emission.lines - forwarded_lines)?;
+            return Ok(ScrollRouting::ViewportScrolled(scrolled));
         }
         return Ok(ScrollRouting::Forwarded);
     }
     if emission.lines == 0 {
         return Ok(ScrollRouting::NotHandled);
     }
-    let scrolled = runtime.borrow_mut().scroll_viewport_lines(emission.lines);
-    Ok(ScrollRouting::ViewportScrolled(scrolled?))
+    let scrolled = scroll_viewport_rows(runtime, emission.lines)?;
+    Ok(ScrollRouting::ViewportScrolled(scrolled))
+}
+
+/// Scrolls the viewport by `lines` and reports how many rows it actually
+/// moved (the core clamps at the scrollback edges).
+fn scroll_viewport_rows(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    lines: isize,
+) -> Result<isize, TerminalError> {
+    let mut runtime = runtime.borrow_mut();
+    let before = runtime.viewport_position()?;
+    runtime.scroll_viewport_lines(lines)?;
+    let after = runtime.viewport_position()?;
+    Ok(after.top as isize - before.top as isize)
+}
+
+/// Re-anchors an in-progress selection drag after the viewport scrolled under
+/// it, mirroring `autoscroll_selection_tick`, so a wheel scroll during a drag
+/// moves the view without killing the selection.
+fn compensate_selection_for_scroll(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    selection: &Rc<RefCell<TerminalSelection>>,
+    scrolled_rows: isize,
+) -> Result<(), TerminalError> {
+    let (max_row, max_col) = {
+        let runtime = runtime.borrow_mut();
+        let rows = runtime.viewport_position()?.rows;
+        let cols = runtime.size().cols;
+        (rows.saturating_sub(1), usize::from(cols.saturating_sub(1)))
+    };
+    selection
+        .borrow_mut()
+        .compensate_scroll(scrolled_rows, max_row, max_col);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2315,7 +2452,9 @@ mod selection_tests {
         let routing =
             route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
 
-        assert_eq!(routing, ScrollRouting::ViewportScrolled(true));
+        // 6 lines on a 4-row terminal leave 2 scrollback rows; a 3-line wheel
+        // scroll up clamps at the top, so the viewport moved exactly -2 rows.
+        assert_eq!(routing, ScrollRouting::ViewportScrolled(-2));
         assert_eq!(remainder.get(), 0.0);
 
         // A sub-line touchpad delta is accumulated, not routed anywhere yet.
@@ -2535,6 +2674,18 @@ mod selection_tests {
                 SelectionPoint { row: 3, col: 19 }
             ))
         );
+    }
+
+    #[test]
+    fn release_after_scroll_compensation_extends_only_after_pointer_motion() {
+        let drag = SelectionAutoscroll::default();
+        drag.pointer.set((20.0, 30.0));
+
+        assert!(should_extend_selection_on_release(&drag, 20.0, 30.0));
+
+        drag.scroll_compensated_head.set(true);
+        assert!(!should_extend_selection_on_release(&drag, 20.0, 30.0));
+        assert!(should_extend_selection_on_release(&drag, 21.0, 30.0));
     }
 
     #[test]
@@ -2994,6 +3145,29 @@ mod mouse_tests {
     fn terminal_content_size_excludes_css_padding_for_mouse_coordinates() {
         assert_eq!(terminal_content_size(100, 12, 12), 76);
         assert_eq!(terminal_content_size(10, 12, 12), 1);
+    }
+
+    #[test]
+    fn terminal_area_grid_strips_css_padding_once_and_matches_draw_path() {
+        // `.ghostty-terminal { padding: 10px 12px; }`, a 800x480 allocation and
+        // a 10x20 cell. This exercises the real runtime helper (not a
+        // hand-built geometry), so it would catch the mouse path stripping the
+        // CSS padding twice or feeding the full allocation — either of which
+        // shifts the origin away from what the renderer draws.
+        let padding = TerminalContentPadding {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        };
+        let (grid, (cols, rows)) = terminal_area_grid(800, 480, padding, 10, 20);
+
+        // The renderer (`draw_frame`) receives GTK's content-area dimensions
+        // (CSS padding already applied) and builds the grid from
+        // `terminal_grid_geometry` on those. With a single strip the mouse path
+        // lands on the same inner-gutter origin and cell count.
+        assert_eq!((grid.origin_x, grid.origin_y), (8, 10));
+        assert_eq!((cols, rows), (76, 22));
     }
 
     #[test]

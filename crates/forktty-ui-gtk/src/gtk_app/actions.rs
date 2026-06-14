@@ -92,6 +92,12 @@ pub(super) fn install_actions(
         let controller = controller.clone();
         move || show_notification_panel(&window, &state, Some(controller.clone()))
     });
+    add_action(app, "agents", {
+        let window = window.clone();
+        let state = state.clone();
+        let controller = controller.clone();
+        move || show_agent_panel(&window, &state, Some(controller.clone()))
+    });
     add_action(app, "settings", {
         let window = window.clone();
         let state = state.clone();

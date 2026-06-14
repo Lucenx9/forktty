@@ -53,6 +53,9 @@ Usage:
   forktty new-tab [--surface-id <id>]
   forktty select-tab <surface-id>
   forktty send-text <text> [--surface-id <id>]
+  forktty read-screen [--surface-id <id>] [--scope visible|all] [--max-bytes <n>] [--json]
+  forktty capture-tail [--surface-id <id>] [--lines <n>] [--max-bytes <n>] [--json]
+  forktty tree [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty worktree-list [--cwd <repo>]
   forktty worktree-status [--path <worktree>] [--cwd <worktree>]
   forktty worktree-create <branch> [--cwd <repo>]
@@ -743,6 +746,13 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "new-tab" | "pane-new-tab" | "pane:new-tab" => handle_new_tab(&context, args),
         "select-tab" | "pane-select-tab" | "pane:select-tab" => handle_select_tab(&context, args),
         "send-text" | "send_text" => handle_send_text(&context, args),
+        "read-screen" | "read_screen" | "surface-read-text" | "surface:read-text" => {
+            handle_read_screen(&context, args)
+        }
+        "capture-tail" | "capture_tail" | "surface-capture-tail" | "surface:capture-tail" => {
+            handle_capture_tail(&context, args)
+        }
+        "tree" | "topology-tree" | "topology:tree" => handle_tree(&context, args),
         "worktree-list" | "worktree:list" => handle_worktree_list(&context, args),
         "worktree-status" | "worktree:status" => handle_worktree_status(&context, args),
         "worktree-create" | "worktree:create" => {
@@ -1407,6 +1417,15 @@ fn write_output_line(out: &mut impl Write, text: &str) -> CliResult<()> {
 
 fn write_stdout_line(text: &str) -> CliResult<()> {
     write_output_line(&mut io::stdout().lock(), text)
+}
+
+fn write_stdout_text(text: &str) -> CliResult<()> {
+    let mut out = io::stdout().lock();
+    match out.write_all(text.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 fn print_json(value: &Value) -> CliResult<()> {
@@ -2489,6 +2508,122 @@ fn handle_send_text(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         json!({ "surface_id": surface_id, "text": text }),
     )?;
     print_result_or_json(context, "Sent text", json!({ "result": true }))
+}
+
+fn handle_read_screen(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["surface-id", "scope", "max-bytes"],
+        "read-screen",
+    )?;
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "read-screen: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let surface_id = resolve_terminal_read_surface_id(context, &parsed, "read-screen")?;
+    let mut params = json!({ "surface_id": surface_id });
+    if let Some(scope) = non_blank_string_option(&parsed.options, "scope", "--scope")? {
+        params["scope"] = Value::String(scope.trim().to_string());
+    }
+    if let Some(max_bytes) = parse_u64_option(&parsed.options, "max-bytes", "--max-bytes")? {
+        params["max_bytes"] = json!(max_bytes);
+    }
+    let result = send_socket_request(&context.socket_path, "surface.read_text", params)?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_text(result.get("text").and_then(Value::as_str).unwrap_or(""))
+}
+
+fn handle_capture_tail(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["surface-id", "lines", "max-bytes"],
+        "capture-tail",
+    )?;
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "capture-tail: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let surface_id = resolve_terminal_read_surface_id(context, &parsed, "capture-tail")?;
+    let mut params = json!({ "surface_id": surface_id });
+    if let Some(lines) = parse_u64_option(&parsed.options, "lines", "--lines")? {
+        params["lines"] = json!(lines);
+    }
+    if let Some(max_bytes) = parse_u64_option(&parsed.options, "max-bytes", "--max-bytes")? {
+        params["max_bytes"] = json!(max_bytes);
+    }
+    let result = send_socket_request(&context.socket_path, "surface.capture_tail", params)?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_text(result.get("text").and_then(Value::as_str).unwrap_or(""))
+}
+
+fn handle_tree(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "tree")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name"],
+        "tree",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "topology.tree",
+        Value::Object(build_target_params(&parsed.options, "tree")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    format_topology_tree(&result)
+}
+
+fn resolve_terminal_read_surface_id(
+    context: &CliContext,
+    parsed: &ParsedFlags,
+    command: &str,
+) -> CliResult<String> {
+    if let Some(surface_id) = surface_id_from_args(parsed, command)? {
+        return Ok(surface_id);
+    }
+    resolve_focused_surface_id(context)?.ok_or_else(|| {
+        CliError::new(format!(
+            "{command} requires --surface-id, a surface id, FORKTTY_SURFACE_ID, or an active workspace surface"
+        ))
+    })
+}
+
+fn format_topology_tree(value: &Value) -> CliResult<()> {
+    let Some(workspaces) = value.get("workspaces").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if workspaces.is_empty() {
+        return write_stdout_line("No workspaces");
+    }
+    for workspace in workspaces {
+        let active = workspace
+            .get("active")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let marker = if active { "*" } else { " " };
+        let name = safe_string_field(workspace, "name").unwrap_or_else(|| "(unnamed)".to_string());
+        let id = safe_string_field(workspace, "id").unwrap_or_else(|| "(unknown)".to_string());
+        let dir = safe_string_field(workspace, "working_dir").unwrap_or_default();
+        write_stdout_line(&format!("{marker} {name} [{id}] {dir}"))?;
+        if let Some(surfaces) = workspace.get("surfaces").and_then(Value::as_array) {
+            for surface in surfaces {
+                write_stdout_line(&format!("  - {}", format_surface_line(surface)))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn surface_id_from_args(parsed: &ParsedFlags, command: &str) -> CliResult<Option<String>> {
@@ -6184,11 +6319,13 @@ fn handle_hook_event(context: &CliContext, args: Vec<String>) -> CliResult<()> {
                 params,
                 HOOK_STATUS_TIMEOUT,
             ) {
+                // Keep going on failure: a transient error on one action (e.g.
+                // an informational log) must not skip later cleanup actions
+                // like clearing a stale status or permission marker.
                 eprintln!(
                     "{}",
                     sanitize_for_terminal(&format!("ForkTTY hook warning: {}", err.message))
                 );
-                break;
             }
         }
     }
@@ -6950,7 +7087,7 @@ fn build_hook_response(
                 trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
             ),
             workspace_line,
-            "MCP tools: workspace_list and surface_list inspect panes; surface_focus and surface_send_text drive them.".to_string(),
+            "MCP tools: workspace_list, surface_list, topology_tree, surface_read_text, and surface_capture_tail inspect panes; surface_focus and surface_send_text drive them.".to_string(),
             "Worktrees: worktree_create creates an isolated git worktree + workspace; worktree_attach, worktree_remove, and worktree_merge manage branches.".to_string(),
             "Status: status_set and notification_create publish progress; CLI fallback is forktty list/surfaces/send-text/worktree-*.".to_string(),
         ];
@@ -8499,10 +8636,11 @@ mod tests {
         assert!(context.contains("surface-9"));
         assert!(context.contains("forktty.sock"));
         assert!(context.contains("Feature Shell on branch feature/mcp"));
-        assert!(context.contains("workspace_list and surface_list"));
+        assert!(context.contains("workspace_list, surface_list, topology_tree"));
+        assert!(context.contains("surface_read_text"));
         assert!(context.contains("worktree_create creates an isolated git worktree"));
         assert!(context.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, or sending text to another surface."
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, terminal read/capture, or sending text to another surface."
         ));
         assert!(context.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
@@ -9344,6 +9482,19 @@ mod tests {
                 .unwrap();
                 assert_eq!(params["surface_id"], "surface-env");
                 assert_eq!(params["text"], "cargo test\n");
+
+                let (_, params) =
+                    crate::mcp_server::build_socket_call_for_test("surface_read_text", json!({}))
+                        .unwrap();
+                assert_eq!(params["surface_id"], "surface-env");
+
+                let (_, params) = crate::mcp_server::build_socket_call_for_test(
+                    "surface_capture_tail",
+                    json!({ "lines": 20 }),
+                )
+                .unwrap();
+                assert_eq!(params["surface_id"], "surface-env");
+                assert_eq!(params["lines"], 20);
 
                 let (_, params) = crate::mcp_server::build_socket_call_for_test(
                     "status_set",
@@ -10664,6 +10815,120 @@ mod tests {
         );
         assert_eq!(request["method"], "status.summary");
         assert_eq!(request["params"]["workspace_name"], "main");
+    }
+
+    #[test]
+    fn read_screen_requests_surface_read_text() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "surface_id": "surface-1",
+                        "scope": "all",
+                        "text": "",
+                        "cols": 80,
+                        "rows": 24,
+                        "total_lines": 0,
+                        "lines": 0,
+                        "truncated": false,
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_read_screen(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "--surface-id",
+                        "surface-1",
+                        "--scope",
+                        "all",
+                        "--max-bytes",
+                        "4096",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "surface.read_text");
+        assert_eq!(request["params"]["surface_id"], "surface-1");
+        assert_eq!(request["params"]["scope"], "all");
+        assert_eq!(request["params"]["max_bytes"], 4096);
+    }
+
+    #[test]
+    fn capture_tail_requests_surface_capture_tail() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "surface_id": "surface-1",
+                        "scope": "tail",
+                        "text": "",
+                        "cols": 80,
+                        "rows": 24,
+                        "total_lines": 0,
+                        "lines": 0,
+                        "truncated": false,
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_capture_tail(
+                    &ctx_for(socket_path),
+                    strings(&["surface-1", "--lines", "20", "--max-bytes", "2048"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "surface.capture_tail");
+        assert_eq!(request["params"]["surface_id"], "surface-1");
+        assert_eq!(request["params"]["lines"], 20);
+        assert_eq!(request["params"]["max_bytes"], 2048);
+    }
+
+    #[test]
+    fn tree_requests_topology_tree_with_workspace_selector() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "workspaces": [{
+                            "id": "workspace-1",
+                            "name": "main",
+                            "active": true,
+                            "working_dir": "/tmp",
+                            "focused_surface_id": "surface-1",
+                            "surface_count": 1,
+                            "surfaces": [{
+                                "id": "surface-1",
+                                "workspace_id": "workspace-1",
+                                "title": "shell",
+                                "cwd": "/tmp",
+                                "unread": false
+                            }]
+                        }]
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_tree(
+                    &ctx_for(socket_path),
+                    strings(&["--workspace-id", "workspace-1"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "topology.tree");
+        assert_eq!(request["params"]["workspace_id"], "workspace-1");
     }
 
     #[test]

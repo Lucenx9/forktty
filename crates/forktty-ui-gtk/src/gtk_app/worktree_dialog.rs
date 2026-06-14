@@ -226,10 +226,14 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     });
     existing.connect_changed({
         let entry = entry.clone();
+        let mode = mode.clone();
+        let has_existing_worktrees = has_existing_worktrees.clone();
         let refresh = refresh.clone();
         move |combo| {
-            if let Some(selector) = combo.active_id() {
-                entry.set_text(selector.as_str());
+            if should_mirror_existing_selector(mode.get(), has_existing_worktrees.get()) {
+                if let Some(selector) = combo.active_id() {
+                    entry.set_text(selector.as_str());
+                }
             }
             refresh(true);
         }
@@ -257,16 +261,28 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     let state_for_action = state.clone();
     let status_for_action = status.clone();
     let entry_for_action = entry.clone();
+    let existing_for_action = existing.clone();
+    let has_existing_worktrees_for_action = has_existing_worktrees.clone();
     let dialog_for_action = dialog.clone();
     let mode_for_action = mode.clone();
     primary.connect_clicked(move |button| {
-        let name = entry_for_action.text().trim().to_string();
+        let mode = mode_for_action.get();
+        let name = if should_mirror_existing_selector(mode, has_existing_worktrees_for_action.get())
+        {
+            existing_for_action
+                .active_id()
+                .map(|selector| selector.to_string())
+                .unwrap_or_default()
+        } else {
+            entry_for_action.text().to_string()
+        }
+        .trim()
+        .to_string();
         if let Err(err) = validate_worktree_name_for_gtk(&name) {
             set_status_message(&status_for_action, &err, StatusKind::Error);
             return;
         }
 
-        let mode = mode_for_action.get();
         let action = match mode {
             WorktreeDialogMode::Create => Some(WorktreeAction::Create),
             WorktreeDialogMode::Attach => Some(WorktreeAction::Attach),
@@ -447,6 +463,10 @@ impl WorktreeDialogMode {
     }
 }
 
+fn should_mirror_existing_selector(mode: WorktreeDialogMode, has_existing_worktrees: bool) -> bool {
+    mode.uses_existing_chooser() && has_existing_worktrees
+}
+
 pub(super) fn worktree_mode_button(label: &str, active: bool) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::with_label(label);
     button.add_css_class("worktree-mode-button");
@@ -524,6 +544,35 @@ pub(super) fn refresh_worktree_dialog(
         clear_status_message(&controls.status);
     }
     controls.primary.set_sensitive(valid);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_selector_mirrors_only_when_it_is_the_active_input() {
+        assert!(!should_mirror_existing_selector(
+            WorktreeDialogMode::Create,
+            true
+        ));
+        assert!(!should_mirror_existing_selector(
+            WorktreeDialogMode::Attach,
+            true
+        ));
+        assert!(!should_mirror_existing_selector(
+            WorktreeDialogMode::Merge,
+            false
+        ));
+        assert!(should_mirror_existing_selector(
+            WorktreeDialogMode::Merge,
+            true
+        ));
+        assert!(should_mirror_existing_selector(
+            WorktreeDialogMode::Remove,
+            true
+        ));
+    }
 }
 
 #[derive(Clone, Copy)]

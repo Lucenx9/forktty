@@ -10,7 +10,10 @@ use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, serve, socket_path_from_env, SocketAppState,
 };
-use forktty_terminal::{SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState};
+use forktty_terminal::{
+    SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState, TerminalTextCapture,
+    TerminalTextSnapshot, TerminalTextSnapshotParts,
+};
 use global_hotkey::{
     hotkey::{Code, HotKey},
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
@@ -77,6 +80,7 @@ const GH_PR_VIEW_TIMEOUT: Duration = Duration::from_secs(8);
 const GH_PR_VIEW_MAX_STDOUT_BYTES: u64 = 64 * 1024;
 
 mod actions;
+mod agents_panel;
 mod app;
 mod backend;
 #[cfg(feature = "browser")]
@@ -101,6 +105,8 @@ mod terminal_search;
 mod terminal_signals;
 mod terminal_widget;
 mod ui_common;
+mod updater;
+mod welcome;
 mod workspace_dialogs;
 mod workspace_menu;
 mod workspace_ops;
@@ -108,6 +114,7 @@ mod workspace_popover;
 mod worktree_dialog;
 
 use actions::*;
+use agents_panel::*;
 use app::*;
 use backend::*;
 #[cfg(feature = "browser")]
@@ -130,6 +137,8 @@ use terminal_search::*;
 use terminal_signals::*;
 use terminal_widget::*;
 use ui_common::*;
+use updater::*;
+use welcome::*;
 use workspace_dialogs::*;
 use workspace_menu::*;
 use workspace_ops::*;

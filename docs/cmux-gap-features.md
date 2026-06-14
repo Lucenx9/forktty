@@ -163,9 +163,12 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   send-input, capture-tail, inspect-liveness, attach, and detach, with tmux only
   as the first adapter.
 - ForkTTY covers core workspace/surface/pane-tab/metadata/worktree/browser
-  verbs, but not full topology inspection or tmux-like manipulation.
-- Scope: read-only topology first (`tree`, `top`, capture/read), then mutating
-  verbs with clear model invariants and tests.
+  verbs, plus read-only `topology.tree`, terminal `read-screen`, and
+  `capture-tail` primitives. It still lacks `top`, `send-key`, move/reorder,
+  join/swap/split-off, buffers, pipe/wait, and broader tmux-compatible
+  manipulation.
+- Scope: add `top`/health-style inspection next, then mutating verbs with clear
+  model invariants and tests.
 
 ### 11. Prompt Composer / TextBox
 
@@ -195,9 +198,9 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - OMC has a statusline HUD for active mode, agents, token/context health, tasks,
   and update/install diagnostics.
 - ForkTTY has native in-app status, sidebar metadata, a read-only
-  agent-session inventory, and a compact workspace/status/progress/session
-  summary through `status.summary`, `forktty statusline`, and MCP
-  `status_summary`.
+  agent-session inventory, a GTK Agent HUD, and a compact
+  workspace/status/progress/session summary through `status.summary`,
+  `forktty statusline`, and MCP `status_summary`.
 - Remaining scope: active-mode, worker, token, health, and notification fields
   when hooks provide them, plus provider-specific statusline packaging.
 

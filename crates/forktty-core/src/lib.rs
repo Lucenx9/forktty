@@ -12,6 +12,7 @@ pub mod pr;
 pub mod profile;
 pub mod protocol;
 pub mod session;
+pub mod update;
 pub mod worktree;
 
 pub use agents::{
@@ -27,7 +28,7 @@ pub use browser_cmd::{
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
 
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
-pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig};
+pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, UpdateConfig};
 pub use model::{
     has_uri_scheme, normalize_browser_url, AgentSession, AgentSessionLifecycle, LogEntry, LogLevel,
     MovePosition, NotificationItem, NotificationKind, PaneNode, ProgressEntry, SplitAxis,
@@ -37,3 +38,4 @@ pub use model::{
 pub use notification::{dispatch_notification, NotificationDispatchError};
 pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};

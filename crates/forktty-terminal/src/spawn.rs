@@ -41,8 +41,8 @@ pub fn child_argv(request: &SpawnRequest, unset_env_keys: Vec<String>) -> Vec<St
     argv
 }
 
-pub fn child_cwd(request: &SpawnRequest) -> String {
-    request.cwd.to_string_lossy().to_string()
+pub fn child_cwd(request: &SpawnRequest) -> &Path {
+    request.cwd.as_path()
 }
 
 pub fn appimage_runtime_env_keys() -> Vec<String> {
@@ -357,21 +357,20 @@ mod tests {
         let mut request = spawn_request();
         request.cwd = PathBuf::from("/workspace/forktty");
 
-        assert_eq!(child_cwd(&request), "/workspace/forktty");
+        assert_eq!(child_cwd(&request), Path::new("/workspace/forktty"));
     }
 
     #[test]
     #[cfg(unix)]
-    fn child_cwd_replaces_invalid_utf8_bytes() {
+    fn child_cwd_preserves_invalid_utf8_bytes() {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
         let mut request = spawn_request();
-        request.cwd = PathBuf::from(OsString::from_vec(vec![
-            b'/', b'b', b'a', b'd', b'/', 0xff, 0xfe,
-        ]));
+        let raw = OsString::from_vec(vec![b'/', b'b', b'a', b'd', b'/', 0xff, 0xfe]);
+        request.cwd = PathBuf::from(raw.clone());
 
-        assert_eq!(child_cwd(&request), "/bad/\u{fffd}\u{fffd}");
+        assert_eq!(child_cwd(&request).as_os_str(), raw.as_os_str());
     }
 
     #[test]

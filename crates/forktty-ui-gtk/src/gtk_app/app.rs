@@ -54,6 +54,13 @@ pub(super) fn build_ui(app: &adw::Application) {
         ),
     };
     apply_color_scheme(&app_config);
+    // On first launch the welcome dialog shows the (default-on) telemetry
+    // toggle before any data leaves the machine, so defer the startup ping
+    // until the user has dismissed it (see below, after `window.present()`).
+    let welcome_pending = welcome_pending();
+    if !welcome_pending {
+        crate::telemetry::maybe_start_anonymous_ping(&app_config);
+    }
     let shell = configured_shell(&app_config);
     let quake_mode = app_config.appearance.window_mode == "quake";
     let (default_width, default_height) = if quake_mode {
@@ -132,6 +139,22 @@ pub(super) fn build_ui(app: &adw::Application) {
         .icon_name("forktty-search-symbolic")
         .tooltip_text("Command Palette (Ctrl+Shift+P)")
         .build();
+    let agent_overlay = gtk::Overlay::new();
+    agent_overlay.set_halign(gtk::Align::Center);
+    agent_overlay.set_valign(gtk::Align::Center);
+    let agent_icon = gtk::Image::from_icon_name("forktty-terminal-symbolic");
+    agent_overlay.set_child(Some(&agent_icon));
+    let agent_badge = gtk::Label::new(None);
+    agent_badge.add_css_class("notification-badge");
+    agent_badge.add_css_class("agent-badge");
+    agent_badge.set_halign(gtk::Align::End);
+    agent_badge.set_valign(gtk::Align::Start);
+    agent_badge.set_visible(false);
+    agent_overlay.add_overlay(&agent_badge);
+    let agents = gtk::Button::builder()
+        .child(&agent_overlay)
+        .tooltip_text("Agents")
+        .build();
     let notif_overlay = gtk::Overlay::new();
     notif_overlay.set_halign(gtk::Align::Center);
     notif_overlay.set_valign(gtk::Align::Center);
@@ -150,12 +173,14 @@ pub(super) fn build_ui(app: &adw::Application) {
         .build();
     for (button, label, shortcut) in [
         (&command_palette, "Command Palette", Some("Ctrl+Shift+P")),
+        (&agents, "Agents", None),
         (&notifications, "Notifications", Some("Ctrl+Shift+M")),
     ] {
         button.add_css_class("flat");
         button.add_css_class("header-action");
         set_accessible_button_text(button, label, shortcut);
     }
+    refresh_agent_indicator(&agents, &agent_badge, &state);
     refresh_notification_indicator(&notifications, &state);
 
     let window_controls = gtk::Box::new(gtk::Orientation::Horizontal, 3);
@@ -174,6 +199,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_end(&window_controls);
     header.pack_end(&header_action_separator);
     header.pack_end(&notifications);
+    header.pack_end(&agents);
     header.pack_end(&command_palette);
 
     let sidebar = gtk::ListBox::builder()
@@ -440,6 +466,21 @@ pub(super) fn build_ui(app: &adw::Application) {
         refresh_notification_indicator(&notifications_for_timer, &state_for_notifications_timer);
         glib::ControlFlow::Continue
     });
+    let agents_for_timer = agents.clone();
+    let agent_badge_for_timer = agent_badge.clone();
+    let state_for_agents_timer = state.clone();
+    let alive_for_agents_timer = ui_alive.clone();
+    glib::timeout_add_local(Duration::from_millis(500), move || {
+        if !alive_for_agents_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        refresh_agent_indicator(
+            &agents_for_timer,
+            &agent_badge_for_timer,
+            &state_for_agents_timer,
+        );
+        glib::ControlFlow::Continue
+    });
     let controller_for_ports = controller.clone();
     let alive_for_ports_timer = ui_alive.clone();
     let port_in_flight = Arc::new(AtomicBool::new(false));
@@ -501,6 +542,16 @@ pub(super) fn build_ui(app: &adw::Application) {
             Some(notifications_controller.clone()),
         );
     });
+    let agents_parent = window.clone();
+    let agents_state = state.clone();
+    let agents_controller = controller.clone();
+    agents.connect_clicked(move |_| {
+        show_agent_panel(
+            &agents_parent,
+            &agents_state,
+            Some(agents_controller.clone()),
+        );
+    });
 
     install_actions(
         app,
@@ -523,6 +574,14 @@ pub(super) fn build_ui(app: &adw::Application) {
     });
 
     window.present();
+    if welcome_pending {
+        // First launch: greet the user and let them confirm telemetry and set
+        // up agent integration. Skip the update check this once to avoid
+        // stacking a second dialog on a freshly installed build.
+        show_welcome_dialog(&window, app_config.telemetry.anonymous_ping);
+    } else {
+        maybe_start_update_check(&window, &app_config);
+    }
 
     let state_for_bootstrap = state.clone();
     let controller_for_bootstrap = controller.clone();
@@ -619,6 +678,19 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
         open_support_uri,
     );
     add_context_menu_separator(&menu);
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-terminal-symbolic",
+        "Agents",
+        false,
+        {
+            let parent = parent.clone();
+            move || {
+                activate_app_action(&parent, "agents");
+            }
+        },
+    );
     add_context_menu_item(
         &menu,
         &popover,
