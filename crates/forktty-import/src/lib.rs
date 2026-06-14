@@ -22,7 +22,10 @@ pub use plan::{resolve_default_plan, resolve_separate_profiles_plan};
 pub use sources::{discover, discover_chromium_family, discover_firefox};
 
 use std::fmt;
-use std::io;
+use std::fs::OpenOptions;
+use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 const MAX_SQLITE_COPY_BYTES: u64 = 512 * 1024 * 1024;
@@ -98,16 +101,16 @@ fn read_via_copy<T, F>(src: &Path, default: T, f: F) -> Result<T, ImportError>
 where
     F: FnOnce(&Path) -> Result<T, ImportError>,
 {
-    let tmp = tempfile::NamedTempFile::new().map_err(ImportError::from)?;
-    if !copy_regular_file_bounded(src, tmp.path())? {
+    let tmp_dir = tempfile::Builder::new()
+        .prefix("forktty-import-")
+        .tempdir()
+        .map_err(ImportError::from)?;
+    let tmp_db = tmp_dir.path().join("database.sqlite");
+    if !copy_regular_file_bounded(src, &tmp_db)? {
         return Ok(default);
     }
-    let copied_sidecars = copy_sqlite_sidecars(src, tmp.path())?;
-    let result = f(tmp.path());
-    for sidecar in copied_sidecars {
-        let _ = std::fs::remove_file(sidecar);
-    }
-    result
+    copy_sqlite_sidecars(src, &tmp_db)?;
+    f(&tmp_db)
 }
 
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
@@ -116,16 +119,13 @@ fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(os)
 }
 
-fn copy_sqlite_sidecars(src: &Path, dst: &Path) -> Result<Vec<PathBuf>, ImportError> {
-    let mut copied = Vec::new();
+fn copy_sqlite_sidecars(src: &Path, dst: &Path) -> Result<(), ImportError> {
     for suffix in ["-wal", "-shm"] {
         let src_sidecar = sqlite_sidecar_path(src, suffix);
         let dst_sidecar = sqlite_sidecar_path(dst, suffix);
-        if copy_regular_file_bounded(&src_sidecar, &dst_sidecar)? {
-            copied.push(dst_sidecar);
-        }
+        copy_regular_file_bounded(&src_sidecar, &dst_sidecar)?;
     }
-    Ok(copied)
+    Ok(())
 }
 
 fn copy_regular_file_bounded(src: &Path, dst: &Path) -> Result<bool, ImportError> {
@@ -148,7 +148,18 @@ fn copy_regular_file_bounded(src: &Path, dst: &Path) -> Result<bool, ImportError
             MAX_SQLITE_COPY_BYTES
         )));
     }
-    std::fs::copy(src, dst).map_err(ImportError::from)?;
+    let mut src_file = std::fs::File::open(src).map_err(ImportError::from)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut dst_file = options.open(dst).map_err(ImportError::from)?;
+    io::copy(
+        &mut std::io::Read::by_ref(&mut src_file).take(metadata.len()),
+        &mut dst_file,
+    )
+    .map_err(ImportError::from)?;
+    dst_file.flush().map_err(ImportError::from)?;
     Ok(true)
 }
 
