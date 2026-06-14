@@ -103,6 +103,9 @@ All notable changes to ForkTTY are documented here.
 - Large PTY writes now retry `poll()` interrupted by signals instead of treating `EINTR` as a fatal partial-paste error.
 - Config recovery no longer quarantines a valid config file on transient I/O errors such as permission/read failures.
 
+### Security
+- Socket-triggered desktop notification dispatch now uses one bounded worker queue instead of spawning an OS thread per `notification.create`, preventing a local client from exhausting threads by flooding notifications.
+
 ## [0.2.0-alpha.11] - 2026-06-11
 
 ### Added
