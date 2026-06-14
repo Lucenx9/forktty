@@ -688,14 +688,14 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         }
         let mut workspace_leaf_ids = Vec::new();
         collect_pane_surface_ids(&workspace.pane_tree, &mut workspace_leaf_ids);
-        if !workspace_leaf_ids.contains(&workspace.focused_surface_id) {
+        if !workspace_leaf_ids.contains(&workspace.focused_surface_id.as_str()) {
             return Err(SessionError::InvalidData(format!(
                 "workspace {} focused surface id is not present",
                 workspace.id
             )));
         }
         for surface_id in workspace_leaf_ids {
-            if !surface_ids.insert(surface_id.clone()) {
+            if !surface_ids.insert(surface_id) {
                 return Err(SessionError::InvalidData(format!(
                     "duplicate pane surface id: {surface_id}"
                 )));
@@ -715,7 +715,7 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
                 surface.id
             )));
         }
-        if !surface_ids.contains(&surface.id) {
+        if !surface_ids.contains(surface.id.as_str()) {
             return Err(SessionError::InvalidData(format!(
                 "persisted surface id is not present in pane tree: {}",
                 surface.id
@@ -811,12 +811,10 @@ fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, Sess
     }
 }
 
-fn collect_pane_surface_ids(node: &PaneNode, ids: &mut Vec<String>) {
+fn collect_pane_surface_ids<'a>(node: &'a PaneNode, ids: &mut Vec<&'a str>) {
     match node {
         PaneNode::Leaf { tabs, .. } => {
-            for tab in tabs {
-                ids.push(tab.clone());
-            }
+            ids.extend(tabs.iter().map(|s| s.as_str()));
         }
         PaneNode::Split { children, .. } => {
             for child in children {
