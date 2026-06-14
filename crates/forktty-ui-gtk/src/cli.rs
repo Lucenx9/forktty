@@ -1011,6 +1011,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_empty_args_launches_app() {
+        let empty: [&str; 0] = [];
+        assert_eq!(parse::<_, &str>(empty), CliAction::LaunchApp);
+    }
+
+    #[test]
     fn parse_no_args_launches_app() {
         assert_eq!(parse::<_, &str>(["forktty"]), CliAction::LaunchApp);
     }
@@ -1165,6 +1171,32 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "explode"]),
             CliAction::Unknown("unknown argument: explode".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn parse_rejects_non_utf8_command() {
+        use std::os::unix::ffi::OsStrExt;
+        let invalid_utf8 = std::ffi::OsStr::from_bytes(&[0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            parse::<_, &std::ffi::OsStr>(&[std::ffi::OsStr::new("forktty"), invalid_utf8]),
+            CliAction::Unknown("unknown argument: <non-utf8>".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn parse_rejects_non_utf8_extra_arg() {
+        use std::os::unix::ffi::OsStrExt;
+        let invalid_utf8 = std::ffi::OsStr::from_bytes(&[0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            parse::<_, &std::ffi::OsStr>(&[
+                std::ffi::OsStr::new("forktty"),
+                std::ffi::OsStr::new("--version"),
+                invalid_utf8
+            ]),
+            CliAction::Unknown("unknown argument: <non-utf8>".to_string())
         );
     }
 
