@@ -557,6 +557,19 @@ mod tests {
     }
 
     #[test]
+    fn bookmark_remove_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        {
+            let mut b = BookmarkStore::open(&path).unwrap();
+            b.add("https://persist.test/", "P").unwrap();
+            assert!(b.remove("https://persist.test/").unwrap());
+        }
+        let b2 = BookmarkStore::open(&path).unwrap();
+        assert!(b2.list().is_empty());
+    }
+
+    #[test]
     fn bookmark_persists_across_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bookmarks.json");
