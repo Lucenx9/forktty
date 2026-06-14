@@ -23,6 +23,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - `forktty hooks test` now sanitizes socket error text before rendering human-readable failures, preventing local socket responses from injecting terminal control sequences.
+- Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
 - Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
 - MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.
 - Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
