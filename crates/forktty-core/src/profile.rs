@@ -4,7 +4,7 @@
 
 use std::fmt;
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -135,6 +135,30 @@ fn backup_corrupt_profile_store(path: &Path, bytes: &[u8]) {
     }
 }
 
+#[cfg(unix)]
+fn replacement_profile_store_mode(mode: u32, same_uid_and_gid: bool) -> u32 {
+    if same_uid_and_gid {
+        mode
+    } else {
+        mode & 0o700
+    }
+}
+
+#[cfg(unix)]
+fn profile_store_mode_for_replacement(
+    existing: Option<&std::fs::Metadata>,
+    replacement: &std::fs::Metadata,
+) -> u32 {
+    let Some(existing) = existing else {
+        return 0o600;
+    };
+    let mode = existing.permissions().mode() & 0o777;
+    replacement_profile_store_mode(
+        mode,
+        existing.uid() == replacement.uid() && existing.gid() == replacement.gid(),
+    )
+}
+
 impl ProfileStore {
     /// Load the store from `path`, creating an in-memory Default-only store if the
     /// file is absent. A present file always has the Default profile ensured.
@@ -179,20 +203,27 @@ impl ProfileStore {
             let mut open_options = std::fs::OpenOptions::new();
             open_options.write(true).create_new(true);
             #[cfg(unix)]
-            let mode = std::fs::metadata(&self.path)
-                .map(|metadata| metadata.permissions().mode() & 0o777)
-                .unwrap_or(0o600);
+            let existing_metadata = std::fs::metadata(&self.path).ok();
             #[cfg(unix)]
             open_options.mode(0o600);
             let mut tmp_file = open_options
                 .open(&tmp_path)
                 .map_err(|e| ProfileError::Io(e.to_string()))?;
-            #[cfg(unix)]
-            tmp_file
-                .set_permissions(std::fs::Permissions::from_mode(mode))
-                .map_err(|e| ProfileError::Io(e.to_string()))?;
             std::io::Write::write_all(&mut tmp_file, &bytes)
                 .map_err(|e| ProfileError::Io(e.to_string()))?;
+            #[cfg(unix)]
+            {
+                let replacement_metadata = tmp_file
+                    .metadata()
+                    .map_err(|e| ProfileError::Io(e.to_string()))?;
+                let mode = profile_store_mode_for_replacement(
+                    existing_metadata.as_ref(),
+                    &replacement_metadata,
+                );
+                tmp_file
+                    .set_permissions(std::fs::Permissions::from_mode(mode))
+                    .map_err(|e| ProfileError::Io(e.to_string()))?;
+            }
             tmp_file
                 .sync_all()
                 .map_err(|e| ProfileError::Io(e.to_string()))?;
@@ -394,6 +425,15 @@ mod tests {
 
         let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_mode_drops_shared_bits_when_ownership_differs() {
+        assert_eq!(replacement_profile_store_mode(0o640, true), 0o640);
+        assert_eq!(replacement_profile_store_mode(0o640, false), 0o600);
+        assert_eq!(replacement_profile_store_mode(0o644, false), 0o600);
+        assert_eq!(replacement_profile_store_mode(0o750, false), 0o700);
     }
 
     #[test]

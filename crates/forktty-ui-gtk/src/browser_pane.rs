@@ -51,6 +51,9 @@ fn set_accessible_button_text(button: &gtk::Button, label: &str, shortcut: Optio
     }
 }
 
+/// The isolated WebKit script world used for ForkTTY browser automation.
+const AUTOMATION_WORLD: &str = "forktty-automation";
+
 /// The scripting driver injected into every page (SP2).
 pub const DRIVER_JS: &str = include_str!("driver.js");
 
@@ -255,10 +258,11 @@ impl BrowserPaneWidget {
             let content_manager = web_view
                 .user_content_manager()
                 .expect("WebView always has a default UserContentManager");
-            let script = UserScript::new(
+            let script = UserScript::for_world(
                 DRIVER_JS,
                 UserContentInjectedFrames::TopFrame,
                 UserScriptInjectionTime::Start,
+                AUTOMATION_WORLD,
                 &[],
                 &[],
             );
@@ -538,16 +542,20 @@ impl BrowserPaneWidget {
         self.web_view.stop_loading();
     }
 
-    /// Run JavaScript in the page, delivering the JSON-serialized result (or an
-    /// error) to `on_done`. `on_done` runs on the GTK main thread once the GIO
+    /// Run JavaScript in ForkTTY's isolated automation world, delivering the
+    /// JSON-serialized result (or an error) to `on_done`. `on_done` runs on the GTK
     /// async call settles.
     pub fn run_js<F>(&self, js: &str, on_done: F)
     where
         F: FnOnce(Result<String, BrowserCmdError>) + 'static,
     {
         use webkit6::gio::Cancellable;
-        self.web_view
-            .evaluate_javascript(js, None, None, Cancellable::NONE, move |result| {
+        self.web_view.evaluate_javascript(
+            js,
+            Some(AUTOMATION_WORLD),
+            None,
+            Cancellable::NONE,
+            move |result| {
                 let mapped = match result {
                     Ok(value) => match value.to_json(0) {
                         Some(s) => {
@@ -572,7 +580,8 @@ impl BrowserPaneWidget {
                     }
                 };
                 on_done(mapped);
-            });
+            },
+        );
     }
 }
 
@@ -593,6 +602,7 @@ mod tests {
 
     #[test]
     fn driver_script_is_present() {
+        assert_eq!(AUTOMATION_WORLD, "forktty-automation");
         assert!(DRIVER_JS.contains("window.__forktty"));
         assert!(DRIVER_JS.contains("snapshot"));
         assert!(DRIVER_JS.contains("return root;"));
