@@ -6,13 +6,8 @@ use forktty_core::{ProfileId, ProfileMeta};
 
 use crate::model::{ImportDestination, ImportEntry, ImportMode, ImportPlan, SourceProfile};
 
-fn normalized<'a>(name: &'a str) -> std::borrow::Cow<'a, str> {
-    let trimmed = name.trim();
-    if trimmed.chars().any(|c| c.is_uppercase()) {
-        std::borrow::Cow::Owned(trimmed.to_lowercase())
-    } else {
-        std::borrow::Cow::Borrowed(trimmed)
-    }
+fn normalized(name: &str) -> String {
+    name.trim().to_lowercase()
 }
 
 /// First destination whose display name matches `source_name` (trimmed, case-insensitive).
@@ -36,13 +31,13 @@ fn next_create_name(base: &str, taken: &std::collections::HashSet<String>) -> St
     } else {
         trimmed
     };
-    if !taken.contains(normalized(resolved).as_ref()) {
+    if !taken.contains(&normalized(resolved)) {
         return resolved.to_string();
     }
     let mut suffix = 2;
     loop {
         let candidate = format!("{resolved} ({suffix})");
-        if !taken.contains(normalized(&candidate).as_ref()) {
+        if !taken.contains(&normalized(&candidate)) {
             return candidate;
         }
         suffix += 1;
@@ -84,7 +79,7 @@ pub fn resolve_separate_profiles_plan(
 ) -> ImportPlan {
     let mut reserved: std::collections::HashSet<String> = destinations
         .iter()
-        .map(|d| normalized(&d.display_name).into_owned())
+        .map(|d| normalized(&d.display_name))
         .collect();
     let entries = selected
         .iter()
@@ -94,7 +89,7 @@ pub fn resolve_separate_profiles_plan(
                 ImportDestination::Existing(id)
             } else {
                 let name = next_create_name(&s.display_name, &reserved);
-                reserved.insert(normalized(&name).into_owned());
+                reserved.insert(normalized(&name));
                 ImportDestination::Create(name)
             };
             ImportEntry {
@@ -186,6 +181,31 @@ mod tests {
         assert_eq!(
             plan.entries[1].destination,
             ImportDestination::Create("Work (2)".to_string())
+        );
+    }
+
+    #[test]
+    fn separate_plan_reuses_existing_unicode_titlecase_destination() {
+        let work_id = ProfileId::new();
+        let plan = resolve_separate_profiles_plan(&[src("ǅ", true)], &[dest("ǆ", work_id)]);
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(
+            plan.entries[0].destination,
+            ImportDestination::Existing(work_id)
+        );
+    }
+
+    #[test]
+    fn separate_plan_deduplicates_unicode_titlecase_create_names() {
+        let plan = resolve_separate_profiles_plan(&[src("ǅ", true), src("ǆ", false)], &[]);
+        assert_eq!(plan.entries.len(), 2);
+        assert_eq!(
+            plan.entries[0].destination,
+            ImportDestination::Create("ǅ".to_string())
+        );
+        assert_eq!(
+            plan.entries[1].destination,
+            ImportDestination::Create("ǆ (2)".to_string())
         );
     }
 

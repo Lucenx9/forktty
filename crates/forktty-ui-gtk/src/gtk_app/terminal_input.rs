@@ -354,9 +354,13 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
         && matches!(
             key,
             gtk::gdk::Key::Page_Up
+                | gtk::gdk::Key::KP_Page_Up
                 | gtk::gdk::Key::Page_Down
+                | gtk::gdk::Key::KP_Page_Down
                 | gtk::gdk::Key::Home
+                | gtk::gdk::Key::KP_Home
                 | gtk::gdk::Key::End
+                | gtk::gdk::Key::KP_End
         );
     ctrl_shift_app_action || ctrl_app_action || tab_navigation_action
 }
@@ -624,6 +628,10 @@ mod tests {
         assert!(translate_gtk_key(gtk::gdk::Key::Page_Down, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::Home, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::End, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_Page_Up, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_Page_Down, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_Home, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_End, ctrl, None).is_none());
     }
 
     #[test]
