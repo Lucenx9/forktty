@@ -613,12 +613,15 @@ impl GhosttyCore {
             // Out-of-range points are a lookup miss, not a failure.
             Err(_) => return Ok(None),
         };
-        let mut buf = vec![0u8; 1024];
+        let mut buf = vec![0u8; HYPERLINK_URI_INITIAL_BUFFER_BYTES];
         let len = loop {
             match grid_ref.hyperlink_uri(&mut buf) {
                 Ok(len) => break len,
                 Err(libghostty_vt::Error::OutOfSpace { required }) => {
-                    buf = vec![0u8; hyperlink_uri_retry_buffer_len(buf.len(), required)];
+                    let Some(next_len) = hyperlink_uri_retry_buffer_len(buf.len(), required) else {
+                        return Ok(None);
+                    };
+                    buf = vec![0u8; next_len];
                 }
                 Err(err) => return Err(err),
             }
@@ -768,10 +771,20 @@ impl GhosttyCore {
     }
 }
 
-fn hyperlink_uri_retry_buffer_len(current_len: usize, required: usize) -> usize {
-    required
-        .saturating_mul(4)
-        .max(current_len.saturating_add(1))
+const HYPERLINK_URI_INITIAL_BUFFER_BYTES: usize = 1024;
+const HYPERLINK_URI_MAX_BYTES: usize = 8 * 1024;
+
+fn hyperlink_uri_retry_buffer_len(current_len: usize, required: usize) -> Option<usize> {
+    if required > HYPERLINK_URI_MAX_BYTES || current_len >= HYPERLINK_URI_MAX_BYTES {
+        return None;
+    }
+
+    Some(
+        required
+            .saturating_mul(4)
+            .max(current_len.saturating_add(1))
+            .min(HYPERLINK_URI_MAX_BYTES),
+    )
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1708,6 +1721,20 @@ mod tests {
     }
 
     #[test]
+    fn paste_replaces_unsafe_control_bytes_with_spaces() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.set_bracketed_paste_for_test(true).unwrap();
+
+        let encoded = core.paste_bytes("echo \x1b[31mred\x1b[0m\x03").unwrap();
+        assert_eq!(encoded, b"\x1b[200~echo  [31mred [0m \x1b[201~");
+    }
+
+    #[test]
     fn unsafe_paste_uses_bracketed_paste_even_when_mode_is_off() {
         let core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 80,
@@ -1931,8 +1958,27 @@ mod tests {
 
     #[test]
     fn hyperlink_uri_retry_buffer_allows_utf8_worst_case() {
-        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 600), 2400);
-        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 0), 1025);
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 600), Some(2400));
+        assert_eq!(hyperlink_uri_retry_buffer_len(1024, 0), Some(1025));
+    }
+
+    #[test]
+    fn hyperlink_uri_retry_buffer_is_capped() {
+        assert_eq!(
+            hyperlink_uri_retry_buffer_len(
+                HYPERLINK_URI_INITIAL_BUFFER_BYTES,
+                HYPERLINK_URI_MAX_BYTES + 1
+            ),
+            None
+        );
+        assert_eq!(
+            hyperlink_uri_retry_buffer_len(HYPERLINK_URI_MAX_BYTES, HYPERLINK_URI_MAX_BYTES),
+            None
+        );
+        assert_eq!(
+            hyperlink_uri_retry_buffer_len(HYPERLINK_URI_INITIAL_BUFFER_BYTES, 4096),
+            Some(HYPERLINK_URI_MAX_BYTES)
+        );
     }
 
     #[test]
