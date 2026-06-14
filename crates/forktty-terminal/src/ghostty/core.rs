@@ -1709,12 +1709,13 @@ mod tests {
 
     #[test]
     fn paste_replaces_unsafe_control_bytes_with_spaces() {
-        let core = GhosttyCore::new(GhosttyCoreOptions {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 80,
             rows: 24,
             scrollback_lines: 100,
         })
         .unwrap();
+        core.set_bracketed_paste_for_test(true).unwrap();
 
         let encoded = core.paste_bytes("echo \x1b[31mred\x1b[0m\x03").unwrap();
         assert_eq!(encoded, b"\x1b[200~echo  [31mred [0m \x1b[201~");
