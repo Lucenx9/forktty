@@ -6,6 +6,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Security
 - Browser automation now injects and evaluates its driver in an isolated WebKit script world, preventing visited pages from detecting or tampering with `window.__forktty`.
+- Chromium cookie import now verifies the version-24+ encrypted host digest before accepting decrypted values, rejecting malformed or cross-host cookie rows.
 - Agent resume PTY spawns now resolve bare provider commands using only absolute `PATH` entries before applying the recorded session cwd, preventing relative/empty `PATH` entries from executing project-local binaries during restore or resume.
 - Socket hook correlation now rejects `hook_session_id` values larger than the metadata text limit before caching them, preventing a local client from retaining many near-request-size session IDs in memory.
 - Socket-triggered notification dispatch and custom notification command reaping now use bounded queues instead of spawning unbounded OS threads per `notification.create`, preventing a local client from exhausting threads by flooding notifications.
@@ -19,6 +20,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- `forktty doctor` once again exits 2 whenever the diagnostics report contains warnings, preserving the documented health-check behavior even without `--strict`.
 - Ctrl+click terminal links now open only `http://` and `https://` targets, blocking terminal-controlled `file://` and custom URI handlers.
 - AppImage self-updates now create downloaded replacement files with owner-only permissions before checksum verification, closing a local same-group temp-file tampering window under permissive umasks.
 - Notification commands using SSH/mosh options that contain `-c` are no longer rejected as shell trampolines, and a ForkTTY binary built without `gtk-ghostty` now exits with failure when asked to launch the GTK app.
