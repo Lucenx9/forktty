@@ -1926,7 +1926,7 @@ fn link_at_point(
 /// GTK past what shipped hosts have): a failed launch reports nothing.
 fn open_terminal_link(drawing_area: &gtk::DrawingArea, uri: &str) {
     if !is_safe_terminal_uri(uri) {
-        tracing::warn!(uri, "blocked unsafe terminal link URI");
+        eprintln!("blocked unsafe terminal link URI: {uri}");
         return;
     }
     let window = drawing_area

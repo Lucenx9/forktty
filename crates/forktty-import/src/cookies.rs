@@ -291,6 +291,37 @@ mod tests {
     }
 
     #[test]
+    fn decrypt_chromium_value_test_pure_deterministic() {
+        let key = chromium_v10_key();
+        let plaintext = b"pure_deterministic_test";
+        let blob = make_v10_blob(&key, plaintext);
+        let decoded = decrypt_chromium_value(&blob, &key).unwrap();
+        assert_eq!(decoded, "pure_deterministic_test");
+
+        // Edge case: empty blob
+        assert!(decrypt_chromium_value(b"", &key).is_none());
+
+        // Edge case: malformed version prefix
+        let mut malformed_prefix = blob.clone();
+        malformed_prefix[0..3].copy_from_slice(b"v99");
+        assert!(decrypt_chromium_value(&malformed_prefix, &key).is_none());
+
+        // Edge case: valid prefix but invalid length (not a multiple of block size 16)
+        let invalid_length = &blob[0..blob.len() - 1];
+        assert!(decrypt_chromium_value(invalid_length, &key).is_none());
+
+        // Edge case: valid length but invalid padding/decryption
+        let mut invalid_cipher = blob.clone();
+        invalid_cipher[5] ^= 0xFF; // corrupt ciphertext
+        assert!(decrypt_chromium_value(&invalid_cipher, &key).is_none());
+
+        // Edge case: decryption succeeds but bytes are invalid UTF-8
+        let invalid_utf8_plaintext = b"\xFF\xFF\xFF";
+        let invalid_utf8_blob = make_v10_blob(&key, invalid_utf8_plaintext);
+        assert!(decrypt_chromium_value(&invalid_utf8_blob, &key).is_none());
+    }
+
+    #[test]
     fn v10_key_is_pbkdf2_peanuts() {
         // Known vector: PBKDF2-HMAC-SHA1("peanuts", "saltysalt", 1, 16).
         let key = chromium_v10_key();
