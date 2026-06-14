@@ -3,7 +3,11 @@
 //! (history/bookmark verbs) use these stores against the same per-profile files.
 //! sqlite runs in WAL mode so a concurrent reader and writer do not block.
 
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
@@ -78,6 +82,100 @@ fn backup_corrupt_sqlite(path: &Path) -> Result<(), HistoryError> {
     Ok(())
 }
 
+fn ensure_private_history_dir(parent: &Path) -> Result<(), HistoryError> {
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        let mut missing = Vec::new();
+        let mut cursor = Some(parent);
+        while let Some(dir) = cursor {
+            match fs::metadata(dir) {
+                Ok(meta) if meta.is_dir() => break,
+                Ok(_) => {
+                    return Err(HistoryError::Io(format!(
+                        "history directory path is not a directory: {}",
+                        dir.display()
+                    )));
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(dir.to_path_buf());
+                    cursor = dir.parent().filter(|path| !path.as_os_str().is_empty());
+                }
+                Err(err) => return Err(HistoryError::Io(err.to_string())),
+            }
+        }
+
+        for dir in missing.iter().rev() {
+            match fs::DirBuilder::new().mode(0o700).create(dir) {
+                Ok(()) => fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+                    .map_err(|err| HistoryError::Io(err.to_string()))?,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !fs::metadata(dir)
+                        .map_err(|err| HistoryError::Io(err.to_string()))?
+                        .is_dir()
+                    {
+                        return Err(HistoryError::Io(format!(
+                            "history directory path is not a directory: {}",
+                            dir.display()
+                        )));
+                    }
+                }
+                Err(err) => return Err(HistoryError::Io(err.to_string())),
+            }
+        }
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(parent).map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn ensure_private_history_file(path: &Path) -> Result<(), HistoryError> {
+    #[cfg(unix)]
+    {
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn apply_private_history_sidecar_permissions(path: &Path) -> Result<(), HistoryError> {
+    #[cfg(unix)]
+    {
+        for sensitive_path in [
+            path.to_path_buf(),
+            sqlite_sidecar_path(path, "-wal"),
+            sqlite_sidecar_path(path, "-shm"),
+        ] {
+            match fs::set_permissions(&sensitive_path, fs::Permissions::from_mode(0o600)) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(HistoryError::Io(err.to_string())),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 fn now_us() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -131,13 +229,20 @@ impl HistoryStore {
     /// Open (creating + migrating) `history.sqlite` at `path`, ensuring the parent dir.
     pub fn open(path: &Path) -> Result<Self, HistoryError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| HistoryError::Io(e.to_string()))?;
+            ensure_private_history_dir(parent)?;
         }
+        ensure_private_history_file(path)?;
         match Self::open_sqlite(path) {
-            Ok(store) => Ok(store),
+            Ok(store) => {
+                apply_private_history_sidecar_permissions(path)?;
+                Ok(store)
+            }
             Err(e) if path.exists() && is_recoverable_sqlite_error(&e) => {
                 backup_corrupt_sqlite(path)?;
-                Self::open_sqlite(path).map_err(HistoryError::from)
+                ensure_private_history_file(path)?;
+                let store = Self::open_sqlite(path).map_err(HistoryError::from)?;
+                apply_private_history_sidecar_permissions(path)?;
+                Ok(store)
             }
             Err(e) => Err(HistoryError::from(e)),
         }
@@ -312,8 +417,7 @@ impl BookmarkStore {
             Some(bytes) => match serde_json::from_slice::<Vec<Bookmark>>(&bytes) {
                 Ok(v) => v,
                 Err(_) => {
-                    let bak = reserve_unique_backup_path(path, "json.bak");
-                    let _ = std::fs::write(&bak, &bytes);
+                    backup_malformed_bookmarks(path, &bytes);
                     Vec::new()
                 }
             },
@@ -375,11 +479,14 @@ impl BookmarkStore {
             .path
             .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         let result = (|| -> Result<(), HistoryError> {
-            let mut tmp_file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(PRIVATE_FILE_MODE);
+            let mut tmp_file = options
                 .open(&tmp)
                 .map_err(|e| HistoryError::Io(e.to_string()))?;
+            set_private_permissions(&tmp)?;
             std::io::Write::write_all(&mut tmp_file, &bytes)
                 .map_err(|e| HistoryError::Io(e.to_string()))?;
             tmp_file
@@ -391,6 +498,47 @@ impl BookmarkStore {
             let _ = std::fs::remove_file(&tmp);
         }
         result
+    }
+}
+
+#[cfg(unix)]
+const PRIVATE_FILE_MODE: u32 = 0o600;
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), HistoryError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(PRIVATE_FILE_MODE);
+    let mut file = options
+        .open(path)
+        .map_err(|err| HistoryError::Io(err.to_string()))?;
+    set_private_permissions(path)?;
+    std::io::Write::write_all(&mut file, bytes).map_err(|err| HistoryError::Io(err.to_string()))?;
+    file.sync_all()
+        .map_err(|err| HistoryError::Io(err.to_string()))?;
+    set_private_permissions(path)
+}
+
+fn set_private_permissions(path: &Path) -> Result<(), HistoryError> {
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))
+            .map_err(|err| HistoryError::Io(err.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn backup_malformed_bookmarks(path: &Path, bytes: &[u8]) {
+    let backup = reserve_unique_backup_path(path, "json.bak");
+    if std::fs::rename(path, &backup).is_err() {
+        let _ = write_private_file(&backup, bytes);
+        let _ = std::fs::remove_file(path);
+    } else {
+        let _ = set_private_permissions(&backup);
     }
 }
 
@@ -593,6 +741,68 @@ mod tests {
         assert_eq!(h.list(10).unwrap().len(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn open_hardens_history_file_directory_and_sidecars() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("nested")
+            .join("profile")
+            .join("history.sqlite");
+
+        let h = HistoryStore::open(&path).unwrap();
+        h.record_visit("https://private.test/", "Private").unwrap();
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&sqlite_sidecar_path(&path, "-wal")), 0o600);
+        assert_eq!(mode(&sqlite_sidecar_path(&path, "-shm")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_tightens_existing_permissive_history_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let profile_dir = dir.path().join("profile");
+        std::fs::create_dir(&profile_dir).unwrap();
+        std::fs::set_permissions(&profile_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = profile_dir.join("history.sqlite");
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let h = HistoryStore::open(&path).unwrap();
+        h.record_visit("https://private.test/", "Private").unwrap();
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&profile_dir), 0o700);
+        assert_eq!(mode(&path), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_recreates_history_db_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        std::fs::write(&path, b"not a sqlite database").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let h = HistoryStore::open(&path).unwrap();
+        h.record_visit("https://recovered-private.test/", "Recovered")
+            .unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(path.with_extension("sqlite.bak").exists());
+    }
+
     #[test]
     fn open_returns_error_for_invalid_directory() {
         let dir = tempfile::tempdir().unwrap();
@@ -606,6 +816,11 @@ mod tests {
             Ok(_) => panic!("expected open to fail because parent is a file"),
         };
         assert!(matches!(err, HistoryError::Io(_)));
+    }
+
+    #[cfg(unix)]
+    fn file_mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
     }
 
     fn bm_store() -> (tempfile::TempDir, BookmarkStore) {
@@ -668,6 +883,32 @@ mod tests {
         assert_eq!(b2.list().len(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_save_forces_owner_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+
+        let mut b = BookmarkStore::open(&path).unwrap();
+        b.add("https://persist.test/?token=secret", "P").unwrap();
+
+        assert_eq!(file_mode(&path), PRIVATE_FILE_MODE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_save_replaces_world_readable_file_with_owner_only_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        std::fs::write(&path, "[]").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut b = BookmarkStore::open(&path).unwrap();
+        b.add("https://persist.test/?token=secret", "P").unwrap();
+
+        assert_eq!(file_mode(&path), PRIVATE_FILE_MODE);
+    }
+
     #[test]
     fn bookmark_malformed_file_starts_fresh_and_backs_up() {
         let dir = tempfile::tempdir().unwrap();
@@ -675,9 +916,13 @@ mod tests {
         std::fs::write(&path, b"{ this is not valid json").unwrap();
         let b = BookmarkStore::open(&path).unwrap();
         assert!(b.list().is_empty());
-        // Original bytes preserved alongside as a .bak.
+        // Original bytes moved alongside as a .bak so future opens do not repeat recovery.
         let bak = path.with_extension("json.bak");
         assert!(bak.exists());
+        assert_eq!(std::fs::read(&bak).unwrap(), b"{ this is not valid json");
+        #[cfg(unix)]
+        assert_eq!(file_mode(&bak), PRIVATE_FILE_MODE);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -691,6 +936,7 @@ mod tests {
         let b = BookmarkStore::open(&path).unwrap();
         assert!(b.list().is_empty());
         assert_eq!(std::fs::read(&first_backup).unwrap(), b"previous backup");
+        assert!(!path.exists());
 
         let backup_count = std::fs::read_dir(dir.path())
             .unwrap()
@@ -703,6 +949,30 @@ mod tests {
             })
             .count();
         assert_eq!(backup_count, 2);
+    }
+
+    #[test]
+    fn bookmark_repeated_open_after_malformed_file_does_not_create_more_backups() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        std::fs::write(&path, b"{ this is not valid json").unwrap();
+
+        let first = BookmarkStore::open(&path).unwrap();
+        assert!(first.list().is_empty());
+        let second = BookmarkStore::open(&path).unwrap();
+        assert!(second.list().is_empty());
+
+        let backup_count = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("bookmarks.json.bak")
+            })
+            .count();
+        assert_eq!(backup_count, 1);
     }
 
     #[test]
