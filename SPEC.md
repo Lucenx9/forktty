@@ -330,7 +330,7 @@ Worktree operations use `git2` and avoid shelling out to git.
 Implemented operations:
 
 - list worktrees;
-- create worktree and branch;
+- create worktree and branch; if the requested branch already has a linked worktree in one of ForkTTY's supported layouts, `worktree.create` returns that existing worktree so a retry can recover after a crash between Git registration and ForkTTY session persistence;
 - attach existing branch/worktree;
 - remove worktree after dirty-state and metadata validation;
 - merge worktree branch with dirty-target/conflict checks and abort incomplete merges before returning failure;

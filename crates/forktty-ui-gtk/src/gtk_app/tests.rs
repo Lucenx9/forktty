@@ -149,6 +149,77 @@ impl TerminalBackend for CloseFailsBackend {
     }
 }
 
+#[derive(Debug)]
+struct CloseObservesModelLockBackend {
+    surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+    model: Arc<Mutex<WorkspaceModel>>,
+    observed_model_unlocked: Mutex<bool>,
+}
+
+impl CloseObservesModelLockBackend {
+    fn new(model: Arc<Mutex<WorkspaceModel>>) -> Self {
+        Self {
+            surfaces: Mutex::new(BTreeMap::new()),
+            model,
+            observed_model_unlocked: Mutex::new(false),
+        }
+    }
+
+    fn observed_model_unlocked(&self) -> bool {
+        *self.observed_model_unlocked.lock().unwrap()
+    }
+}
+
+impl TerminalBackend for CloseObservesModelLockBackend {
+    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        self.surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .insert(
+                request.surface_id.clone(),
+                TerminalSurfaceState {
+                    surface_id: request.surface_id,
+                    workspace_id: request.workspace_id,
+                    cwd: request.cwd,
+                    shell: request.shell,
+                    cols: 80,
+                    rows: 24,
+                },
+            );
+        Ok(())
+    }
+
+    fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        if self.model.try_lock().is_ok() {
+            *self.observed_model_unlocked.lock().unwrap() = true;
+        }
+        self.surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .remove(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        Ok(())
+    }
+
+    fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+        Ok(self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .values()
+            .cloned()
+            .collect())
+    }
+}
+
 #[test]
 fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
@@ -1455,6 +1526,47 @@ fn close_tab_surface_closes_model_and_backend_for_non_last_tab() {
     let backend_surfaces = terminal.surfaces().unwrap();
     assert_eq!(backend_surfaces.len(), 1);
     assert_eq!(backend_surfaces[0].surface_id, first_surface_id);
+}
+
+#[test]
+fn close_tab_surface_holds_model_lock_while_closing_backend() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(CloseObservesModelLockBackend::new(model.clone()));
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, first_surface_id, second_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        let first_surface_id = workspace.focused_surface_id.clone();
+        let second = model.add_tab(&first_surface_id).unwrap();
+        (workspace.id, first_surface_id, second.id)
+    };
+    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
+        terminal
+            .spawn(SpawnRequest::for_surface(
+                &surface,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            ))
+            .unwrap();
+    }
+
+    assert!(close_tab_surface(&state, &second_surface_id));
+
+    assert!(
+        !terminal.observed_model_unlocked(),
+        "backend close observed the model lock open before model close"
+    );
+    let model = model.lock().unwrap();
+    assert!(model.surface(&first_surface_id).is_some());
+    assert!(model.surface(&second_surface_id).is_none());
 }
 
 #[test]

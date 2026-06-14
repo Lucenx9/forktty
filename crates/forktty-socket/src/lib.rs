@@ -8328,6 +8328,49 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn worktree_create_reopens_existing_worktree_after_workspace_close() {
+        let repo_dir = make_temp_repo();
+        let (state, _backend) = test_state();
+        dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "repo", "workingDir": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        let created = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": "topic/retry", "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        let first_workspace_id = created["id"].as_str().unwrap().to_string();
+
+        dispatch(&state, "workspace.close", json!({"id": first_workspace_id}))
+            .await
+            .unwrap();
+        let reopened = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": "topic/retry", "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(reopened["branch"], "topic/retry");
+        assert_eq!(reopened["path"], created["path"]);
+        assert_eq!(reopened["worktree_name"], created["worktree_name"]);
+        assert_ne!(reopened["id"], created["id"]);
+        assert_eq!(
+            worktree::list(repo_dir.path().to_str().unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn worktree_create_surfaces_setup_hook_failure_as_warning_and_notification() {

@@ -52,6 +52,10 @@ experimental in this alpha; they have a separate opt-in smoke section.
 - Split right and split down until at least three panes exist.
 - Move focus between panes with keyboard shortcuts and pointer clicks.
 - Copy and paste with `Ctrl+Shift+C` / `Ctrl+Shift+V`.
+- Click an unfocused terminal pane and immediately drag; confirm the same click focuses the pane and starts selection instead of being swallowed.
+- In a mouse-tracking app such as `vim` or `htop`, confirm normal drag reaches the app, then Shift+drag selects terminal text locally.
+- Start a terminal text selection, wheel/touchpad-scroll before releasing, and confirm the released selection still covers the intended text and copies correctly.
+- Drag a selection above and below the terminal viewport edge long enough to trigger autoscroll; confirm the highlight tracks the text and the final copied text matches the selected range.
 - Open the terminal context menu in a small split pane and use Paste.
 - If GTK cannot spawn the target workspace terminal while switching workspaces, it shows a Workspace Switch Failed notification and keeps the previous workspace active.
 - Close one pane and confirm focus moves to a remaining pane.
@@ -225,6 +229,7 @@ checking that the opt-in browser feature still builds and starts.
 - `forktty worktree-create feature/x --branch feature/y --cwd <repo>` — exits with `cannot combine a positional name with --name or --branch` instead of ignoring one target.
 - `forktty worktree-create --name feature/x --branch feature/y --cwd <repo>` — exits with `cannot combine --name and --branch` instead of ignoring one target.
 - `forktty worktree-create feature/x --cwd <path-to-clean-repo>` — new workspace opens at `.worktrees/feature-x`.
+- Run the same `forktty worktree-create feature/x --cwd <path-to-clean-repo>` again after closing the workspace without removing the Git worktree — it reopens the existing worktree instead of failing on the already-created branch.
 - If terminal spawn fails during `forktty worktree-create feature/x`, the action
   reports the spawn failure and removes the newly created git worktree and branch.
 - Run `forktty worktree-attach feature/x --cwd <path-to-clean-repo>` again — it opens/reuses the existing worktree instead of creating a duplicate or failing.

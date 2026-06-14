@@ -40,6 +40,9 @@ All notable changes to ForkTTY are documented here.
 - Socket `surface.read_text`/`surface.capture_tail` no longer block a tokio worker thread while waiting for the GTK main loop: the wait is offloaded via `block_in_place`, so many concurrent read requests (as agent hooks issue) can no longer starve the socket server and stall every other request.
 - Removing a worktree now deletes its working-tree directory before deregistering it from git, so a failed directory removal leaves a recoverable (git-pruneable) registration instead of stranding the directory permanently with no way for git to find it.
 - A failed fast-forward merge rollback now logs the underlying ref-reset/HEAD-restore errors instead of silently discarding them, making a wedged repository diagnosable.
+- Re-running `worktree.create` for a branch that already has a ForkTTY-supported linked worktree now reopens that worktree instead of failing on the already-created branch, recovering the crash window between Git worktree registration and ForkTTY session persistence.
+- Concurrent nested worktree creation now serializes updates to `.git/info/exclude`, keeping the `.worktrees/` entry idempotent.
+- Closing a non-last tab now keeps the model locked through backend close and model removal, so concurrent UI/socket closes cannot observe a half-closed surface.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 

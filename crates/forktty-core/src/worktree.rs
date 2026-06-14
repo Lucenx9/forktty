@@ -1,7 +1,7 @@
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -182,6 +182,12 @@ pub fn create(
 ) -> Result<WorktreeInfo, WorktreeError> {
     let repo = open_repo(repo_path)?;
     let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
+    if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, branch_name)? {
+        let setup_warning = run_setup_hook_advisory(&existing_path);
+        let mut info = info(branch_name.to_string(), existing_path, existing_name);
+        info.setup_warning = setup_warning;
+        return Ok(info);
+    }
     let head_commit = repo
         .head()
         .map_err(WorktreeError::NoHead)?
@@ -913,8 +919,31 @@ fn ensure_local_exclude_for_worktree_path(
     }
     let mut file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
         .open(&exclude_path)?;
+    file.lock()?;
+    file.seek(SeekFrom::Start(0))?;
+    existing.clear();
+    {
+        let mut limited = (&mut file).take(MAX_EXCLUDE_BYTES + 1);
+        limited.read_to_string(&mut existing)?;
+    }
+    if existing.len() as u64 > MAX_EXCLUDE_BYTES {
+        return Err(WorktreeError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            ".git/info/exclude is too large",
+        )));
+    }
+    if existing
+        .lines()
+        .map(str::trim)
+        .any(|line| line == ".worktrees/" || line == "/.worktrees/")
+    {
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(0))?;
     if !existing.is_empty() && !existing.ends_with('\n') {
         writeln!(file)?;
     }
@@ -1104,6 +1133,19 @@ mod tests {
     }
 
     #[test]
+    fn create_returns_existing_worktree_for_existing_branch_registration() {
+        let dir = make_repo();
+        let first = create(dir.path().to_str().unwrap(), "feature/retry", "nested").unwrap();
+
+        let second = create(dir.path().to_str().unwrap(), "feature/retry", "nested").unwrap();
+
+        assert_eq!(second.branch, first.branch);
+        assert_eq!(second.path, first.path);
+        assert_eq!(second.worktree_name, first.worktree_name);
+        assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
+    }
+
+    #[test]
     fn prepare_remove_does_not_prune_until_finish() {
         let dir = make_repo();
         let info = create(
@@ -1195,6 +1237,42 @@ mod tests {
 
         let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert!(exclude.lines().any(|line| line.trim() == ".worktrees/"));
+    }
+
+    #[test]
+    fn local_exclude_update_waits_for_existing_file_lock() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&exclude_path)
+            .unwrap();
+        lock.lock().unwrap();
+
+        let repo_path = dir.path().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let repo = Repository::open(&repo_path).unwrap();
+            let result = ensure_local_exclude_for_worktree_path(
+                &repo,
+                &repo_path,
+                &repo_path.join(".worktrees/locked"),
+            );
+            tx.send(result).unwrap();
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "exclude update returned while another process-style file lock was held"
+        );
+        lock.unlock().unwrap();
+        rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
+        worker.join().unwrap();
     }
 
     #[test]
