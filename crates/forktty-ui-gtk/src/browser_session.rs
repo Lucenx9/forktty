@@ -152,9 +152,12 @@ fn prepare_profile_dirs(dirs: &ProfileDirs) -> std::io::Result<()> {
 
 #[cfg(unix)]
 fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(path)?;
-    for dir in private_profile_dirs(path) {
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    let dirs = private_profile_dirs(path);
+    if let Some(parent) = dirs.first().and_then(|dir| dir.parent()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    for dir in dirs {
+        ensure_private_dir(dir)?;
     }
     Ok(())
 }
@@ -166,8 +169,24 @@ fn create_private_dir_all(path: &Path) -> std::io::Result<()> {
 
 #[cfg(unix)]
 fn harden_existing_cookie_store(path: &Path) -> std::io::Result<()> {
-    if path.exists() {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refusing symlinked browser cookie store {}", path.display()),
+            ));
+        }
+        Ok(meta) if meta.is_file() => {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("browser cookie store is not a file: {}", path.display()),
+            ));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
     }
     Ok(())
 }
@@ -185,6 +204,33 @@ fn private_profile_dirs(path: &Path) -> Vec<&Path> {
         .into_iter()
         .rev()
         .collect()
+}
+
+#[cfg(unix)]
+fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refusing symlinked browser profile dir {}", path.display()),
+            ));
+        }
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "browser profile path is not a directory: {}",
+                    path.display()
+                ),
+            ));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(path)?;
+        }
+        Err(err) => return Err(err),
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 
 #[cfg(test)]
@@ -259,6 +305,45 @@ mod tests {
                 std::path::Path::new("/tmp/ft-data/browser_profiles/abc"),
                 std::path::Path::new("/tmp/ft-data/browser_profiles/abc/data"),
             ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_dir_all_rejects_symlinked_profile_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let target = tmp.path().join("target");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o777)).unwrap();
+        std::os::unix::fs::symlink(&target, root.join("browser_profiles")).unwrap();
+
+        let err = create_private_dir_all(&root.join("browser_profiles/abc/data")).unwrap_err();
+
+        assert!(err.to_string().contains("refusing symlinked"));
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o777
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn harden_existing_cookie_store_rejects_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target.sqlite");
+        let link = tmp.path().join("cookies.sqlite");
+        std::fs::write(&target, b"cookie").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o666)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = harden_existing_cookie_store(&link).unwrap_err();
+
+        assert!(err.to_string().contains("refusing symlinked"));
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o666
         );
     }
 }
