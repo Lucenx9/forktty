@@ -103,6 +103,8 @@ pub struct WorktreeInfo {
     pub path: String,
     pub branch: String,
     pub worktree_name: String,
+    #[serde(default, skip_serializing)]
+    pub created: bool,
     #[serde(default)]
     pub status: String,
     /// Non-fatal warning emitted when the `.forktty/setup` hook failed.
@@ -216,6 +218,7 @@ pub fn create(
     }
     let setup_warning = run_setup_hook_advisory(&wt_path);
     let mut info = info(branch, wt_path, worktree_name);
+    info.created = true;
     info.setup_warning = setup_warning;
     Ok(info)
 }
@@ -250,6 +253,7 @@ pub fn attach(
     repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
     let setup_warning = run_setup_hook_advisory(&wt_path);
     let mut info = info(branch, wt_path, worktree_name);
+    info.created = true;
     info.setup_warning = setup_warning;
     Ok(info)
 }
@@ -517,6 +521,7 @@ fn info(branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
         path: path.to_string_lossy().to_string(),
         branch,
         worktree_name,
+        created: false,
         status,
         setup_warning: None,
     }

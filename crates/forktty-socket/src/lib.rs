@@ -2354,6 +2354,9 @@ fn rollback_created_worktree_after_spawn_failure(
     info: &worktree::WorktreeInfo,
     spawn_error: String,
 ) -> String {
+    if !info.created {
+        return spawn_error;
+    }
     match worktree::remove(cwd, &info.worktree_name, true) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(
@@ -8188,6 +8191,55 @@ mod tests {
             .list_workspaces()
             .iter()
             .all(|workspace| workspace.git_branch != branch_name));
+    }
+
+    #[tokio::test]
+    async fn worktree_create_preserves_existing_worktree_when_spawn_fails() {
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/existing-spawn-rollback-{}", std::process::id());
+        let created = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            &branch_name,
+            "../forktty-worktrees/{name}",
+        )
+        .unwrap();
+        let existing_path = created.path.clone();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+        let state = SocketAppState::new(
+            model.clone(),
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        assert!(Path::new(&existing_path).exists());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_ok());
+        let worktrees = worktree::list(repo_dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].branch, branch_name);
     }
 
     #[tokio::test]

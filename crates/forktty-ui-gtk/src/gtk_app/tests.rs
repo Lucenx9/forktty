@@ -1738,6 +1738,46 @@ fn worktree_create_removes_created_worktree_when_spawn_fails() {
 }
 
 #[test]
+fn worktree_create_preserves_existing_worktree_when_gtk_spawn_fails() {
+    let repo_dir = make_temp_repo();
+    let branch_name = format!("feature/existing-spawn-rollback-{}", std::process::id());
+    let created = worktree::create(
+        repo_dir.path().to_str().unwrap(),
+        &branch_name,
+        "../forktty-worktrees/{name}",
+    )
+    .unwrap();
+    let existing_path = created.path.clone();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    {
+        let mut model = model.lock().unwrap();
+        model.create_workspace("repo", repo_dir.path());
+    }
+    let (tx, rx) = mpsc::channel();
+    drop(rx);
+    let terminal = Arc::new(GtkTerminalBackend::new(tx));
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err();
+
+    assert!(error.contains("sending on a closed channel"));
+    assert!(Path::new(&existing_path).exists());
+    let repo = Repository::open(repo_dir.path()).unwrap();
+    assert!(repo
+        .find_branch(&branch_name, git2::BranchType::Local)
+        .is_ok());
+    let worktrees = worktree::list(repo_dir.path().to_str().unwrap()).unwrap();
+    assert_eq!(worktrees.len(), 1);
+    assert_eq!(worktrees[0].branch, branch_name);
+}
+
+#[test]
 fn gtk_worktree_remove_keeps_worktree_when_terminal_close_fails() {
     let repo_dir = make_temp_repo();
     let branch_name = format!("feature/remove-close-fails-{}", std::process::id());
