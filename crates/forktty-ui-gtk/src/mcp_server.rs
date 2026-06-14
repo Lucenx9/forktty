@@ -994,18 +994,27 @@ struct ToolSpec {
 }
 
 // MCP tool annotations (2025-03-26 spec): UX hints for clients, not a
-// security boundary. Every ForkTTY tool acts on the local instance only,
-// so openWorldHint is always false.
+// security boundary. Most ForkTTY tools act on the local instance only, but
+// terminal-input tools can drive shells that touch files, networks, or other
+// external systems, so they must opt into open-world/destructive hints.
 fn read_only_annotations() -> Value {
     json!({ "readOnlyHint": true, "openWorldHint": false })
 }
 
 fn mutating_annotations(destructive: bool, idempotent: bool) -> Value {
+    mutating_annotations_with_open_world(destructive, idempotent, false)
+}
+
+fn mutating_annotations_with_open_world(
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+) -> Value {
     json!({
         "readOnlyHint": false,
         "destructiveHint": destructive,
         "idempotentHint": idempotent,
-        "openWorldHint": false,
+        "openWorldHint": open_world,
     })
 }
 
@@ -1133,8 +1142,8 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "surface_send_text",
-            annotations: mutating_annotations(false, false),
-            description: "Send literal text to a ForkTTY terminal surface. Use this to drive a pane after inspecting surface_list; surface_id defaults from FORKTTY_SURFACE_ID.",
+            annotations: mutating_annotations_with_open_world(true, false, true),
+            description: "Send literal text to a ForkTTY terminal surface. Text may execute shell commands or interact with external systems; use this to drive a pane after inspecting surface_list; surface_id defaults from FORKTTY_SURFACE_ID.",
             input_schema: object_schema(
                 &["text"],
                 json!({
@@ -1370,8 +1379,9 @@ mod tests {
         }));
 
         // Every tool must carry annotations, and the hints must reflect the
-        // tool's actual effect: list tools are read-only, worktree_remove is
-        // the destructive one, and nothing leaves the local instance.
+        // tool's actual effect: list tools are read-only, worktree_remove
+        // is destructive, and terminal input can execute commands that touch
+        // files, networks, or other external systems.
         let annotation = |name: &str| -> &Value {
             tools
                 .iter()
@@ -1385,7 +1395,8 @@ mod tests {
         assert_eq!(annotation("surface_capture_tail")["readOnlyHint"], true);
         assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
         assert_eq!(annotation("status_set")["idempotentHint"], true);
-        assert_eq!(annotation("surface_send_text")["openWorldHint"], false);
+        assert_eq!(annotation("surface_send_text")["destructiveHint"], true);
+        assert_eq!(annotation("surface_send_text")["openWorldHint"], true);
     }
 
     #[test]
