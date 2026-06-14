@@ -1,7 +1,8 @@
 //! Plain-text URL detection for Ctrl+click link opening. OSC 8 hyperlinks
 //! are handled separately via the cell flags; this scans rendered text for
-//! bare `http(s)://` and `file://` URLs, joining soft-wrapped rows so a URL
-//! broken across lines still resolves.
+//! bare `http(s)://` URLs, joining soft-wrapped rows so a URL broken
+//! across lines still resolves. Terminal-controlled `file://` and custom
+//! schemes are intentionally not treated as clickable links.
 
 use super::*;
 use forktty_terminal::ghostty::core::{TerminalCellWidth, TerminalFrame};
@@ -46,7 +47,7 @@ pub(super) fn logical_lines(frame: &TerminalFrame) -> Vec<LogicalLine> {
     lines
 }
 
-const URL_SCHEMES: &[&str] = &["https://", "http://", "file://"];
+const URL_SCHEMES: &[&str] = &["https://", "http://"];
 /// Punctuation a sentence hangs on a URL; trimmed from the detected tail.
 const TRAILING_TRIM: &[char] = &['.', ',', ';', ':', ')', ']', '}', '>', '\'', '"'];
 
@@ -56,6 +57,16 @@ pub(super) struct DetectedUrl {
     pub(super) start: usize,
     pub(super) end: usize,
     pub(super) url: String,
+}
+
+/// Returns true if a terminal-controlled URI is safe to hand to the
+/// desktop URI dispatcher. Keep this allowlist narrow: terminal output is
+/// untrusted, and `gtk::show_uri` delegates non-web schemes to arbitrary
+/// desktop handlers.
+pub(super) fn is_safe_terminal_uri(uri: &str) -> bool {
+    URL_SCHEMES
+        .iter()
+        .any(|scheme| uri.starts_with(scheme) && uri.len() > scheme.len())
 }
 
 /// Finds bare URLs in a logical line. A URL runs from its scheme to the
@@ -86,12 +97,13 @@ pub(super) fn detect_urls(line: &str) -> Vec<DetectedUrl> {
         while end > i + scheme_len && TRAILING_TRIM.contains(&chars[end - 1]) {
             end -= 1;
         }
+        let url: String = chars[i..end].iter().collect();
         // A bare scheme with nothing after it is not a link.
-        if end > i + scheme_len {
+        if is_safe_terminal_uri(&url) {
             urls.push(DetectedUrl {
                 start: i,
                 end: end - 1,
-                url: chars[i..end].iter().collect(),
+                url,
             });
         }
         i = end.max(i + 1);
@@ -137,10 +149,10 @@ mod tests {
 
     #[test]
     fn detect_urls_finds_schemes_and_trims_trailing_punctuation() {
-        let urls = detect_urls("see https://example.com/a?b=1, then file:///tmp/x.");
+        let urls = detect_urls("see https://example.com/a?b=1, not file:///tmp/x.");
         assert_eq!(
             urls.iter().map(|u| u.url.as_str()).collect::<Vec<_>>(),
-            vec!["https://example.com/a?b=1", "file:///tmp/x"]
+            vec!["https://example.com/a?b=1"]
         );
         assert!(detect_urls("no links here, https:// alone neither").is_empty());
         // A scheme glued to a word is not a link (xhttps://..., nothttp://...).
