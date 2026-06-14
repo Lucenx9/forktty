@@ -37,6 +37,9 @@ All notable changes to ForkTTY are documented here.
 - Closing a terminal pane no longer risks freezing the UI: the dropped PTY session now reaps its killed child on a background thread instead of blocking the GTK main thread in `waitpid`, which a child stuck in uninterruptible sleep (D state on a dead NFS/FUSE mount) could otherwise wedge forever.
 - The PTY read loop now retries a read interrupted by a signal (`EINTR`) instead of surfacing it as a spurious error on every pump tick.
 - Large PTY writes now honor their overall deadline even when repeatedly interrupted by signals, instead of being able to retry indefinitely under a pathological signal rate.
+- Socket `surface.read_text`/`surface.capture_tail` no longer block a tokio worker thread while waiting for the GTK main loop: the wait is offloaded via `block_in_place`, so many concurrent read requests (as agent hooks issue) can no longer starve the socket server and stall every other request.
+- Removing a worktree now deletes its working-tree directory before deregistering it from git, so a failed directory removal leaves a recoverable (git-pruneable) registration instead of stranding the directory permanently with no way for git to find it.
+- A failed fast-forward merge rollback now logs the underlying ref-reset/HEAD-restore errors instead of silently discarding them, making a wedged repository diagnosable.
 
 ## [0.2.0-alpha.12] - 2026-06-13
 

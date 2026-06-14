@@ -151,9 +151,25 @@ impl TerminalBackend for GtkTerminalBackend {
             max_bytes,
             reply,
         })?;
-        receiver
-            .recv_timeout(Duration::from_secs(2))
-            .map_err(|err| TerminalError::Backend(format!("read-text reply failed: {err}")))?
+        // Blocks until the GTK main loop services the command. The socket
+        // server calls this from its multi-threaded tokio runtime, where a bare
+        // blocking wait pins a worker thread — N concurrent read_text calls
+        // (agent hooks issue them constantly) would starve every other socket
+        // task, including accept(). Offload the wait via block_in_place so tokio
+        // can keep those workers busy. Off a multi-thread runtime (GTK thread or
+        // a current-thread runtime) there is no worker pool to protect and
+        // block_in_place would panic, so wait directly.
+        let wait = move || -> Result<TerminalTextSnapshot, TerminalError> {
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .map_err(|err| TerminalError::Backend(format!("read-text reply failed: {err}")))?
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(wait)
+            }
+            _ => wait(),
+        }
     }
 
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {

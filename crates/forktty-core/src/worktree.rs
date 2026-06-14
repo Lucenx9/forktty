@@ -153,12 +153,19 @@ impl PreparedWorktreeRemoval {
                 Err(err) => return Err(err.into()),
             }
         }
-        let mut opts = git2::WorktreePruneOptions::new();
-        opts.valid(true).working_tree(true);
-        wt.prune(Some(&mut opts))?;
+        // Remove the working-tree directory before deregistering it from git.
+        // The reverse order is unrecoverable: if prune succeeds but
+        // remove_dir_all fails (a file locked by an agent, EBUSY, read-only
+        // mount), git has already forgotten the path mapping, so the retry hits
+        // NotFound and the directory is stranded forever. This order leaves at
+        // most an orphaned admin entry on failure, which `git worktree prune`
+        // recovers.
         if let Some(wt_path) = self.wt_path.filter(|path| path.exists()) {
             std::fs::remove_dir_all(&wt_path)?;
         }
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true).working_tree(true);
+        wt.prune(Some(&mut opts))?;
         if delete_branch && !self.branch.is_empty() {
             if let Ok(mut branch) = repo.find_branch(&self.branch, BranchType::Local) {
                 let _ = branch.delete();
@@ -776,9 +783,21 @@ fn restore_failed_fast_forward(
     original_head_oid: git2::Oid,
 ) -> Result<(), WorktreeError> {
     if let Ok(mut reference) = repo.find_reference(head_ref_name) {
-        let _ = reference.set_target(original_head_oid, "Rollback failed fast-forward merge");
+        if let Err(err) =
+            reference.set_target(original_head_oid, "Rollback failed fast-forward merge")
+        {
+            eprintln!(
+                "Failed to reset {head_ref_name} to its pre-merge commit during rollback: {err}"
+            );
+        }
     }
-    let _ = repo.set_head(head_ref_name);
+    if let Err(err) = repo.set_head(head_ref_name) {
+        eprintln!("Failed to restore HEAD to {head_ref_name} during fast-forward rollback: {err}");
+    }
+    // force_checkout_head still reconciles the working tree with whatever HEAD
+    // now points at, so a swallowed ref-reset above leaves a consistent (if
+    // unexpected) state rather than a split-brain tree; the logs above make a
+    // wedged rollback diagnosable.
     force_checkout_head(repo)
 }
 
