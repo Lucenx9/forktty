@@ -6276,10 +6276,7 @@ fn print_hook_test_report(
             if check["ok"] == json!(true) {
                 eprintln!("{method}: ok");
             } else {
-                eprintln!(
-                    "{method}: failed: {}",
-                    check["error"].as_str().unwrap_or("unknown error")
-                );
+                eprintln!("{method}: failed: {}", hook_check_error_for_terminal(check));
             }
         }
     }
@@ -6289,6 +6286,10 @@ fn print_hook_test_report(
         if healthy { "ok" } else { "failed" }
     );
     hooks_health_exit("hooks test", spec.key, healthy)
+}
+
+fn hook_check_error_for_terminal(check: &Value) -> String {
+    sanitize_for_terminal(check["error"].as_str().unwrap_or("unknown error"))
 }
 
 fn handle_hooks_test(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -8635,6 +8636,12 @@ mod tests {
         assert_eq!(
             sanitize_for_terminal("bad\u{1b}[31m\nnext"),
             "bad\\x1b[31m\\nnext"
+        );
+        assert_eq!(
+            hook_check_error_for_terminal(
+                &json!({ "method": "system.ping", "ok": false, "error": "bad\u{1b}]0;title\u{7}\nnext" })
+            ),
+            "bad\\x1b]0;title\\x07\\nnext"
         );
         assert_eq!(
             extract_hook_tool_name(&json!({ "tool_name": "Bash\u{1b}[31m" })).unwrap(),
