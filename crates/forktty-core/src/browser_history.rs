@@ -17,6 +17,8 @@ use crate::backup::reserve_unique_backup_path;
 use crate::profile::ProfileId;
 
 const MAX_BOOKMARKS_JSON_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_HISTORY_URL_BYTES: usize = 8 * 1024;
+const MAX_HISTORY_TITLE_BYTES: usize = 4 * 1024;
 
 /// One visited URL with its aggregate visit metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +183,24 @@ fn now_us() -> i64 {
         .unwrap_or(0)
 }
 
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn bounded_history_fields<'a>(url: &'a str, title: &'a str) -> Option<(&'a str, &'a str)> {
+    if url.is_empty() || url.len() > MAX_HISTORY_URL_BYTES {
+        return None;
+    }
+    Some((url, truncate_utf8(title, MAX_HISTORY_TITLE_BYTES)))
+}
+
 /// `~/.local/share/forktty/browser_profiles/<id>/history.sqlite` for the given profile.
 /// `None` if the platform has no data dir.
 pub fn history_path(profile: ProfileId) -> Option<PathBuf> {
@@ -270,6 +290,9 @@ impl HistoryStore {
     /// existing url. A non-empty `title` overwrites the stored one; an empty title
     /// leaves the existing title intact.
     pub fn record_visit(&self, url: &str, title: &str) -> Result<(), HistoryError> {
+        let Some((url, title)) = bounded_history_fields(url, title) else {
+            return Ok(());
+        };
         self.conn.execute(
             "INSERT INTO visits (url, title, visit_count, last_visit_us)
                  VALUES (?1, ?2, 1, ?3)
@@ -285,6 +308,9 @@ impl HistoryStore {
     /// Update the stored title for an already-recorded visit without incrementing
     /// its visit count.
     pub fn update_title(&self, url: &str, title: &str) -> Result<(), HistoryError> {
+        let Some((url, title)) = bounded_history_fields(url, title) else {
+            return Ok(());
+        };
         if title.is_empty() {
             return Ok(());
         }
@@ -302,7 +328,10 @@ impl HistoryStore {
         url: &str,
         title: &str,
         visit_count: i64,
-    ) -> Result<(), HistoryError> {
+    ) -> Result<bool, HistoryError> {
+        let Some((url, title)) = bounded_history_fields(url, title) else {
+            return Ok(false);
+        };
         let count = visit_count.max(1);
         self.conn.execute(
             "INSERT INTO visits (url, title, visit_count, last_visit_us)
@@ -313,7 +342,7 @@ impl HistoryStore {
                  title         = CASE WHEN ?2 <> '' THEN ?2 ELSE title END",
             rusqlite::params![url, title, count, now_us()],
         )?;
-        Ok(())
+        Ok(true)
     }
 
     /// Most-recently-visited rows first, capped at `limit`.
@@ -567,12 +596,39 @@ mod tests {
     }
 
     #[test]
+    fn record_visit_bounds_untrusted_url_and_title_sizes() {
+        let h = store();
+        let long_url = format!("https://a.test/{}", "x".repeat(MAX_HISTORY_URL_BYTES));
+        h.record_visit(&long_url, "ignored").unwrap();
+        assert!(h.list(10).unwrap().is_empty());
+
+        let long_title = "é".repeat(MAX_HISTORY_TITLE_BYTES);
+        h.record_visit("https://a.test/", &long_title).unwrap();
+        let rows = h.list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].title.len() <= MAX_HISTORY_TITLE_BYTES);
+        assert!(rows[0].title.is_char_boundary(rows[0].title.len()));
+    }
+
+    #[test]
     fn update_title_does_not_increment_visit_count() {
         let h = store();
         h.record_visit("https://a.test/", "").unwrap();
         h.update_title("https://a.test/", "Real Title").unwrap();
         let rows = h.list(10).unwrap();
         assert_eq!(rows[0].title, "Real Title");
+        assert_eq!(rows[0].visit_count, 1);
+    }
+
+    #[test]
+    fn update_title_bounds_untrusted_title_size() {
+        let h = store();
+        h.record_visit("https://a.test/", "").unwrap();
+        let long_title = "é".repeat(MAX_HISTORY_TITLE_BYTES);
+        h.update_title("https://a.test/", &long_title).unwrap();
+        let rows = h.list(10).unwrap();
+        assert!(rows[0].title.len() <= MAX_HISTORY_TITLE_BYTES);
+        assert!(rows[0].title.is_char_boundary(rows[0].title.len()));
         assert_eq!(rows[0].visit_count, 1);
     }
 

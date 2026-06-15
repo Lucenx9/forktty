@@ -367,6 +367,7 @@ impl BrowserPaneWidget {
         };
         // Initial population.
         populate_completion(profile);
+        let title_recorded_for_uri = std::rc::Rc::new(std::cell::RefCell::new(None::<String>));
 
         // Connect load-changed: sync the committed URI into the toolbar, record
         // visits on Committed, and refresh completion. Updating last_requested
@@ -379,6 +380,7 @@ impl BrowserPaneWidget {
             let address = address.downgrade();
             let last_requested = navigation.last_requested.clone();
             let committed_uri_handlers = committed_uri_handlers.clone();
+            let title_recorded_for_uri = title_recorded_for_uri.clone();
             web_view.connect_load_changed(move |wv, event| {
                 if let (Some(back_button), Some(forward_button)) =
                     (back_button.upgrade(), forward_button.upgrade())
@@ -397,6 +399,7 @@ impl BrowserPaneWidget {
                         for handler in committed_uri_handlers.borrow().iter() {
                             handler(u.clone());
                         }
+                        *title_recorded_for_uri.borrow_mut() = None;
                         if is_recordable_url(&u) {
                             let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
                             if let Ok(store) = forktty_core::HistoryStore::for_profile(profile) {
@@ -417,18 +420,22 @@ impl BrowserPaneWidget {
         // parsed, so the Committed handler above usually records an empty title.
         // This keeps visit_count tied to committed navigations.
         {
+            let title_recorded_for_uri = title_recorded_for_uri.clone();
             web_view.connect_title_notify(move |wv| {
                 if let Some(uri) = wv.uri() {
                     let u = uri.to_string();
                     if is_recordable_url(&u) {
                         let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
                         // Only bother if we actually have a title now.
-                        if !title.is_empty() {
+                        if !title.is_empty()
+                            && title_recorded_for_uri.borrow().as_deref() != Some(u.as_str())
+                        {
                             if let Ok(store) = forktty_core::HistoryStore::for_profile(profile) {
                                 if let Err(e) = store.update_title(&u, &title) {
                                     eprintln!("forktty: history update_title failed: {e}");
                                 }
                             }
+                            *title_recorded_for_uri.borrow_mut() = Some(u);
                         }
                     }
                 }
