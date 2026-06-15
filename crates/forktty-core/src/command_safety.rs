@@ -15,12 +15,14 @@ use std::os::unix::fs::PermissionsExt;
 /// Returns true when `program` + `args` look like `sh -c <something>`.
 ///
 /// Accepted shell basenames cover the common POSIX shells plus known shells
-/// with less common names (`rbash`, `tcsh`, `xonsh`, `pwsh`, etc.). `-c` is detected
+/// with less common names (`rbash`, `tcsh`, `xonsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
 /// (`-lc`, `-xc`); options that take a value (`-o vi`, `--rcfile path`) are
 /// skipped before scanning continues. Scanning stops at the first non-flag
 /// argument or at `--`. A leading `env` (with its flags and `VAR=val`
 /// assignments) is unwrapped so `env bash -c <something>` is caught too.
+/// PowerShell (`pwsh`) uses its own command grammar and is handled by
+/// `powershell_invokes_command`.
 pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     let basename = Path::new(program)
         .file_name()
@@ -28,6 +30,12 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
         .unwrap_or_default();
     if basename == "env" {
         return env_invokes_shell_trampoline(args);
+    }
+    // PowerShell uses a different flag grammar than POSIX shells (case-
+    // insensitive, prefix-abbreviated `-Command`/`-EncodedCommand`), so the
+    // `-c` cluster scan below never catches its canonical `pwsh -Command`.
+    if basename == "pwsh" {
+        return powershell_invokes_command(args);
     }
     let is_shell = matches!(
         basename,
@@ -42,7 +50,6 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
             | "mksh"
             | "oksh"
             | "posh"
-            | "pwsh"
             | "rbash"
             | "rksh"
             | "tcsh"
@@ -78,6 +85,51 @@ fn shell_option_takes_value(arg: &str) -> bool {
         arg,
         "-o" | "+o" | "-O" | "+O" | "--emulate" | "--init-file" | "--rcfile"
     )
+}
+
+/// Returns true when `args` invoke PowerShell with a command *string* to run.
+///
+/// PowerShell's `-Command`, `-EncodedCommand`, and `-CommandWithArgs`
+/// parameters (and their `-c`/`-e`/`-ec`/`-cwa` aliases) execute an inline
+/// command, which is the trampoline we reject; parameter names are matched
+/// case-insensitively, accept any unambiguous prefix, and may be written with a
+/// `-` or `/` sigil. `-File`/`-f` selects a script path and (per `about_Pwsh`)
+/// ends option parsing, so a `-Command` after it is a script argument, not a
+/// trampoline — like `sh script.sh`, it is not flagged. Other tokens (unknown
+/// options, option values, a bare script path) are scanned past rather than
+/// treated as the script boundary, so a command flag following a value-bearing
+/// option such as `-ExecutionPolicy Bypass -Command ...` is still caught; this
+/// errs toward rejecting, the safe direction for a command-execution guard.
+fn powershell_invokes_command<S: AsRef<str>>(args: &[S]) -> bool {
+    for arg in args {
+        let arg = arg.as_ref();
+        if arg == "--" {
+            return false;
+        }
+        let Some(name) = arg.strip_prefix('-').or_else(|| arg.strip_prefix('/')) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let name = name.to_ascii_lowercase();
+        // `-File`/`-f` is documented to be the last PowerShell parameter; every
+        // following token is a script argument, so stop before flagging them.
+        if "file".starts_with(&name) {
+            return false;
+        }
+        // `-c`/`-co`/.../`-command`/.../`-commandwithargs` and `-e`/.../
+        // `-encodedcommand` are caught by prefix; the `-ec` and `-cwa` aliases
+        // are not prefixes of their parameter names, so list them explicitly.
+        if "commandwithargs".starts_with(&name)
+            || "encodedcommand".starts_with(&name)
+            || name == "ec"
+            || name == "cwa"
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
@@ -344,6 +396,68 @@ mod tests {
             "/usr/bin/env",
             &["-S", "notify-send -c x"]
         ));
+    }
+
+    #[test]
+    fn shell_trampoline_detects_powershell_command_flags() {
+        // PowerShell's canonical command-string flags are `-Command` and
+        // `-EncodedCommand` (case-insensitive, prefix-abbreviated), not the
+        // POSIX `-c` the cluster scan looks for.
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-Command", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-command", "echo hi"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/pwsh", &["-Com", "echo hi"]));
+        assert!(is_shell_trampoline("/usr/bin/pwsh", &["-c", "echo hi"]));
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-NoProfile", "-Command", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-EncodedCommand", "ZQBjAGgAbwA="]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-e", "ZQBjAGgAbwA="]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-ec", "ZQBjAGgAbwA="]
+        ));
+        // `-CommandWithArgs`/`-cwa` (PowerShell 7.4+) also runs an inline
+        // command string and must not regress to accepted.
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-CommandWithArgs", "echo $args[0]", "hi"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/pwsh", &["-cwa", "echo hi"]));
+        // A command flag still counts after a value-bearing option, so the
+        // guard does not regress into a false negative.
+        assert!(is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-ExecutionPolicy", "Bypass", "-Command", "echo hi"]
+        ));
+        // `-File` selects a script path, not a command string, so it is not a
+        // trampoline (mirroring `sh script.sh`) even when the script takes its
+        // own `-Command` argument.
+        assert!(!is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-File", "/tmp/script.ps1"]
+        ));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-File", "/tmp/script.ps1", "-Command", "value"]
+        ));
+        assert!(!is_shell_trampoline(
+            "/usr/bin/pwsh",
+            &["-ExecutionPolicy", "Bypass", "-NoProfile"]
+        ));
+        assert!(!is_shell_trampoline("/usr/bin/pwsh", &["/tmp/script.ps1"]));
     }
 
     #[test]

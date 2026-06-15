@@ -28,6 +28,7 @@ All notable changes to ForkTTY are documented here.
 - Saving browser bookmarks now creates the profile directory with owner-only (`0700`) permissions instead of inheriting the umask, matching the history database directory, so bookmark URLs are not exposed when a profile's first write is a bookmark.
 - Bookmark entries now bound the stored URL and title to the same size caps as history visits, preventing an oversized imported bookmark from growing `bookmarks.json` until it becomes unreadable.
 - Shell trampoline detection now keeps scanning after shell options that take a value, so `bash -o vi -c ...` and `bash --rcfile file -c ...` notification commands are rejected instead of bypassing the `-c` guard.
+- Shell trampoline detection now recognizes PowerShell's command grammar, so `pwsh -Command ...`, `pwsh -EncodedCommand ...`, and `pwsh -CommandWithArgs ...` notification commands (and their `-c`/`-e`/`-ec`/`-cwa` aliases) are rejected instead of bypassing the shell-command guard.
 - `PtySession::read_until` now reports `UnexpectedEof` when a child exits before the requested bytes arrive, instead of returning partial output as success.
 - `forktty hooks test` now sanitizes socket error text before rendering human-readable failures, preventing local socket responses from injecting terminal control sequences.
 - Browser import is now limited to the in-app Settings workflow and is no longer advertised or accepted over the socket/CLI automation boundary, preventing local socket clients from using ForkTTY to read external browser profile data.
