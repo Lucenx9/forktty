@@ -23,7 +23,6 @@ pub use agents::{
 };
 pub use browser_cmd::{
     BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, MAX_BROWSER_RESULT_BYTES,
-    MAX_BROWSER_SCRIPT_BYTES,
 };
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
 

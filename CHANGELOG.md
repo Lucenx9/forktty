@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Removed the raw `browser.eval` socket/CLI command so same-user socket clients can no longer execute arbitrary JavaScript inside browser panes.
 - Agent HUD terminal-tail polling now formats only the bounded tail rows instead of dumping the full scrollback each second, preventing noisy agents from freezing the GTK UI while the HUD is open.
 - Browser committed-URI synchronization now rejects URLs over the shared 8 KiB browser URL limit while preserving non-hierarchical URLs such as `about:blank`.
 - OpenCode hooks now sanitize and size-bound plugin payloads before spawning the ForkTTY CLI, preventing oversized tool output from blocking or crashing the OpenCode process before the CLI stdin cap applies.
