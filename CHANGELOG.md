@@ -25,7 +25,7 @@ All notable changes to ForkTTY are documented here.
 - Update checks now honor HTTP-date `Retry-After` headers from GitHub rate-limit responses instead of retrying before the requested deadline.
 - Restarting an agent pane now resumes the agent session (provider resume argv and recorded cwd) instead of relaunching a plain shell, matching the session-restore and worktree spawn paths.
 - Session restore now quarantines a session file containing invalid UTF-8 instead of returning an error that crashed startup on every launch.
-- The first-run welcome dialog no longer traps the user when persisting a telemetry opt-out fails (e.g. a read-only config directory): the error is shown but the dialog still closes, and the anonymous ping is skipped per the live toggle.
+- The first-run welcome dialog no longer records completion when persisting a telemetry opt-out fails (e.g. a read-only config directory), so a later launch cannot silently fall back to the default-enabled ping without showing the choice again.
 - Saving browser bookmarks now creates the profile directory with owner-only (`0700`) permissions instead of inheriting the umask, matching the history database directory, so bookmark URLs are not exposed when a profile's first write is a bookmark.
 - Bookmark entries now bound the stored URL and title to the same size caps as history visits, preventing an oversized imported bookmark from growing `bookmarks.json` until it becomes unreadable.
 - Shell trampoline detection now keeps scanning after shell options that take a value, so `bash -o vi -c ...` and `bash --rcfile file -c ...` notification commands are rejected instead of bypassing the `-c` guard.

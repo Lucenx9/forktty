@@ -165,13 +165,13 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
         let ping_row = ping_row.clone();
         let telemetry_status = telemetry_status.clone();
         move |_| {
-            if !ping_row.is_active() {
-                // Persist the opt-out, but never trap the user in the dialog if
-                // the write fails (e.g. a read-only config dir): the live toggle
-                // is the source of truth and we skip the ping below regardless.
-                if let Err(err) = set_anonymous_ping(false) {
-                    show_telemetry_error(&telemetry_status, false, &err);
-                }
+            if let Err(err) = persist_welcome_telemetry_choice(ping_row.is_active()) {
+                // Persist the opt-out before recording first-run completion. If
+                // the write fails (e.g. a read-only config dir), keep the
+                // welcome pending so a later launch cannot fall back to the
+                // default-on config without showing this choice again.
+                show_telemetry_error(&telemetry_status, false, &err);
+                return glib::Propagation::Proceed;
             }
             record_welcome_seen_best_effort();
             // The startup ping was deferred on first launch; start it now that
@@ -197,6 +197,19 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
 fn set_anonymous_ping(enabled: bool) -> Result<(), String> {
     let path = config::config_path().map_err(|err| err.to_string())?;
     set_anonymous_ping_at_path(&path, enabled)
+}
+
+fn persist_welcome_telemetry_choice(enabled: bool) -> Result<(), String> {
+    let path = config::config_path().map_err(|err| err.to_string())?;
+    persist_welcome_telemetry_choice_at_path(&path, enabled)
+}
+
+fn persist_welcome_telemetry_choice_at_path(path: &Path, enabled: bool) -> Result<(), String> {
+    if enabled {
+        Ok(())
+    } else {
+        set_anonymous_ping_at_path(path, false)
+    }
 }
 
 fn set_anonymous_ping_at_path(path: &Path, enabled: bool) -> Result<(), String> {
@@ -367,6 +380,27 @@ mod tests {
         let path = blocked_config_home.join("config.toml");
 
         assert!(set_anonymous_ping_at_path(&path, false).is_err());
+    }
+
+    #[test]
+    fn welcome_opt_out_must_persist_before_completion() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blocked_config_home = dir.path().join("not-a-directory");
+        fs::write(&blocked_config_home, b"blocked").expect("blocked file");
+        let path = blocked_config_home.join("config.toml");
+
+        assert!(persist_welcome_telemetry_choice_at_path(&path, false).is_err());
+    }
+
+    #[test]
+    fn welcome_default_ping_choice_does_not_require_config_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blocked_config_home = dir.path().join("not-a-directory");
+        fs::write(&blocked_config_home, b"blocked").expect("blocked file");
+        let path = blocked_config_home.join("config.toml");
+
+        persist_welcome_telemetry_choice_at_path(&path, true)
+            .expect("default-on choice does not need to be written");
     }
 
     #[test]
