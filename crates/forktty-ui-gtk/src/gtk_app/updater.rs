@@ -365,6 +365,14 @@ pub(super) fn rate_limit_retry_after_ms(
     if let Some(seconds) = retry_after.and_then(|value| value.trim().parse::<u64>().ok()) {
         return Some(now_ms.saturating_add(seconds.saturating_mul(1000)));
     }
+    if let Some(deadline) = retry_after
+        .and_then(|value| chrono::DateTime::parse_from_rfc2822(value.trim()).ok())
+        .map(|date| date.timestamp_millis())
+        .and_then(|deadline| u64::try_from(deadline).ok())
+        .filter(|deadline| *deadline > now_ms)
+    {
+        return Some(deadline);
+    }
     if x_rate_limit_remaining.map(str::trim) == Some("0") {
         return x_rate_limit_reset
             .and_then(|value| value.trim().parse::<u64>().ok())
@@ -759,4 +767,25 @@ pub(super) fn sha256_hex(bytes: &[u8]) -> String {
         let _ = write!(&mut out, "{byte:02x}");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limit_retry_after_accepts_http_date() {
+        let now_ms = 1_781_524_800_000;
+
+        assert_eq!(
+            rate_limit_retry_after_ms(
+                429,
+                Some("Mon, 15 Jun 2026 12:00:05 GMT"),
+                None,
+                None,
+                now_ms,
+            ),
+            Some(now_ms + 5_000)
+        );
+    }
 }
