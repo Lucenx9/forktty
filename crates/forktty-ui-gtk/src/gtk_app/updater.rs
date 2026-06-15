@@ -382,27 +382,6 @@ pub(super) fn rate_limit_retry_after_ms(
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rate_limit_retry_after_accepts_http_date() {
-        let now_ms = 1_781_524_800_000;
-
-        assert_eq!(
-            rate_limit_retry_after_ms(
-                429,
-                Some("Mon, 15 Jun 2026 12:00:05 GMT"),
-                None,
-                None,
-                now_ms
-            ),
-            Some(now_ms + 5_000)
-        );
-    }
-}
-
 fn show_update_available_dialog(parent: &adw::ApplicationWindow, update: AvailableUpdate) {
     if let Some(plan) = appimage_update_plan(&update) {
         show_appimage_update_dialog(parent, update, plan);
@@ -788,4 +767,25 @@ pub(super) fn sha256_hex(bytes: &[u8]) -> String {
         let _ = write!(&mut out, "{byte:02x}");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limit_retry_after_accepts_http_date() {
+        let now_ms = 1_781_524_800_000;
+
+        assert_eq!(
+            rate_limit_retry_after_ms(
+                429,
+                Some("Mon, 15 Jun 2026 12:00:05 GMT"),
+                None,
+                None,
+                now_ms,
+            ),
+            Some(now_ms + 5_000)
+        );
+    }
 }
