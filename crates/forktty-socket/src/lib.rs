@@ -3321,19 +3321,42 @@ async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> 
     }))
 }
 
-async fn browser_import_preflight_sources(
+async fn browser_import_read_sources(
     sources: &[forktty_import::SourceProfile],
     include: BrowserImportSelection,
-) -> Result<(), DispatchError> {
+) -> Result<Vec<(forktty_import::SourceProfile, forktty_import::ImportedData)>, DispatchError> {
+    let mut source_data = Vec::with_capacity(sources.len());
     for source in sources {
-        forktty_import::ImportEngine::read_source_async_with_selection(
+        let data = forktty_import::ImportEngine::read_source_async_with_selection(
             source,
             include.read_selection(),
         )
         .await
         .map_err(|err| DispatchError::Other(err.to_string()))?;
+        source_data.push((source.clone(), data));
     }
-    Ok(())
+    Ok(source_data)
+}
+
+struct BrowserImportReadEntry {
+    destination: forktty_import::ImportDestination,
+    source_data: Vec<(forktty_import::SourceProfile, forktty_import::ImportedData)>,
+}
+
+async fn browser_import_read_plan(
+    plan: forktty_import::ImportPlan,
+    include: BrowserImportSelection,
+) -> Result<(forktty_import::ImportMode, Vec<BrowserImportReadEntry>), DispatchError> {
+    let mode = plan.mode;
+    let mut entries = Vec::with_capacity(plan.entries.len());
+    for entry in plan.entries {
+        let source_data = browser_import_read_sources(&entry.sources, include).await?;
+        entries.push(BrowserImportReadEntry {
+            destination: entry.destination,
+            source_data,
+        });
+    }
+    Ok((mode, entries))
 }
 
 fn resolve_profile_value_in_store(
@@ -3544,16 +3567,14 @@ async fn browser_import_run(
         let store = profiles_store()?;
         browser_import_plan_from_params(params, &selected, &store)?
     };
-    let mode = plan.mode;
+    let (mode, read_entries) = browser_import_read_plan(plan, include).await?;
 
     let mut total_read = BrowserImportCounts::default();
     let mut total_written = BrowserImportCounts::default();
     let mut total_unsupported_cookies = 0usize;
     let mut entries_json = Vec::new();
 
-    for entry in plan.entries {
-        let sources = entry.sources;
-        browser_import_preflight_sources(&sources, include).await?;
+    for entry in read_entries {
         let (profile_id, display_name, created) = {
             let _profile_store_guard = state
                 .profile_store_lock
@@ -3588,13 +3609,7 @@ async fn browser_import_run(
             let mut entry_unsupported_cookies = 0usize;
             let mut entry_sources = Vec::new();
 
-            for source in sources {
-                let data = forktty_import::ImportEngine::read_source_async_with_selection(
-                    &source,
-                    include.read_selection(),
-                )
-                .await
-                .map_err(|err| DispatchError::Other(err.to_string()))?;
+            for (source, data) in entry.source_data {
                 let read_counts = browser_import_counts_from_data(&data, include);
                 entry_read.add(read_counts);
                 entry_sources.push(browser_import_profile_json(&source));
@@ -10696,6 +10711,43 @@ mod tests {
                 .await
                 .unwrap();
             assert!(bookmarks.as_array().unwrap().is_empty());
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn browser_import_run_does_not_create_earlier_separate_profile_on_later_read_error() {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = tmp.path().join("home");
+            fs::create_dir_all(&home).unwrap();
+            let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+            let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+            let valid = create_firefox_import_source(&home, "valid");
+            let corrupt = create_corrupt_firefox_import_source(&home, "corrupt");
+            write_firefox_profiles_ini(&home, &["valid", "corrupt"]);
+            let (state, _backend) = test_state();
+
+            let err = dispatch(
+                &state,
+                "browser.import.run",
+                json!({
+                    "sources": [
+                        browser_import_source_id(&valid),
+                        browser_import_source_id(&corrupt)
+                    ],
+                    "mode": "separate_profiles"
+                }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code(), "error");
+
+            let profiles = dispatch(&state, "browser.profile.list", json!({}))
+                .await
+                .unwrap();
+            assert!(!profiles.as_array().unwrap().iter().any(|profile| {
+                profile["display_name"] == json!("valid")
+                    || profile["display_name"] == json!("corrupt")
+            }));
         }
 
         #[tokio::test]
