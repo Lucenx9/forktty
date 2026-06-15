@@ -13,6 +13,7 @@ description = "Core ForkTTY workspace, pane, config, session, notification, work
 chrono.workspace = true
 dirs.workspace = true
 git2.workspace = true
+libc.workspace = true
 notify-rust.workspace = true
 rusqlite.workspace = true
 semver.workspace = true
