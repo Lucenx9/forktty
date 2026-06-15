@@ -194,9 +194,10 @@ pub enum SocketError {
 ///
 /// The variants map to stable string codes that clients can branch on
 /// (`method_not_found`, `missing_param`, `not_found`, `payload_too_large`,
-/// `not_ready`, `error`). Existing handlers that return ad-hoc `String` errors keep
-/// working via the [`From<String>`] impl below; new sites should prefer the
-/// structured variants so the response carries a useful `error.code`.
+/// `conflict`, `already_exists`, `not_ready`, `invalid_param`,
+/// `precondition_failed`, `error`). Existing handlers that return ad-hoc `String`
+/// errors keep working via the [`From<String>`] impl below; new sites should
+/// prefer the structured variants so the response carries a useful `error.code`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchError {
     MethodNotFound(String),
@@ -312,14 +313,24 @@ impl From<TerminalError> for DispatchError {
 
 impl From<String> for DispatchError {
     fn from(message: String) -> Self {
-        DispatchError::Other(message)
+        if is_invalid_param_message(&message) {
+            DispatchError::InvalidParam(message)
+        } else {
+            DispatchError::Other(message)
+        }
     }
 }
 
 impl From<&str> for DispatchError {
     fn from(message: &str) -> Self {
-        DispatchError::Other(message.to_string())
+        message.to_string().into()
     }
+}
+
+fn is_invalid_param_message(message: &str) -> bool {
+    message.starts_with("Invalid parameter ")
+        || (message.starts_with("Ambiguous ")
+            && (message.contains(" selector:") || message.contains(" parameter:")))
 }
 
 #[derive(Clone)]
@@ -4249,9 +4260,6 @@ fn resolve_workspace_id_for_metadata(
             }
             return Ok(surface.workspace_id.clone());
         }
-        if let Some(workspace_id) = workspace_id {
-            return Ok(workspace_id);
-        }
         return Err(DispatchError::NotFound("surface".to_string()));
     }
     if let Some(workspace_id) = workspace_id {
@@ -4376,7 +4384,7 @@ async fn handle_connection_with_write_timeout(
             Ok(Some(Err(ReadLineError::TooLarge))) => {
                 let response = JsonRpcResponse::error(
                     Value::Null,
-                    "request_too_large",
+                    "payload_too_large",
                     "Request exceeds 1 MiB",
                 );
                 write_response(&mut writer, &response, write_timeout).await?;
@@ -5994,7 +6002,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter kind"));
         }
         let notifications = dispatch(&state, "notification.list", json!({}))
@@ -6012,14 +6020,14 @@ mod tests {
                 .await
                 .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter title"));
         }
 
         let error = dispatch(&state, "notification.create", json!({"body": 42}))
             .await
             .unwrap_err();
-        assert_eq!(error.code(), "error");
+        assert_eq!(error.code(), "invalid_param");
         assert!(error.to_string().contains("Invalid parameter body"));
 
         let notifications = dispatch(&state, "notification.list", json!({}))
@@ -6041,7 +6049,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter surface_id"));
         }
 
@@ -6097,6 +6105,62 @@ mod tests {
 
         assert_eq!(error.code(), "not_found");
         assert_eq!(error.to_string(), "Workspace not found");
+    }
+
+    #[tokio::test]
+    async fn metadata_commands_reject_stale_surface_targets_even_with_workspace_id() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        let split = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap();
+        let stale_surface_id = split["id"].as_str().unwrap().to_string();
+        {
+            let mut model = state.model.lock().unwrap();
+            model.close_surface(&stale_surface_id).unwrap();
+        }
+
+        for (method, params) in [
+            (
+                "metadata.set_status",
+                json!({
+                    "workspace_id": workspace_id,
+                    "surface_id": stale_surface_id,
+                    "key": "agent:codex",
+                    "label": "Codex",
+                    "value": "Running"
+                }),
+            ),
+            (
+                "metadata.set_progress",
+                json!({
+                    "workspace_id": workspace_id,
+                    "surface_id": stale_surface_id,
+                    "key": "build",
+                    "label": "Build",
+                    "value": 1
+                }),
+            ),
+            (
+                "metadata.log",
+                json!({
+                    "workspace_id": workspace_id,
+                    "surface_id": stale_surface_id,
+                    "level": "info",
+                    "message": "waiting"
+                }),
+            ),
+        ] {
+            let error = dispatch(&state, method, params).await.unwrap_err();
+            assert_eq!(error.code(), "not_found");
+            assert_eq!(error.to_string(), "Surface not found");
+        }
     }
 
     #[tokio::test]
@@ -6485,7 +6549,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn metadata_hooks_can_finish_cleanup_after_target_surface_closes() {
+    async fn metadata_hooks_reject_cleanup_after_target_surface_closes() {
         let (state, _backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspaces[0]["id"].as_str().unwrap();
@@ -6513,7 +6577,7 @@ mod tests {
             model.close_surface(surface_id).unwrap();
         }
 
-        dispatch(
+        let log_error = dispatch(
             &state,
             "metadata.log",
             json!({
@@ -6524,8 +6588,8 @@ mod tests {
             }),
         )
         .await
-        .unwrap();
-        dispatch(
+        .unwrap_err();
+        let clear_error = dispatch(
             &state,
             "metadata.clear_status",
             json!({
@@ -6538,7 +6602,10 @@ mod tests {
             }),
         )
         .await
-        .unwrap();
+        .unwrap_err();
+
+        assert_eq!(log_error.code(), "not_found");
+        assert_eq!(clear_error.code(), "not_found");
 
         let statuses = dispatch(
             &state,
@@ -6554,8 +6621,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(statuses.as_array().unwrap().is_empty());
-        assert_eq!(logs.as_array().unwrap().len(), 1);
+        assert_eq!(statuses.as_array().unwrap().len(), 1);
+        assert!(logs.as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -6729,7 +6796,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter workspace_id"));
         }
 
@@ -6758,7 +6825,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter level"));
         }
 
@@ -6866,8 +6933,8 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(status_error.code(), "error");
-            assert_eq!(progress_error.code(), "error");
+            assert_eq!(status_error.code(), "invalid_param");
+            assert_eq!(progress_error.code(), "invalid_param");
             assert!(status_error.to_string().contains("Invalid parameter key"));
             assert!(progress_error.to_string().contains("Invalid parameter key"));
         }
@@ -7001,7 +7068,7 @@ mod tests {
             ),
         ] {
             let error = dispatch(&state, method, params).await.unwrap_err();
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains(message));
         }
 
@@ -7056,7 +7123,7 @@ mod tests {
             ),
         ] {
             let error = dispatch(&state, method, params).await.unwrap_err();
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains(message));
         }
 
@@ -7097,7 +7164,7 @@ mod tests {
             ),
         ] {
             let error = dispatch(&state, method, params).await.unwrap_err();
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains(message));
         }
 
@@ -7173,7 +7240,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter color"));
         }
 
@@ -7336,7 +7403,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter name"));
         }
 
@@ -7538,7 +7605,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert_eq!(error.code(), "error");
+            assert_eq!(error.code(), "invalid_param");
             assert!(error.to_string().contains("Invalid parameter axis"));
         }
 
@@ -7549,7 +7616,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(non_string_error.code(), "error");
+        assert_eq!(non_string_error.code(), "invalid_param");
         assert!(non_string_error
             .to_string()
             .contains("Invalid parameter axis"));
@@ -8909,7 +8976,7 @@ mod tests {
             (
                 "worktree.create",
                 json!({"name": 42}),
-                "error",
+                "invalid_param",
                 "Invalid parameter name: expected string",
             ),
             (
@@ -8921,31 +8988,31 @@ mod tests {
             (
                 "worktree.attach",
                 json!({"branch": 42}),
-                "error",
+                "invalid_param",
                 "Invalid parameter branch: expected string",
             ),
             (
                 "worktree.attach",
                 json!({"name": 42, "branch": "topic/socket"}),
-                "error",
+                "invalid_param",
                 "Invalid parameter name: expected string",
             ),
             (
                 "worktree.attach",
                 json!({"name": "topic/name", "branch": "topic/branch"}),
-                "error",
+                "invalid_param",
                 "Ambiguous worktree selector: cannot combine name and branch",
             ),
             (
                 "worktree.remove",
                 json!({"name": 42}),
-                "error",
+                "invalid_param",
                 "Invalid parameter name: expected string",
             ),
             (
                 "worktree.merge",
                 json!({"name": 42}),
-                "error",
+                "invalid_param",
                 "Invalid parameter name: expected string",
             ),
         ] {
@@ -9132,7 +9199,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-            assert_eq!(err.code(), "error");
+            assert_eq!(err.code(), "invalid_param");
             assert!(err.to_string().contains("Invalid parameter workspace_id"));
         }
 
@@ -9143,7 +9210,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
         assert!(err.to_string().contains(
             "Ambiguous workspace selector: cannot combine workspace_id and workspace_name"
         ));
@@ -9171,7 +9238,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
         assert!(err.to_string().contains("Invalid parameter text"));
 
         let err = dispatch(
@@ -9181,7 +9248,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
         assert!(err.to_string().contains("Invalid parameter text"));
     }
 
@@ -9241,7 +9308,7 @@ mod tests {
             ),
         ] {
             let err = dispatch(&state, method, params).await.unwrap_err();
-            assert_eq!(err.code(), "error");
+            assert_eq!(err.code(), "invalid_param");
             assert!(err.to_string().contains(message));
         }
 
@@ -9256,7 +9323,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.code(), "error");
+        assert_eq!(err.code(), "invalid_param");
         assert!(err
             .to_string()
             .contains("Ambiguous surface selector: cannot combine surface_id and surfaceId"));
@@ -9491,7 +9558,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(repo_error.code(), "error");
+        assert_eq!(repo_error.code(), "invalid_param");
         assert!(repo_error.to_string().contains("Ambiguous path parameter"));
         assert!(repo_error.to_string().contains("path and cwd"));
     }
@@ -9562,7 +9629,7 @@ mod tests {
 
         assert!(!response.ok);
         assert_eq!(response.id, Value::Null);
-        assert_eq!(response.error.unwrap().code, "request_too_large");
+        assert_eq!(response.error.unwrap().code, "payload_too_large");
         server.await.unwrap().unwrap();
     }
 

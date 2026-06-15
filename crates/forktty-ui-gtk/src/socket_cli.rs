@@ -1304,7 +1304,7 @@ fn is_connection_level_socket_error(response: &JsonRpcResponse) -> bool {
         && response.error.as_ref().is_some_and(|err| {
             matches!(
                 err.code.as_str(),
-                "parse_error" | "request_too_large" | "server_busy"
+                "parse_error" | "payload_too_large" | "server_busy"
             )
         })
 }
@@ -8196,7 +8196,7 @@ mod tests {
     }
 
     #[test]
-    fn socket_response_errors_preserve_method_path_and_codes_request_too_large() {
+    fn socket_response_errors_preserve_method_path_and_codes_payload_too_large() {
         with_socket_response(
             |_| {
                 format!(
@@ -8204,7 +8204,7 @@ mod tests {
                     json!({
                         "id": null,
                         "ok": false,
-                        "error": { "code": "request_too_large", "message": "Request exceeds 1 MiB" }
+                        "error": { "code": "payload_too_large", "message": "Request exceeds 1 MiB" }
                     })
                 )
             },
@@ -8212,11 +8212,11 @@ mod tests {
                 let err =
                     send_socket_request(socket_path, "surface.send_text", json!({ "text": "x" }))
                         .unwrap_err();
-                assert_eq!(err.code.as_deref(), Some("request_too_large"));
+                assert_eq!(err.code.as_deref(), Some("payload_too_large"));
                 assert!(err.message.contains("surface.send_text"));
                 assert!(err
                     .message
-                    .contains("request_too_large: Request exceeds 1 MiB"));
+                    .contains("payload_too_large: Request exceeds 1 MiB"));
                 assert!(!err.message.contains("response id mismatch"));
             },
         );
