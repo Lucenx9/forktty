@@ -1,10 +1,8 @@
 use crate::SpawnRequest;
+use forktty_core::command_safety::is_executable_file;
 use std::collections::BTreeMap;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::{
     ffi::OsStr,
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -180,27 +178,13 @@ pub fn env_command_path() -> Option<String> {
         .map(|path| (*path).to_string())
 }
 
-fn is_executable_file(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};

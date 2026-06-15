@@ -1,3 +1,4 @@
+use forktty_core::command_safety::is_executable_file;
 use forktty_socket::socket_path_from_env;
 use serde_json::json;
 use std::ffi::OsString;
@@ -804,16 +805,6 @@ fn resolve_telemetry_anonymous_ping(config_path: Option<&Path>) -> bool {
         .unwrap_or_default()
         .telemetry
         .anonymous_ping
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_absolute() {
-        return false;
-    }
-    match fs::metadata(path) {
-        Ok(meta) => meta.is_file() && (meta.permissions().mode() & 0o111) != 0,
-        Err(_) => false,
-    }
 }
 
 fn collect_hooks() -> Vec<HookState> {
