@@ -23,6 +23,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - `forktty hooks test` now sanitizes socket error text before rendering human-readable failures, preventing local socket responses from injecting terminal control sequences.
+- Notification command validation now rejects `rbash -c` shell trampolines instead of allowing restricted Bash aliases to bypass the shell-command guard.
 - Session restore now quarantines FIFO and other non-regular session paths without blocking application startup.
 - Browser history now ignores oversized URLs and truncates oversized page titles before writing to SQLite, preventing web-controlled title or URL churn from causing unbounded history database growth.
 - Browser imports now report oversized history URLs as skipped writes instead of counting them as imported rows.
