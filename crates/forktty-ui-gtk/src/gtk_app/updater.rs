@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn rate_limit_retry_after_accepts_http_date() {
-        let now_ms = 1_781_524_795_000;
+        let now_ms = 1_781_524_800_000;
 
         assert_eq!(
             rate_limit_retry_after_ms(
