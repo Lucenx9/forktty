@@ -3337,19 +3337,21 @@ async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> 
     }))
 }
 
-async fn browser_import_preflight_sources(
+async fn browser_import_read_sources(
     sources: &[forktty_import::SourceProfile],
     include: BrowserImportSelection,
-) -> Result<(), DispatchError> {
+) -> Result<Vec<(forktty_import::SourceProfile, forktty_import::ImportedData)>, DispatchError> {
+    let mut source_data = Vec::with_capacity(sources.len());
     for source in sources {
-        forktty_import::ImportEngine::read_source_async_with_selection(
+        let data = forktty_import::ImportEngine::read_source_async_with_selection(
             source,
             include.read_selection(),
         )
         .await
         .map_err(|err| DispatchError::Other(err.to_string()))?;
+        source_data.push((source.clone(), data));
     }
-    Ok(())
+    Ok(source_data)
 }
 
 fn resolve_profile_value_in_store(
@@ -3568,8 +3570,7 @@ async fn browser_import_run(
     let mut entries_json = Vec::new();
 
     for entry in plan.entries {
-        let sources = entry.sources;
-        browser_import_preflight_sources(&sources, include).await?;
+        let source_data = browser_import_read_sources(&entry.sources, include).await?;
         let (profile_id, display_name, created) = {
             let _profile_store_guard = state
                 .profile_store_lock
@@ -3604,13 +3605,7 @@ async fn browser_import_run(
             let mut entry_unsupported_cookies = 0usize;
             let mut entry_sources = Vec::new();
 
-            for source in sources {
-                let data = forktty_import::ImportEngine::read_source_async_with_selection(
-                    &source,
-                    include.read_selection(),
-                )
-                .await
-                .map_err(|err| DispatchError::Other(err.to_string()))?;
+            for (source, data) in source_data {
                 let read_counts = browser_import_counts_from_data(&data, include);
                 entry_read.add(read_counts);
                 entry_sources.push(browser_import_profile_json(&source));

@@ -24,7 +24,7 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
 - MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.
-- Browser imports now preflight selected source profiles before writing and then process them one at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
+- Browser imports now read selected source profiles before writing and then process the captured data one source at a time, avoiding partial imports when a later source is unreadable while reducing peak memory use for large multi-profile imports.
 - Terminal-originated OSC 9/basic OSC 99 notifications are now rate-limited per surface, preventing untrusted terminal output from spamming desktop notifications or repeatedly spawning `notification_command`.
 - Session locking now creates and hardens the state directory and lock file with private permissions, preventing other local users from reading or pre-locking `session.lock` to block startup.
 - Atomic profile metadata saves now preserve an existing `profiles.json` file mode on Unix when ownership matches, and drop group/other bits when replacing with a temp inode owned by a different uid or gid.
