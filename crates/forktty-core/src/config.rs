@@ -1263,6 +1263,25 @@ mod tests {
         validate_config(&config).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn notification_command_rejects_shell_trampoline_after_option_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let bash = dir.path().join("bash");
+        fs::write(&bash, "").unwrap();
+        let mut permissions = fs::metadata(&bash).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&bash, permissions).unwrap();
+
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.general.notification_command = format!("{} -o vi -c notify-send", bash.display());
+
+        let error = validate_config(&config).unwrap_err();
+
+        assert!(error.to_string().contains("must not invoke a shell"));
+    }
+
     #[test]
     fn sidebar_visible_defaults_to_true_when_missing() {
         let dir = tempfile::tempdir().unwrap();

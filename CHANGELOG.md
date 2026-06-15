@@ -22,6 +22,8 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Shell trampoline detection now keeps scanning after shell options that take a value, so `bash -o vi -c ...` and `bash --rcfile file -c ...` notification commands are rejected instead of bypassing the `-c` guard.
+- `PtySession::read_until` now reports `UnexpectedEof` when a child exits before the requested bytes arrive, instead of returning partial output as success.
 - `forktty hooks test` now sanitizes socket error text before rendering human-readable failures, preventing local socket responses from injecting terminal control sequences.
 - Browser import is now limited to the in-app Settings workflow and is no longer advertised or accepted over the socket/CLI automation boundary, preventing local socket clients from using ForkTTY to read external browser profile data.
 - Notification command validation now rejects `rbash -c` shell trampolines instead of allowing restricted Bash aliases to bypass the shell-command guard.

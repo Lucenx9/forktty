@@ -17,9 +17,10 @@ use std::os::unix::fs::PermissionsExt;
 /// Accepted shell basenames cover the common POSIX shells plus known shells
 /// with less common names (`rbash`, `tcsh`, `xonsh`, `pwsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
-/// (`-lc`, `-xc`); scanning stops at the first non-flag argument or at `--`.
-/// A leading `env` (with its flags and `VAR=val` assignments) is unwrapped so
-/// `env bash -c <something>` is caught too.
+/// (`-lc`, `-xc`); options that take a value (`-o vi`, `--rcfile path`) are
+/// skipped before scanning continues. Scanning stops at the first non-flag
+/// argument or at `--`. A leading `env` (with its flags and `VAR=val`
+/// assignments) is unwrapped so `env bash -c <something>` is caught too.
 pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     let basename = Path::new(program)
         .file_name()
@@ -52,18 +53,31 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     if !is_shell {
         return false;
     }
-    for arg in args {
-        let arg = arg.as_ref();
-        if arg == "--" || !arg.starts_with('-') {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--" || !(arg.starts_with('-') || arg.starts_with('+')) {
             // End of flags: the next token is a script path, not a command
             // string.
             return false;
         }
-        if arg == "-c" || (!arg.starts_with("--") && arg.contains('c')) {
+        if arg == "-c" || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c')) {
             return true;
         }
+        if shell_option_takes_value(arg) {
+            index += 2;
+            continue;
+        }
+        index += 1;
     }
     false
+}
+
+fn shell_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-o" | "+o" | "-O" | "+O" | "--emulate" | "--init-file" | "--rcfile"
+    )
 }
 
 fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
@@ -238,6 +252,30 @@ mod tests {
         assert!(is_shell_trampoline("/bin/bash", &["-lc", "echo hi"]));
         assert!(is_shell_trampoline("/bin/bash", &["-x", "-c", "echo hi"]));
         assert!(is_shell_trampoline("/usr/bin/zsh", &["-ic", "echo hi"]));
+    }
+
+    #[test]
+    fn shell_trampoline_detects_command_after_option_values() {
+        assert!(is_shell_trampoline(
+            "/bin/bash",
+            &["--rcfile", "/tmp/forktty-rc", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/bin/bash",
+            &["-o", "vi", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/zsh",
+            &["-o", "vi", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/zsh",
+            &["+o", "vi", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["bash", "--rcfile", "/tmp/forktty-rc", "-c", "echo hi"]
+        ));
     }
 
     #[test]
