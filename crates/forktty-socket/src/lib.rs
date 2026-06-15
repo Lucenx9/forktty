@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::fs::{self, DirBuilder};
-use std::io;
+use std::io::{self, Seek, SeekFrom};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::{Path, PathBuf};
@@ -3321,10 +3321,15 @@ async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> 
     }))
 }
 
+struct BrowserImportSpooledSource {
+    source: forktty_import::SourceProfile,
+    data_file: tempfile::NamedTempFile,
+}
+
 async fn browser_import_read_sources(
     sources: &[forktty_import::SourceProfile],
     include: BrowserImportSelection,
-) -> Result<Vec<(forktty_import::SourceProfile, forktty_import::ImportedData)>, DispatchError> {
+) -> Result<Vec<BrowserImportSpooledSource>, DispatchError> {
     let mut source_data = Vec::with_capacity(sources.len());
     for source in sources {
         let data = forktty_import::ImportEngine::read_source_async_with_selection(
@@ -3333,14 +3338,21 @@ async fn browser_import_read_sources(
         )
         .await
         .map_err(|err| DispatchError::Other(err.to_string()))?;
-        source_data.push((source.clone(), data));
+        let mut data_file =
+            tempfile::NamedTempFile::new().map_err(|err| DispatchError::Other(err.to_string()))?;
+        serde_json::to_writer(data_file.as_file_mut(), &data)
+            .map_err(|err| DispatchError::Other(err.to_string()))?;
+        source_data.push(BrowserImportSpooledSource {
+            source: source.clone(),
+            data_file,
+        });
     }
     Ok(source_data)
 }
 
 struct BrowserImportReadEntry {
     destination: forktty_import::ImportDestination,
-    source_data: Vec<(forktty_import::SourceProfile, forktty_import::ImportedData)>,
+    source_data: Vec<BrowserImportSpooledSource>,
 }
 
 async fn browser_import_read_plan(
@@ -3609,10 +3621,18 @@ async fn browser_import_run(
             let mut entry_unsupported_cookies = 0usize;
             let mut entry_sources = Vec::new();
 
-            for (source, data) in entry.source_data {
+            for mut spooled in entry.source_data {
+                spooled
+                    .data_file
+                    .as_file_mut()
+                    .seek(SeekFrom::Start(0))
+                    .map_err(|err| DispatchError::Other(err.to_string()))?;
+                let data: forktty_import::ImportedData =
+                    serde_json::from_reader(spooled.data_file.as_file_mut())
+                        .map_err(|err| DispatchError::Other(err.to_string()))?;
                 let read_counts = browser_import_counts_from_data(&data, include);
                 entry_read.add(read_counts);
-                entry_sources.push(browser_import_profile_json(&source));
+                entry_sources.push(browser_import_profile_json(&spooled.source));
 
                 if let Some(history_store) = &history_store {
                     for visit in &data.visits {
