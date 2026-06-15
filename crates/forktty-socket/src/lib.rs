@@ -3601,10 +3601,12 @@ async fn browser_import_run(
 
                 if let Some(history_store) = &history_store {
                     for visit in &data.visits {
-                        history_store
+                        if history_store
                             .import_visit(&visit.url, &visit.title, visit.visit_count)
-                            .map_err(|err| DispatchError::Other(err.to_string()))?;
-                        entry_written.history += 1;
+                            .map_err(|err| DispatchError::Other(err.to_string()))?
+                        {
+                            entry_written.history += 1;
+                        }
                     }
                 }
 
@@ -10349,6 +10351,39 @@ mod tests {
             }
         }
 
+        fn create_firefox_import_source_with_long_history_url(
+            home: &Path,
+            name: &str,
+        ) -> forktty_import::SourceProfile {
+            let profile_dir = home.join(".mozilla/firefox").join(name);
+            fs::create_dir_all(&profile_dir).unwrap();
+            let long_url = format!("https://{}.test/", "a".repeat(MAX_BROWSER_URL_BYTES + 1));
+            let places = rusqlite::Connection::open(profile_dir.join("places.sqlite")).unwrap();
+            places
+                .execute(
+                    "CREATE TABLE moz_places (
+                        id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER
+                    );",
+                    [],
+                )
+                .unwrap();
+            places
+                .execute(
+                    "INSERT INTO moz_places (id,url,title,visit_count)
+                        VALUES (1,?1,'Too Long',4);",
+                    [&long_url],
+                )
+                .unwrap();
+            drop(places);
+            write_firefox_profiles_ini(home, &[name]);
+            forktty_import::SourceProfile {
+                family: forktty_import::BrowserFamily::Firefox,
+                display_name: name.to_string(),
+                path: profile_dir.to_string_lossy().into_owned(),
+                is_default: true,
+            }
+        }
+
         fn write_firefox_profiles_ini(home: &Path, names: &[&str]) {
             let mut profiles_ini = String::new();
             for (index, name) in names.iter().enumerate() {
@@ -10445,6 +10480,38 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(bookmarks_after.as_array().unwrap().len(), 1);
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn browser_import_reports_skipped_oversized_history_urls() {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = tmp.path().join("home");
+            fs::create_dir_all(&home).unwrap();
+            let _home = EnvGuard::set("HOME", home.to_str().unwrap());
+            let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path().join("data").to_str().unwrap());
+            let source = create_firefox_import_source_with_long_history_url(&home, "long-url");
+            let source_id = browser_import_source_id(&source);
+            let (state, _backend) = test_state();
+
+            let imported = dispatch(
+                &state,
+                "browser.import.run",
+                json!({
+                    "sources": [source_id],
+                    "destination": {"kind": "existing", "profile": "Default"}
+                }),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(imported["total"]["read"]["history"], json!(1));
+            assert_eq!(imported["total"]["written"]["history"], json!(0));
+            assert_eq!(imported["entries"][0]["written"]["history"], json!(0));
+            let history = dispatch(&state, "browser.history.list", json!({}))
+                .await
+                .unwrap();
+            assert!(history.as_array().unwrap().is_empty());
         }
 
         #[tokio::test]
