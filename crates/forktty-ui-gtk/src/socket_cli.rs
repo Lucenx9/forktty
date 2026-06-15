@@ -100,7 +100,6 @@ const BROWSER_HELP_TEXT: &str = "\
   forktty browser snapshot <surface-id>            Dump the page accessibility tree (JSON)
   forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
   forktty browser fill <surface-id> <ref> <value>  Set an input's value by snapshot ref
-  forktty browser eval <surface-id> <script>       Run JavaScript (use --json for the result)
   forktty browser back <surface-id>                Navigate back in history
   forktty browser forward <surface-id>             Navigate forward in history
   forktty browser reload <surface-id>              Reload the current page
@@ -249,6 +248,7 @@ const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
 // does not kill a Gemini hook sooner than the other providers.
 const GEMINI_HOOK_ENTRY_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 const OPENCODE_HOOK_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
+const OPENCODE_MAX_INPUT_BYTES: usize = MAX_STDIN_TEXT_BYTES;
 
 const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
@@ -2697,7 +2697,6 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "snapshot" => browser_surface_cmd(context, rest, "browser.snapshot", "snapshot", None),
         "click" => browser_click(context, rest),
         "fill" => browser_fill(context, rest),
-        "eval" => browser_eval(context, rest),
         "back" => browser_surface_cmd(
             context,
             rest,
@@ -2723,7 +2722,7 @@ fn handle_browser(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         "history" => browser_history(context, rest),
         "bookmark" => browser_bookmark(context, rest),
         "" => Err(CliError::new(
-            "browser requires a subcommand: open | navigate | snapshot | click | fill | eval | back | forward | reload | profile | history | bookmark",
+            "browser requires a subcommand: open | navigate | snapshot | click | fill | back | forward | reload | profile | history | bookmark",
         )),
         other => Err(CliError::new(format!(
             "browser: unknown subcommand {other}"
@@ -2870,31 +2869,6 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         json!({"surface_id": surface_id, "ref": reference, "value": value}),
     )?;
     print_result_or_json(context, "Filled", result)
-}
-
-#[cfg(any(feature = "browser", test))]
-fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &[], "browser eval")?;
-    let (surface_id, script) = match parsed.positionals.as_slice() {
-        [s, sc] => (
-            required_trimmed_arg(Some(s), "browser eval requires <surface-id> <script>")?,
-            required_non_blank_arg(Some(sc), "browser eval requires <surface-id> <script>")?
-                .to_string(),
-        ),
-        [_, _, extra, ..] => {
-            return Err(CliError::new(format!(
-                "browser eval: unexpected argument '{extra}'"
-            )))
-        }
-        _ => return Err(CliError::new("browser eval requires <surface-id> <script>")),
-    };
-    let result = send_socket_request(
-        &context.socket_path,
-        "browser.eval",
-        json!({"surface_id": surface_id, "script": script}),
-    )?;
-    print_result_or_json(context, "Evaluated", result)
 }
 
 #[cfg(any(feature = "browser", test))]
@@ -3938,6 +3912,13 @@ fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> CliResult<()> 
             "hooks setup: forktty executable path must be absolute",
         ));
     }
+    if !dry_run {
+        for spec in &agents {
+            if spec.key == "antigravity" {
+                ensure_private_antigravity_hook_dirs()?;
+            }
+        }
+    }
 
     let mut plans = Vec::new();
     for spec in agents {
@@ -4762,8 +4743,12 @@ fn gemini_mcp_config_path() -> PathBuf {
 // Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
 // (verified against agy 1.0.3; the workspace-level .agents/hooks.json is
 // intentionally not managed so hooks work from any project).
+fn antigravity_root_dir() -> PathBuf {
+    home_dir().join(".gemini")
+}
+
 fn antigravity_config_dir() -> PathBuf {
-    home_dir().join(".gemini/config")
+    antigravity_root_dir().join("config")
 }
 
 fn antigravity_config_path() -> PathBuf {
@@ -5304,13 +5289,132 @@ import {{ spawnSync }} from "node:child_process";
 const FORKTTY_LAUNCHER = {launcher};
 const DISABLED_ENV = "FORKTTY_OPENCODE_HOOKS_DISABLED";
 const HOOK_TIMEOUT_MS = {timeout};
+const MAX_INPUT_BYTES = {max_input_bytes};
+const MAX_SANITIZE_DEPTH = 32;
+const MAX_SANITIZE_ITEMS = 128;
+const MAX_SANITIZE_NODES = 4096;
+const textEncoder = new TextEncoder();
+
+function utf8Len(value) {{
+  return textEncoder.encode(value).length;
+}}
+
+function makeBudget() {{
+  return {{ remaining: Math.floor(MAX_INPUT_BYTES / 2), nodes: MAX_SANITIZE_NODES, truncated: false }};
+}}
+
+function takeNode(budget, overhead = 1) {{
+  if (budget.remaining <= 0 || budget.nodes <= 0) {{
+    budget.truncated = true;
+    return false;
+  }}
+  budget.nodes -= 1;
+  budget.remaining -= Math.max(1, overhead);
+  if (budget.remaining < 0) {{
+    budget.truncated = true;
+    return false;
+  }}
+  return true;
+}}
+
+function takeBytes(budget, bytes) {{
+  budget.remaining -= Math.max(1, bytes);
+  if (budget.remaining < 0) {{
+    budget.truncated = true;
+    return false;
+  }}
+  return true;
+}}
+
+function truncateString(value, budget) {{
+  const bytes = utf8Len(value);
+  if (bytes <= budget.remaining) {{
+    budget.remaining -= bytes;
+    return value;
+  }}
+  let out = "";
+  for (const ch of value) {{
+    const chBytes = utf8Len(ch);
+    if (budget.remaining < chBytes) break;
+    out += ch;
+    budget.remaining -= chBytes;
+  }}
+  budget.truncated = true;
+  return `${{out}}[forktty:truncated]`;
+}}
+
+function sanitizeJson(value, budget, depth = 0) {{
+  if (!takeNode(budget)) return "[forktty:truncated]";
+  if (value === null || value === undefined) return value ?? null;
+  const kind = typeof value;
+  if (kind === "string") {{
+    return truncateString(value, budget);
+  }}
+  if (kind === "number" || kind === "boolean") {{
+    takeBytes(budget, utf8Len(String(value)));
+    return value;
+  }}
+  if (kind === "bigint") {{
+    return truncateString(String(value), budget);
+  }}
+  if (kind !== "object") return `[forktty:${{kind}}]`;
+  if (depth >= MAX_SANITIZE_DEPTH) {{
+    budget.truncated = true;
+    return "[forktty:max-depth]";
+  }}
+  if (Array.isArray(value)) {{
+    const out = [];
+    for (let i = 0; i < value.length && i < MAX_SANITIZE_ITEMS; i++) {{
+      out.push(sanitizeJson(value[i], budget, depth + 1));
+      if (budget.remaining <= 0) break;
+    }}
+    if (value.length > out.length) {{
+      budget.truncated = true;
+      out.push(`[forktty:truncated ${{value.length - out.length}} array items]`);
+    }}
+    return out;
+  }}
+  const out = {{}};
+  let count = 0;
+  for (const key in value) {{
+    if (!Object.prototype.propertyIsEnumerable.call(value, key)) continue;
+    if (count >= MAX_SANITIZE_ITEMS || budget.remaining <= 0 || budget.nodes <= 0) {{
+      budget.truncated = true;
+      out.forktty_truncated = "object fields";
+      break;
+    }}
+    if (!takeBytes(budget, utf8Len(key) + 3)) {{
+      out.forktty_truncated = "object fields";
+      break;
+    }}
+    out[key] = sanitizeJson(value[key], budget, depth + 1);
+    count += 1;
+  }}
+  return out;
+}}
 
 function cloneJson(value) {{
-  try {{
-    return JSON.parse(JSON.stringify(value ?? {{}}));
-  }} catch {{
-    return {{ forktty_note: "unserializable opencode payload" }};
+  const budget = makeBudget();
+  const cloned = sanitizeJson(value ?? {{}}, budget);
+  if (budget.truncated && cloned && typeof cloned === "object" && !Array.isArray(cloned)) {{
+    cloned.forktty_note = "opencode payload truncated before forwarding";
   }}
+  return cloned;
+}}
+
+function hookInput(body) {{
+  const budget = makeBudget();
+  const sanitized = sanitizeJson(body ?? {{}}, budget);
+  if (budget.truncated && sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)) {{
+    sanitized.forktty_note = "opencode payload truncated before forwarding";
+  }}
+  try {{
+    const input = JSON.stringify(sanitized);
+    if (utf8Len(input) <= MAX_INPUT_BYTES) return input;
+  }} catch (error) {{
+    return JSON.stringify({{ provider: "opencode", forktty_note: `unserializable opencode payload: ${{error.message}}` }});
+  }}
+  return JSON.stringify({{ provider: "opencode", forktty_note: "opencode payload exceeded ForkTTY input limit after sanitization" }});
 }}
 
 function findString(value, names, depth = 0) {{
@@ -5345,7 +5449,7 @@ function payload(source, extra = {{}}) {{
 function runForkTTY(hookEvent, body) {{
   if (process.env[DISABLED_ENV] === "1") return;
   const result = spawnSync(FORKTTY_LAUNCHER, ["hooks", "opencode", hookEvent], {{
-    input: JSON.stringify(body ?? {{}}),
+    input: hookInput(body),
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
     timeout: HOOK_TIMEOUT_MS,
@@ -5391,6 +5495,7 @@ export const ForkTTYPlugin = async () => ({{
         tag = OPENCODE_PLUGIN_TAG,
         launcher = launcher,
         timeout = OPENCODE_HOOK_TIMEOUT_MS,
+        max_input_bytes = OPENCODE_MAX_INPUT_BYTES,
     ))
 }
 
@@ -5412,6 +5517,39 @@ fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {
 fn ensure_parent_dir(path: &Path) -> CliResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+fn ensure_private_antigravity_hook_dirs() -> CliResult<()> {
+    for dir in [
+        antigravity_root_dir(),
+        antigravity_config_dir(),
+        antigravity_scripts_dir(),
+    ] {
+        fs::create_dir_all(&dir)?;
+        let link_meta = fs::symlink_metadata(&dir)?;
+        if link_meta.file_type().is_symlink() {
+            return Err(CliError::new(format!(
+                "antigravity hooks setup: refusing symlinked hook directory {}",
+                dir.display()
+            )));
+        }
+        if !link_meta.is_dir() {
+            return Err(CliError::new(format!(
+                "antigravity hooks setup: {} is not a directory",
+                dir.display()
+            )));
+        }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        let meta = fs::symlink_metadata(&dir)?;
+        let mode = meta.permissions().mode();
+        if mode & 0o022 != 0 {
+            return Err(CliError::new(format!(
+                "antigravity hooks setup: refusing group/world-writable hook directory {}",
+                dir.display()
+            )));
+        }
     }
     Ok(())
 }
@@ -9291,6 +9429,11 @@ mod tests {
                 assert!(opencode.contains(OPENCODE_PLUGIN_TAG));
                 assert!(opencode.contains("hooks\", \"opencode\""));
                 assert!(opencode.contains("\"tool.execute.before\""));
+                assert!(opencode.contains("const MAX_INPUT_BYTES = 1048576"));
+                assert!(opencode.contains("const MAX_SANITIZE_NODES = 4096"));
+                assert!(opencode.contains("function makeBudget"));
+                assert!(opencode.contains("function sanitizeJson"));
+                assert!(opencode.contains("input: hookInput(body)"));
 
                 let first = fs::read_to_string(&codex_path).unwrap();
                 handle_hooks_setup(&context, strings(&["codex"])).unwrap();
@@ -10256,6 +10399,66 @@ mod tests {
             let replanned = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
             assert!(!replanned.changed);
         });
+    }
+
+    #[test]
+    fn antigravity_setup_hardens_config_and_wrapper_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().display().to_string();
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let root_dir = antigravity_root_dir();
+            let config_dir = antigravity_config_dir();
+            let scripts_dir = antigravity_scripts_dir();
+            fs::create_dir_all(&scripts_dir).unwrap();
+            fs::set_permissions(&root_dir, fs::Permissions::from_mode(0o777)).unwrap();
+            fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o777)).unwrap();
+            fs::set_permissions(&scripts_dir, fs::Permissions::from_mode(0o777)).unwrap();
+
+            handle_hooks_setup(&test_context(), strings(&["antigravity"])).unwrap();
+
+            assert_eq!(
+                fs::metadata(&root_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&scripts_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            for event in ["before-model", "pre-tool", "post-tool"] {
+                let script_path = antigravity_script_path(event);
+                assert_eq!(
+                    fs::metadata(script_path).unwrap().permissions().mode() & 0o777,
+                    0o700
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn antigravity_setup_rejects_symlinked_hook_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let target = dir.path().join("target");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o777)).unwrap();
+        std::os::unix::fs::symlink(&target, home.join(".gemini")).unwrap();
+        let home = home.display().to_string();
+
+        with_env(&[("HOME", Some(home.as_str()))], || {
+            let err = handle_hooks_setup(&test_context(), strings(&["antigravity"]))
+                .expect_err("symlinked Antigravity hook root must be rejected");
+            assert!(err.message.contains("refusing symlinked hook directory"));
+        });
+
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o777
+        );
     }
 
     #[test]
@@ -11395,10 +11598,6 @@ mod tests {
                 "browser click requires <surface-id> <ref>",
             ),
             (
-                strings(&["eval", "s9", "   "]),
-                "browser eval requires <surface-id> <script>",
-            ),
-            (
                 strings(&["profile", "create", "   "]),
                 "browser profile create requires a <name>",
             ),
@@ -11616,27 +11815,6 @@ mod tests {
         assert_eq!(request["params"]["surface_id"], "s9");
         assert_eq!(request["params"]["ref"], "e3");
         assert_eq!(request["params"]["value"], "hello world");
-    }
-
-    #[test]
-    fn browser_eval_sends_script() {
-        let request = with_socket_response(
-            |req| {
-                json!({
-                    "id": req["id"],
-                    "ok": true,
-                    "result": "ForkTTY",
-                })
-                .to_string()
-            },
-            |socket_path| {
-                let ctx = ctx_for(socket_path);
-                handle_browser(&ctx, strings(&["eval", "s9", "document.title"])).unwrap();
-            },
-        );
-        assert_eq!(request["method"], "browser.eval");
-        assert_eq!(request["params"]["surface_id"], "s9");
-        assert_eq!(request["params"]["script"], "document.title");
     }
 
     #[test]
@@ -11865,6 +12043,15 @@ mod tests {
         assert_err_contains(
             handle_browser(&ctx, strings(&["import", "discover"])),
             "browser: unknown subcommand import",
+        );
+    }
+
+    #[test]
+    fn browser_eval_cli_is_not_exposed() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_browser(&ctx, strings(&["eval", "s9", "document.title"])),
+            "browser: unknown subcommand eval",
         );
     }
 
