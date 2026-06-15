@@ -23,6 +23,8 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Session restore now quarantines FIFO and other non-regular session paths without blocking application startup.
+- Browser history now ignores oversized URLs and truncates oversized page titles before writing to SQLite, preventing web-controlled title or URL churn from causing unbounded history database growth.
+- Browser imports now report oversized history URLs as skipped writes instead of counting them as imported rows.
 - Browser automation CLI fill now supports `--value-file` (with `-` for stdin) so sensitive values do not have to be exposed in process arguments.
 - Removed the raw `browser.eval` socket/CLI command so same-user socket clients can no longer execute arbitrary JavaScript inside browser panes.
 - Agent HUD terminal-tail polling now formats only the bounded tail rows instead of dumping the full scrollback each second, preventing noisy agents from freezing the GTK UI while the HUD is open.
