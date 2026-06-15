@@ -85,9 +85,6 @@ pub const METHODS: &[&str] = &[
     "browser.history.clear",
     "browser.history.list",
     "browser.history.search",
-    "browser.import.discover",
-    "browser.import.preview",
-    "browser.import.run",
     "browser.navigate",
     "browser.open",
     "browser.profile.create",
@@ -1792,6 +1789,10 @@ pub async fn dispatch(
         }
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
+}
+
+fn method_allowed_from_socket(method: &str) -> bool {
+    !method.starts_with("browser.import.")
 }
 
 fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec<Value> {
@@ -4386,9 +4387,17 @@ async fn handle_connection_with_write_timeout(
             .await;
         }
         let id = request.id.clone();
-        let response = match dispatch(&state, &request.method, request.params).await {
-            Ok(result) => JsonRpcResponse::ok(id, result),
-            Err(err) => JsonRpcResponse::error(id, err.code(), err.to_string()),
+        let response = if method_allowed_from_socket(&request.method) {
+            match dispatch(&state, &request.method, request.params).await {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(err) => JsonRpcResponse::error(id, err.code(), err.to_string()),
+            }
+        } else {
+            JsonRpcResponse::error(
+                id,
+                "method_not_found",
+                format!("Unknown method: {}", request.method),
+            )
         };
         write_response(&mut writer, &response, write_timeout).await?;
     }
@@ -9471,6 +9480,32 @@ mod tests {
         assert!(!response.ok);
         assert_eq!(response.id, Value::Null);
         assert_eq!(response.error.unwrap().code, "request_too_large");
+        server.await.unwrap().unwrap();
+    }
+
+    #[cfg(feature = "browser")]
+    #[tokio::test]
+    async fn socket_connection_rejects_browser_import_methods() {
+        let (state, _backend) = test_state();
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let server = tokio::spawn(handle_connection(server, state));
+        let (read_half, mut write_half) = client.into_split();
+
+        write_half
+            .write_all(br#"{"id":1,"method":"browser.import.discover","params":{}}"#)
+            .await
+            .unwrap();
+        write_half.write_all(b"\n").await.unwrap();
+        write_half.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let response: JsonRpcResponse = serde_json::from_str(line.trim_end()).unwrap();
+
+        assert!(!response.ok);
+        assert_eq!(response.id, json!(1));
+        assert_eq!(response.error.unwrap().code, "method_not_found");
         server.await.unwrap().unwrap();
     }
 

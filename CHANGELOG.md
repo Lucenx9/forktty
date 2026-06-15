@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Browser import is now limited to the in-app Settings workflow and is no longer advertised or accepted over the socket/CLI automation boundary, preventing local socket clients from using ForkTTY to read external browser profile data.
 - Notification command validation now rejects `rbash -c` shell trampolines instead of allowing restricted Bash aliases to bypass the shell-command guard.
 - Session restore now quarantines FIFO and other non-regular session paths without blocking application startup.
 - Browser history now ignores oversized URLs and truncates oversized page titles before writing to SQLite, preventing web-controlled title or URL churn from causing unbounded history database growth.
