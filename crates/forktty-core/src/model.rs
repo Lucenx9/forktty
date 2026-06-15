@@ -958,14 +958,17 @@ impl WorkspaceModel {
     /// Update a browser surface's URL. Same-URL navigation is a successful no-op.
     /// Returns false for terminals, SSH surfaces, or missing ids.
     pub fn set_surface_url(&mut self, surface_id: &str, url: &str) -> bool {
+        let Some(url) = validated_committed_browser_url(url) else {
+            return false;
+        };
         match self.surfaces.get_mut(surface_id) {
             Some(surface) => match &mut surface.kind {
                 SurfaceKind::Browser { url: current, .. } => {
-                    if current == url {
+                    if current == &url {
                         return true;
                     }
-                    *current = url.to_string();
-                    surface.title = browser_title_for(url);
+                    *current = url;
+                    surface.title = browser_title_for(current);
                     true
                 }
                 SurfaceKind::Terminal | SurfaceKind::Ssh { .. } => false,
@@ -2197,6 +2200,9 @@ pub fn has_uri_scheme(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
 }
 
+/// Maximum normalized browser URL size accepted for model persistence.
+pub const MAX_BROWSER_URL_BYTES: usize = 8_192;
+
 /// Normalize a user-entered browser URL.
 ///
 /// Whitespace-only input is rejected. Bare domains and paths get an `https://`
@@ -2210,6 +2216,29 @@ pub fn normalize_browser_url(input: &str) -> Option<String> {
         Some(trimmed.to_string())
     } else {
         Some(format!("https://{trimmed}"))
+    }
+}
+
+/// Normalize and size-check a browser URL before it is stored or navigated.
+pub fn validated_browser_url(input: &str) -> Option<String> {
+    let url = normalize_browser_url(input)?;
+    if url.len() > MAX_BROWSER_URL_BYTES {
+        None
+    } else {
+        Some(url)
+    }
+}
+
+/// Size-check a URL already committed by the browser engine.
+///
+/// Unlike user-entered URLs, committed URLs may be non-hierarchical WebKit
+/// values such as `about:blank`, `data:...`, or `blob:...`; preserve them.
+fn validated_committed_browser_url(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_BROWSER_URL_BYTES {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -4331,6 +4360,66 @@ mod tests {
         // terminal + missing rejected
         assert!(!model.set_surface_url(&terminal, "https://b.com"));
         assert!(!model.set_surface_url("nope", "https://b.com"));
+    }
+
+    #[test]
+    fn set_surface_url_rejects_overlong_browser_urls() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let browser = model
+            .open_browser(
+                &ws.id,
+                "https://a.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+        let overlong = format!("https://{}", "a".repeat(MAX_BROWSER_URL_BYTES));
+
+        assert!(!model.set_surface_url(&browser.id, &overlong));
+        assert_eq!(
+            model.surface(&browser.id).unwrap().kind,
+            SurfaceKind::Browser {
+                url: "https://a.com".to_string(),
+                profile: crate::profile::ProfileId::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn set_surface_url_preserves_committed_non_hierarchical_urls() {
+        let mut model = WorkspaceModel::default();
+        let ws = model.create_workspace("w", PathBuf::from("/tmp"));
+        let browser = model
+            .open_browser(
+                &ws.id,
+                "https://a.com",
+                crate::profile::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+
+        assert!(model.set_surface_url(&browser.id, "about:blank"));
+        assert_eq!(
+            model.surface(&browser.id).unwrap().kind,
+            SurfaceKind::Browser {
+                url: "about:blank".to_string(),
+                profile: crate::profile::ProfileId::default(),
+            }
+        );
+        assert_eq!(model.surface(&browser.id).unwrap().title, "browser");
+    }
+
+    #[test]
+    fn browser_url_validation_applies_default_scheme_before_limit() {
+        let fits = "a".repeat(MAX_BROWSER_URL_BYTES - "https://".len());
+        assert_eq!(
+            validated_browser_url(&fits),
+            Some(format!("https://{fits}"))
+        );
+
+        let overlong = "a".repeat(MAX_BROWSER_URL_BYTES - "https://".len() + 1);
+        assert_eq!(validated_browser_url(&overlong), None);
     }
 
     #[test]
