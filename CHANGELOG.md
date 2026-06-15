@@ -23,6 +23,11 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser automation CLI fill now supports `--value-file` (with `-` for stdin) so sensitive values do not have to be exposed in process arguments.
+- Removed the raw `browser.eval` socket/CLI command so same-user socket clients can no longer execute arbitrary JavaScript inside browser panes.
+- Agent HUD terminal-tail polling now formats only the bounded tail rows instead of dumping the full scrollback each second, preventing noisy agents from freezing the GTK UI while the HUD is open.
+- Browser committed-URI synchronization now rejects URLs over the shared 8 KiB browser URL limit while preserving non-hierarchical URLs such as `about:blank`.
+- OpenCode hooks now sanitize and size-bound plugin payloads before spawning the ForkTTY CLI, preventing oversized tool output from blocking or crashing the OpenCode process before the CLI stdin cap applies.
+- Antigravity hook setup now hardens `~/.gemini`, the config directory, and generated wrapper directory to owner-only permissions before planning or writing executable hook scripts, preventing local users from replacing wrappers through group/world-writable directories.
 - Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
 - Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
 - MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.

@@ -30,11 +30,6 @@ pub(super) fn handle_browser_command(
                 let _ = reply.send(into_ok_cmd_result(r));
             });
         }
-        BrowserOp::Eval { script } => {
-            pane.run_js(&script, move |r| {
-                let _ = reply.send(into_cmd_result(r));
-            });
-        }
         // Nav ops are fire-and-forget: Ok means "navigation initiated", not
         // "page loaded". Callers issue a follow-up snapshot to see the result.
         BrowserOp::Back => {

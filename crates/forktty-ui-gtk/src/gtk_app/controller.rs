@@ -394,9 +394,9 @@ impl TerminalController {
     }
 
     /// The last non-empty line of `surface_id`'s terminal output plus the
-    /// content generation it was read at. `known` short-circuits the read —
-    /// which costs a full scrollback dump — when the generation has not
-    /// moved; the agent HUD polls this once per second per agent.
+    /// content generation it was read at. `known` short-circuits the bounded
+    /// tail read when the generation has not moved; the agent HUD polls this
+    /// once per second per agent.
     pub(super) fn surface_tail_line(
         &self,
         surface_id: &str,

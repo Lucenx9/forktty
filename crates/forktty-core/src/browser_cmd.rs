@@ -10,11 +10,6 @@ use tokio::sync::oneshot;
 /// Maximum byte length of a JSON result returned by a browser command.
 pub const MAX_BROWSER_RESULT_BYTES: usize = 256 * 1024;
 
-/// Maximum byte length of a JS-evaluate script.
-pub const MAX_BROWSER_SCRIPT_BYTES: usize = 64 * 1024;
-
-const _: () = assert!(MAX_BROWSER_SCRIPT_BYTES < MAX_BROWSER_RESULT_BYTES);
-
 /// What a browser command asks the WebView to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserOp {
@@ -24,8 +19,6 @@ pub enum BrowserOp {
     Click { reference: String },
     /// Set the value of the element `reference` to `value`.
     Fill { reference: String, value: String },
-    /// Run arbitrary JavaScript, return its JSON-serialized result.
-    Eval { script: String },
     /// Navigate back in session history.
     Back,
     /// Navigate forward in session history.
