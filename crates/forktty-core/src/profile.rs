@@ -136,9 +136,26 @@ fn ensure_private_profile_store_dir(path: &Path) -> std::io::Result<()> {
     }
     match std::fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => {
+            harden_existing_profile_store_dir(path)
+        }
         Err(e) => Err(e),
     }
+}
+
+#[cfg(unix)]
+fn harden_existing_profile_store_dir(path: &Path) -> std::io::Result<()> {
+    let metadata = std::fs::metadata(path)?;
+    if metadata.uid() == unsafe { libc::geteuid() as u32 }
+        && metadata.gid() == unsafe { libc::getegid() as u32 }
+    {
+        let mode = metadata.permissions().mode() & 0o777;
+        let hardened = mode & 0o700;
+        if hardened != mode {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(hardened))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -443,6 +460,23 @@ mod tests {
         store.create("Work").unwrap();
         let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "browser_profiles/ must be created with 0o700");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_hardens_existing_parent_dir_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("browser_profiles");
+        let path = parent.join("profiles.json");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut store = ProfileStore::load(path).unwrap();
+        store.create("Work").unwrap();
+
+        let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "existing browser_profiles/ must be hardened");
     }
 
     #[cfg(unix)]

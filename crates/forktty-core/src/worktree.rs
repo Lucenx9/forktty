@@ -218,7 +218,10 @@ pub fn create(
     // a pre-existing branch must never be deleted here.
     let (branch, branch_was_created) = match repo.find_branch(branch_name, BranchType::Local) {
         Ok(existing) => (existing, false),
-        Err(_) => (repo.branch(branch_name, &head_commit, false)?, true),
+        Err(err) if err.code() == git2::ErrorCode::NotFound => {
+            (repo.branch(branch_name, &head_commit, false)?, true)
+        }
+        Err(err) => return Err(err.into()),
     };
     let branch_ref = branch.into_reference();
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
@@ -1198,6 +1201,34 @@ mod tests {
         assert_eq!(second.path, first.path);
         assert_eq!(second.worktree_name, first.worktree_name);
         assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn create_propagates_branch_lookup_errors_other_than_not_found() {
+        let dir = make_repo();
+        let branch_name = "corrupt-ref";
+        std::fs::write(
+            dir.path()
+                .join(".git")
+                .join("refs")
+                .join("heads")
+                .join(branch_name),
+            b"not-a-valid-object-id\n",
+        )
+        .unwrap();
+
+        let err = create(dir.path().to_str().unwrap(), branch_name, "nested").unwrap_err();
+
+        let WorktreeError::Git(err) = err else {
+            panic!("expected git error, got {err:?}");
+        };
+        assert_ne!(err.code(), git2::ErrorCode::NotFound);
+        assert_ne!(
+            err.code(),
+            git2::ErrorCode::Exists,
+            "create must not mask lookup errors by attempting to create the branch"
+        );
+        assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
     }
 
     #[test]
