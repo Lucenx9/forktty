@@ -5,7 +5,7 @@ use forktty_core::{
     validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
     AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
     JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
-    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_SCRIPT_BYTES, MAX_BROWSER_URL_BYTES,
+    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -80,7 +80,6 @@ pub const METHODS: &[&str] = &[
     "browser.bookmark.list",
     "browser.bookmark.remove",
     "browser.click",
-    "browser.eval",
     "browser.fill",
     "browser.forward",
     "browser.history.clear",
@@ -1319,21 +1318,6 @@ pub async fn dispatch(
             }
             let value = required_string_param(&params, "value")?.to_string();
             dispatch_browser_cmd(state, surface_id, BrowserOp::Fill { reference, value }).await
-        }
-        "browser.eval" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            let script = required_string_param(&params, "script")?.to_string();
-            if script.is_empty() {
-                return Err("Invalid parameter script: must not be empty".into());
-            }
-            if script.len() > MAX_BROWSER_SCRIPT_BYTES {
-                return Err(DispatchError::PayloadTooLarge {
-                    field: "script",
-                    limit: MAX_BROWSER_SCRIPT_BYTES,
-                    actual: script.len(),
-                });
-            }
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Eval { script }).await
         }
         "browser.back" => {
             let surface_id = required_surface_id(&params)?.to_string();
@@ -9882,18 +9866,17 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn browser_eval_rejects_oversize_script() {
+        async fn browser_eval_is_not_exposed() {
             let (state, _rx) = state_with_browser_channel();
             let sid = open_browser_surface(&state).await;
-            let big = "x".repeat(forktty_core::MAX_BROWSER_SCRIPT_BYTES + 1);
             let err = dispatch(
                 &state,
                 "browser.eval",
-                json!({"surface_id": sid, "script": big}),
+                json!({"surface_id": sid, "script": "document.title"}),
             )
             .await
             .unwrap_err();
-            assert_eq!(err.code(), "payload_too_large");
+            assert_eq!(err.code(), "method_not_found");
         }
 
         #[tokio::test]
