@@ -306,6 +306,11 @@ impl TerminalRuntime {
         self.core.visible_full_text_unwrapped().unwrap_or_default()
     }
 
+    /// Plain-text dump of at most the last `lines` scrollable rows.
+    pub(super) fn tail_text(&self, lines: usize) -> String {
+        self.core.tail_text(lines).unwrap_or_default()
+    }
+
     /// Changes whenever [`Self::full_text`] may have changed; viewport
     /// scrolling does not count.
     pub(super) fn content_generation(&self) -> u64 {
