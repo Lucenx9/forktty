@@ -24,6 +24,7 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Browser history now ignores oversized URLs and truncates oversized page titles before writing to SQLite, preventing web-controlled title or URL churn from causing unbounded history database growth.
 - Browser imports now report oversized history URLs as skipped writes instead of counting them as imported rows.
+- Browser committed-URI synchronization now rejects URLs over the shared 8 KiB browser URL limit while preserving non-hierarchical URLs such as `about:blank`.
 - OpenCode hooks now sanitize and size-bound plugin payloads before spawning the ForkTTY CLI, preventing oversized tool output from blocking or crashing the OpenCode process before the CLI stdin cap applies.
 - Antigravity hook setup now hardens `~/.gemini`, the config directory, and generated wrapper directory to owner-only permissions before planning or writing executable hook scripts, preventing local users from replacing wrappers through group/world-writable directories.
 - Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
