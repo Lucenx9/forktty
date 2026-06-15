@@ -166,9 +166,11 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
         let telemetry_status = telemetry_status.clone();
         move |_| {
             if !ping_row.is_active() {
+                // Persist the opt-out, but never trap the user in the dialog if
+                // the write fails (e.g. a read-only config dir): the live toggle
+                // is the source of truth and we skip the ping below regardless.
                 if let Err(err) = set_anonymous_ping(false) {
                     show_telemetry_error(&telemetry_status, false, &err);
-                    return glib::Propagation::Stop;
                 }
             }
             record_welcome_seen_best_effort();

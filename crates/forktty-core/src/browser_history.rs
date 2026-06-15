@@ -442,6 +442,9 @@ impl BookmarkStore {
 
     /// Add a bookmark, or update the title if the url already exists. Persists.
     pub fn add(&mut self, url: &str, title: &str) -> Result<(), HistoryError> {
+        let Some((url, title)) = bounded_history_fields(url, title) else {
+            return Ok(());
+        };
         if let Some(existing) = self.items.iter_mut().find(|b| b.url == url) {
             existing.title = title.to_string();
         } else {
@@ -467,7 +470,7 @@ impl BookmarkStore {
 
     fn save(&self) -> Result<(), HistoryError> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| HistoryError::Io(e.to_string()))?;
+            ensure_private_history_dir(parent)?;
         }
         let bytes =
             serde_json::to_vec_pretty(&self.items).map_err(|e| HistoryError::Io(e.to_string()))?;
@@ -907,6 +910,40 @@ mod tests {
         b.add("https://persist.test/?token=secret", "P").unwrap();
 
         assert_eq!(file_mode(&path), PRIVATE_FILE_MODE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_save_hardens_profile_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("nested")
+            .join("profile")
+            .join("bookmarks.json");
+
+        let mut b = BookmarkStore::open(&path).unwrap();
+        b.add("https://private.test/?token=secret", "P").unwrap();
+
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(mode(&path), 0o600);
+    }
+
+    #[test]
+    fn bookmark_add_rejects_oversized_url_and_truncates_title() {
+        let (_d, mut b) = bm_store();
+
+        let long_url = format!("https://a.test/{}", "x".repeat(MAX_HISTORY_URL_BYTES));
+        b.add(&long_url, "ignored").unwrap();
+        assert!(b.list().is_empty());
+
+        let long_title = "é".repeat(MAX_HISTORY_TITLE_BYTES);
+        b.add("https://b.test/", &long_title).unwrap();
+        assert_eq!(b.list().len(), 1);
+        assert!(b.list()[0].title.len() <= MAX_HISTORY_TITLE_BYTES);
     }
 
     #[test]
