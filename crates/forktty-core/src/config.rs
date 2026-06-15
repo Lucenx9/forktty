@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -382,7 +382,7 @@ fn config_write_path(path: &Path) -> Result<PathBuf, ConfigError> {
 }
 
 pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
-    let file = match fs::File::open(path) {
+    let file = match open_config_for_read(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             if fs::symlink_metadata(path).is_ok() {
@@ -417,6 +417,16 @@ pub fn load_config_from_path(path: &Path) -> Result<AppConfig, ConfigError> {
     let config = normalize_loaded_config(toml::from_str(&content)?);
     validate_config(&config)?;
     Ok(config)
+}
+
+fn open_config_for_read(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    options.open(path)
 }
 
 pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
@@ -691,6 +701,16 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn mkfifo(path: &Path) {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "mkfifo failed: {}", std::io::Error::last_os_error());
+    }
 
     #[test]
     fn load_config_from_path_with_recovery_recovers_bad_config() {
@@ -1136,6 +1156,50 @@ mod tests {
             "broken config symlink should be renamed aside"
         );
         let (_, quarantined_path) = assert_recovery_and_get_quarantined_path(config, recovery);
+        assert!(fs::symlink_metadata(&quarantined_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_quarantines_symlink_to_fifo_config_without_blocking() {
+        use std::os::unix::fs::symlink;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let fifo = dir.path().join("config-fifo");
+        mkfifo(&fifo);
+        symlink(&fifo, &path).unwrap();
+
+        let path_for_thread = path.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = load_config_from_path_with_recovery(&path_for_thread);
+            let _ = tx.send(result);
+        });
+        let (config, recovery) = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("loading a FIFO-backed config path must not block")
+            .unwrap();
+
+        assert_eq!(config.appearance.font_size, default_font_size());
+        let recovery = recovery.expect("expected recovery details");
+        assert!(recovery.reason.contains("not a regular file"));
+        assert!(
+            fs::symlink_metadata(&path).is_err(),
+            "config symlink should be renamed aside"
+        );
+        assert!(
+            fifo.exists(),
+            "quarantining the symlink must not rename its target"
+        );
+        let quarantined_path = recovery
+            .quarantined_path
+            .expect("expected quarantined path");
         assert!(fs::symlink_metadata(&quarantined_path)
             .unwrap()
             .file_type()
