@@ -205,14 +205,24 @@ pub fn create(
         std::fs::create_dir_all(parent)?;
     }
     ensure_local_exclude_for_worktree_path(&repo, workdir, &wt_path)?;
-    let branch = repo.branch(branch_name, &head_commit, false)?;
+    // The branch can already exist when recreating a worktree whose registration
+    // was just pruned as stale (its directory had been deleted): adopt it so
+    // `create` stays idempotent, rather than failing on `repo.branch`. Only a
+    // branch this call freshly created is rolled back on a worktree-add failure;
+    // a pre-existing branch must never be deleted here.
+    let (branch, branch_was_created) = match repo.find_branch(branch_name, BranchType::Local) {
+        Ok(existing) => (existing, false),
+        Err(_) => (repo.branch(branch_name, &head_commit, false)?, true),
+    };
     let branch_ref = branch.into_reference();
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
     if let Err(err) = repo.worktree(&worktree_name, &wt_path, Some(&opts)) {
-        if let Ok(mut created_branch) = repo.find_branch(&branch, BranchType::Local) {
-            let _ = created_branch.delete();
+        if branch_was_created {
+            if let Ok(mut created_branch) = repo.find_branch(&branch, BranchType::Local) {
+                let _ = created_branch.delete();
+            }
         }
         return Err(err.into());
     }
@@ -656,11 +666,43 @@ fn find_worktree_by_branch(
             continue;
         };
         if get_registered_worktree_branch(repo, name, wt.path()) == branch_name {
+            // A registered worktree whose working directory was deleted out from
+            // under git (e.g. an external `rm -rf`) is a stale registration:
+            // prune it and keep searching so `create`/`attach` can recreate it,
+            // instead of hard-failing in `verify_linked_worktree_path` with
+            // WorktreePathUnresolved. This mirrors the tolerance the `remove`
+            // path already grants the same condition. Only a confirmed-missing
+            // directory triggers the prune; every other state still flows
+            // through the verifying path below.
+            if worktree_directory_missing(wt.path()) {
+                prune_stale_worktree(&wt)?;
+                continue;
+            }
             let wt_path = verify_linked_worktree_path(repo, name, wt.path())?;
             return Ok(Some((name.to_string(), wt_path)));
         }
     }
     Ok(None)
+}
+
+/// True when `reported_path` does not exist (its directory was removed out from
+/// under git), as opposed to existing-but-unreadable.
+fn worktree_directory_missing(reported_path: &Path) -> bool {
+    matches!(
+        std::fs::symlink_metadata(reported_path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// Deregister a worktree whose working directory is already gone. Pruning only
+/// removes the `.git/worktrees/<name>` administrative entry; it never deletes a
+/// filesystem path, so it cannot be redirected at a neighbor the way a
+/// `remove_dir_all` could, and it leaves the branch ref intact.
+fn prune_stale_worktree(wt: &git2::Worktree) -> Result<(), WorktreeError> {
+    let mut opts = git2::WorktreePruneOptions::new();
+    opts.valid(true).working_tree(true);
+    wt.prune(Some(&mut opts))?;
+    Ok(())
 }
 
 fn parse_linked_worktree_gitdir(git_file_contents: &str) -> Option<&str> {
@@ -1274,6 +1316,38 @@ mod tests {
         assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
         let repo = Repository::open(dir.path()).unwrap();
         assert!(repo.find_branch("stale-branch", BranchType::Local).is_ok());
+    }
+
+    #[test]
+    fn create_recreates_worktree_after_external_directory_deletion() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let first = create(repo_path, "stale-create", "nested").unwrap();
+        fs::remove_dir_all(&first.path).unwrap();
+
+        let second = create(repo_path, "stale-create", "nested").unwrap();
+
+        // The stale registration is pruned and a fresh worktree recreated in
+        // place, restoring `create`'s idempotency contract.
+        assert_eq!(second.branch, "stale-create");
+        assert!(Path::new(&second.path).exists());
+        assert_eq!(list(repo_path).unwrap().len(), 1);
+        let repo = Repository::open(dir.path()).unwrap();
+        assert!(repo.find_branch("stale-create", BranchType::Local).is_ok());
+    }
+
+    #[test]
+    fn attach_recreates_worktree_after_external_directory_deletion() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let first = create(repo_path, "stale-attach", "nested").unwrap();
+        fs::remove_dir_all(&first.path).unwrap();
+
+        let attached = attach(repo_path, "stale-attach", "nested").unwrap();
+
+        assert_eq!(attached.branch, "stale-attach");
+        assert!(Path::new(&attached.path).exists());
+        assert_eq!(list(repo_path).unwrap().len(), 1);
     }
 
     #[test]
