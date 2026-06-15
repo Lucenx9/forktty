@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Session restore now quarantines FIFO and other non-regular session paths without blocking application startup.
 - Browser history now ignores oversized URLs and truncates oversized page titles before writing to SQLite, preventing web-controlled title or URL churn from causing unbounded history database growth.
 - Browser imports now report oversized history URLs as skipped writes instead of counting them as imported rows.
 - Browser automation CLI fill now supports `--value-file` (with `-` for stdin) so sensitive values do not have to be exposed in process arguments.
