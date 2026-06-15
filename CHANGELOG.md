@@ -22,6 +22,8 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- `ProfileStore::save` now creates the `browser_profiles` directory with owner-only (`0700`) permissions instead of inheriting the umask, so profile metadata is not world-readable on multi-user systems when the directory is first created via the socket API.
+- Browser import spooling now uses anonymous (unlinked) temp files instead of named temp files, so spooled pre-read data is reclaimed automatically if the process is killed mid-import.
 - Browser imports now spool pre-read source data to temporary files instead of retaining every selected profile in memory, preventing large all-source imports from exhausting memory while preserving all-or-nothing read validation before writes begin.
 - Update checks now honor HTTP-date `Retry-After` headers from GitHub rate-limit responses instead of retrying before the requested deadline.
 - Restarting an agent pane now resumes the agent session (provider resume argv and recorded cwd) instead of relaunching a plain shell, matching the session-restore and worktree spawn paths.

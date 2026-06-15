@@ -128,6 +128,24 @@ fn ensure_default_profile(profiles: &mut Vec<ProfileMeta>) {
     profiles.append(&mut others);
 }
 
+#[cfg(unix)]
+fn ensure_private_profile_store_dir(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if let Some(grandparent) = path.parent() {
+        std::fs::create_dir_all(grandparent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_private_profile_store_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
 fn backup_corrupt_profile_store(path: &Path, bytes: &[u8]) {
     let backup = crate::backup::reserve_unique_backup_path(path, "json.bak");
     if std::fs::rename(path, &backup).is_err() {
@@ -188,7 +206,8 @@ impl ProfileStore {
 
     fn save(&self) -> Result<(), ProfileError> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| ProfileError::Io(e.to_string()))?;
+            ensure_private_profile_store_dir(parent)
+                .map_err(|e| ProfileError::Io(e.to_string()))?;
         }
         let bytes = serde_json::to_vec_pretty(&self.profiles)
             .map_err(|e| ProfileError::Io(e.to_string()))?;
@@ -410,6 +429,20 @@ mod tests {
             Err(ProfileError::InvalidInput(_))
         ));
         assert_eq!(store.list().len(), 1); // nothing persisted
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_creates_missing_parent_dir_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("browser_profiles");
+        let path = parent.join("profiles.json");
+        assert!(!parent.exists());
+        let mut store = ProfileStore::load(path).unwrap();
+        store.create("Work").unwrap();
+        let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "browser_profiles/ must be created with 0o700");
     }
 
     #[cfg(unix)]

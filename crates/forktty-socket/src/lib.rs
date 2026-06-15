@@ -3323,18 +3323,19 @@ async fn browser_import_preview(params: &Value) -> Result<Value, DispatchError> 
 
 struct BrowserImportSpooledSource {
     source: forktty_import::SourceProfile,
-    data_file: tempfile::NamedTempFile,
+    // Anonymous (unlinked) temp file: no directory entry survives crash/SIGKILL.
+    data_file: std::fs::File,
 }
 
 fn browser_import_spool_data(
     mut data: forktty_import::ImportedData,
-) -> Result<tempfile::NamedTempFile, DispatchError> {
+) -> Result<std::fs::File, DispatchError> {
     // Cookie import is reported as unsupported; keep only the counts needed for
     // the report so plaintext/decrypted cookie values never land in temp files.
     data.cookies.clear();
     let mut data_file =
-        tempfile::NamedTempFile::new().map_err(|err| DispatchError::Other(err.to_string()))?;
-    serde_json::to_writer(data_file.as_file_mut(), &data)
+        tempfile::tempfile().map_err(|err| DispatchError::Other(err.to_string()))?;
+    serde_json::to_writer(&mut data_file, &data)
         .map_err(|err| DispatchError::Other(err.to_string()))?;
     Ok(data_file)
 }
@@ -3634,11 +3635,10 @@ async fn browser_import_run(
             for mut spooled in entry.source_data {
                 spooled
                     .data_file
-                    .as_file_mut()
                     .seek(SeekFrom::Start(0))
                     .map_err(|err| DispatchError::Other(err.to_string()))?;
                 let data: forktty_import::ImportedData =
-                    serde_json::from_reader(spooled.data_file.as_file_mut())
+                    serde_json::from_reader(&mut spooled.data_file)
                         .map_err(|err| DispatchError::Other(err.to_string()))?;
                 let read_counts = browser_import_counts_from_data(&data, include);
                 entry_read.add(read_counts);
@@ -10327,13 +10327,15 @@ mod tests {
             };
 
             let mut data_file = browser_import_spool_data(data).unwrap();
-            let serialized = fs::read_to_string(data_file.path()).unwrap();
+            data_file.seek(SeekFrom::Start(0)).unwrap();
+            let mut serialized = String::new();
+            std::io::Read::read_to_string(&mut data_file, &mut serialized).unwrap();
             assert!(!serialized.contains("secret-cookie-value"));
             assert!(serialized.contains("https://example.test/"));
 
-            data_file.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+            data_file.seek(SeekFrom::Start(0)).unwrap();
             let spooled: forktty_import::ImportedData =
-                serde_json::from_reader(data_file.as_file_mut()).unwrap();
+                serde_json::from_reader(&mut data_file).unwrap();
             assert!(spooled.cookies.is_empty());
             assert_eq!(spooled.result.cookies, 1);
             assert_eq!(spooled.visits.len(), 1);
