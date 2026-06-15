@@ -13,17 +13,29 @@ cargo run -p forktty-ui-gtk                                          # default =
 cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty   # exact release config
 ```
 
-The CI gate — run all of these before every push (CI runs the same set and `-D warnings` means any clippy lint fails the build):
+The local gate — run the relevant subset before finishing a change. Before every push, run all of these if the local environment has the needed GTK/WebKit deps. `cargo fmt` fixes formatting; CI uses `--check`, and `-D warnings` means any clippy lint fails the build:
 
 ```bash
-cargo fmt --all                # CI runs --check; never push unformatted code
+cargo fmt --all                # CI runs --check
 cargo run -p xtask -- check    # repo consistency (hook templates, release automation)
 cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
 cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings
+cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
 cargo clippy -p forktty-ui-gtk --all-targets --no-default-features --features browser -- -D warnings
 ```
 
-CI also tests the browser feature (`cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser`), validates the desktop file, and builds the deb. Both feature combinations must stay compiling even when you only touch one.
+Additional PR CI parity / release-sensitive checks:
+
+```bash
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
+cargo build -p forktty-ui-gtk --no-default-features --features browser
+desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
+bash scripts/build-deb.sh
+readelf -d target/release/forktty | grep -E 'RUNPATH|RPATH' | grep -F '$ORIGIN/../lib'
+cargo audit
+```
+
+Both `gtk-ghostty` and `browser` feature combinations must stay compiling even when you only touch one.
 
 Single test / single crate:
 
@@ -42,7 +54,11 @@ bash scripts/build-appimage.sh   # → target/packaging/appimage/ (needs appimag
 ## Critical constraints (violating these has broken releases before)
 
 - **GTK 4.14 CSS compatibility**: `crates/forktty-ui-gtk/src/style.css` must NOT use CSS custom properties (`var(--x)` / `--x:` definitions) — the AppImage may run against a bundled GTK 4.14, which silently drops them (this shipped a release with no accent colors). Use literal colors and `@named_color` references only. Accent is `#e88745`, dark surfaces `#181818`/`#232323`.
-- **libghostty pin**: `[patch.crates-io]` in the workspace `Cargo.toml` points `libghostty-vt` AND `libghostty-vt-sys` at the vendored tree in `vendor/libghostty-rs` (upstream rev 20edad15 plus `FORKTTY PATCH`-marked changes) — never let the two crates resolve from different sources. The vendored build.rs passes `-Dcpu=baseline` to zig for native builds; without it the built library's ISA follows the build host's CPU, and an AVX-512 CI runner shipped binaries that SIGILL on every non-AVX-512 machine (first alpha.10 cut). `.cargo/config.toml` sets `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe`; never remove it (upstream maps Cargo debug profile to zig Debug, whose VT parser is ~870x slower and drags every test run). Drop the vendor only when upstream pins the CPU baseline for native builds (see `vendor/libghostty-rs/FORKTTY-VENDORED.md`).
+- **libghostty pin**:
+  - `[patch.crates-io]` in the workspace `Cargo.toml` points `libghostty-vt` AND `libghostty-vt-sys` at the vendored tree in `vendor/libghostty-rs` (upstream rev 20edad15 plus `FORKTTY PATCH`-marked changes) — never let the two crates resolve from different sources.
+  - Keep the vendored build.rs `-Dcpu=baseline` zig flag for native builds; without it the built library's ISA follows the build host's CPU, and an AVX-512 CI runner shipped binaries that SIGILL on every non-AVX-512 machine (first alpha.10 cut).
+  - Keep `.cargo/config.toml` setting `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe`; upstream maps Cargo debug profile to zig Debug, whose VT parser is ~870x slower and drags every test run.
+  - Drop the vendor only when upstream pins the CPU baseline for native builds; see `vendor/libghostty-rs/FORKTTY-VENDORED.md`.
 - **Ghostty scrollback is bytes, not lines**: the C API `max_scrollback` is a byte budget (upstream won't-fix). `forktty-terminal/src/ghostty/core.rs` converts via `SCROLLBACK_BYTES_PER_LINE = 2048`; this conversion is permanent.
 - **Browser feature is source-only**: release artifacts (AppImage, deb) are built with `--no-default-features --features gtk-ghostty` and must never include the browser feature. Browser code stays behind `#[cfg(feature = "browser")]` and must keep compiling.
 - **Single-instance app**: the GtkApplication uses DBus single-instance; a second launch delegates to the running one and exits immediately. Kill existing instances before launching for manual testing.
@@ -68,4 +84,14 @@ Useful CLI for inspecting a running instance: `forktty doctor`, `forktty list`, 
 - Every user-visible change gets a `CHANGELOG.md` entry under `## [Unreleased]` (`Added`/`Changed`/`Fixed`/`Security` headings).
 - Update `SPEC.md` when changing behavior it describes (config fields, socket methods, security boundaries).
 - Prefer tests that pin observable behavior (socket responses, validation rejections) over mocking internals. Tests that read env vars must guard with the existing `with_env` helper — tests run in parallel.
+- Do not weaken enforced security boundaries to make a task easier: keep argv validation, owner-only socket checks, request size bounds, and local-first/privacy guarantees in code.
 - Release process is in `RELEASING.md`; after a release publishes, download the actual assets and verify them end-to-end (run the AppImage, check theming/icons) — green CI alone has not been sufficient in the past.
+
+## Change checklist
+
+- User-visible behavior, UI text, CLI output, or packaging changed → update `CHANGELOG.md`.
+- Config fields, socket methods, session format, or security boundaries changed → update `SPEC.md`.
+- Hook templates or release automation changed → run `cargo run -p xtask -- check`.
+- Browser-gated code changed → run browser feature test, clippy, and build.
+- Packaging/AppImage/runtime loader changed → build artifacts and smoke-test them.
+- Dependencies changed → run `cargo audit` and justify the dependency.
