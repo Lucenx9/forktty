@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Browser imports now spool pre-read source data to temporary files instead of retaining every selected profile in memory, preventing large all-source imports from exhausting memory while preserving all-or-nothing read validation before writes begin.
 - Update checks now honor HTTP-date `Retry-After` headers from GitHub rate-limit responses instead of retrying before the requested deadline.
 - Restarting an agent pane now resumes the agent session (provider resume argv and recorded cwd) instead of relaunching a plain shell, matching the session-restore and worktree spawn paths.
 - Session restore now quarantines a session file containing invalid UTF-8 instead of returning an error that crashed startup on every launch.
