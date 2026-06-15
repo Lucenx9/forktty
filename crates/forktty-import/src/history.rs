@@ -202,6 +202,9 @@ pub fn read_chromium_bookmarks(path: &Path) -> std::io::Result<Vec<ImportedBookm
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(err) => return Err(err),
     };
+    if !metadata.is_file() {
+        return Ok(vec![]);
+    }
     if metadata.len() > MAX_CHROMIUM_BOOKMARKS_BYTES {
         return Ok(vec![]);
     }
@@ -382,6 +385,35 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bms = read_chromium_bookmarks(&dir.path().join("Bookmarks")).unwrap();
         assert!(bms.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chromium_bookmarks_fifo_returns_empty_without_blocking() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success(),
+            "mkfifo failed"
+        );
+
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            sender.send(read_chromium_bookmarks(&path)).ok();
+        });
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("read_chromium_bookmarks must not block on a FIFO")
+            .unwrap();
+        assert!(result.is_empty());
     }
 
     #[test]

@@ -22,6 +22,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Chromium bookmark import, browser bookmark loading, and browser profile metadata loading now reject or skip non-regular files before reading, preventing local FIFO/device paths from blocking the import or profile workflows.
 - Socket metadata calls now reject stale explicit `surface_id` values even when `workspace_id` is valid, oversized request lines return the documented `payload_too_large` code, and invalid parameter errors use the documented `invalid_param` code.
 - Config recovery now quarantines config paths that resolve to FIFOs without blocking application startup.
 - Worktree create now propagates branch lookup errors other than `NotFound` instead of treating every libgit2 failure as a missing branch.

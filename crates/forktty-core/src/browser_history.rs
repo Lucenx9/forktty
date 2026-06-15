@@ -555,6 +555,11 @@ fn read_optional_file_bounded(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(HistoryError::Io(err.to_string())),
     };
+    if !metadata.is_file() {
+        return Err(HistoryError::Io(format!(
+            "{label} path is not a regular file"
+        )));
+    }
     if metadata.len() > limit {
         return Err(HistoryError::Io(format!(
             "{label} file is {} bytes, exceeds limit of {limit} bytes",
@@ -830,6 +835,33 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bookmarks.json");
         (dir, BookmarkStore::open(&path).unwrap())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_open_rejects_fifo_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarks.json");
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            sender.send(BookmarkStore::open(&path)).ok();
+        });
+
+        let err = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("BookmarkStore::open must not block on a FIFO");
+        let err = match err {
+            Ok(_) => panic!("expected BookmarkStore::open to reject a FIFO"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("not a regular file"));
     }
 
     #[test]
