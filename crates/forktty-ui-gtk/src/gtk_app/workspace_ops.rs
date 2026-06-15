@@ -265,11 +265,15 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
         }
     }
 
-    if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
-        &surface,
-        state.shell.clone(),
-        state.socket_path.clone(),
-    )) {
+    // Route through spawn_request_for_surface so an agent terminal (a Terminal
+    // surface carrying an agent_session) is rewritten to the provider resume
+    // argv + resume cwd instead of relaunching a plain shell, matching every
+    // other (re)spawn path (controller.rs, worktree_dialog.rs).
+    let base = SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
+    let Some(request) = forktty_socket::spawn_request_for_surface(base, &surface) else {
+        return false;
+    };
+    if let Err(err) = state.terminal.spawn(request) {
         record_terminal_spawn_failure(
             &state.model,
             &surface.workspace_id,
