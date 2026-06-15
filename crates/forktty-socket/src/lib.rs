@@ -2368,7 +2368,9 @@ fn rollback_created_worktree_after_spawn_failure(
     if !info.created {
         return spawn_error;
     }
-    match worktree::remove(cwd, &info.worktree_name, true) {
+    // Only delete the branch when this create call actually created it; a
+    // worktree recovered for a pre-existing branch must leave that branch.
+    match worktree::remove(cwd, &info.worktree_name, info.branch_created) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(
             "{spawn_error}; created worktree '{}' remains because rollback failed: {rollback_error}",
@@ -8426,6 +8428,57 @@ mod tests {
         let worktrees = worktree::list(repo_dir.path().to_str().unwrap()).unwrap();
         assert_eq!(worktrees.len(), 1);
         assert_eq!(worktrees[0].branch, branch_name);
+    }
+
+    #[tokio::test]
+    async fn worktree_create_preserves_preexisting_branch_when_spawn_fails() {
+        // A branch can exist with no linked worktree (e.g. its worktree was
+        // removed without deleting the branch). `create` adopts it, so a spawn
+        // failure must roll back only the worktree it created and never delete
+        // the user's pre-existing branch.
+        let repo_dir = make_temp_repo();
+        let branch_name = format!("topic/adopt-rollback-{}", std::process::id());
+        {
+            let repo = Repository::open(repo_dir.path()).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            repo.branch(&branch_name, &head, false).unwrap();
+        }
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+        let bootstrap_state = SocketAppState::new(
+            model.clone(),
+            bootstrap_backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+        let state = SocketAppState::new(
+            model.clone(),
+            Arc::new(FailingSpawnBackend),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let error = dispatch(
+            &state,
+            "worktree.create",
+            json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("spawn failed"));
+        // The rolled-back worktree is gone, but the pre-existing branch survives.
+        assert!(worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .is_empty());
+        let repo = Repository::open(repo_dir.path()).unwrap();
+        assert!(repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_ok());
     }
 
     #[tokio::test]
