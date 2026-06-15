@@ -1349,6 +1349,33 @@ mod tests {
     }
 
     #[test]
+    fn create_adopts_existing_branch_without_branch_created_flag() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        create_branch(dir.path(), "adopt-existing");
+
+        let info = create(repo_path, "adopt-existing", "nested").unwrap();
+
+        assert_eq!(info.branch, "adopt-existing");
+        assert!(info.created);
+        assert!(!info.branch_created);
+        let repo = Repository::open(dir.path()).unwrap();
+        assert!(repo
+            .find_branch("adopt-existing", BranchType::Local)
+            .is_ok());
+    }
+
+    #[test]
+    fn create_new_branch_sets_branch_created_flag() {
+        let dir = make_repo();
+
+        let info = create(dir.path().to_str().unwrap(), "new-cleanup", "nested").unwrap();
+
+        assert!(info.created);
+        assert!(info.branch_created);
+    }
+
+    #[test]
     fn attach_recreates_worktree_after_external_directory_deletion() {
         let dir = make_repo();
         let repo_path = dir.path().to_str().unwrap();
