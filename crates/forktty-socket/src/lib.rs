@@ -3326,6 +3326,19 @@ struct BrowserImportSpooledSource {
     data_file: tempfile::NamedTempFile,
 }
 
+fn browser_import_spool_data(
+    mut data: forktty_import::ImportedData,
+) -> Result<tempfile::NamedTempFile, DispatchError> {
+    // Cookie import is reported as unsupported; keep only the counts needed for
+    // the report so plaintext/decrypted cookie values never land in temp files.
+    data.cookies.clear();
+    let mut data_file =
+        tempfile::NamedTempFile::new().map_err(|err| DispatchError::Other(err.to_string()))?;
+    serde_json::to_writer(data_file.as_file_mut(), &data)
+        .map_err(|err| DispatchError::Other(err.to_string()))?;
+    Ok(data_file)
+}
+
 async fn browser_import_read_sources(
     sources: &[forktty_import::SourceProfile],
     include: BrowserImportSelection,
@@ -3338,10 +3351,7 @@ async fn browser_import_read_sources(
         )
         .await
         .map_err(|err| DispatchError::Other(err.to_string()))?;
-        let mut data_file =
-            tempfile::NamedTempFile::new().map_err(|err| DispatchError::Other(err.to_string()))?;
-        serde_json::to_writer(data_file.as_file_mut(), &data)
-            .map_err(|err| DispatchError::Other(err.to_string()))?;
+        let data_file = browser_import_spool_data(data)?;
         source_data.push(BrowserImportSpooledSource {
             source: source.clone(),
             data_file,
@@ -10285,6 +10295,49 @@ mod tests {
                 .await
                 .unwrap();
             assert!(listed2.as_array().unwrap().is_empty());
+        }
+
+        #[test]
+        fn browser_import_spool_data_strips_cookie_values_but_keeps_counts() {
+            let data = forktty_import::ImportedData {
+                cookies: vec![forktty_import::ImportedCookie {
+                    name: "sid".to_string(),
+                    value: "secret-cookie-value".to_string(),
+                    host: ".example.test".to_string(),
+                    path: "/".to_string(),
+                    expires: None,
+                    secure: false,
+                    http_only: true,
+                }],
+                visits: vec![forktty_import::ImportedVisit {
+                    url: "https://example.test/".to_string(),
+                    title: "Example".to_string(),
+                    visit_count: 2,
+                }],
+                bookmarks: vec![forktty_import::ImportedBookmark {
+                    url: "https://example.test/".to_string(),
+                    title: "Example Bookmark".to_string(),
+                }],
+                result: forktty_import::ImportResult {
+                    cookies: 1,
+                    history: 1,
+                    bookmarks: 1,
+                    skipped: 0,
+                },
+            };
+
+            let mut data_file = browser_import_spool_data(data).unwrap();
+            let serialized = fs::read_to_string(data_file.path()).unwrap();
+            assert!(!serialized.contains("secret-cookie-value"));
+            assert!(serialized.contains("https://example.test/"));
+
+            data_file.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+            let spooled: forktty_import::ImportedData =
+                serde_json::from_reader(data_file.as_file_mut()).unwrap();
+            assert!(spooled.cookies.is_empty());
+            assert_eq!(spooled.result.cookies, 1);
+            assert_eq!(spooled.visits.len(), 1);
+            assert_eq!(spooled.bookmarks.len(), 1);
         }
 
         fn create_firefox_import_source(home: &Path, name: &str) -> forktty_import::SourceProfile {

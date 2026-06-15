@@ -2276,6 +2276,39 @@ fn restart_surface_does_not_spawn_terminal_for_browser_pane() {
 }
 
 #[test]
+fn restart_surface_respawns_agent_terminal_with_resume_command() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_id = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id;
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            forktty_core::AgentKind::Codex,
+            "codex-session-1",
+        ));
+        surface_id
+    };
+
+    assert!(restart_surface(&state, &surface_id));
+
+    // Restart must resume the agent, not relaunch a plain shell.
+    assert_eq!(terminal.spawn_shell(&surface_id).unwrap(), "codex");
+    assert_eq!(
+        terminal.spawn_args(&surface_id).unwrap(),
+        vec!["resume".to_string(), "codex-session-1".to_string()]
+    );
+}
+
+#[test]
 fn restored_missing_workspace_dirs_fall_back_to_valid_startup_dir() {
     let fallback = tempfile::tempdir().unwrap();
     let missing = fallback.path().join("deleted-workspace");

@@ -23,10 +23,14 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Browser imports now spool pre-read source data to temporary files instead of retaining every selected profile in memory, preventing large all-source imports from exhausting memory while preserving all-or-nothing read validation before writes begin.
+- Update checks now honor HTTP-date `Retry-After` headers from GitHub rate-limit responses instead of retrying before the requested deadline.
+- Restarting an agent pane now resumes the agent session (provider resume argv and recorded cwd) instead of relaunching a plain shell, matching the session-restore and worktree spawn paths.
+- Session restore now quarantines a session file containing invalid UTF-8 instead of returning an error that crashed startup on every launch.
 - The first-run welcome dialog no longer traps the user when persisting a telemetry opt-out fails (e.g. a read-only config directory): the error is shown but the dialog still closes, and the anonymous ping is skipped per the live toggle.
 - Saving browser bookmarks now creates the profile directory with owner-only (`0700`) permissions instead of inheriting the umask, matching the history database directory, so bookmark URLs are not exposed when a profile's first write is a bookmark.
 - Bookmark entries now bound the stored URL and title to the same size caps as history visits, preventing an oversized imported bookmark from growing `bookmarks.json` until it becomes unreadable.
 - Shell trampoline detection now keeps scanning after shell options that take a value, so `bash -o vi -c ...` and `bash --rcfile file -c ...` notification commands are rejected instead of bypassing the `-c` guard.
+- Shell trampoline detection now recognizes PowerShell's command grammar, so `pwsh -Command ...`, `pwsh -EncodedCommand ...`, and `pwsh -CommandWithArgs ...` notification commands (and their `-c`/`-e`/`-ec`/`-cwa` aliases) are rejected instead of bypassing the shell-command guard.
 - `PtySession::read_until` now reports `UnexpectedEof` when a child exits before the requested bytes arrive, instead of returning partial output as success.
 - `forktty hooks test` now sanitizes socket error text before rendering human-readable failures, preventing local socket responses from injecting terminal control sequences.
 - Browser import is now limited to the in-app Settings workflow and is no longer advertised or accepted over the socket/CLI automation boundary, preventing local socket clients from using ForkTTY to read external browser profile data.

@@ -387,17 +387,29 @@ pub fn load_session_from_path(path: &Path) -> Result<Option<SessionData>, Sessio
         quarantine_corrupt_session(path)?;
         return Ok(None);
     }
-    let mut content = String::new();
+    let mut bytes = Vec::new();
     (&mut file)
         .take(MAX_SESSION_SIZE_BYTES + 1)
-        .read_to_string(&mut content)?;
-    if content.len() as u64 > MAX_SESSION_SIZE_BYTES {
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_SESSION_SIZE_BYTES {
         drop(file);
         log_quarantine_reason(path, "session file grew past size limit during read");
         quarantine_corrupt_session(path)?;
         return Ok(None);
     }
     drop(file);
+    // Read into bytes first so a non-UTF-8 session file (a classic
+    // partial-write / disk-corruption outcome) is quarantined like any other
+    // corruption rather than propagating an Io error that crashes startup on
+    // every launch. Mirrors the InvalidData handling in config.rs.
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(_) => {
+            log_quarantine_reason(path, "session file is not valid UTF-8");
+            quarantine_corrupt_session(path)?;
+            return Ok(None);
+        }
+    };
     match parse_session_content(&content) {
         Ok(data) => match validate_session_data(&data) {
             Ok(()) => Ok(Some(data)),
@@ -1600,6 +1612,29 @@ mod tests {
 
         assert!(loaded.is_none());
         assert!(!path.exists(), "corrupt file should be renamed aside");
+        let siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(
+            siblings
+                .iter()
+                .any(|name| name.to_string_lossy().contains(".bad-")),
+            "expected a .bad-* quarantine sibling, got {siblings:?}"
+        );
+    }
+
+    #[test]
+    fn quarantines_non_utf8_session_file_instead_of_returning_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        // Invalid UTF-8 byte sequence, a classic partial-write outcome.
+        fs::write(&path, [0xff, 0xfe, 0x00, 0x80]).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert!(loaded.is_none());
+        assert!(!path.exists(), "non-UTF-8 file should be renamed aside");
         let siblings: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
