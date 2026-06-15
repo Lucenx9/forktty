@@ -136,7 +136,7 @@ fn ensure_private_profile_store_dir(path: &Path) -> std::io::Result<()> {
     }
     match std::fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
         Err(e) => Err(e),
     }
 }
