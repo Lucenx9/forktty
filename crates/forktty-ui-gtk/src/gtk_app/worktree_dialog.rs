@@ -675,7 +675,9 @@ pub(super) fn rollback_created_worktree_after_spawn_failure(
     if !info.created {
         return spawn_error;
     }
-    match worktree::remove(cwd, &info.worktree_name, true) {
+    // Only delete the branch when this create call actually created it; a
+    // worktree recovered for a pre-existing branch must leave that branch.
+    match worktree::remove(cwd, &info.worktree_name, info.branch_created) {
         Ok(()) => spawn_error,
         Err(rollback_error) => format!(
             "{spawn_error}; created worktree '{}' remains because rollback failed: {rollback_error}",

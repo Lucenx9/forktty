@@ -105,6 +105,12 @@ pub struct WorktreeInfo {
     pub worktree_name: String,
     #[serde(default, skip_serializing)]
     pub created: bool,
+    /// Whether this call created the branch (as opposed to adopting one that
+    /// already existed). Rollback after a spawn failure must only delete the
+    /// branch when this is true, so recovering a worktree for a pre-existing
+    /// branch never destroys that branch.
+    #[serde(default, skip_serializing)]
+    pub branch_created: bool,
     #[serde(default)]
     pub status: String,
     /// Non-fatal warning emitted when the `.forktty/setup` hook failed.
@@ -229,6 +235,7 @@ pub fn create(
     let setup_warning = run_setup_hook_advisory(&wt_path);
     let mut info = info(branch, wt_path, worktree_name);
     info.created = true;
+    info.branch_created = branch_was_created;
     info.setup_warning = setup_warning;
     Ok(info)
 }
@@ -532,6 +539,7 @@ fn info(branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
         branch,
         worktree_name,
         created: false,
+        branch_created: false,
         status,
         setup_warning: None,
     }
@@ -1323,13 +1331,17 @@ mod tests {
         let dir = make_repo();
         let repo_path = dir.path().to_str().unwrap();
         let first = create(repo_path, "stale-create", "nested").unwrap();
+        // The first create made the branch; the recovery adopts it.
+        assert!(first.branch_created);
         fs::remove_dir_all(&first.path).unwrap();
 
         let second = create(repo_path, "stale-create", "nested").unwrap();
 
         // The stale registration is pruned and a fresh worktree recreated in
-        // place, restoring `create`'s idempotency contract.
+        // place, restoring `create`'s idempotency contract. The branch already
+        // existed, so `branch_created` is false and rollback must not delete it.
         assert_eq!(second.branch, "stale-create");
+        assert!(!second.branch_created);
         assert!(Path::new(&second.path).exists());
         assert_eq!(list(repo_path).unwrap().len(), 1);
         let repo = Repository::open(dir.path()).unwrap();
