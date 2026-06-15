@@ -9354,6 +9354,33 @@ mod tests {
     }
 
     #[test]
+    fn installed_hook_events_are_supported_and_render_actions() {
+        for spec in AGENTS {
+            for entry in spec.hook_entries {
+                assert!(
+                    is_supported_hook_event(entry.hook_event_name),
+                    "{} installs unsupported hook event {}",
+                    spec.key,
+                    entry.hook_event_name
+                );
+
+                let actions = build_hook_actions(
+                    spec,
+                    entry.hook_event_name,
+                    &json!({ "session_id": "sess-installed-hook" }),
+                    "42",
+                );
+                assert!(
+                    !actions.is_empty(),
+                    "{} {} produced no actions",
+                    spec.key,
+                    entry.hook_event_name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn transcript_usage_reader_returns_latest_usage() {
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("transcript.jsonl");

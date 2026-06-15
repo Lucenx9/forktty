@@ -1692,12 +1692,50 @@ pub async fn dispatch(
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
             let key = optional_non_blank_string_param(&params, "key")?;
             let hook = optional_hook_status_metadata(&params)?;
+            let surface_id = optional_surface_id_param(&params)?;
+            let hook_session_id = optional_non_blank_string_param(&params, "hook_session_id")?;
+            let session_end_agent = key
+                .filter(|_| {
+                    hook.as_ref()
+                        .is_some_and(|hook| hook.event.trim().eq_ignore_ascii_case("session-end"))
+                })
+                .and_then(agent_kind_from_status_key);
+            let last_activity_ms = current_unix_epoch_ms();
             let cleared = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.clear_status_with_hook_metadata(&workspace_id, key, hook)
+                let cleared = model.clear_status_with_hook_metadata(&workspace_id, key, hook);
+                let primary_status_cleared = cleared
+                    && key.is_some_and(|key| {
+                        model
+                            .list_status(&workspace_id)
+                            .iter()
+                            .all(|status| status.key != key)
+                    });
+                if primary_status_cleared {
+                    if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
+                        (session_end_agent, surface_id, hook_session_id)
+                    {
+                        if model.surface(surface_id).is_some_and(|surface| {
+                            surface.workspace_id == workspace_id
+                                && surface.agent_session.as_ref().is_some_and(|session| {
+                                    session.agent == agent && session.session_id == hook_session_id
+                                })
+                        }) {
+                            model.set_surface_agent_session_lifecycle(
+                                surface_id,
+                                AgentSessionLifecycle::Ended,
+                            );
+                            model.set_surface_agent_session_last_activity_ms(
+                                surface_id,
+                                last_activity_ms,
+                            );
+                        }
+                    }
+                }
+                cleared
             };
             if cleared {
                 Ok(json!({"cleared": true}))
@@ -4062,7 +4100,7 @@ fn prepare_hook_session_targets(
     ensure_max_text_size("hook_session_id", session_id)?;
     let session_id = session_id.to_string();
     let event_name = optional_non_blank_string_param(params, "hook_event_name")?;
-    let evict_on_return = event_name == Some("session-end");
+    let evict_on_return = should_evict_hook_session_target_on_return(method, params, event_name)?;
 
     let surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let workspace_selectors = workspace_selector_params(params)?;
@@ -4119,6 +4157,18 @@ fn prepare_hook_session_targets(
         state,
         evict_on_return.then_some(session_id),
     ))
+}
+
+fn should_evict_hook_session_target_on_return(
+    method: &str,
+    params: &Value,
+    event_name: Option<&str>,
+) -> Result<bool, DispatchError> {
+    if event_name != Some("session-end") || method != "metadata.clear_status" {
+        return Ok(false);
+    }
+    let key = optional_non_blank_string_param(params, "key")?;
+    Ok(key.is_none_or(|key| agent_kind_from_status_key(key).is_none()))
 }
 
 fn is_hook_targetable_method(method: &str) -> bool {
@@ -6394,6 +6444,211 @@ mod tests {
         let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
         assert_eq!(health[0]["lifecycle"], "ended");
         assert!(health[0]["last_activity_ms"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn hook_session_end_clear_marks_persisted_agent_session_ended() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Running",
+                "hook_session_id": "claude-session-9",
+                "hook_event_name": "session-start",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({
+                "key": "agent:claude",
+                "hook_session_id": "claude-session-9",
+                "hook_event_name": "session-end",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
+        assert_eq!(health[0]["lifecycle"], "ended");
+        assert!(health[0]["last_activity_ms"].as_u64().unwrap() > 0);
+
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn hook_session_end_cleanup_keeps_learned_target_until_aux_status_clear() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+        let surface_id = workspaces[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Running",
+                "hook_session_id": "claude-session-10",
+                "hook_event_name": "session-start",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:claude:permission",
+                "label": "Claude permissions",
+                "value": "bypassPermissions",
+                "hook_session_id": "claude-session-10",
+                "hook_event_name": "permission-request",
+                "hook_event_order": 150
+            }),
+        )
+        .await
+        .unwrap();
+
+        let other = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "other", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        let other_workspace_id = other["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({
+                "key": "agent:claude",
+                "hook_session_id": "claude-session-10",
+                "hook_event_name": "session-end",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({
+                "key": "agent:claude:permission",
+                "hook_session_id": "claude-session-10",
+                "hook_event_name": "session-end",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        let health = dispatch(
+            &state,
+            "agent.health",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(health[0]["lifecycle"], "ended");
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
+        let other_statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": other_workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(other_statuses.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_hook_session_end_clear_does_not_end_newer_running_session() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:claude",
+                "label": "Claude",
+                "value": "Running",
+                "hook_session_id": "claude-session-11",
+                "hook_event_name": "prompt-submit",
+                "hook_event_clock": "boottime-ns",
+                "hook_event_order": 200
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "metadata.clear_status",
+            json!({
+                "key": "agent:claude",
+                "hook_session_id": "claude-session-11",
+                "hook_event_name": "session-end",
+                "hook_event_clock": "boottime-ns",
+                "hook_event_order": 100
+            }),
+        )
+        .await
+        .unwrap();
+
+        let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
+        assert_eq!(health[0]["lifecycle"], "running");
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses[0]["value"], "Running");
     }
 
     #[tokio::test]
