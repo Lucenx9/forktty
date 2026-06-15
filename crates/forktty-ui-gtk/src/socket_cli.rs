@@ -101,8 +101,7 @@ const BROWSER_HELP_TEXT: &str = "\
   forktty browser click <surface-id> <ref>         Click the element with the given snapshot ref
   forktty browser fill <surface-id> <ref> [<value>|--value-file <path>|--value-file -]
                                                    Set an input's value; prefer --value-file - for secrets
-  forktty browser eval <surface-id> [<script>|--script-file <path>|--script-file -]
-                                                   Run JavaScript; prefer --script-file - for sensitive scripts
+  forktty browser eval <surface-id> <script>       Run JavaScript (use --json for the result)
   forktty browser back <surface-id>                Navigate back in history
   forktty browser forward <surface-id>             Navigate forward in history
   forktty browser reload <surface-id>              Reload the current page
@@ -2923,53 +2922,19 @@ fn browser_fill(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 #[cfg(any(feature = "browser", test))]
 fn browser_eval(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &["script-file"], "browser eval")?;
-    let script_file = string_option(&parsed.options, "script-file", "--script-file")?;
+    reject_unknown_options(&parsed.options, &[], "browser eval")?;
     let (surface_id, script) = match parsed.positionals.as_slice() {
-        [s] => {
-            let Some(path) = script_file else {
-                return Err(CliError::new(
-                    "browser eval requires <surface-id> and <script> or --script-file",
-                ));
-            };
-            let script = read_text_file_or_stdin(path, "browser eval script")?;
-            (
-                required_trimmed_arg(
-                    Some(s),
-                    "browser eval requires <surface-id> and <script> or --script-file",
-                )?,
-                required_non_blank_arg(Some(&script), "browser eval requires a non-empty script")?
-                    .to_string(),
-            )
-        }
-        [s, sc] => {
-            if script_file.is_some() {
-                return Err(CliError::new(
-                    "browser eval accepts either <script> or --script-file, not both",
-                ));
-            }
-            (
-                required_trimmed_arg(
-                    Some(s),
-                    "browser eval requires <surface-id> and <script> or --script-file",
-                )?,
-                required_non_blank_arg(
-                    Some(sc),
-                    "browser eval requires <surface-id> and <script> or --script-file",
-                )?
+        [s, sc] => (
+            required_trimmed_arg(Some(s), "browser eval requires <surface-id> <script>")?,
+            required_non_blank_arg(Some(sc), "browser eval requires <surface-id> <script>")?
                 .to_string(),
-            )
-        }
+        ),
         [_, _, extra, ..] => {
             return Err(CliError::new(format!(
                 "browser eval: unexpected argument '{extra}'"
             )))
         }
-        _ => {
-            return Err(CliError::new(
-                "browser eval requires <surface-id> and <script> or --script-file",
-            ))
-        }
+        _ => return Err(CliError::new("browser eval requires <surface-id> <script>")),
     };
     let result = send_socket_request(
         &context.socket_path,
@@ -11616,7 +11581,7 @@ mod tests {
             ),
             (
                 strings(&["eval", "s9", "   "]),
-                "browser eval requires <surface-id> and <script> or --script-file",
+                "browser eval requires <surface-id> <script>",
             ),
             (
                 strings(&["profile", "create", "   "]),
@@ -11889,38 +11854,6 @@ mod tests {
         );
         assert_eq!(request["method"], "browser.eval");
         assert_eq!(request["params"]["surface_id"], "s9");
-        assert_eq!(request["params"]["script"], "document.title");
-    }
-
-    #[test]
-    fn browser_eval_reads_script_from_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let script_path = dir.path().join("script.js");
-        fs::write(&script_path, "document.title").unwrap();
-        let request = with_socket_response(
-            |req| {
-                json!({
-                    "id": req["id"],
-                    "ok": true,
-                    "result": "ForkTTY",
-                })
-                .to_string()
-            },
-            move |socket_path| {
-                let ctx = ctx_for(socket_path);
-                handle_browser(
-                    &ctx,
-                    vec![
-                        "eval".to_string(),
-                        "s9".to_string(),
-                        "--script-file".to_string(),
-                        script_path.display().to_string(),
-                    ],
-                )
-                .unwrap();
-            },
-        );
-        assert_eq!(request["method"], "browser.eval");
         assert_eq!(request["params"]["script"], "document.title");
     }
 
