@@ -23,6 +23,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Notification command validation now rejects `rbash -c` shell trampolines instead of allowing restricted Bash aliases to bypass the shell-command guard.
+- Antigravity hook setup now hardens `~/.gemini`, the config directory, and generated wrapper directory to owner-only permissions before planning or writing executable hook scripts, preventing local users from replacing wrappers through group/world-writable directories.
 - Browser profile storage directories are now created with private Unix permissions before WebKit persists cookies, local storage, and cache data.
 - Terminal scrollback search now caps stored matches and shows a capped count, avoiding unbounded memory/CPU use on repetitive untrusted terminal output.
 - MCP `surface_send_text` is now annotated as destructive and open-world, reflecting that terminal input can execute shell commands or interact with files and networks.
