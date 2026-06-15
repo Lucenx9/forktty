@@ -168,10 +168,10 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
             if let Err(err) = persist_welcome_telemetry_choice(ping_row.is_active()) {
                 // Persist the opt-out before recording first-run completion. If
                 // the write fails (e.g. a read-only config dir), keep the
-                // welcome pending so a later launch cannot fall back to the
-                // default-on config without showing this choice again.
+                // welcome open so the user can fix permissions or re-enable
+                // the ping before continuing.
                 show_telemetry_error(&telemetry_status, false, &err);
-                return glib::Propagation::Proceed;
+                return glib::Propagation::Stop;
             }
             record_welcome_seen_best_effort();
             // The startup ping was deferred on first launch; start it now that
