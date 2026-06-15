@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 const MAX_SQLITE_COPY_BYTES: u64 = 512 * 1024 * 1024;
 
 /// All data read from a single source profile.
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct ImportedData {
     pub cookies: Vec<ImportedCookie>,
     pub visits: Vec<ImportedVisit>,
