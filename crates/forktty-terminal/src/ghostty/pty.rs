@@ -192,7 +192,13 @@ impl PtySession {
             }
             if self.child.try_wait()?.is_some() {
                 out.extend(self.read_available()?);
-                return Ok(out);
+                if out.windows(needle.len()).any(|window| window == needle) {
+                    return Ok(out);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "terminal child exited before output contained expected bytes",
+                ));
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -522,6 +528,18 @@ mod tests {
     }
 
     #[test]
+    fn pty_read_until_reports_eof_when_child_exits_before_needle() {
+        let request = test_spawn_request_for_shell("/bin/sh").with_args(["-lc", "printf partial"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        let err = session
+            .read_until(b"missing", Duration::from_secs(2))
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
     fn pty_write_all_retries_poll_interrupted_by_signal() {
         extern "C" fn ignore_signal(_: libc::c_int) {}
 
@@ -629,7 +647,7 @@ mod tests {
             .unwrap();
         session.write_all(b"\n").unwrap();
         let out = session
-            .read_until(b"40 120\n", Duration::from_secs(2))
+            .read_until(b"40 120", Duration::from_secs(2))
             .unwrap();
         let out_str = String::from_utf8_lossy(&out);
         assert!(out_str.contains("40 120"), "output: {:?}", out_str);

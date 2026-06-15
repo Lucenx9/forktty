@@ -268,6 +268,37 @@ mod tests {
         assert!(errors[0].message.contains("must not invoke a shell"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_shell_trampoline_custom_command_after_option_value() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let bash = dir.path().join("bash");
+        std::fs::write(&bash, "").unwrap();
+        let mut permissions = std::fs::metadata(&bash).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&bash, permissions).unwrap();
+
+        let mut config = AppConfig::default();
+        config.notifications.desktop = false;
+        config.general.notification_command = format!("{} -o vi -c notify-send", bash.display());
+        let mut model = WorkspaceModel::new();
+        let notification = model.create_notification(
+            "trampoline-option-test",
+            "Body",
+            NotificationKind::Info,
+            None,
+            None,
+        );
+
+        let errors = dispatch_notification(&config, &notification);
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].channel, "custom_command");
+        assert!(errors[0].message.contains("must not invoke a shell"));
+    }
+
     #[test]
     fn dedupes_identical_back_to_back_notifications() {
         let now = Instant::now();
