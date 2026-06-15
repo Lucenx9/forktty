@@ -14,6 +14,7 @@ use libghostty_vt::{
     paste,
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::{CellWide, Screen},
+    selection::Selection,
     style::RgbColor,
     terminal::{Point, PointCoordinate, ScrollViewport},
     RenderState, Terminal, TerminalOptions,
@@ -521,6 +522,73 @@ impl GhosttyCore {
     /// into a shell must not split a wrapped command across lines.
     pub fn full_text_unwrapped(&self) -> Result<String> {
         self.format_plain_text(false, true)
+    }
+
+    /// Plain-text dump of at most the last `lines` scrollable rows.
+    ///
+    /// Unlike [`Self::full_text`], this formats a bounded selection near the
+    /// bottom of the terminal instead of materializing the whole scrollback.
+    pub fn tail_text(&self, lines: usize) -> Result<String> {
+        if lines == 0 {
+            return Ok(String::new());
+        }
+        let viewport = self.viewport_position()?;
+        if viewport.total == 0 {
+            return Ok(String::new());
+        }
+        let Some(end_y) =
+            self.last_formatted_screen_row(viewport.total, lines.max(viewport.rows))?
+        else {
+            return Ok(String::new());
+        };
+        let start_y = (end_y as usize).saturating_add(1).saturating_sub(lines) as u32;
+        self.format_plain_text_selection(start_y, end_y, false, false)
+    }
+
+    fn last_formatted_screen_row(
+        &self,
+        total_rows: usize,
+        max_scan_rows: usize,
+    ) -> Result<Option<u32>> {
+        let scan_start = total_rows.saturating_sub(max_scan_rows);
+        for y in (scan_start..total_rows).rev() {
+            if self.screen_row_has_text(y as u32)? {
+                return Ok(Some(y as u32));
+            }
+        }
+        Ok(None)
+    }
+
+    fn screen_row_has_text(&self, y: u32) -> Result<bool> {
+        let text = self.format_plain_text_selection(y, y, false, false)?;
+        Ok(text.lines().any(|line| !line.trim_end().is_empty()))
+    }
+
+    fn format_plain_text_selection(
+        &self,
+        start_y: u32,
+        end_y: u32,
+        trim: bool,
+        unwrap: bool,
+    ) -> Result<String> {
+        let end_x = self.terminal.cols()?.saturating_sub(1);
+        let start = self
+            .terminal
+            .grid_ref(Point::Screen(PointCoordinate { x: 0, y: start_y }))?;
+        let end = self
+            .terminal
+            .grid_ref(Point::Screen(PointCoordinate { x: end_x, y: end_y }))?;
+        let selection = Selection::new(start, end, false);
+        let mut formatter = Formatter::new(
+            &self.terminal,
+            FormatterOptions::new()
+                .with_format(Format::Plain)
+                .with_trim(trim)
+                .with_unwrap(unwrap)
+                .with_selection(&selection),
+        )?;
+        let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
+        Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
 
     /// Plain-text dump for clipboard select-all: scrollback plus screen,
@@ -1919,6 +1987,41 @@ mod tests {
 
         assert!(text.contains("one"));
         assert!(text.contains("three"));
+    }
+
+    #[test]
+    fn tail_text_formats_only_requested_scrollable_rows() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"one\r\ntwo\r\nthree\r\nfour").unwrap();
+
+        assert_eq!(
+            core.tail_text(2).unwrap().lines().collect::<Vec<_>>(),
+            ["three", "four"]
+        );
+        assert_eq!(core.tail_text(0).unwrap(), "");
+    }
+
+    #[test]
+    fn tail_text_starts_at_last_formatted_row_not_physical_bottom() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 10,
+            rows: 4,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"first visible row").unwrap();
+
+        assert_eq!(
+            core.tail_text(2).unwrap().lines().collect::<Vec<_>>(),
+            ["first visi", "ble row"]
+        );
     }
 
     #[test]
