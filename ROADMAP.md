@@ -2,6 +2,16 @@
 
 This roadmap tracks the native GTK/Ghostty implementation that replaced the old Tauri/React path.
 
+## Near-Term Direction
+
+- [ ] Close the practical cmux gap through ForkTTY's control plane first, not by
+  copying every panel: start with `top`/health inspection, a durable
+  feed/approval bridge, repo-local `forktty.json` actions, and real agent
+  hibernate/reclaim.
+- [ ] Keep richer sidebars, remote daemon depth, multi-window routing, and plugin
+  surfaces behind those primitives; they need real state/events before extra UI
+  pays for itself.
+
 ## Implemented
 
 ### Native Runtime
