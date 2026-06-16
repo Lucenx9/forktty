@@ -48,31 +48,14 @@ pub(super) fn build_pane_chrome(
     cwd.add_css_class("terminal-pane-cwd");
     cwd.add_css_class("monospace");
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    actions.add_css_class("terminal-pane-actions");
-    actions.set_can_target(false);
-    let split_h = pane_action_button(
-        "forktty-split-horizontal-symbolic",
-        "Split Right (Ctrl+Shift+H)",
-    );
-    let split_v = pane_action_button(
-        "forktty-split-vertical-symbolic",
-        &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
-    );
-    let close = pane_action_button("forktty-close-symbolic", "Close Pane (Ctrl+Shift+W)");
-    close.add_css_class("pane-close-action");
-    let close_separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    close_separator.add_css_class("pane-action-separator");
-    let new_tab = pane_action_button("forktty-add-symbolic", "New Tab (Ctrl+Shift+T)");
-    actions.append(&split_h);
-    actions.append(&split_v);
-    actions.append(&new_tab);
+    let action_strip = build_pane_action_strip();
+    let actions = action_strip.actions;
+    let split_h = action_strip.split_h;
+    let split_v = action_strip.split_v;
+    let new_tab = action_strip.new_tab;
+    let close = action_strip.close;
     #[cfg(feature = "browser")]
-    let open_browser = pane_action_button("forktty-browser-symbolic", "Open Browser Pane");
-    #[cfg(feature = "browser")]
-    actions.append(&open_browser);
-    actions.append(&close_separator);
-    actions.append(&close);
+    let open_browser = action_strip.open_browser;
 
     let terminal_overlay = gtk::Overlay::new();
     terminal_overlay.set_hexpand(true);
@@ -247,6 +230,61 @@ pub(super) fn pane_action_button(icon_name: &str, tooltip: &str) -> gtk::Button 
     button.add_css_class("flat");
     button.add_css_class("terminal-pane-action");
     button
+}
+
+struct PaneActionStrip {
+    actions: gtk::Box,
+    split_h: gtk::Button,
+    split_v: gtk::Button,
+    new_tab: gtk::Button,
+    close: gtk::Button,
+    #[cfg(feature = "browser")]
+    open_browser: gtk::Button,
+}
+
+fn build_pane_action_strip() -> PaneActionStrip {
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    actions.add_css_class("terminal-pane-actions");
+    actions.set_can_target(false);
+    actions.set_hexpand(true);
+
+    let split_h = pane_action_button(
+        "forktty-split-horizontal-symbolic",
+        "Split Right (Ctrl+Shift+H)",
+    );
+    let split_v = pane_action_button(
+        "forktty-split-vertical-symbolic",
+        &format!("Split Down ({SPLIT_VERTICAL_SHORTCUT})"),
+    );
+    let new_tab = pane_action_button("forktty-add-symbolic", "New Tab (Ctrl+Shift+T)");
+    let close_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    close_spacer.set_can_target(false);
+    close_spacer.set_hexpand(true);
+    let close_separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    close_separator.add_css_class("pane-action-separator");
+    let close = pane_action_button("forktty-close-symbolic", "Close Pane (Ctrl+Shift+W)");
+    close.add_css_class("pane-close-action");
+
+    actions.append(&split_h);
+    actions.append(&split_v);
+    actions.append(&new_tab);
+    #[cfg(feature = "browser")]
+    let open_browser = pane_action_button("forktty-browser-symbolic", "Open Browser Pane");
+    #[cfg(feature = "browser")]
+    actions.append(&open_browser);
+    actions.append(&close_spacer);
+    actions.append(&close_separator);
+    actions.append(&close);
+
+    PaneActionStrip {
+        actions,
+        split_h,
+        split_v,
+        new_tab,
+        close,
+        #[cfg(feature = "browser")]
+        open_browser,
+    }
 }
 
 pub(super) fn install_pane_reorder_dnd<W>(handle: &W, surface_id: &str, state: &SocketAppState)
@@ -438,5 +476,35 @@ pub(super) fn update_tab_tooltip(widget: &impl IsA<gtk::Widget>, title: Option<S
         widget.set_tooltip_text(Some(&title));
     } else {
         widget.set_tooltip_text(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn direct_children(widget: &impl IsA<gtk::Widget>) -> Vec<gtk::Widget> {
+        let mut children = Vec::new();
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            children.push(current);
+        }
+        children
+    }
+
+    #[test]
+    fn pane_action_strip_places_close_pane_at_trailing_edge() {
+        gtk::init().expect("GTK must initialize under xvfb-run");
+
+        let strip = build_pane_action_strip();
+        let children = direct_children(&strip.actions);
+
+        assert!(children
+            .last()
+            .expect("action strip should have children")
+            .has_css_class("pane-close-action"));
+        assert!(children[children.len() - 2].has_css_class("pane-action-separator"));
+        assert!(children[children.len() - 3].property::<bool>("hexpand"));
     }
 }

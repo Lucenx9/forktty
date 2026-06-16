@@ -10,16 +10,16 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.12)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.13)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
 [Website](https://forktty-site.vercel.app/) ·
-[Download v0.2.0-alpha.12 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.12/forktty-0.2.0-alpha.12-x86_64.AppImage)
+[Download v0.2.0-alpha.13 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.13/forktty-0.2.0-alpha.13-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.12). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
+> **Status**: Early alpha (v0.2.0-alpha.13). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
   <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY with workspace sidebar, split terminal panes, active pane focus, and agent status notifications" width="960" />
@@ -35,12 +35,12 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 ## Install
 
 The fastest paths are the prebuilt artifacts from the
-[v0.2.0-alpha.12 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.12).
+[v0.2.0-alpha.13 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.13).
 Each release ships:
 
-- `forktty-0.2.0-alpha.12-x86_64.AppImage` — recommended portable Linux package.
-- `forktty-0.2.0-alpha.12-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
-- `forktty_0.2.0.alpha.12_amd64.deb` — Debian/Ubuntu package.
+- `forktty-0.2.0-alpha.13-x86_64.AppImage` — recommended portable Linux package.
+- `forktty-0.2.0-alpha.13-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
+- `forktty_0.2.0.alpha.13_amd64.deb` — Debian/Ubuntu package.
 - `SHA256SUMS` — checksums for release artifacts.
 
 After downloading, verify checksums:
@@ -52,8 +52,8 @@ sha256sum -c SHA256SUMS
 ### AppImage
 
 ```bash
-chmod +x forktty-0.2.0-alpha.12-x86_64.AppImage
-./forktty-0.2.0-alpha.12-x86_64.AppImage
+chmod +x forktty-0.2.0-alpha.13-x86_64.AppImage
+./forktty-0.2.0-alpha.13-x86_64.AppImage
 ```
 
 The AppImage always ships the vendored libghostty-vt library and prefers the
@@ -81,15 +81,15 @@ If the AppImage launches but the GTK interface renders incorrectly, try
 an explicit GTK renderer from a terminal:
 
 ```bash
-GSK_RENDERER=ngl ./forktty-0.2.0-alpha.12-x86_64.AppImage
+GSK_RENDERER=ngl ./forktty-0.2.0-alpha.13-x86_64.AppImage
 ```
 
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo apt install ./forktty_0.2.0.alpha.12_amd64.deb
+sudo apt install ./forktty_0.2.0.alpha.13_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0.alpha.12_amd64.deb
+sudo dpkg -i forktty_0.2.0.alpha.13_amd64.deb
 sudo apt -f install
 ```
 

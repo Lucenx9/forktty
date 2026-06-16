@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.13] - 2026-06-16
+
 ### Security
 - Stop hooks now preserve agent permission-mode warnings when the provider has a later session-end cleanup, while providers without session-end hooks still clear the warning on final stop.
 - Terminal smooth-scroll handling now rejects non-finite deltas and caps per-event line replay, preventing oversized synthetic scroll events from monopolizing the UI thread while mouse tracking is active.
@@ -23,6 +25,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- The terminal pane header now keeps the Close Pane button on the far right of split-pane headers instead of clustering it beside the split and new-tab actions.
 - Worktree list/status reporting now treats registered worktree paths replaced by files, symlinks, or invalid directories as unknown instead of clean/dirty.
 - Command palette and Settings selection states now use neutral row highlights instead of heavy accent rails.
 - Settings toggles are now smaller and use a subtler checked state.
