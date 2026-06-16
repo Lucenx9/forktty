@@ -109,7 +109,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Prompt composer/TextBox surface for reusable prompt drafting and dispatch.
 - [ ] Agent/skill catalog: installable prompt packs, provider-specific workflow skills, and project-scoped reusable guidance.
 - [ ] File/project panels: file explorer, markdown preview, diff/comment review flows.
-- [ ] Complete advanced OSC 99 support: base64 payloads, notification updates/close, activation reports, buttons, and full chunk aggregation.
+- [ ] Complete advanced OSC 99 support: notification updates/close, activation reports, buttons, icon payloads, and broader chunk lifecycle behavior.
 - [ ] Runtime GTK/Ghostty smoke tests for keyboard, split, notification, and socket workflows.
 - [ ] Manual QA matrix for `.deb` across Debian/Ubuntu, Fedora-family, Arch/CachyOS.
 - [ ] Persistent scrollback, opt-in and bounded.
