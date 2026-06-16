@@ -85,6 +85,7 @@ pub(super) struct RendererPalette {
     pub(super) background: RendererColor,
     pub(super) foreground: RendererColor,
     pub(super) bold: RendererColor,
+    pub(super) bold_is_bright: bool,
     pub(super) cursor: RendererColor,
     pub(super) cursor_foreground: RendererColor,
     pub(super) highlight: RendererColor,
@@ -98,6 +99,7 @@ impl RendererPalette {
             background: RendererColor::parse(&colors.background),
             foreground: RendererColor::parse(&colors.foreground),
             bold: RendererColor::parse(&colors.bold),
+            bold_is_bright: colors.bold_is_bright,
             cursor: RendererColor::parse(&colors.cursor),
             cursor_foreground: RendererColor::parse(&colors.cursor_foreground),
             highlight: RendererColor::parse(&colors.highlight),
@@ -111,10 +113,24 @@ impl RendererPalette {
     }
 }
 
+#[cfg(test)]
+fn renderer_palette_ansi_defaults(palette: &RendererPalette) -> [RendererColor; 16] {
+    std::array::from_fn(|index| {
+        palette
+            .ansi
+            .get(index)
+            .copied()
+            .unwrap_or(palette.foreground)
+    })
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct TerminalRenderer {
     palette: RendererPalette,
     font: gtk::pango::FontDescription,
+    bold_font: Option<gtk::pango::FontDescription>,
+    italic_font: Option<gtk::pango::FontDescription>,
+    bold_italic_font: Option<gtk::pango::FontDescription>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +199,7 @@ impl From<TerminalCursorStyle> for RendererCursorStyle {
 struct RendererFrameDefaults {
     foreground: RendererColor,
     background: RendererColor,
+    palette: [RendererColor; 16],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,15 +233,24 @@ impl TerminalRenderer {
         config: &config::AppConfig,
         font: gtk::pango::FontDescription,
     ) -> Self {
+        let variants = terminal_font_variants_for_config(config, &font);
         Self {
             palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(config)),
             font,
+            bold_font: variants.bold,
+            italic_font: variants.italic,
+            bold_italic_font: variants.bold_italic,
         }
     }
 
     #[cfg(test)]
     pub(super) fn font_description(&self) -> gtk::pango::FontDescription {
         self.font.clone()
+    }
+
+    #[cfg(test)]
+    fn font_for_style(&self, bold: bool, italic: bool) -> gtk::pango::FontDescription {
+        self.font_for_cell_style(bold, italic)
     }
 
     /// Cell size used for pixel<->cell mapping (mouse, selection, resize).
@@ -487,12 +513,21 @@ impl TerminalRenderer {
         self.cell_foreground_with_defaults(cell, self.palette_defaults())
     }
 
+    #[cfg(test)]
+    fn cell_foreground_for_frame(
+        &self,
+        frame: &TerminalFrame,
+        cell: &TerminalCell,
+    ) -> RendererColor {
+        self.cell_foreground_with_defaults(cell, self.frame_defaults(frame))
+    }
+
     fn cell_foreground_with_defaults(
         &self,
         cell: &TerminalCell,
         defaults: RendererFrameDefaults,
     ) -> RendererColor {
-        let default_foreground = if cell.bold {
+        let default_foreground = if cell.bold && !self.palette.bold_is_bright {
             self.palette.bold
         } else {
             defaults.foreground
@@ -500,6 +535,15 @@ impl TerminalRenderer {
         let mut foreground = cell
             .foreground
             .map_or(default_foreground, RendererColor::from_terminal_rgb);
+        if cell.bold && self.palette.bold_is_bright {
+            if let Some(index) = cell
+                .foreground_palette
+                .filter(|index| *index < 8)
+                .map(|index| usize::from(index) + 8)
+            {
+                foreground = defaults.palette[index];
+            }
+        }
         let mut background = cell
             .background
             .map_or(defaults.background, RendererColor::from_terminal_rgb);
@@ -549,6 +593,7 @@ impl TerminalRenderer {
         RendererFrameDefaults {
             foreground: self.palette.foreground,
             background: self.palette.background,
+            palette: renderer_palette_ansi_defaults(&self.palette),
         }
     }
 
@@ -556,6 +601,7 @@ impl TerminalRenderer {
         RendererFrameDefaults {
             foreground: RendererColor::from_terminal_rgb(frame.foreground),
             background: RendererColor::from_terminal_rgb(frame.background),
+            palette: frame.palette.map(RendererColor::from_terminal_rgb),
         }
     }
 
@@ -578,13 +624,7 @@ impl TerminalRenderer {
         for run in self.text_runs_for_frame_row(frame, row, link_cols) {
             color.unwrap_or(run.foreground).set_cairo_source(cr);
             let layout = pangocairo::functions::create_layout(cr);
-            let mut font = self.font.clone();
-            if run.bold {
-                font.set_weight(gtk::pango::Weight::Bold);
-            }
-            if run.italic {
-                font.set_style(gtk::pango::Style::Italic);
-            }
+            let font = self.font_for_cell_style(run.bold, run.italic);
             layout.set_font_description(Some(&font));
             layout.set_text(&run.text);
             draw_layout_fitted_to_cells(
@@ -665,16 +705,37 @@ impl TerminalRenderer {
 
         cursor.foreground.set_cairo_source(cr);
         let layout = pangocairo::functions::create_layout(cr);
-        let mut font = self.font.clone();
-        if cursor.bold {
-            font.set_weight(gtk::pango::Weight::Bold);
-        }
-        if cursor.italic {
-            font.set_style(gtk::pango::Style::Italic);
-        }
+        let font = self.font_for_cell_style(cursor.bold, cursor.italic);
         layout.set_font_description(Some(&font));
         layout.set_text(&cursor.text);
         draw_layout_fitted_to_cells(cr, &layout, x, y, width);
+    }
+
+    fn font_for_cell_style(&self, bold: bool, italic: bool) -> gtk::pango::FontDescription {
+        if bold && italic {
+            if let Some(font) = &self.bold_italic_font {
+                return font.clone();
+            }
+        }
+        if bold {
+            if let Some(font) = &self.bold_font {
+                return font.clone();
+            }
+        }
+        if italic {
+            if let Some(font) = &self.italic_font {
+                return font.clone();
+            }
+        }
+
+        let mut font = self.font.clone();
+        if bold {
+            font.set_weight(gtk::pango::Weight::Bold);
+        }
+        if italic {
+            font.set_style(gtk::pango::Style::Italic);
+        }
+        font
     }
 }
 
@@ -861,6 +922,33 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_uses_configured_styled_fonts() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer {
+            palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(&config)),
+            font: gtk::pango::FontDescription::from_string("Base Mono 12"),
+            bold_font: Some(gtk::pango::FontDescription::from_string("ForkTTYBold 12")),
+            italic_font: Some(gtk::pango::FontDescription::from_string("ForkTTYItalic 12")),
+            bold_italic_font: Some(gtk::pango::FontDescription::from_string(
+                "ForkTTYBoldItalic 12",
+            )),
+        };
+
+        assert_eq!(
+            renderer.font_for_style(true, false).family().as_deref(),
+            Some("ForkTTYBold")
+        );
+        assert_eq!(
+            renderer.font_for_style(false, true).family().as_deref(),
+            Some("ForkTTYItalic")
+        );
+        assert_eq!(
+            renderer.font_for_style(true, true).family().as_deref(),
+            Some("ForkTTYBoldItalic")
+        );
+    }
+
+    #[test]
     fn fitted_layout_x_scale_maps_text_width_to_cell_width() {
         assert_eq!(fitted_layout_x_scale(30, 45.0), 1.5);
         assert_eq!(fitted_layout_x_scale(0, 45.0), 1.0);
@@ -1025,6 +1113,37 @@ mod tests {
         assert_eq!(
             renderer.cell_foreground(&bold_cell).to_string(),
             TerminalColors::forktty_dark().bold
+        );
+    }
+
+    #[test]
+    fn terminal_renderer_maps_bold_base_ansi_to_bright_ansi_when_configured() {
+        let mut colors = TerminalColors::forktty_dark();
+        colors.bold_is_bright = true;
+        let renderer = TerminalRenderer {
+            palette: RendererPalette::from_terminal_colors(&colors),
+            font: gtk::pango::FontDescription::from_string("monospace 12"),
+            bold_font: None,
+            italic_font: None,
+            bold_italic_font: None,
+        };
+        let mut red_cell = test_cell("x", Some(parse_rgb(&colors.ansi[1])), None);
+        red_cell.bold = true;
+        red_cell.foreground_palette = Some(1);
+        let frame = test_frame(
+            parse_rgb(&colors.foreground),
+            parse_rgb(&colors.background),
+            TerminalRow {
+                cells: vec![red_cell],
+                wrapped: false,
+            },
+        );
+
+        assert_eq!(
+            renderer
+                .cell_foreground_for_frame(&frame, &frame.rows[0].cells[0])
+                .to_string(),
+            colors.ansi[9]
         );
     }
 
@@ -1344,6 +1463,7 @@ mod tests {
         TerminalCell {
             text: text.to_string(),
             foreground,
+            foreground_palette: None,
             background,
             width: TerminalCellWidth::Narrow,
             bold: false,
@@ -1366,8 +1486,20 @@ mod tests {
             row_count: 1,
             background,
             foreground,
+            palette: TerminalColors::forktty_dark()
+                .ansi
+                .map(|color| parse_rgb(&color)),
             cursor: None,
             rows: vec![row],
+        }
+    }
+
+    fn parse_rgb(value: &str) -> TerminalRgb {
+        let color = RendererColor::parse(value);
+        TerminalRgb {
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
         }
     }
 

@@ -15,7 +15,7 @@ use libghostty_vt::{
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::{CellWide, Screen},
     selection::Selection,
-    style::RgbColor,
+    style::{RgbColor, StyleColor},
     terminal::{Point, PointCoordinate, ScrollViewport},
     RenderState, Terminal, TerminalOptions,
 };
@@ -273,6 +273,7 @@ pub struct TerminalFrame {
     pub row_count: u16,
     pub background: TerminalRgb,
     pub foreground: TerminalRgb,
+    pub palette: [TerminalRgb; 16],
     pub cursor: Option<TerminalCursor>,
     pub rows: Vec<TerminalRow>,
 }
@@ -288,6 +289,7 @@ pub struct TerminalRow {
 pub struct TerminalCell {
     pub text: String,
     pub foreground: Option<TerminalRgb>,
+    pub foreground_palette: Option<u8>,
     pub background: Option<TerminalRgb>,
     pub width: TerminalCellWidth,
     pub bold: bool,
@@ -620,6 +622,7 @@ impl GhosttyCore {
         let colors = snapshot.colors()?;
         let foreground = TerminalRgb::from(colors.foreground);
         let background = TerminalRgb::from(colors.background);
+        let palette = std::array::from_fn(|index| TerminalRgb::from(colors.palette[index]));
         let cursor = if snapshot.cursor_visible()? {
             let style = TerminalCursorStyle::from(snapshot.cursor_visual_style()?);
             snapshot
@@ -639,6 +642,7 @@ impl GhosttyCore {
             row_count: snapshot.rows()?,
             background,
             foreground,
+            palette,
             cursor,
             rows: Vec::new(),
         };
@@ -655,10 +659,15 @@ impl GhosttyCore {
                 let raw_cell = cell.raw_cell()?;
                 let width = TerminalCellWidth::from(raw_cell.wide()?);
                 let cell_foreground = cell.fg_color()?.map(TerminalRgb::from);
+                let foreground_palette = match style.fg_color {
+                    StyleColor::Palette(index) => Some(index.0),
+                    _ => None,
+                };
                 let cell_background = cell.bg_color()?.map(TerminalRgb::from);
                 row_cells.push(TerminalCell {
                     text: cell.graphemes()?.into_iter().collect(),
                     foreground: cell_foreground,
+                    foreground_palette,
                     background: cell_background,
                     width,
                     bold: style.bold,
@@ -1510,7 +1519,9 @@ mod tests {
         assert_eq!(row.cells[2].text, "d");
         assert_eq!(row.cells[4].text, "o");
         assert!(row.cells[0].foreground.is_some());
+        assert_eq!(row.cells[0].foreground_palette, Some(1));
         assert_eq!(row.cells[4].foreground, None);
+        assert_eq!(row.cells[4].foreground_palette, None);
         assert_eq!(row.cells[4].background, None);
     }
 

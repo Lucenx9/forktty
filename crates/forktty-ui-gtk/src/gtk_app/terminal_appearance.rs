@@ -51,9 +51,19 @@ pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_family: Option<String>,
+    pub(super) font_family_bold: Option<String>,
+    pub(super) font_family_italic: Option<String>,
+    pub(super) font_family_bold_italic: Option<String>,
     pub(super) font_size_pt: Option<f64>,
     pub(super) scrollback_limit_bytes: Option<usize>,
     pub(super) colors: TerminalColors,
+    bold_color_explicit: bool,
+}
+
+pub(super) struct TerminalFontVariants {
+    pub(super) bold: Option<gtk::pango::FontDescription>,
+    pub(super) italic: Option<gtk::pango::FontDescription>,
+    pub(super) bold_italic: Option<gtk::pango::FontDescription>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +71,7 @@ pub(super) struct TerminalColors {
     pub(super) background: String,
     pub(super) foreground: String,
     pub(super) bold: String,
+    pub(super) bold_is_bright: bool,
     pub(super) cursor: String,
     pub(super) cursor_foreground: String,
     pub(super) highlight: String,
@@ -137,6 +148,44 @@ pub(super) fn terminal_font_description_for_zoom_level(
         font.set_size((size * f64::from(gtk::pango::SCALE)).round() as i32);
     } else if let Some(size) = appearance.font_size_pt {
         font.set_size((size * f64::from(gtk::pango::SCALE)).round() as i32);
+    }
+    font
+}
+
+pub(super) fn terminal_font_variants_for_config(
+    config: &config::AppConfig,
+    base: &gtk::pango::FontDescription,
+) -> TerminalFontVariants {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    TerminalFontVariants {
+        bold: appearance
+            .font_family_bold
+            .as_deref()
+            .map(|family| styled_terminal_font_description(base, family, true, false)),
+        italic: appearance
+            .font_family_italic
+            .as_deref()
+            .map(|family| styled_terminal_font_description(base, family, false, true)),
+        bold_italic: appearance
+            .font_family_bold_italic
+            .as_deref()
+            .map(|family| styled_terminal_font_description(base, family, true, true)),
+    }
+}
+
+fn styled_terminal_font_description(
+    base: &gtk::pango::FontDescription,
+    family: &str,
+    bold: bool,
+    italic: bool,
+) -> gtk::pango::FontDescription {
+    let mut font = base.clone();
+    font.set_family(family);
+    if bold {
+        font.set_weight(gtk::pango::Weight::Bold);
+    }
+    if italic {
+        font.set_style(gtk::pango::Style::Italic);
     }
     font
 }
@@ -307,10 +356,7 @@ fn load_ghostty_config_file(
 
 fn apply_ghostty_terminal_appearance_text(appearance: &mut GhosttyTerminalAppearance, text: &str) {
     for entry in text.lines().filter_map(parse_ghostty_config_entry) {
-        let Some(value) = entry.value else {
-            continue;
-        };
-        appearance.apply(&entry.key, value);
+        appearance.apply(&entry.key, entry.value);
     }
 }
 
@@ -321,13 +367,13 @@ fn apply_ghostty_terminal_appearance_text_with_themes(
     color_scheme: GhosttyColorScheme,
 ) {
     for entry in text.lines().filter_map(parse_ghostty_config_entry) {
-        let Some(value) = entry.value else {
-            continue;
-        };
         if entry.key == "theme" {
+            let Some(value) = entry.value else {
+                continue;
+            };
             load_ghostty_theme(appearance, &value, theme_dirs, color_scheme);
         } else {
-            appearance.apply(&entry.key, value);
+            appearance.apply(&entry.key, entry.value);
         }
     }
 }
@@ -384,17 +430,27 @@ impl Default for GhosttyTerminalAppearance {
     fn default() -> Self {
         Self {
             font_family: None,
+            font_family_bold: None,
+            font_family_italic: None,
+            font_family_bold_italic: None,
             font_size_pt: None,
             scrollback_limit_bytes: None,
             colors: TerminalColors::forktty_dark(),
+            bold_color_explicit: false,
         }
     }
 }
 
 impl GhosttyTerminalAppearance {
-    fn apply(&mut self, key: &str, value: String) {
+    fn apply(&mut self, key: &str, value: Option<String>) {
+        let value = value.unwrap_or_default();
         match key {
             "font-family" => self.apply_font_family(value),
+            "font-family-bold" => apply_font_family_value(&mut self.font_family_bold, value),
+            "font-family-italic" => apply_font_family_value(&mut self.font_family_italic, value),
+            "font-family-bold-italic" => {
+                apply_font_family_value(&mut self.font_family_bold_italic, value);
+            }
             "font-size" => {
                 self.font_size_pt = value
                     .parse::<f64>()
@@ -404,15 +460,66 @@ impl GhosttyTerminalAppearance {
             "scrollback-limit" => {
                 self.scrollback_limit_bytes = parse_ghostty_integer_literal(&value)
             }
-            "background" => set_color(&mut self.colors.background, &value),
+            "background" => {
+                set_color(&mut self.colors.background, &value);
+            }
             "foreground" => {
                 set_color(&mut self.colors.foreground, &value);
-                set_color(&mut self.colors.bold, &value);
+                if !self.bold_color_explicit {
+                    set_color(&mut self.colors.bold, &value);
+                }
             }
-            "cursor-color" => set_color(&mut self.colors.cursor, &value),
-            "cursor-text" => set_color(&mut self.colors.cursor_foreground, &value),
-            "selection-background" => set_color(&mut self.colors.highlight, &value),
-            "selection-foreground" => set_color(&mut self.colors.highlight_foreground, &value),
+            "bold-color" => {
+                if value == "bright" {
+                    self.colors.bold_is_bright = true;
+                    self.bold_color_explicit = true;
+                } else if set_color(&mut self.colors.bold, &value) {
+                    self.colors.bold_is_bright = false;
+                    self.bold_color_explicit = true;
+                }
+            }
+            "bold-is-bright" => {
+                if parse_ghostty_bool(&value) {
+                    self.colors.bold_is_bright = true;
+                    self.bold_color_explicit = true;
+                }
+            }
+            "cursor-color" => set_terminal_color(
+                &mut self.colors.cursor,
+                &value,
+                &self.colors.foreground,
+                &self.colors.background,
+            ),
+            "cursor-text" => set_terminal_color(
+                &mut self.colors.cursor_foreground,
+                &value,
+                &self.colors.foreground,
+                &self.colors.background,
+            ),
+            "cursor-invert-fg-bg" => {
+                if parse_ghostty_bool(&value) {
+                    self.colors.cursor = self.colors.foreground.clone();
+                    self.colors.cursor_foreground = self.colors.background.clone();
+                }
+            }
+            "selection-background" => set_terminal_color(
+                &mut self.colors.highlight,
+                &value,
+                &self.colors.foreground,
+                &self.colors.background,
+            ),
+            "selection-foreground" => set_terminal_color(
+                &mut self.colors.highlight_foreground,
+                &value,
+                &self.colors.foreground,
+                &self.colors.background,
+            ),
+            "selection-invert-fg-bg" => {
+                if parse_ghostty_bool(&value) {
+                    self.colors.highlight = self.colors.foreground.clone();
+                    self.colors.highlight_foreground = self.colors.background.clone();
+                }
+            }
             "palette" => {
                 if let Some((index, color)) = value.split_once('=').and_then(|(index, color)| {
                     Some((
@@ -430,17 +537,21 @@ impl GhosttyTerminalAppearance {
     }
 
     fn apply_font_family(&mut self, value: String) {
-        if value.is_empty() {
-            self.font_family = None;
-            return;
+        apply_font_family_value(&mut self.font_family, value);
+    }
+}
+
+fn apply_font_family_value(target: &mut Option<String>, value: String) {
+    if value.is_empty() {
+        *target = None;
+        return;
+    }
+    match target {
+        Some(existing) => {
+            existing.push_str(", ");
+            existing.push_str(&value);
         }
-        match &mut self.font_family {
-            Some(existing) => {
-                existing.push_str(", ");
-                existing.push_str(&value);
-            }
-            None => self.font_family = Some(value),
-        }
+        None => *target = Some(value),
     }
 }
 
@@ -454,6 +565,7 @@ impl TerminalColors {
             background: "#181818".to_string(),
             foreground: "#d7d7d7".to_string(),
             bold: "#f0f0f0".to_string(),
+            bold_is_bright: false,
             cursor: "#d7d7d7".to_string(),
             cursor_foreground: "#181818".to_string(),
             highlight: "#3a2a1f".to_string(),
@@ -463,10 +575,30 @@ impl TerminalColors {
     }
 }
 
-fn set_color(target: &mut String, value: &str) {
+fn set_color(target: &mut String, value: &str) -> bool {
     if let Some(color) = normalize_ghostty_color(value) {
         *target = color;
+        true
+    } else {
+        false
     }
+}
+
+fn set_terminal_color(target: &mut String, value: &str, foreground: &str, background: &str) {
+    match value {
+        "cell-foreground" => *target = foreground.to_string(),
+        "cell-background" => *target = background.to_string(),
+        _ => {
+            set_color(target, value);
+        }
+    }
+}
+
+fn parse_ghostty_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "1" | "true" | "t" | "yes" | "y" | "on"
+    )
 }
 
 fn load_ghostty_theme(
