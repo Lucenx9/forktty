@@ -23,6 +23,7 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Config loading now normalizes a `notification_command` that tokenizes to zero words (for example an inline shell comment like `"# disabled"`) to an empty command instead of rejecting it and quarantining the entire config, so a benign command value no longer resets every other setting to defaults.
 - Agent session-end hooks now mark the persisted agent binding as ended when clearing its live status, so agents whose providers emit a session-end event no longer remain shown as running in the Agent HUD.
 - Chromium bookmark import, browser bookmark loading, and browser profile metadata loading now reject or skip non-regular files before reading, preventing local FIFO/device paths from blocking the import or profile workflows.
 - Socket metadata calls now reject stale explicit `surface_id` values even when `workspace_id` is valid, oversized request lines return the documented `payload_too_large` code, and invalid parameter errors use the documented `invalid_param` code.

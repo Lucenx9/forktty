@@ -521,11 +521,19 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     // problems (unparseable quoting, shell `-c` trampolines) still fail
     // validation and quarantine.
     if let Ok(parts) = shell_words::split(&config.general.notification_command) {
-        if let Some(program) = parts.first() {
-            if !is_shell_trampoline(program, &parts[1..]) && !is_executable_file(Path::new(program))
-            {
-                config.general.notification_command = String::new();
+        match parts.first() {
+            Some(program) => {
+                if !is_shell_trampoline(program, &parts[1..])
+                    && !is_executable_file(Path::new(program))
+                {
+                    config.general.notification_command = String::new();
+                }
             }
+            // No tokens at all (e.g. an inline shell comment like
+            // `notification_command = "# disabled"`) is benign — it is
+            // equivalent to "no command", so normalize it to empty instead of
+            // letting validation reject it and quarantine the whole config.
+            None => config.general.notification_command = String::new(),
         }
     }
     config.appearance.sidebar_position =
@@ -1064,6 +1072,34 @@ mod tests {
         let config = load_config_from_path(&path).unwrap();
 
         assert_eq!(config.general.notification_command, "/bin/true");
+    }
+
+    #[test]
+    fn loaded_config_normalizes_comment_only_notification_command_without_quarantine() {
+        // A notification_command that tokenizes to zero words (e.g. an inline
+        // shell comment) is benign — equivalent to "no command" — so it must be
+        // normalized away on load like a missing/non-executable program, not
+        // quarantine the entire config the way a structural problem does.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r##"
+            [general]
+            shell = "/bin/sh"
+            notification_command = "# disabled for now"
+
+            [appearance]
+            font_size = 20
+            "##,
+        )
+        .unwrap();
+
+        let (config, recovery) = load_config_from_path_with_recovery(&path).unwrap();
+
+        assert!(recovery.is_none(), "config should not be quarantined");
+        assert_eq!(config.general.notification_command, "");
+        assert_eq!(config.appearance.font_size, 20);
     }
 
     #[test]
