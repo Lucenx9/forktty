@@ -948,7 +948,7 @@ fn ensure_local_exclude_for_worktree_path(
     if let Some(parent) = exclude_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut existing = String::new();
+    let mut existing = Vec::new();
     match std::fs::symlink_metadata(&exclude_path) {
         Ok(metadata) => {
             if !metadata.file_type().is_file() {
@@ -965,18 +965,14 @@ fn ensure_local_exclude_for_worktree_path(
             }
             File::open(&exclude_path)?
                 .take(MAX_EXCLUDE_BYTES + 1)
-                .read_to_string(&mut existing)?;
+                .read_to_end(&mut existing)?;
             if existing.len() as u64 > MAX_EXCLUDE_BYTES {
                 return Err(WorktreeError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     ".git/info/exclude is too large",
                 )));
             }
-            if existing
-                .lines()
-                .map(str::trim)
-                .any(|line| line == ".worktrees/" || line == "/.worktrees/")
-            {
+            if has_worktrees_exclude(&existing) {
                 return Ok(());
             }
         }
@@ -994,7 +990,7 @@ fn ensure_local_exclude_for_worktree_path(
     existing.clear();
     {
         let mut limited = (&mut file).take(MAX_EXCLUDE_BYTES + 1);
-        limited.read_to_string(&mut existing)?;
+        limited.read_to_end(&mut existing)?;
     }
     if existing.len() as u64 > MAX_EXCLUDE_BYTES {
         return Err(WorktreeError::Io(std::io::Error::new(
@@ -1002,19 +998,35 @@ fn ensure_local_exclude_for_worktree_path(
             ".git/info/exclude is too large",
         )));
     }
-    if existing
-        .lines()
-        .map(str::trim)
-        .any(|line| line == ".worktrees/" || line == "/.worktrees/")
-    {
+    if has_worktrees_exclude(&existing) {
         return Ok(());
     }
     file.seek(SeekFrom::End(0))?;
-    if !existing.is_empty() && !existing.ends_with('\n') {
+    if !existing.is_empty() && !existing.ends_with(b"\n") {
         writeln!(file)?;
     }
     writeln!(file, ".worktrees/")?;
     Ok(())
+}
+
+fn has_worktrees_exclude(contents: &[u8]) -> bool {
+    contents.split(|byte| *byte == b'\n').any(|line| {
+        let trimmed = trim_ascii_whitespace(line);
+        trimmed == b".worktrees/" || trimmed == b"/.worktrees/"
+    })
+}
+
+fn trim_ascii_whitespace(line: &[u8]) -> &[u8] {
+    let start = line
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(line.len());
+    let end = line
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    &line[start..end]
 }
 
 fn is_nested_worktree_path(repo_workdir: &Path, wt_path: &Path) -> bool {
@@ -1520,6 +1532,25 @@ mod tests {
             result,
             Err(WorktreeError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidData
         ));
+    }
+
+    #[test]
+    fn local_exclude_handles_non_utf8_existing_file() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let exclude_path = repo.path().join("info").join("exclude");
+        fs::create_dir_all(exclude_path.parent().unwrap()).unwrap();
+        fs::write(&exclude_path, b"# local ignore\n\xff\n").unwrap();
+
+        ensure_local_exclude_for_worktree_path(
+            &repo,
+            dir.path(),
+            &dir.path().join(".worktrees/next"),
+        )
+        .unwrap();
+
+        let exclude = fs::read(&exclude_path).unwrap();
+        assert!(exclude.ends_with(b"\n.worktrees/\n"));
     }
 
     #[cfg(unix)]
