@@ -2917,6 +2917,32 @@ fn ghostty_config_text_accumulates_font_family_fallbacks_and_resets() {
 }
 
 #[test]
+fn ghostty_config_text_accumulates_styled_font_family_fallbacks() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r#"
+        font-family-bold = ForkTTYBold
+        font-family-bold = Symbols Nerd Font
+        font-family-italic = ForkTTYItalic
+        font-family-bold-italic =
+        font-family-bold-italic = ForkTTYBoldItalic
+        "#,
+    );
+
+    assert_eq!(
+        appearance.font_family_bold.as_deref(),
+        Some("ForkTTYBold, Symbols Nerd Font")
+    );
+    assert_eq!(
+        appearance.font_family_italic.as_deref(),
+        Some("ForkTTYItalic")
+    );
+    assert_eq!(
+        appearance.font_family_bold_italic.as_deref(),
+        Some("ForkTTYBoldItalic")
+    );
+}
+
+#[test]
 fn ghostty_scrollback_limit_overrides_legacy_scrollback_lines() {
     let mut config = config::AppConfig::default();
     config.appearance.scrollback_lines = 777;
@@ -3041,6 +3067,62 @@ fn ghostty_config_text_accepts_short_hex_and_named_colors() {
     assert_eq!(appearance.colors.foreground, "#0000ff");
     assert_eq!(appearance.colors.cursor, "#ffffff");
     assert_eq!(appearance.colors.ansi[15], "#000000");
+}
+
+#[test]
+fn ghostty_config_text_accepts_cell_color_references_and_invert_compat() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r##"
+        background = #101010
+        foreground = #eeeeee
+        cursor-color = cell-background
+        cursor-text = cell-foreground
+        selection-invert-fg-bg
+        "##,
+    );
+
+    assert_eq!(appearance.colors.cursor, "#101010");
+    assert_eq!(appearance.colors.cursor_foreground, "#eeeeee");
+    assert_eq!(appearance.colors.highlight, "#eeeeee");
+    assert_eq!(appearance.colors.highlight_foreground, "#101010");
+
+    let cursor_invert = ghostty_terminal_appearance_from_text(
+        r##"
+        background = #202020
+        foreground = #dddddd
+        cursor-invert-fg-bg = true
+        "##,
+    );
+
+    assert_eq!(cursor_invert.colors.cursor, "#dddddd");
+    assert_eq!(cursor_invert.colors.cursor_foreground, "#202020");
+}
+
+#[test]
+fn ghostty_config_text_accepts_bold_color() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r##"
+        foreground = #eeeeee
+        bold-color = #ff00aa
+        "##,
+    );
+
+    assert_eq!(appearance.colors.bold, "#ff00aa");
+    assert!(!appearance.colors.bold_is_bright);
+
+    let bright = ghostty_terminal_appearance_from_text("bold-is-bright");
+    assert!(bright.colors.bold_is_bright);
+
+    let bright_new_key = ghostty_terminal_appearance_from_text("bold-color = bright");
+    assert!(bright_new_key.colors.bold_is_bright);
+
+    let ordered = ghostty_terminal_appearance_from_text(
+        r##"
+        bold-color = #ff00aa
+        foreground = #eeeeee
+        "##,
+    );
+    assert_eq!(ordered.colors.bold, "#ff00aa");
 }
 
 #[test]
