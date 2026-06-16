@@ -1614,6 +1614,7 @@ fn selection_cell_for_position_clamped(
     SelectionPoint { row, col }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_selection_drag(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,

@@ -187,7 +187,7 @@ pub(super) fn apply_ghostty_events_to_model(
             GhosttyEvent::PtyWrite(_) | GhosttyEvent::VisibleContentChanged => {
                 if let Ok(mut model) = model.lock() {
                     let should_mark_unread = model.surface(surface_id).is_some()
-                        && model.active_workspace().map_or(true, |workspace| {
+                        && model.active_workspace().is_none_or(|workspace| {
                             workspace.id != workspace_id
                                 || workspace.focused_surface_id != surface_id
                         });
