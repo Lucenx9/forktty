@@ -891,18 +891,26 @@ fn has_uncommitted_changes(repo: &Repository) -> Result<bool, WorktreeError> {
 }
 
 fn resolve_branch_name(repo: &Repository, selector: &str) -> Result<String, WorktreeError> {
+    // Prefer the worktree interpretation so the branch we merge matches the
+    // worktree that `ensure_clean_source_worktree` dirty-checks. Otherwise a
+    // selector naming a worktree whose branch was sanitized into a different
+    // name (e.g. worktree `feat-a` for branch `feat/a`) would dirty-check that
+    // worktree but merge an unrelated local branch that happens to share the
+    // worktree's name.
+    if let Ok(worktree_name) = resolve_worktree_name(repo, selector) {
+        let wt = repo
+            .find_worktree(&worktree_name)
+            .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
+        let branch_name = get_worktree_branch(wt.path());
+        if branch_name.is_empty() {
+            return Err(WorktreeError::BranchNotFound(selector.to_string()));
+        }
+        return Ok(branch_name);
+    }
     if repo.find_branch(selector, BranchType::Local).is_ok() {
         return Ok(selector.to_string());
     }
-    let worktree_name = resolve_worktree_name(repo, selector)?;
-    let wt = repo
-        .find_worktree(&worktree_name)
-        .map_err(|_| WorktreeError::NotFound(worktree_name.clone()))?;
-    let branch_name = get_worktree_branch(wt.path());
-    if branch_name.is_empty() {
-        return Err(WorktreeError::BranchNotFound(selector.to_string()));
-    }
-    Ok(branch_name)
+    Err(WorktreeError::NotFound(selector.to_string()))
 }
 
 fn worktree_path(repo_workdir: &Path, name: &str, layout: &str) -> Result<PathBuf, WorktreeError> {
@@ -1881,6 +1889,31 @@ mod tests {
         // The commit must have landed in the base checkout's working tree, not
         // just had its branch ref moved.
         assert!(dir.path().join("feature.txt").exists());
+    }
+
+    #[test]
+    fn merge_by_worktree_name_prefers_worktree_branch_over_colliding_branch() {
+        let dir = make_repo();
+        // Branch "feat/a" sanitizes to the worktree name "feat-a".
+        let info = create(dir.path().to_str().unwrap(), "feat/a", "nested").unwrap();
+        assert_eq!(info.branch, "feat/a");
+        assert_eq!(info.worktree_name, "feat-a");
+        // Advance the worktree's branch (feat/a) ahead of the base checkout.
+        commit_file(Path::new(&info.path), "from_feat_slash_a.txt", "x\n");
+        // A separate, unrelated local branch literally named "feat-a" exists at
+        // the base commit, colliding with the worktree's derived name.
+        create_branch(dir.path(), "feat-a");
+
+        // Merging the worktree named "feat-a" must merge its branch (feat/a),
+        // consistent with the dirty-check, not the unrelated "feat-a" branch
+        // (which is at the base commit and would report "Already up to date").
+        let result = merge(dir.path().to_str().unwrap(), &info.worktree_name).unwrap();
+
+        assert!(
+            result.contains("feat/a"),
+            "unexpected merge result: {result}"
+        );
+        assert!(dir.path().join("from_feat_slash_a.txt").exists());
     }
 
     #[test]
