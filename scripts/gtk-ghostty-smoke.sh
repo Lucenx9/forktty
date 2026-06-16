@@ -89,6 +89,15 @@ done
 surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["surface_id"])')"
 
+read_screen_json() {
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" --json
+}
+
+snapshot_field() {
+  local field="$1"
+  read_screen_json | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$field"
+}
+
 sent=0
 for _ in {1..40}; do
   if "$BIN" --socket "$FORKTTY_SOCKET_PATH" send-text --surface-id "$surface_id" $'echo forktty-smoke-ok\r' >/dev/null 2>&1; then
@@ -110,6 +119,44 @@ for _ in {1..40}; do
 done
 
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-ok"
+
+base_cols="$(snapshot_field cols)"
+base_rows="$(snapshot_field rows)"
+gapplication action dev.forktty.forktty zoom-in >/dev/null
+gapplication action dev.forktty.forktty zoom-in >/dev/null
+zoom_changed=0
+for _ in {1..40}; do
+  cols="$(snapshot_field cols)"
+  rows="$(snapshot_field rows)"
+  if (( cols > 0 && rows > 0 && (cols < base_cols || rows < base_rows) )); then
+    zoom_changed=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$zoom_changed" != "1" ]]; then
+  echo "gtk-ghostty smoke: terminal dimensions did not change after zoom-in" >&2
+  exit 1
+fi
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-ok"
+
+gapplication action dev.forktty.forktty zoom-out >/dev/null
+gapplication action dev.forktty.forktty zoom-reset >/dev/null
+zoom_reset=0
+for _ in {1..40}; do
+  cols="$(snapshot_field cols)"
+  rows="$(snapshot_field rows)"
+  if (( cols == base_cols && rows == base_rows )); then
+    zoom_reset=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$zoom_reset" != "1" ]]; then
+  echo "gtk-ghostty smoke: terminal dimensions did not return after zoom reset" >&2
+  exit 1
+fi
+
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" split-surface --surface-id "$surface_id" --axis vertical >/dev/null
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
   python3 -c 'import json,sys; assert len(json.load(sys.stdin)) >= 2'
