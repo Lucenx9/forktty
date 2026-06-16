@@ -34,6 +34,7 @@ esac
 
 APPIMAGE_PATH="$TARGET_DIR/forktty-${VERSION}-${APPIMAGE_ARCH}.AppImage"
 APPIMAGE_ZSYNC_PATH="$APPIMAGE_PATH.zsync"
+APPIMAGE_ZSYNC_CWD_PATH="$PWD/$(basename "$APPIMAGE_ZSYNC_PATH")"
 
 resolve_tool() {
   local env_name="$1"
@@ -294,6 +295,9 @@ fi
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
 
 rm -rf "$APPDIR" "$APPIMAGE_PATH" "$APPIMAGE_ZSYNC_PATH"
+if [[ "$APPIMAGE_ZSYNC_CWD_PATH" != "$APPIMAGE_ZSYNC_PATH" ]]; then
+  rm -f "$APPIMAGE_ZSYNC_CWD_PATH"
+fi
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$APPDIR/usr/bin/forktty"
 install -Dm644 "$DESKTOP_FILE" "$APPDIR/usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop"
 install -Dm644 "$ICON_FILE" "$APPDIR/usr/share/icons/hicolor/128x128/apps/forktty.png"
@@ -345,8 +349,12 @@ export VERSION="$VERSION"
 
 "$APPIMAGETOOL_TOOL" "${APPIMAGETOOL_ARGS[@]}"
 if [[ "${APPIMAGE_UPDATE_INFO:-0}" == "1" && ! -f "$APPIMAGE_ZSYNC_PATH" ]]; then
-  echo "Expected AppImage update metadata missing: $APPIMAGE_ZSYNC_PATH" >&2
-  exit 1
+  if [[ -f "$APPIMAGE_ZSYNC_CWD_PATH" ]]; then
+    mv "$APPIMAGE_ZSYNC_CWD_PATH" "$APPIMAGE_ZSYNC_PATH"
+  else
+    echo "Expected AppImage update metadata missing: $APPIMAGE_ZSYNC_PATH" >&2
+    exit 1
+  fi
 fi
 sha256sum "$APPIMAGE_PATH" > "$APPIMAGE_PATH.sha256"
 
