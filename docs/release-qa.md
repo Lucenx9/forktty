@@ -44,10 +44,12 @@ fully prove (GTK/Ghostty lifecycle, desktop environment integration, and
 packaging/runtime service availability). Browser panes are source-only and
 experimental in this alpha; they have a separate opt-in smoke section.
 
-`scripts/gtk-ghostty-smoke.sh` runs a short GTK/Ghostty launch against isolated
-config/data/state/socket paths and verifies socket ping, surface listing, terminal
-input/readback, and split creation. It uses the current display or `xvfb-run`
-when available.
+`scripts/gtk-ghostty-smoke.sh` runs a short GTK/Ghostty launch in a fresh
+DBus session against isolated config/data/state/socket paths under
+`$XDG_RUNTIME_DIR`, and verifies socket ping, surface listing, terminal
+input/readback, and split creation. The temporary config disables desktop
+notifications and telemetry so the smoke does not depend on host notification
+services. It uses the current display or `xvfb-run` when available.
 
 ## Manual Runtime Smoke
 
