@@ -64,9 +64,7 @@ pub(super) struct DetectedUrl {
 /// untrusted, and `gtk::show_uri` delegates non-web schemes to arbitrary
 /// desktop handlers.
 pub(super) fn is_safe_terminal_uri(uri: &str) -> bool {
-    URL_SCHEMES
-        .iter()
-        .any(|scheme| uri.starts_with(scheme) && uri.len() > scheme.len())
+    http_scheme_len(uri).is_some()
 }
 
 /// Finds bare URLs in a logical line. A URL runs from its scheme to the
@@ -82,11 +80,11 @@ pub(super) fn detect_urls(line: &str) -> Vec<DetectedUrl> {
             i += 1;
             continue;
         }
-        let Some(scheme_len) = scheme_chars.iter().find_map(|scheme| {
-            chars[i..]
-                .starts_with(scheme.as_slice())
-                .then_some(scheme.len())
-        }) else {
+        let Some(scheme_len) = scheme_chars
+            .iter()
+            .find(|scheme| scheme_matches_at(&chars, i, scheme))
+            .map(Vec::len)
+        else {
             i += 1;
             continue;
         };
@@ -109,6 +107,29 @@ pub(super) fn detect_urls(line: &str) -> Vec<DetectedUrl> {
         i = end.max(i + 1);
     }
     urls
+}
+
+fn http_scheme_len(uri: &str) -> Option<usize> {
+    URL_SCHEMES
+        .iter()
+        .find(|scheme| {
+            uri.len() > scheme.len()
+                && uri
+                    .get(..scheme.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+        })
+        .map(|scheme| scheme.len())
+}
+
+fn scheme_matches_at(chars: &[char], offset: usize, scheme: &[char]) -> bool {
+    chars
+        .get(offset..offset + scheme.len())
+        .is_some_and(|prefix| {
+            prefix
+                .iter()
+                .zip(scheme)
+                .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+        })
 }
 
 /// The URL under `point`, if any, with its viewport cell bounds.
@@ -159,6 +180,15 @@ mod tests {
         assert!(detect_urls("xhttps://a.com and nothttp://b.io").is_empty());
         // But a URL after punctuation/brackets still is.
         assert_eq!(detect_urls("(https://a.com)")[0].url, "https://a.com");
+    }
+
+    #[test]
+    fn detect_urls_accepts_http_scheme_case_insensitively() {
+        assert!(is_safe_terminal_uri("HTTPS://example.com"));
+        assert_eq!(
+            detect_urls("see HTTP://example.com")[0].url,
+            "HTTP://example.com"
+        );
     }
 
     #[test]

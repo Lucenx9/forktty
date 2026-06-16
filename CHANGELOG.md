@@ -4,6 +4,21 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
+- Terminal panes now support runtime zoom with `Ctrl++`/`Ctrl+=`, `Ctrl+-`, and `Ctrl+0` without adding persistent font settings.
+
+### Fixed
+- Sidebar badges, duplicate GTK spawns, closed-terminal status handling, corrupt tab leaves, and scrollback settings copy now handle stale or delayed terminal state without misleading UI or backend readiness loss.
+- Terminal panes now size rows from one shared widget-measured cell size plus a small vertical guard, preventing agent TUIs from being clipped after resizes without inflating terminal line spacing.
+- Terminal styled text runs now fit the terminal cell grid, preventing colored inline-code spans from leaving visual gaps between words.
+- Terminal text selection and mouse hit-testing now use GTK content-box coordinates directly, fixing selections that were offset from the pointer.
+- Terminal shortcuts, Meta-key input, unread output tracking, OSC99 status updates, browser-pane cleanup, and uppercase HTTP(S) links now behave consistently from focused panes and delayed events.
+- Terminal drag selection now snaps at cell midpoints and preserves real one-cell drags, keeping highlights aligned with the pointer.
+- Terminal selections now preserve selected whitespace, invalidate select-all payloads on new output, clear stale search highlights, keep adjacent OSC 8 links separated by URI, handle wide-character spacer tails, and avoid drawing scrollback indicators outside tiny panes.
+- Terminal mouse release suppression is now tracked per button, avoiding spurious release forwarding during left/middle button chords.
+- Agent HUD, workspace closing, worktree, restart, settings reset, and welcome telemetry flows now keep their captured context through delayed UI actions and failure paths.
+
 ## [0.2.0-alpha.13] - 2026-06-16
 
 ### Security

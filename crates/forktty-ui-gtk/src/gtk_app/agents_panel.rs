@@ -394,12 +394,14 @@ pub(super) fn open_agent_surface(
         if !model.focus_surface(surface_id) {
             return false;
         }
-        let _ = model.mark_surface_unread(surface_id, false);
         surface.workspace_id
     };
 
     match select_workspace_with_terminal(state, &workspace_id) {
         Ok(true) => {
+            if let Ok(mut model) = state.model.lock() {
+                let _ = model.mark_surface_unread(surface_id, false);
+            }
             if let Some(controller) = controller {
                 controller.borrow_mut().rebuild_layout();
                 controller.borrow_mut().sync_model_focus_to_ui();
@@ -418,6 +420,10 @@ pub(super) fn open_agent_surface(
             false
         }
     }
+}
+
+pub(super) fn agent_reply_payload(text: &str) -> Option<String> {
+    (!text.trim().is_empty()).then(|| format!("{text}\r"))
 }
 
 pub(super) fn forget_agent_surface(
@@ -524,15 +530,14 @@ fn append_agent_row(
         let surface_for_reply = row.surface_id.clone();
         reply.connect_activate(move |entry| {
             let text = entry.text();
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
+            let Some(payload) = agent_reply_payload(text.as_str()) else {
                 return;
-            }
+            };
             let sent = controller_for_reply
                 .as_ref()
                 .and_then(|controller| controller.try_borrow().ok())
                 .is_some_and(|controller| {
-                    controller.send_text_to_surface(&surface_for_reply, &format!("{trimmed}\r"))
+                    controller.send_text_to_surface(&surface_for_reply, &payload)
                 });
             if sent {
                 entry.set_text("");

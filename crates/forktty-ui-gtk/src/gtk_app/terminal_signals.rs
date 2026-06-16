@@ -184,6 +184,18 @@ pub(super) fn apply_ghostty_events_to_model(
                     dispatch_notification_with_loaded_config(&notification);
                 }
             }
+            GhosttyEvent::PtyWrite(_) | GhosttyEvent::VisibleContentChanged => {
+                if let Ok(mut model) = model.lock() {
+                    let should_mark_unread = model.surface(surface_id).is_some()
+                        && model.active_workspace().map_or(true, |workspace| {
+                            workspace.id != workspace_id
+                                || workspace.focused_surface_id != surface_id
+                        });
+                    if should_mark_unread {
+                        let _ = model.mark_surface_unread(surface_id, true);
+                    }
+                }
+            }
             GhosttyEvent::Metadata(metadata) => {
                 if let Ok(mut model) = model.lock() {
                     match terminal_metadata_action(metadata) {
@@ -206,6 +218,9 @@ pub(super) fn apply_ghostty_events_to_model(
                             dispatch_notification_with_loaded_config(&notification);
                         }
                         TerminalMetadataAction::Status => {
+                            if model.surface(surface_id).is_none() {
+                                continue;
+                            }
                             let _ = model.set_status(
                                 workspace_id,
                                 surface_status_key(surface_id),
@@ -252,7 +267,6 @@ pub(super) fn apply_ghostty_events_to_model(
                     dispatch_notification_with_loaded_config(&notification);
                 }
             }
-            GhosttyEvent::PtyWrite(_) | GhosttyEvent::VisibleContentChanged => {}
         }
     }
 }
@@ -440,6 +454,44 @@ mod ghostty_tests {
     }
 
     #[test]
+    fn visible_output_marks_non_focused_surface_unread() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (
+            background_workspace_id,
+            background_surface_id,
+            active_workspace_id,
+            active_surface_id,
+        ) = {
+            let mut model = model.lock().unwrap();
+            let background = model.create_workspace("background", "/tmp/background");
+            let active = model.create_workspace("active", "/tmp/active");
+            (
+                background.id,
+                background.focused_surface_id,
+                active.id,
+                active.focused_surface_id,
+            )
+        };
+
+        apply_events(
+            &model,
+            &background_workspace_id,
+            &background_surface_id,
+            &[GhosttyEvent::VisibleContentChanged],
+        );
+        apply_events(
+            &model,
+            &active_workspace_id,
+            &active_surface_id,
+            &[GhosttyEvent::VisibleContentChanged],
+        );
+
+        let model = model.lock().unwrap();
+        assert!(model.surface(&background_surface_id).unwrap().unread);
+        assert!(!model.surface(&active_surface_id).unwrap().unread);
+    }
+
+    #[test]
     fn ghostty_osc9_metadata_notifications_are_rate_limited_per_surface() {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let (workspace_id, surface_id) = {
@@ -493,6 +545,29 @@ mod ghostty_tests {
         assert_eq!(notifications[0].title, "Terminal notification");
         assert_eq!(notifications[0].body, "Hello world");
         assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_status_ignores_closed_surface() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let surface_id = workspace.focused_surface_id;
+            model.close_surface(&surface_id).unwrap();
+            (workspace.id, surface_id)
+        };
+
+        apply_events(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "status=running".to_string(),
+            })],
+        );
+
+        assert!(model.lock().unwrap().list_status(&workspace_id).is_empty());
     }
 
     #[test]

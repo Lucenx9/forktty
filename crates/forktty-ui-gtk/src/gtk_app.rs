@@ -39,26 +39,6 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_ID: &str = "dev.forktty.forktty";
-const DEFAULT_FONT_FAMILY_ID: &str = "__forktty_default_font__";
-const SYSTEM_MONOSPACE_FONT_FAMILY_ID: &str = "__forktty_system_monospace__";
-const INSTALLED_FONT_FAMILY_ID_PREFIX: &str = "font:";
-const TERMINAL_THEME_ITEMS: &[(&str, &str)] = &[
-    (config::TERMINAL_THEME_SYSTEM, "System"),
-    (config::TERMINAL_THEME_CATPPUCCIN_MOCHA, "Catppuccin Mocha"),
-    (config::TERMINAL_THEME_ROSE_PINE, "Rose Pine"),
-    (config::TERMINAL_THEME_TOKYO_NIGHT, "Tokyo Night"),
-    (config::TERMINAL_THEME_DRACULA, "Dracula"),
-    (config::TERMINAL_THEME_GRUVBOX_DARK, "Gruvbox Dark"),
-];
-const PREFERRED_TERMINAL_FONT_FAMILIES: &[&str] = &[
-    "JetBrainsMono Nerd Font Mono",
-    "JetBrainsMono Nerd Font",
-    "FantasqueSansM Nerd Font Mono",
-    "FiraCode Nerd Font Mono",
-    "Hack Nerd Font Mono",
-    "Iosevka Nerd Font Mono",
-    "Symbols Nerd Font Mono",
-];
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
 const TERMINAL_METADATA_NOTIFICATION_INTERVAL: Duration = Duration::from_secs(10);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
@@ -80,6 +60,9 @@ const LAST_TAB_ACCEL: &str = "<Control>End";
 const LAST_TAB_KP_ACCEL: &str = "<Control>KP_End";
 const RESTART_PANE_SHORTCUT: &str = "Ctrl+Shift+R";
 const RESTART_PANE_ACCEL: &str = "<Control><Shift>R";
+const TERMINAL_ZOOM_IN_SHORTCUT: &str = "Ctrl++ / Ctrl+=";
+const TERMINAL_ZOOM_OUT_SHORTCUT: &str = "Ctrl+-";
+const TERMINAL_ZOOM_RESET_SHORTCUT: &str = "Ctrl+0";
 const EMPTY_LAYOUT_SIGNATURE: &str = "empty-layout";
 const GH_PR_VIEW_TIMEOUT: Duration = Duration::from_secs(8);
 const GH_PR_VIEW_MAX_STDOUT_BYTES: u64 = 64 * 1024;

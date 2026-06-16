@@ -14,6 +14,17 @@ pub(super) enum TabMoveDirection {
     Right,
 }
 
+pub(super) fn spawn_surface_gtk(
+    state: &SocketAppState,
+    surface: &Surface,
+) -> Result<(), TerminalError> {
+    let base = SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone());
+    let Some(request) = forktty_socket::spawn_request_for_surface(base, surface) else {
+        return Ok(());
+    };
+    state.terminal.spawn(request)
+}
+
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
     let surface = {
         let mut model = match state.model.lock() {
@@ -29,11 +40,7 @@ pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str)
     let Some(surface) = surface else {
         return;
     };
-    if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
-        &surface,
-        state.shell.clone(),
-        state.socket_path.clone(),
-    )) {
+    if let Err(err) = spawn_surface_gtk(state, &surface) {
         if let Ok(mut model) = state.model.lock() {
             let _ = model.close_surface(&surface.id);
         }
@@ -67,11 +74,7 @@ pub(super) fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
     let Some(surface) = surface else {
         return;
     };
-    if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
-        &surface,
-        state.shell.clone(),
-        state.socket_path.clone(),
-    )) {
+    if let Err(err) = spawn_surface_gtk(state, &surface) {
         if let Ok(mut model) = state.model.lock() {
             let _ = model.close_surface(&surface.id);
         }
@@ -239,6 +242,37 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
         return false;
     }
 
+    match state.terminal.close(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+        Err(err) => {
+            eprintln!("Failed to restart terminal surface {surface_id}: {err}");
+            if let Ok(mut model) = state.model.lock() {
+                let _ = model.set_status(
+                    &surface.workspace_id,
+                    surface_status_key(surface_id),
+                    "Terminal",
+                    format!(
+                        "Restart failed: {}",
+                        truncate_single_line(&err.to_string(), 140)
+                    ),
+                    Some("red".to_string()),
+                );
+                let _ = model.append_log(
+                    &surface.workspace_id,
+                    LogLevel::Error,
+                    format!("Terminal {surface_id} restart failed: {err}"),
+                );
+            }
+            create_global_notification(
+                state,
+                "Restart Failed",
+                &err.to_string(),
+                NotificationKind::Error,
+            );
+            return false;
+        }
+    }
+
     if let Ok(mut model) = state.model.lock() {
         let _ = model.set_status(
             &surface.workspace_id,
@@ -249,20 +283,6 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
         );
         let _ = model.focus_surface(surface_id);
         let _ = model.mark_surface_unread(surface_id, false);
-    }
-
-    match state.terminal.close(surface_id) {
-        Ok(()) | Err(TerminalError::NotFound(_)) => {}
-        Err(err) => {
-            eprintln!("Failed to restart terminal surface {surface_id}: {err}");
-            create_global_notification(
-                state,
-                "Restart Failed",
-                &err.to_string(),
-                NotificationKind::Error,
-            );
-            return false;
-        }
     }
 
     // Route through spawn_request_for_surface so an agent terminal (a Terminal
@@ -375,11 +395,7 @@ pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
     };
 
     if let Some(replacement) = root_replacement {
-        if let Err(err) = state.terminal.spawn(SpawnRequest::for_surface(
-            &replacement,
-            state.shell.clone(),
-            state.socket_path.clone(),
-        )) {
+        if let Err(err) = spawn_surface_gtk(state, &replacement) {
             eprintln!("Failed to spawn replacement terminal surface: {err}");
             create_global_notification(
                 state,

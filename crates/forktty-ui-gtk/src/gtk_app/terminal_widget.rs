@@ -1,7 +1,6 @@
 use super::terminal_geometry::{
     padded_cell_for_position, padded_cell_for_position_clamped, padded_mouse_position,
-    terminal_content_pixels, terminal_grid_cells_for_allocation, terminal_grid_geometry,
-    TerminalGridGeometry,
+    terminal_grid_cells_for_allocation, terminal_grid_geometry, TerminalGridGeometry,
 };
 use super::terminal_links::{is_safe_terminal_uri, url_at_point};
 use super::*;
@@ -16,6 +15,35 @@ use forktty_terminal::ghostty::events::GhosttyEvent;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const VISUAL_BELL_DURATION: Duration = Duration::from_millis(150);
 const LOCAL_DRAG_SELECTION_THRESHOLD_PX: f64 = 6.0;
+
+#[derive(Debug, Default)]
+struct SuppressedReleases {
+    left: Cell<bool>,
+    middle: Cell<bool>,
+}
+
+impl SuppressedReleases {
+    fn suppress(&self, button: TerminalMouseButton) {
+        match button {
+            TerminalMouseButton::Left => self.left.set(true),
+            TerminalMouseButton::Middle => self.middle.set(true),
+            _ => {}
+        }
+    }
+
+    fn take(&self, button: TerminalMouseButton) -> bool {
+        match button {
+            TerminalMouseButton::Left => self.left.replace(false),
+            TerminalMouseButton::Middle => self.middle.replace(false),
+            _ => false,
+        }
+    }
+
+    fn clear(&self) {
+        self.left.set(false);
+        self.middle.set(false);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VisualBellFlash {
@@ -45,6 +73,7 @@ fn expire_visual_bell_flash(state: VisualBellFlash, generation: u64) -> VisualBe
 pub(super) struct GhosttyTerminalWidget {
     drawing_area: gtk::DrawingArea,
     runtime: Rc<RefCell<TerminalRuntime>>,
+    renderer: Rc<RefCell<TerminalRenderer>>,
     selection: Rc<RefCell<TerminalSelection>>,
     toast_handle: Option<ToastHandle>,
     // Blink phase for the focused cursor; `true` means the cursor is drawn.
@@ -122,7 +151,7 @@ where
     let runtime = TerminalRuntime::spawn_with_scrollback_lines(
         request,
         forktty_terminal::ghostty::pty::PtySize { cols: 80, rows: 24 },
-        config.appearance.scrollback_lines as usize,
+        terminal_scrollback_lines_for_config(&config),
     )?;
     let pid = runtime.child_pid();
     let widget = GhosttyTerminalWidget::new_with_config(runtime, &config, toast_handle);
@@ -152,7 +181,9 @@ impl GhosttyTerminalWidget {
         let is_model_focused = Rc::new(Cell::new(false));
         let scroll_remainder = Rc::new(Cell::new(reset_scroll_accumulator()));
         let font = terminal_font_description(&drawing_area, config);
-        let renderer = TerminalRenderer::from_config_with_font(config, font);
+        let renderer = Rc::new(RefCell::new(TerminalRenderer::from_config_with_font(
+            config, font,
+        )));
         let im_context = gtk::IMMulticontext::new();
         im_context.set_client_widget(Some(&drawing_area));
         {
@@ -177,10 +208,12 @@ impl GhosttyTerminalWidget {
                             });
                         let range = selection.borrow().normalized_range();
                         let link_range = hover_link.borrow().as_ref().map(|l| (l.start, l.end));
+                        let renderer = renderer.borrow();
                         renderer.draw_frame(
                             cr,
                             width,
                             height,
+                            renderer.cell_pixel_size_for_widget(area),
                             &frame,
                             range,
                             link_range,
@@ -311,11 +344,8 @@ impl GhosttyTerminalWidget {
             let any_button_pressed = Rc::new(Cell::new(false));
             // Set when a press was handled locally and not forwarded to the
             // application (word/line click selection, middle-click paste); the
-            // matching release must then not be forwarded either. Shared between
-            // Left and Middle: a simultaneous Left+Middle chord can let one
-            // button's release consume the other's flag, which at worst forwards
-            // one spurious release to a mouse-tracking app.
-            let suppress_release = Rc::new(Cell::new(false));
+            // matching release must then not be forwarded either.
+            let suppress_release = Rc::new(SuppressedReleases::default());
             let pending_left_press = Rc::new(RefCell::new(None::<DeferredLeftPress>));
             let autoscroll = Rc::new(SelectionAutoscroll::default());
             let click = gtk::GestureClick::new();
@@ -345,12 +375,13 @@ impl GhosttyTerminalWidget {
                     let modifiers = gesture.current_event_state();
                     let is_left = matches!(button, TerminalMouseButton::Left);
                     let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                    let renderer = renderer.borrow();
                     if is_left && ctrl && n_press == 1 {
                         let point =
                             selection_cell_for_position_clamped(&drawing_area, &renderer, x, y);
                         match link_at_point(&runtime, point) {
                             Ok(Some(link)) => {
-                                suppress_release.set(true);
+                                suppress_release.suppress(button);
                                 // The press consumed the gesture; drop the hover artifacts now —
                                 // Ctrl-release can't (clear_hover_link no-ops once this is None).
                                 *hover_link_for_click.borrow_mut() = None;
@@ -381,7 +412,7 @@ impl GhosttyTerminalWidget {
                             Ok(MiddleClickRouting::Forwarded) => drawing_area.queue_draw(),
                             Ok(MiddleClickRouting::PastePrimary) => {
                                 // The press was not forwarded; its release must not be either.
-                                suppress_release.set(true);
+                                suppress_release.suppress(button);
                                 paste_primary_selection(
                                     &runtime,
                                     &selection,
@@ -404,6 +435,8 @@ impl GhosttyTerminalWidget {
                     };
                     if matches!(left_decision, LeftMousePressDecision::DeferForLocalDrag) {
                         autoscroll.pointer.set((x, y));
+                        autoscroll.drag_origin.set((x, y));
+                        autoscroll.drag_moved.set(false);
                         autoscroll.scroll_compensated_head.set(false);
                         *pending_left_press.borrow_mut() =
                             Some(DeferredLeftPress { x, y, modifiers });
@@ -440,6 +473,8 @@ impl GhosttyTerminalWidget {
                             // drag's pending autoscroll.
                             autoscroll.lines.set(0);
                             autoscroll.pointer.set((x, y));
+                            autoscroll.drag_origin.set((x, y));
+                            autoscroll.drag_moved.set(false);
                             autoscroll.scroll_compensated_head.set(false);
                             if n_press == 1 {
                                 clear_hover_link(&hover_link_for_click, &drawing_area);
@@ -456,7 +491,7 @@ impl GhosttyTerminalWidget {
                                 // The point query is clamped so a click a few
                                 // px into the trailing gutter still selects
                                 // the last row/column.
-                                suppress_release.set(true);
+                                suppress_release.suppress(button);
                                 let point = selection_cell_for_position_clamped(
                                     &drawing_area,
                                     &renderer,
@@ -510,11 +545,13 @@ impl GhosttyTerminalWidget {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
+                    let renderer = renderer.borrow();
                     any_button_pressed.set(false);
                     if matches!(button, TerminalMouseButton::Left) {
                         if selection.borrow().is_selecting() {
                             // The press was not forwarded to the application,
                             // so the release must not be either.
+                            update_selection_drag_moved(&autoscroll, x, y);
                             finish_selection_drag(
                                 &runtime,
                                 &selection,
@@ -523,6 +560,7 @@ impl GhosttyTerminalWidget {
                                 x,
                                 y,
                                 should_extend_selection_on_release(&autoscroll, x, y),
+                                autoscroll.drag_moved.get(),
                             );
                             autoscroll.scroll_compensated_head.set(false);
                             return;
@@ -558,12 +596,12 @@ impl GhosttyTerminalWidget {
                         }
                         // Same rule for a word/line click selection, which
                         // finished during the press.
-                        if suppress_release.replace(false) {
+                        if suppress_release.take(TerminalMouseButton::Left) {
                             return;
                         }
                     }
                     if matches!(button, TerminalMouseButton::Middle)
-                        && suppress_release.replace(false)
+                        && suppress_release.take(TerminalMouseButton::Middle)
                     {
                         return;
                     }
@@ -599,11 +637,16 @@ impl GhosttyTerminalWidget {
                         return;
                     };
                     any_button_pressed.set(false);
-                    suppress_release.set(false);
+                    suppress_release.clear();
                     pending_left_press.borrow_mut().take();
                     autoscroll.lines.set(0);
                     if selection.borrow().is_selecting() {
-                        finalize_selection_drag(&runtime, &selection, &drawing_area);
+                        finalize_selection_drag(
+                            &runtime,
+                            &selection,
+                            &drawing_area,
+                            autoscroll.drag_moved.get(),
+                        );
                     }
                 });
             }
@@ -624,6 +667,7 @@ impl GhosttyTerminalWidget {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
                     };
+                    let renderer = renderer.borrow();
                     if selection.borrow().is_selecting() {
                         // A broken pointer grab can swallow the button release
                         // (e.g. another gesture claiming the sequence cancels
@@ -635,26 +679,30 @@ impl GhosttyTerminalWidget {
                             .contains(gtk::gdk::ModifierType::BUTTON1_MASK)
                         {
                             autoscroll.lines.set(0);
-                            finalize_selection_drag(&runtime, &selection, &drawing_area);
+                            finalize_selection_drag(
+                                &runtime,
+                                &selection,
+                                &drawing_area,
+                                autoscroll.drag_moved.get(),
+                            );
                             return;
                         }
-                        selection
-                            .borrow_mut()
-                            .extend_drag(selection_cell_for_position(
-                                &drawing_area,
-                                &renderer,
-                                x,
-                                y,
-                            ));
+                        update_selection_drag_moved(&autoscroll, x, y);
+                        let anchor = selection.borrow().anchor();
+                        let cell = anchor
+                            .map(|anchor| {
+                                selection_cell_for_drag_head(&drawing_area, &renderer, anchor, x, y)
+                            })
+                            .unwrap_or_else(|| {
+                                selection_cell_for_position(&drawing_area, &renderer, x, y)
+                            });
+                        selection.borrow_mut().extend_drag(cell);
                         autoscroll.pointer.set((x, y));
                         autoscroll.scroll_compensated_head.set(false);
                         // Steer drag-autoscroll: past the top/bottom edge a
                         // timer scrolls and keeps extending the selection
                         // until the pointer comes back inside.
-                        let lines = autoscroll_lines_per_tick(
-                            y,
-                            f64::from(drawing_area.allocated_height()),
-                        );
+                        let lines = autoscroll_lines_per_tick(y, f64::from(drawing_area.height()));
                         autoscroll.lines.set(lines);
                         if lines != 0 && !autoscroll.active.get() {
                             autoscroll.active.set(true);
@@ -695,10 +743,13 @@ impl GhosttyTerminalWidget {
                                 pending.x,
                                 pending.y,
                             );
-                            let end = selection_cell_for_position(&drawing_area, &renderer, x, y);
+                            let end =
+                                selection_cell_for_drag_head(&drawing_area, &renderer, start, x, y);
                             let mut selection = selection.borrow_mut();
                             selection.begin_drag(start);
                             selection.extend_drag(end);
+                            autoscroll.drag_origin.set((pending.x, pending.y));
+                            autoscroll.drag_moved.set(true);
                             autoscroll.pointer.set((x, y));
                             autoscroll.scroll_compensated_head.set(false);
                             drawing_area.queue_draw();
@@ -774,6 +825,7 @@ impl GhosttyTerminalWidget {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return glib::Propagation::Proceed;
                     };
+                    let renderer = renderer.borrow();
                     let current_event = controller.current_event();
                     let smooth_scroll = current_event.as_ref().is_some_and(scroll_event_is_smooth);
                     let (x, y) = current_event
@@ -863,10 +915,12 @@ impl GhosttyTerminalWidget {
             let runtime = runtime.clone();
             let renderer = renderer.clone();
             drawing_area.connect_resize(move |area, width, height| {
+                let renderer = renderer.borrow();
                 let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-                if let Err(err) = runtime.borrow_mut().resize_pixels(
-                    terminal_content_pixels(width),
-                    terminal_content_pixels(height),
+                let (_, (cols, rows)) = terminal_area_grid(width, height, cell_width, cell_height);
+                if let Err(err) = runtime.borrow_mut().resize_cells_with_cell_pixels(
+                    cols,
+                    rows,
                     cell_width,
                     cell_height,
                 ) {
@@ -878,6 +932,7 @@ impl GhosttyTerminalWidget {
         let widget = Self {
             drawing_area,
             runtime,
+            renderer,
             selection,
             hover_link,
             toast_handle,
@@ -926,6 +981,7 @@ impl GhosttyTerminalWidget {
         WeakGhosttyTerminalWidget {
             drawing_area: self.drawing_area.downgrade(),
             runtime: Rc::downgrade(&self.runtime),
+            renderer: Rc::downgrade(&self.renderer),
             selection: Rc::downgrade(&self.selection),
             toast_handle: self.toast_handle.clone(),
             cursor_blink_visible: Rc::downgrade(&self.cursor_blink_visible),
@@ -944,6 +1000,14 @@ impl GhosttyTerminalWidget {
 
     pub(super) fn set_local_selection_on_mouse_drag(&self, enabled: bool) {
         self.local_selection_on_mouse_drag.set(enabled);
+    }
+
+    pub(super) fn set_zoom_level(&self, zoom_level: i32) {
+        let config = config::load_config().unwrap_or_default();
+        let font = terminal_font_description_for_zoom_level(&config, zoom_level);
+        *self.renderer.borrow_mut() = TerminalRenderer::from_config_with_font(&config, font);
+        self.resize_to_current_allocation();
+        self.drawing_area.queue_draw();
     }
 
     /// Registers the search bar's reaction to a pump-side highlight drop.
@@ -1021,6 +1085,27 @@ impl GhosttyTerminalWidget {
             eprintln!("Terminal runtime operation failed: {err}");
         }
         self.drawing_area.queue_draw();
+    }
+
+    fn resize_to_current_allocation(&self) {
+        let (cell_width, cell_height) = self
+            .renderer
+            .borrow()
+            .cell_pixel_size_for_widget(&self.drawing_area);
+        let (_, (cols, rows)) = terminal_area_grid(
+            self.drawing_area.width(),
+            self.drawing_area.height(),
+            cell_width,
+            cell_height,
+        );
+        if let Err(err) = self.runtime.borrow_mut().resize_cells_with_cell_pixels(
+            cols,
+            rows,
+            cell_width,
+            cell_height,
+        ) {
+            eprintln!("Failed to resize terminal runtime after zoom: {err}");
+        }
     }
 
     /// Changes whenever terminal content may have changed; the agent HUD uses
@@ -1120,9 +1205,19 @@ impl GhosttyTerminalWidget {
         let total = matches.len();
         let search_match = matches[index];
         drop(cache_slot);
-        self.search_index.set(Some(index));
-        if let Err(err) = self.show_search_match(query, search_match) {
-            eprintln!("Failed to show terminal search match: {err}");
+        match self.show_search_match(query, search_match) {
+            Ok(true) => {
+                self.search_index.set(Some(index));
+            }
+            Ok(false) => {
+                self.search_index.set(None);
+                return SearchStatus::none();
+            }
+            Err(err) => {
+                eprintln!("Failed to show terminal search match: {err}");
+                self.search_reset();
+                return SearchStatus::none();
+            }
         }
         SearchStatus {
             current: index + 1,
@@ -1151,7 +1246,8 @@ impl GhosttyTerminalWidget {
         &self,
         query: &str,
         search_match: SearchMatch,
-    ) -> Result<(), TerminalError> {
+    ) -> Result<bool, TerminalError> {
+        self.selection.borrow_mut().clear();
         let mut runtime = self.runtime.borrow_mut();
         let viewport = runtime.viewport_position()?;
         let top = viewport_top_for_match(search_match.line, viewport);
@@ -1163,24 +1259,19 @@ impl GhosttyTerminalWidget {
         let frame = runtime.render_frame()?;
         drop(runtime);
         let row = search_match.line.saturating_sub(top);
-        if let Some(frame_row) = frame.rows.get(row) {
-            let cell_texts: Vec<&str> = frame_row
-                .cells
-                .iter()
-                .map(|cell| cell.text.as_str())
-                .collect();
-            if let Some((from, to)) =
-                match_cells_in_row(&cell_texts, query, search_match.occurrence)
-            {
-                let mut selection = self.selection.borrow_mut();
-                selection.begin_drag(SelectionPoint { row, col: from });
-                selection.extend_drag(SelectionPoint { row, col: to });
-                selection.end_drag();
-                selection.select_text(cell_texts[from..=to].concat());
-            }
+        if let Some((start, end, text)) =
+            search_selection_from_frame(&frame, row, query, search_match.occurrence)
+        {
+            let mut selection = self.selection.borrow_mut();
+            selection.begin_drag(start);
+            selection.extend_drag(end);
+            selection.end_drag();
+            selection.select_text(text);
+            self.drawing_area.queue_draw();
+            return Ok(true);
         }
         self.drawing_area.queue_draw();
-        Ok(())
+        Ok(false)
     }
 
     pub(super) fn pump_pty_events(&self) -> Result<Vec<GhosttyEvent>, TerminalError> {
@@ -1189,13 +1280,14 @@ impl GhosttyTerminalWidget {
             // New output shifts the viewport content under a finished
             // selection; drop it rather than highlight the wrong text.
             let mut selection_cleared = false;
+            let visible_content_changed = events
+                .iter()
+                .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged));
             {
                 let mut selection = self.selection.borrow_mut();
                 if !selection.is_selecting()
-                    && selection.normalized_range().is_some()
-                    && events
-                        .iter()
-                        .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged))
+                    && selection.has_selected_payload()
+                    && visible_content_changed
                 {
                     selection.clear();
                     selection_cleared = true;
@@ -1203,11 +1295,7 @@ impl GhosttyTerminalWidget {
             }
             // New output may have shifted what cell is under the pointer;
             // clear the hover-link underline to avoid stale highlights.
-            if events
-                .iter()
-                .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged))
-                && self.hover_link.borrow().is_some()
-            {
+            if visible_content_changed && self.hover_link.borrow().is_some() {
                 *self.hover_link.borrow_mut() = None;
                 self.drawing_area.set_cursor_from_name(None);
             }
@@ -1232,6 +1320,7 @@ impl GhosttyTerminalWidget {
 pub(super) struct WeakGhosttyTerminalWidget {
     drawing_area: glib::WeakRef<gtk::DrawingArea>,
     runtime: std::rc::Weak<RefCell<TerminalRuntime>>,
+    renderer: std::rc::Weak<RefCell<TerminalRenderer>>,
     selection: std::rc::Weak<RefCell<TerminalSelection>>,
     toast_handle: Option<ToastHandle>,
     cursor_blink_visible: std::rc::Weak<Cell<bool>>,
@@ -1252,6 +1341,7 @@ impl WeakGhosttyTerminalWidget {
         Some(GhosttyTerminalWidget {
             drawing_area: self.drawing_area.upgrade()?,
             runtime: self.runtime.upgrade()?,
+            renderer: self.renderer.upgrade()?,
             selection: self.selection.upgrade()?,
             toast_handle: self.toast_handle.clone(),
             cursor_blink_visible: self.cursor_blink_visible.upgrade()?,
@@ -1300,57 +1390,27 @@ struct TerminalMouseWidgetMetrics {
     cell_height: i32,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct TerminalContentPadding {
-    left: i32,
-    right: i32,
-    top: i32,
-    bottom: i32,
-}
-
-/// Grid geometry, CSS padding, cell size, and grid bounds for a pane, all
-/// derived from the same allocation snapshot. Event coordinates include the
-/// CSS padding while the drawn grid lives in the content box, so every
-/// pointer consumer must shift positions by `padding` and build the grid from
-/// the content size — going through this one helper keeps the input mapping
-/// and the renderer from disagreeing by a padding's width.
+/// Grid geometry, cell size, and grid bounds for a pane, all derived from the
+/// same content-box snapshot that GTK gives the draw and event paths.
 fn terminal_area_geometry(
     area: &gtk::DrawingArea,
     renderer: &TerminalRenderer,
-) -> (
-    TerminalGridGeometry,
-    TerminalContentPadding,
-    i32,
-    i32,
-    (u16, u16),
-) {
+) -> (TerminalGridGeometry, i32, i32, (u16, u16)) {
     let (cell_width, cell_height) = renderer.cell_pixel_size_for_widget(area);
-    let padding = terminal_content_padding(area);
-    let (grid, cells) = terminal_area_grid(
-        area.allocated_width(),
-        area.allocated_height(),
-        padding,
-        cell_width,
-        cell_height,
-    );
-    (grid, padding, cell_width, cell_height, cells)
+    let (grid, cells) = terminal_area_grid(area.width(), area.height(), cell_width, cell_height);
+    (grid, cell_width, cell_height, cells)
 }
 
 /// Pure core of [`terminal_area_geometry`]: the grid origin and `(cols, rows)`
-/// for an allocation, given its CSS padding and cell size. The drawn grid lives
-/// in the content box (GTK hands the draw function the CSS-padding-stripped
-/// content dimensions), so this strips the padding exactly once and feeds the
-/// content size to [`terminal_grid_geometry`] — the same input the renderer
-/// uses, which is what keeps pointer mapping aligned with the drawn cells.
+/// for GTK's content-box size and cell size. GTK draw and event coordinates are
+/// already content-box coordinates, so this feeds the same dimensions to the
+/// input path that the renderer receives.
 fn terminal_area_grid(
-    allocated_width: i32,
-    allocated_height: i32,
-    padding: TerminalContentPadding,
+    content_width: i32,
+    content_height: i32,
     cell_width: i32,
     cell_height: i32,
 ) -> (TerminalGridGeometry, (u16, u16)) {
-    let content_width = terminal_content_size(allocated_width, padding.left, padding.right);
-    let content_height = terminal_content_size(allocated_height, padding.top, padding.bottom);
     let (cols, rows) =
         terminal_grid_cells_for_allocation(content_width, content_height, cell_width, cell_height);
     let grid = terminal_grid_geometry(
@@ -1369,10 +1429,9 @@ fn terminal_mouse_input_for_area(
     renderer: &TerminalRenderer,
     event: TerminalMouseEventInput,
 ) -> TerminalMouseInput {
-    let (grid, padding, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
-    let (x, y) = terminal_content_position(event.x, event.y, padding);
+    let (grid, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
     terminal_mouse_input(
-        TerminalMouseEventInput { x, y, ..event },
+        event,
         TerminalMouseWidgetMetrics {
             grid,
             cell_width,
@@ -1438,30 +1497,6 @@ fn positive_u32(value: i32) -> u32 {
     value.max(1) as u32
 }
 
-#[allow(deprecated)]
-fn terminal_content_padding(widget: &impl IsA<gtk::Widget>) -> TerminalContentPadding {
-    let padding = widget.as_ref().style_context().padding();
-    TerminalContentPadding {
-        left: i32::from(padding.left()),
-        right: i32::from(padding.right()),
-        top: i32::from(padding.top()),
-        bottom: i32::from(padding.bottom()),
-    }
-}
-
-fn terminal_content_size(size: i32, leading_padding: i32, trailing_padding: i32) -> i32 {
-    size.saturating_sub(leading_padding)
-        .saturating_sub(trailing_padding)
-        .max(1)
-}
-
-fn terminal_content_position(x: f64, y: f64, padding: TerminalContentPadding) -> (f64, f64) {
-    (
-        (x - f64::from(padding.left)).max(0.0),
-        (y - f64::from(padding.top)).max(0.0),
-    )
-}
-
 fn write_terminal_mouse(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     drawing_area: &gtk::DrawingArea,
@@ -1487,10 +1522,78 @@ fn selection_cell_for_position(
     x: f64,
     y: f64,
 ) -> SelectionPoint {
-    let (geometry, padding, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
-    let (x, y) = terminal_content_position(x, y, padding);
+    let (geometry, cell_width, cell_height, _) = terminal_area_geometry(area, renderer);
     let (col, row) = padded_cell_for_position(&geometry, x, y, cell_width, cell_height);
     SelectionPoint { row, col }
+}
+
+fn selection_cell_for_drag_head(
+    area: &gtk::DrawingArea,
+    renderer: &TerminalRenderer,
+    anchor: SelectionPoint,
+    x: f64,
+    y: f64,
+) -> SelectionPoint {
+    let (geometry, cell_width, cell_height, (cols, _)) = terminal_area_geometry(area, renderer);
+    drag_selection_cell_for_position(&geometry, anchor, x, y, cell_width, cell_height, cols)
+}
+
+fn drag_selection_cell_for_position(
+    geometry: &TerminalGridGeometry,
+    anchor: SelectionPoint,
+    x: f64,
+    y: f64,
+    cell_width: i32,
+    cell_height: i32,
+    cols: u16,
+) -> SelectionPoint {
+    let (col, row) = padded_cell_for_position(geometry, x, y, cell_width, cell_height);
+    let point = SelectionPoint { row, col };
+    if point == anchor {
+        return point;
+    }
+    let midpoint = f64::from(geometry.origin_x)
+        + point.col as f64 * f64::from(cell_width.max(1))
+        + f64::from(cell_width.max(1)) / 2.0;
+    if point > anchor && x < midpoint {
+        previous_selection_point(point, cols)
+    } else if point < anchor && x >= midpoint {
+        next_selection_point(point, cols)
+    } else {
+        point
+    }
+}
+
+fn previous_selection_point(point: SelectionPoint, cols: u16) -> SelectionPoint {
+    let cols = usize::from(cols.max(1));
+    if point.col > 0 {
+        SelectionPoint {
+            col: point.col - 1,
+            ..point
+        }
+    } else if point.row > 0 {
+        SelectionPoint {
+            row: point.row - 1,
+            col: cols - 1,
+        }
+    } else {
+        point
+    }
+}
+
+fn next_selection_point(point: SelectionPoint, cols: u16) -> SelectionPoint {
+    let cols = usize::from(cols.max(1));
+    if point.col + 1 < cols {
+        SelectionPoint {
+            col: point.col + 1,
+            ..point
+        }
+    } else {
+        SelectionPoint {
+            row: point.row + 1,
+            col: 0,
+        }
+    }
 }
 
 /// [`selection_cell_for_position`] clamped to the grid, for point queries
@@ -1505,9 +1608,7 @@ fn selection_cell_for_position_clamped(
     x: f64,
     y: f64,
 ) -> SelectionPoint {
-    let (geometry, padding, cell_width, cell_height, (cols, rows)) =
-        terminal_area_geometry(area, renderer);
-    let (x, y) = terminal_content_position(x, y, padding);
+    let (geometry, cell_width, cell_height, (cols, rows)) = terminal_area_geometry(area, renderer);
     let (col, row) =
         padded_cell_for_position_clamped(&geometry, x, y, cell_width, cell_height, cols, rows);
     SelectionPoint { row, col }
@@ -1521,13 +1622,16 @@ fn finish_selection_drag(
     x: f64,
     y: f64,
     extend_on_release: bool,
+    commit_single_cell: bool,
 ) {
     if extend_on_release {
-        selection
-            .borrow_mut()
-            .extend_drag(selection_cell_for_position(drawing_area, renderer, x, y));
+        let anchor = selection.borrow().anchor();
+        let cell = anchor
+            .map(|anchor| selection_cell_for_drag_head(drawing_area, renderer, anchor, x, y))
+            .unwrap_or_else(|| selection_cell_for_position(drawing_area, renderer, x, y));
+        selection.borrow_mut().extend_drag(cell);
     }
-    finalize_selection_drag(runtime, selection, drawing_area);
+    finalize_selection_drag(runtime, selection, drawing_area, commit_single_cell);
 }
 
 /// Ends the in-progress drag and stores its text (or clears it for a no-op
@@ -1541,21 +1645,32 @@ fn finalize_selection_drag(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
+    commit_single_cell: bool,
 ) {
     let mut selection = selection.borrow_mut();
     selection.end_drag();
     match selection.normalized_range() {
-        Some((start, end)) if start != end => match runtime.borrow_mut().render_frame() {
-            Ok(frame) => commit_selection_range(&mut selection, &frame, start, end),
-            Err(err) => {
-                eprintln!("Failed to extract terminal selection: {err}");
-                selection.clear();
+        Some((start, end)) if should_commit_selection_range(start, end, commit_single_cell) => {
+            match runtime.borrow_mut().render_frame() {
+                Ok(frame) => commit_selection_range(&mut selection, &frame, start, end),
+                Err(err) => {
+                    eprintln!("Failed to extract terminal selection: {err}");
+                    selection.clear();
+                }
             }
-        },
+        }
         // A plain click (no drag) leaves no selection behind.
         _ => selection.clear(),
     }
     drawing_area.queue_draw();
+}
+
+fn should_commit_selection_range(
+    start: SelectionPoint,
+    end: SelectionPoint,
+    commit_single_cell: bool,
+) -> bool {
+    start != end || commit_single_cell
 }
 
 /// The viewport range a double click at `point` selects: the word (or
@@ -1601,7 +1716,7 @@ fn line_selection_in_frame(
 }
 
 /// Installs `start..=end` as the finished selection and stores its text,
-/// publishing it to the PRIMARY clipboard like a finished drag. Blank text
+/// publishing it to the PRIMARY clipboard like a finished drag. Empty text
 /// clears the selection instead.
 fn commit_selection_range(
     selection: &mut TerminalSelection,
@@ -1613,7 +1728,7 @@ fn commit_selection_range(
     selection.extend_drag(end);
     selection.end_drag();
     let text = selection_text_from_frame(frame, start, end);
-    if text.trim().is_empty() {
+    if text.is_empty() {
         selection.clear();
         return;
     }
@@ -1633,12 +1748,21 @@ const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(75);
 struct SelectionAutoscroll {
     lines: Cell<isize>,
     pointer: Cell<(f64, f64)>,
+    drag_origin: Cell<(f64, f64)>,
+    drag_moved: Cell<bool>,
     active: Cell<bool>,
     scroll_compensated_head: Cell<bool>,
 }
 
 fn should_extend_selection_on_release(autoscroll: &SelectionAutoscroll, x: f64, y: f64) -> bool {
     !autoscroll.scroll_compensated_head.get() || autoscroll.pointer.get() != (x, y)
+}
+
+fn update_selection_drag_moved(autoscroll: &SelectionAutoscroll, x: f64, y: f64) {
+    let (start_x, start_y) = autoscroll.drag_origin.get();
+    if deferred_local_drag_exceeded_threshold(start_x, start_y, x, y) {
+        autoscroll.drag_moved.set(true);
+    }
 }
 
 /// Scrolls the viewport while a selection drag sits past the top or bottom
@@ -1678,8 +1802,12 @@ fn spawn_selection_autoscroll_timer(
         }
         // Keep the head pinned under the pointer, clamped into the viewport.
         let (x, y) = autoscroll.pointer.get();
-        let max_y = (f64::from(area.allocated_height()) - 1.0).max(0.0);
-        let cell = selection_cell_for_position(&area, &renderer, x, y.clamp(0.0, max_y));
+        let max_y = (f64::from(area.height()) - 1.0).max(0.0);
+        let y = y.clamp(0.0, max_y);
+        let anchor = selection.borrow().anchor();
+        let cell = anchor
+            .map(|anchor| selection_cell_for_drag_head(&area, &renderer, anchor, x, y))
+            .unwrap_or_else(|| selection_cell_for_position(&area, &renderer, x, y));
         selection.borrow_mut().extend_drag(cell);
         area.queue_draw();
         glib::ControlFlow::Continue
@@ -1723,7 +1851,10 @@ fn autoscroll_selection_tick(
 /// break is right-trimmed and separated by `\n`. The last row never trails a
 /// separator. This is why copying a wrapped command yields one pasteable line
 /// instead of one broken at every screen edge.
-fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String {
+fn join_rows_honoring_wrap(
+    rows: impl Iterator<Item = (String, bool)>,
+    trim_hard_line_ends: bool,
+) -> String {
     let mut out = String::new();
     let mut rows = rows.peekable();
     while let Some((text, wrapped)) = rows.next() {
@@ -1731,7 +1862,11 @@ fn join_rows_honoring_wrap(rows: impl Iterator<Item = (String, bool)>) -> String
         if wrapped && has_next {
             out.push_str(&text);
         } else {
-            out.push_str(text.trim_end());
+            if trim_hard_line_ends {
+                out.push_str(text.trim_end());
+            } else {
+                out.push_str(&text);
+            }
             if has_next {
                 out.push('\n');
             }
@@ -1746,7 +1881,7 @@ fn viewport_text_from_frame(frame: &forktty_terminal::ghostty::core::TerminalFra
         let text: String = row.cells.iter().map(cell_clipboard_text).collect();
         (text, row.wrapped)
     });
-    join_rows_honoring_wrap(rows).trim_end().to_string()
+    join_rows_honoring_wrap(rows, true).trim_end().to_string()
 }
 
 fn visible_text_from_full_text(text: &str, top: usize, rows: usize) -> String {
@@ -1774,6 +1909,26 @@ fn copy_payload<E>(
     }
 }
 
+fn search_selection_from_frame(
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    row: usize,
+    query: &str,
+    occurrence: usize,
+) -> Option<(SelectionPoint, SelectionPoint, String)> {
+    let frame_row = frame.rows.get(row)?;
+    let cell_texts: Vec<&str> = frame_row
+        .cells
+        .iter()
+        .map(|cell| cell.text.as_str())
+        .collect();
+    let (from, to) = match_cells_in_row(&cell_texts, query, occurrence)?;
+    Some((
+        SelectionPoint { row, col: from },
+        SelectionPoint { row, col: to },
+        cell_texts[from..=to].concat(),
+    ))
+}
+
 fn selection_text_from_frame(
     frame: &forktty_terminal::ghostty::core::TerminalFrame,
     start: SelectionPoint,
@@ -1781,13 +1936,30 @@ fn selection_text_from_frame(
 ) -> String {
     let rows = frame.rows.iter().enumerate().filter_map(|(row_idx, row)| {
         let (from, to) = selection_cols_for_row(start, end, row_idx, row.cells.len())?;
+        let (from, to) = expand_selection_cols_for_wide_cell(row, from, to);
         let text: String = row.cells[from..to]
             .iter()
             .map(cell_clipboard_text)
             .collect();
         Some((text, row.wrapped))
     });
-    join_rows_honoring_wrap(rows)
+    join_rows_honoring_wrap(rows, false)
+}
+
+fn expand_selection_cols_for_wide_cell(
+    row: &forktty_terminal::ghostty::core::TerminalRow,
+    mut from: usize,
+    to: usize,
+) -> (usize, usize) {
+    while from > 0
+        && matches!(
+            row.cells.get(from).map(|cell| cell.width),
+            Some(TerminalCellWidth::SpacerTail | TerminalCellWidth::SpacerHead)
+        )
+    {
+        from -= 1;
+    }
+    (from, to)
 }
 
 fn cell_clipboard_text(cell: &TerminalCell) -> &str {
@@ -1969,11 +2141,17 @@ fn link_at_point(
             .hyperlink_uri_at(point.col as u16, point.row as u16)?;
         if let Some(uri) = uri.filter(|uri| is_safe_terminal_uri(uri)) {
             let mut from = point.col;
-            while from > 0 && row.cells[from - 1].hyperlink {
+            while from > 0
+                && row.cells[from - 1].hyperlink
+                && osc8_uri_matches(runtime, point.row, from - 1, &uri)
+            {
                 from -= 1;
             }
             let mut to = point.col;
-            while to + 1 < row.cells.len() && row.cells[to + 1].hyperlink {
+            while to + 1 < row.cells.len()
+                && row.cells[to + 1].hyperlink
+                && osc8_uri_matches(runtime, point.row, to + 1, &uri)
+            {
                 to += 1;
             }
             return Ok(Some(HoverLink {
@@ -1990,6 +2168,21 @@ fn link_at_point(
         }
     }
     Ok(url_at_point(&frame, point).map(|(start, end, uri)| HoverLink { start, end, uri }))
+}
+
+fn osc8_uri_matches(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    row: usize,
+    col: usize,
+    expected: &str,
+) -> bool {
+    runtime
+        .borrow()
+        .hyperlink_uri_at(col as u16, row as u16)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some(expected)
 }
 
 /// Opens a link with the desktop's default handler. `gtk::show_uri` is
@@ -2068,7 +2261,7 @@ fn compensate_selection_for_scroll(
     scrolled_rows: isize,
 ) -> Result<(), TerminalError> {
     let (max_row, max_col) = {
-        let runtime = runtime.borrow_mut();
+        let runtime = runtime.borrow();
         let rows = runtime.viewport_position()?.rows;
         let cols = runtime.size().cols;
         (rows.saturating_sub(1), usize::from(cols.saturating_sub(1)))
@@ -2342,7 +2535,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             selection.clear();
             // Select-all covers the whole scrollback, like other terminals,
             // joining soft-wrapped rows so a wrapped command pastes as one line.
-            selection.select_text(self.runtime.borrow().visible_full_text_unwrapped());
+            selection.select_text(self.runtime.borrow().full_text_unwrapped_visible_cells());
         }
         self.copy_text();
     }
@@ -2488,6 +2681,28 @@ mod selection_tests {
     }
 
     #[test]
+    fn selection_text_expands_spacer_tail_to_wide_head() {
+        let frame = frame_for_lines("a 漢 b".as_bytes());
+
+        assert_eq!(
+            selection_text_from_frame(
+                &frame,
+                SelectionPoint { row: 0, col: 3 },
+                SelectionPoint { row: 0, col: 3 },
+            ),
+            "漢"
+        );
+        assert_eq!(
+            selection_text_from_frame(
+                &frame,
+                SelectionPoint { row: 0, col: 3 },
+                SelectionPoint { row: 0, col: 5 },
+            ),
+            "漢 b"
+        );
+    }
+
+    #[test]
     fn viewport_text_joins_soft_wrapped_rows_without_a_newline() {
         let frame = frame_for_lines(b"abcdefghijklmnopqrstuvwxyz\r\nshort");
 
@@ -2495,6 +2710,19 @@ mod selection_tests {
             viewport_text_from_frame(&frame),
             "abcdefghijklmnopqrstuvwxyz\nshort"
         );
+    }
+
+    #[test]
+    fn search_selection_from_frame_materializes_only_current_frame_hits() {
+        let frame = frame_for_lines(b"alpha beta");
+
+        let (start, end, text) = search_selection_from_frame(&frame, 0, "beta", 0).unwrap();
+
+        assert_eq!(start, SelectionPoint { row: 0, col: 6 });
+        assert_eq!(end, SelectionPoint { row: 0, col: 9 });
+        assert_eq!(text, "beta");
+        assert_eq!(search_selection_from_frame(&frame, 0, "missing", 0), None);
+        assert_eq!(search_selection_from_frame(&frame, 3, "beta", 0), None);
     }
 
     #[test]
@@ -2668,7 +2896,7 @@ mod selection_tests {
 
     #[test]
     fn commit_selection_range_stores_text_and_clears_on_blank() {
-        let frame = frame_for_lines(b"alpha beta\r\ngamma");
+        let frame = frame_for_lines(b"alpha beta\r\nfoo   bar");
         let mut selection = TerminalSelection::default();
 
         commit_selection_range(
@@ -2679,6 +2907,15 @@ mod selection_tests {
         );
         assert_eq!(selection.selected_text().as_deref(), Some("beta"));
         assert!(!selection.is_selecting());
+        assert!(selection.normalized_range().is_some());
+
+        commit_selection_range(
+            &mut selection,
+            &frame,
+            SelectionPoint { row: 1, col: 3 },
+            SelectionPoint { row: 1, col: 5 },
+        );
+        assert_eq!(selection.selected_text().as_deref(), Some("   "));
         assert!(selection.normalized_range().is_some());
 
         // A blank row leaves no selection behind.
@@ -2784,6 +3021,74 @@ mod selection_tests {
     }
 
     #[test]
+    fn drag_selection_head_snaps_at_cell_midpoints() {
+        let geometry = terminal_grid_geometry(119, 77, 10, 3, 10, 20);
+
+        assert_eq!(
+            drag_selection_cell_for_position(
+                &geometry,
+                SelectionPoint { row: 0, col: 0 },
+                23.9,
+                18.0,
+                10,
+                20,
+                10,
+            ),
+            SelectionPoint { row: 0, col: 0 }
+        );
+        assert_eq!(
+            drag_selection_cell_for_position(
+                &geometry,
+                SelectionPoint { row: 0, col: 0 },
+                24.0,
+                18.0,
+                10,
+                20,
+                10,
+            ),
+            SelectionPoint { row: 0, col: 1 }
+        );
+        assert_eq!(
+            drag_selection_cell_for_position(
+                &geometry,
+                SelectionPoint { row: 0, col: 3 },
+                34.1,
+                18.0,
+                10,
+                20,
+                10,
+            ),
+            SelectionPoint { row: 0, col: 3 }
+        );
+        assert_eq!(
+            drag_selection_cell_for_position(
+                &geometry,
+                SelectionPoint { row: 0, col: 3 },
+                33.9,
+                18.0,
+                10,
+                20,
+                10,
+            ),
+            SelectionPoint { row: 0, col: 2 }
+        );
+    }
+
+    #[test]
+    fn real_drag_commits_single_cell_selection() {
+        assert!(!should_commit_selection_range(
+            SelectionPoint { row: 0, col: 4 },
+            SelectionPoint { row: 0, col: 4 },
+            false
+        ));
+        assert!(should_commit_selection_range(
+            SelectionPoint { row: 0, col: 4 },
+            SelectionPoint { row: 0, col: 4 },
+            true
+        ));
+    }
+
+    #[test]
     fn viewport_text_covers_only_the_visible_frame() {
         // 4 rows, so "alpha beta\ngamma" fills rows 0-1 and leaves 2-3 blank;
         // the copy fallback must trim those rather than dump scrollback.
@@ -2806,24 +3111,12 @@ mod selection_tests {
     }
 
     #[test]
-    fn selection_cell_mapping_uses_terminal_content_origin_after_padding() {
-        // CSS padding shifts event coordinates relative to the drawn grid;
-        // the content-position shift plus the grid-origin mapping must agree
-        // (a grid sized exactly to its content has origin = the inner 6px
-        // gutter, so cells start there).
-        let padding = TerminalContentPadding {
-            left: 12,
-            right: 12,
-            top: 10,
-            bottom: 10,
-        };
+    fn selection_cell_mapping_uses_gtk_content_coordinates_directly() {
+        // GTK event coordinates are already widget/content coordinates. CSS
+        // padding affects allocation, not the event origin.
         let geometry = terminal_grid_geometry(112, 72, 10, 3, 10, 20);
         assert_eq!((geometry.origin_x, geometry.origin_y), (6, 6));
 
-        let (x, y) = terminal_content_position(32.0, 50.0, padding);
-        assert_eq!(padded_cell_for_position(&geometry, x, y, 10, 20), (1, 1));
-        // Skipping the CSS-padding shift lands on a different cell: the raw
-        // event coordinates must never feed the grid mapping directly.
         assert_eq!(
             padded_cell_for_position(&geometry, 32.0, 50.0, 10, 20),
             (2, 2)
@@ -3026,6 +3319,40 @@ mod selection_tests {
     }
 
     #[test]
+    fn link_at_point_keeps_adjacent_osc8_uris_separate() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(
+                b"\x1b]8;;https://a.example\x1b\\foo\x1b]8;;\x1b\\\x1b]8;;https://b.example\x1b\\bar\x1b]8;;\x1b\\",
+            )
+            .unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+
+        let first = link_at_point(&runtime, SelectionPoint { row: 0, col: 1 })
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.uri, "https://a.example");
+        assert_eq!(first.start, SelectionPoint { row: 0, col: 0 });
+        assert_eq!(first.end, SelectionPoint { row: 0, col: 2 });
+
+        let second = link_at_point(&runtime, SelectionPoint { row: 0, col: 4 })
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.uri, "https://b.example");
+        assert_eq!(second.start, SelectionPoint { row: 0, col: 3 });
+        assert_eq!(second.end, SelectionPoint { row: 0, col: 5 });
+    }
+
+    #[test]
     fn link_at_point_rejects_unsafe_terminal_uris() {
         let request = SpawnRequest {
             surface_id: "surface-1".to_string(),
@@ -3060,6 +3387,19 @@ mod mouse_tests {
         TerminalKeyModifiers, TerminalMouseAction, TerminalMouseButton, TerminalMousePosition,
         TerminalMouseSize,
     };
+
+    #[test]
+    fn suppressed_releases_track_left_and_middle_independently() {
+        let suppressed = SuppressedReleases::default();
+
+        suppressed.suppress(TerminalMouseButton::Left);
+        suppressed.suppress(TerminalMouseButton::Middle);
+
+        assert!(suppressed.take(TerminalMouseButton::Left));
+        assert!(!suppressed.take(TerminalMouseButton::Left));
+        assert!(suppressed.take(TerminalMouseButton::Middle));
+        assert!(!suppressed.take(TerminalMouseButton::Middle));
+    }
 
     #[test]
     fn terminal_mouse_input_builds_core_input_from_widget_metrics() {
@@ -3298,32 +3638,14 @@ mod mouse_tests {
     }
 
     #[test]
-    fn terminal_content_size_excludes_css_padding_for_mouse_coordinates() {
-        assert_eq!(terminal_content_size(100, 12, 12), 76);
-        assert_eq!(terminal_content_size(10, 12, 12), 1);
-    }
+    fn terminal_area_grid_uses_gtk_content_size_and_matches_draw_path() {
+        // GTK hands draw and event handlers content-box coordinates already.
+        // Feeding the content size directly keeps pointer mapping aligned with
+        // the renderer; subtracting CSS padding here shifts selection.
+        let (grid, (cols, rows)) = terminal_area_grid(800, 480, 10, 20);
 
-    #[test]
-    fn terminal_area_grid_strips_css_padding_once_and_matches_draw_path() {
-        // `.ghostty-terminal { padding: 10px 12px; }`, a 800x480 allocation and
-        // a 10x20 cell. This exercises the real runtime helper (not a
-        // hand-built geometry), so it would catch the mouse path stripping the
-        // CSS padding twice or feeding the full allocation — either of which
-        // shifts the origin away from what the renderer draws.
-        let padding = TerminalContentPadding {
-            left: 12,
-            right: 12,
-            top: 10,
-            bottom: 10,
-        };
-        let (grid, (cols, rows)) = terminal_area_grid(800, 480, padding, 10, 20);
-
-        // The renderer (`draw_frame`) receives GTK's content-area dimensions
-        // (CSS padding already applied) and builds the grid from
-        // `terminal_grid_geometry` on those. With a single strip the mouse path
-        // lands on the same inner-gutter origin and cell count.
-        assert_eq!((grid.origin_x, grid.origin_y), (8, 10));
-        assert_eq!((cols, rows), (76, 22));
+        assert_eq!((grid.origin_x, grid.origin_y), (10, 10));
+        assert_eq!((cols, rows), (78, 23));
     }
 
     #[test]

@@ -199,6 +199,7 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+E`: split pane down
 - `Ctrl+Shift+T`: new tab in the focused pane
 - `Ctrl+Shift+W`: close pane
+- `Ctrl++`/`Ctrl+=`, `Ctrl+-`, `Ctrl+0`: zoom terminal panes
 - `Ctrl+B` or `F9`: toggle workspace sidebar
 - Agents: titlebar button or command palette
 - `Ctrl+Shift+M`: notifications
@@ -434,7 +435,7 @@ anonymous_ping = true
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
 
-`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named terminal themes use fixed dark palettes. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
+`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. Terminal font, colors, and `scrollback-limit` come from Ghostty's config (`~/.config/ghostty/config` and `config.ghostty`) when present, including `config-file`, `theme`, named colors, and 16-color palette entries; legacy ForkTTY font/theme keys are kept only for config compatibility. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 

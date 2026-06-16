@@ -7,6 +7,7 @@ use forktty_terminal::ghostty::core::{
 pub(super) struct GhosttyKeySpec {
     key: GhosttyKey,
     ctrl: bool,
+    alt: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,7 @@ impl GhosttyKeySpec {
         Self {
             key: GhosttyKey::Enter,
             ctrl: false,
+            alt: false,
         }
     }
 
@@ -29,6 +31,7 @@ impl GhosttyKeySpec {
         Self {
             key: GhosttyKey::Char(ch),
             ctrl: true,
+            alt: false,
         }
     }
 }
@@ -71,6 +74,7 @@ pub(super) fn translate_gtk_key(
         gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => GhosttyKeySpec {
             key: GhosttyKey::Enter,
             ctrl,
+            alt,
         },
         gtk::gdk::Key::BackSpace => {
             return Some(TerminalInput::Bytes(if alt {
@@ -131,7 +135,7 @@ pub(super) fn translate_gtk_key(
             return Some(terminal_key_input(TerminalKey::Delete, terminal_modifiers));
         }
         _ => {
-            if !ctrl || alt {
+            if (!ctrl && !alt) || (ctrl && alt) {
                 if let Some(text) = text.filter(|text| !text.is_empty()) {
                     return Some(TerminalInput::Bytes(text.as_bytes().to_vec()));
                 }
@@ -140,6 +144,7 @@ pub(super) fn translate_gtk_key(
                 GhosttyKeySpec {
                     key: GhosttyKey::Char(ch),
                     ctrl,
+                    alt,
                 }
             } else {
                 return None;
@@ -210,11 +215,7 @@ pub(super) fn terminal_navigation_fallback_focus(
 }
 
 pub(super) fn terminal_navigation_fallback_allowed(focus: TerminalNavigationFallbackFocus) -> bool {
-    matches!(
-        focus,
-        TerminalNavigationFallbackFocus::AppChrome
-            | TerminalNavigationFallbackFocus::TerminalSurface
-    )
+    matches!(focus, TerminalNavigationFallbackFocus::AppChrome)
 }
 
 fn focused_widget_is_text_input(widget: &gtk::Widget) -> bool {
@@ -251,14 +252,18 @@ fn is_terminal_navigation_key(key: gtk::gdk::Key) -> bool {
 }
 
 fn encode_key(spec: GhosttyKeySpec) -> Option<Vec<u8>> {
-    match spec.key {
+    let mut bytes = match spec.key {
         GhosttyKey::Enter => Some(b"\r".to_vec()),
         GhosttyKey::Char(ch) if spec.ctrl => control_code(ch).map(|byte| vec![byte]),
         GhosttyKey::Char(ch) => {
             let mut bytes = [0; 4];
             Some(ch.encode_utf8(&mut bytes).as_bytes().to_vec())
         }
+    }?;
+    if spec.alt && !spec.ctrl {
+        bytes.insert(0, 0x1b);
     }
+    Some(bytes)
 }
 
 fn terminal_key_input(key: TerminalKey, modifiers: TerminalKeyModifiers) -> TerminalInput {
@@ -325,6 +330,8 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
                 | gtk::gdk::Key::c
                 | gtk::gdk::Key::E
                 | gtk::gdk::Key::e
+                | gtk::gdk::Key::F
+                | gtk::gdk::Key::f
                 | gtk::gdk::Key::H
                 | gtk::gdk::Key::h
                 | gtk::gdk::Key::M
@@ -362,7 +369,19 @@ fn is_forktty_accelerator(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType)
                 | gtk::gdk::Key::End
                 | gtk::gdk::Key::KP_End
         );
-    ctrl_shift_app_action || ctrl_app_action || tab_navigation_action
+    let terminal_zoom_action = ctrl
+        && !alt
+        && matches!(
+            key,
+            gtk::gdk::Key::plus
+                | gtk::gdk::Key::equal
+                | gtk::gdk::Key::KP_Add
+                | gtk::gdk::Key::minus
+                | gtk::gdk::Key::KP_Subtract
+                | gtk::gdk::Key::_0
+                | gtk::gdk::Key::KP_0
+        );
+    ctrl_shift_app_action || ctrl_app_action || tab_navigation_action || terminal_zoom_action
 }
 
 #[cfg(test)]
@@ -446,6 +465,16 @@ mod tests {
         assert_eq!(
             translate_gtk_key(gtk::gdk::Key::e, altgr_like, Some("€")).unwrap(),
             TerminalInput::Bytes("€".as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn alt_letter_sends_meta_prefix() {
+        let alt = gtk::gdk::ModifierType::ALT_MASK;
+
+        assert_eq!(
+            translate_gtk_key(gtk::gdk::Key::f, alt, None).unwrap(),
+            TerminalInput::Bytes(b"\x1bf".to_vec())
         );
     }
 
@@ -616,6 +645,8 @@ mod tests {
         assert!(translate_gtk_key(gtk::gdk::Key::C, ctrl_shift, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::V, ctrl_shift, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::A, ctrl_shift, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::F, ctrl_shift, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::f, ctrl_shift, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::Return, ctrl_shift, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::b, ctrl, None).is_none());
     }
@@ -632,6 +663,20 @@ mod tests {
         assert!(translate_gtk_key(gtk::gdk::Key::KP_Page_Down, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::KP_Home, ctrl, None).is_none());
         assert!(translate_gtk_key(gtk::gdk::Key::KP_End, ctrl, None).is_none());
+    }
+
+    #[test]
+    fn key_translation_leaves_terminal_zoom_shortcuts_for_actions() {
+        let ctrl = gtk::gdk::ModifierType::CONTROL_MASK;
+        let ctrl_shift = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK;
+
+        assert!(translate_gtk_key(gtk::gdk::Key::plus, ctrl_shift, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::equal, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_Add, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::minus, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_Subtract, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::_0, ctrl, None).is_none());
+        assert!(translate_gtk_key(gtk::gdk::Key::KP_0, ctrl, None).is_none());
     }
 
     #[test]
@@ -726,7 +771,7 @@ mod tests {
         assert!(terminal_navigation_fallback_allowed(
             TerminalNavigationFallbackFocus::AppChrome
         ));
-        assert!(terminal_navigation_fallback_allowed(
+        assert!(!terminal_navigation_fallback_allowed(
             TerminalNavigationFallbackFocus::TerminalSurface
         ));
         assert!(!terminal_navigation_fallback_allowed(

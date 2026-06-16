@@ -213,7 +213,11 @@ fn persist_welcome_telemetry_choice_at_path(path: &Path, enabled: bool) -> Resul
 }
 
 fn set_anonymous_ping_at_path(path: &Path, enabled: bool) -> Result<(), String> {
-    let base = config::load_config_from_path(path).unwrap_or_default();
+    let base = match config::load_config_from_path(path) {
+        Ok(config) => config,
+        Err(_) if !path.exists() => config::AppConfig::default(),
+        Err(err) => return Err(err.to_string()),
+    };
     if base.telemetry.anonymous_ping == enabled {
         return Ok(());
     }
@@ -411,5 +415,15 @@ mod tests {
         set_anonymous_ping_at_path(&path, false).expect("save opt-out");
         let config = config::load_config_from_path(&path).expect("load saved config");
         assert!(!config.telemetry.anonymous_ping);
+    }
+
+    #[test]
+    fn telemetry_preference_refuses_to_overwrite_invalid_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(&path, b"not = [valid").expect("write invalid config");
+
+        assert!(set_anonymous_ping_at_path(&path, false).is_err());
+        assert_eq!(fs::read(&path).expect("read config"), b"not = [valid");
     }
 }

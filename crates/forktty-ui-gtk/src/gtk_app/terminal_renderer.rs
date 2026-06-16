@@ -12,6 +12,9 @@ const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.08;
 const SCROLLBACK_INDICATOR_WIDTH_PX: f64 = 4.0;
 const SCROLLBACK_INDICATOR_ALPHA: f64 = 0.25;
 const VISUAL_BELL_BORDER_PX: f64 = 2.0;
+const TERMINAL_CELL_WIDTH_PROBE: &str = "W";
+const TERMINAL_CELL_HEIGHT_PROBE: &str = "Wgjpqy█▁▂▃▄▅▆▇╭─╮│╰─╯┼╬╠╣║";
+const TERMINAL_GLYPH_GUARD_PX: i32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererColor {
@@ -92,13 +95,13 @@ pub(super) struct RendererPalette {
 impl RendererPalette {
     pub(super) fn from_terminal_colors(colors: &TerminalColors) -> Self {
         Self {
-            background: RendererColor::parse(colors.background),
-            foreground: RendererColor::parse(colors.foreground),
-            bold: RendererColor::parse(colors.bold),
-            cursor: RendererColor::parse(colors.cursor),
-            cursor_foreground: RendererColor::parse(colors.cursor_foreground),
-            highlight: RendererColor::parse(colors.highlight),
-            highlight_foreground: RendererColor::parse(colors.highlight_foreground),
+            background: RendererColor::parse(&colors.background),
+            foreground: RendererColor::parse(&colors.foreground),
+            bold: RendererColor::parse(&colors.bold),
+            cursor: RendererColor::parse(&colors.cursor),
+            cursor_foreground: RendererColor::parse(&colors.cursor_foreground),
+            highlight: RendererColor::parse(&colors.highlight),
+            highlight_foreground: RendererColor::parse(&colors.highlight_foreground),
             ansi: colors
                 .ansi
                 .iter()
@@ -214,7 +217,7 @@ impl TerminalRenderer {
         font: gtk::pango::FontDescription,
     ) -> Self {
         Self {
-            palette: RendererPalette::from_terminal_colors(terminal_colors_for_config(config)),
+            palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(config)),
             font,
         }
     }
@@ -225,15 +228,20 @@ impl TerminalRenderer {
     }
 
     /// Cell size used for pixel<->cell mapping (mouse, selection, resize).
-    /// Must measure exactly like [`Self::cell_metrics`] does for drawing — a
-    /// "W" layout's logical pixel extents — or clicks and highlights drift
-    /// from the painted grid by a pixel per cell (FontMetrics'
-    /// `approximate_char_width`/ascent+descent rounds differently).
+    /// Drawing receives this same size from the widget path; using a separate
+    /// Cairo measurement can leave the PTY one row taller than the painted grid.
     pub(super) fn cell_pixel_size_for_widget(&self, widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
-        let layout = widget.as_ref().create_pango_layout(Some("W"));
-        layout.set_font_description(Some(&self.font));
-        let (_ink, logical) = layout.pixel_extents();
-        (logical.width().max(1), logical.height().max(1))
+        let width_layout = widget
+            .as_ref()
+            .create_pango_layout(Some(TERMINAL_CELL_WIDTH_PROBE));
+        width_layout.set_font_description(Some(&self.font));
+        let (_width_ink, width_logical) = width_layout.pixel_extents();
+        let height_layout = widget
+            .as_ref()
+            .create_pango_layout(Some(TERMINAL_CELL_HEIGHT_PROBE));
+        height_layout.set_font_description(Some(&self.font));
+        let (_height_ink, height_logical) = height_layout.pixel_extents();
+        terminal_cell_pixel_size(width_logical, height_logical)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -242,6 +250,7 @@ impl TerminalRenderer {
         cr: &gtk::cairo::Context,
         width: i32,
         height: i32,
+        cell_size: (i32, i32),
         frame: &TerminalFrame,
         selection: Option<(SelectionPoint, SelectionPoint)>,
         hover_link: Option<(SelectionPoint, SelectionPoint)>,
@@ -253,7 +262,7 @@ impl TerminalRenderer {
         default_background.set_cairo_source(cr);
         cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
         let _ = cr.fill();
-        let metrics = self.cell_metrics(cr);
+        let metrics = renderer_cell_metrics_from_size(cell_size);
         let grid = terminal_grid_geometry(
             width,
             height,
@@ -550,17 +559,6 @@ impl TerminalRenderer {
         }
     }
 
-    fn cell_metrics(&self, cr: &gtk::cairo::Context) -> RendererCellMetrics {
-        let layout = pangocairo::functions::create_layout(cr);
-        layout.set_font_description(Some(&self.font));
-        layout.set_text("W");
-        let (_ink, logical) = layout.pixel_extents();
-        RendererCellMetrics {
-            width: f64::from(logical.width().max(1)),
-            height: f64::from(logical.height().max(1)),
-        }
-    }
-
     /// Draws one row's text runs (glyphs plus decorations). With a `color`
     /// override every run paints in that color instead of its own foreground —
     /// used clipped to the selection span to repaint selected glyphs in the
@@ -589,8 +587,13 @@ impl TerminalRenderer {
             }
             layout.set_font_description(Some(&font));
             layout.set_text(&run.text);
-            cr.move_to(origin_x + run.start_col as f64 * metrics.width, y);
-            pangocairo::functions::show_layout(cr, &layout);
+            draw_layout_fitted_to_cells(
+                cr,
+                &layout,
+                origin_x + run.start_col as f64 * metrics.width,
+                y,
+                run.cell_span as f64 * metrics.width,
+            );
             self.draw_text_decorations(cr, &run, metrics, origin_x, y);
         }
     }
@@ -671,8 +674,51 @@ impl TerminalRenderer {
         }
         layout.set_font_description(Some(&font));
         layout.set_text(&cursor.text);
-        cr.move_to(x, y);
-        pangocairo::functions::show_layout(cr, &layout);
+        draw_layout_fitted_to_cells(cr, &layout, x, y, width);
+    }
+}
+
+fn draw_layout_fitted_to_cells(
+    cr: &gtk::cairo::Context,
+    layout: &gtk::pango::Layout,
+    x: f64,
+    y: f64,
+    target_width: f64,
+) {
+    let (natural_width, _) = layout.pixel_size();
+    let scale = fitted_layout_x_scale(natural_width, target_width);
+    let _ = cr.save();
+    cr.translate(x, y);
+    cr.scale(scale, 1.0);
+    cr.move_to(0.0, 0.0);
+    pangocairo::functions::show_layout(cr, layout);
+    let _ = cr.restore();
+}
+
+fn fitted_layout_x_scale(natural_width: i32, target_width: f64) -> f64 {
+    if natural_width <= 0 || target_width <= 0.0 {
+        return 1.0;
+    }
+    target_width / f64::from(natural_width)
+}
+
+fn terminal_cell_pixel_size(
+    width_logical: gtk::pango::Rectangle,
+    height_logical: gtk::pango::Rectangle,
+) -> (i32, i32) {
+    (
+        width_logical.width().max(1),
+        height_logical
+            .height()
+            .saturating_add(TERMINAL_GLYPH_GUARD_PX)
+            .max(1),
+    )
+}
+
+fn renderer_cell_metrics_from_size(cell_size: (i32, i32)) -> RendererCellMetrics {
+    RendererCellMetrics {
+        width: f64::from(cell_size.0.max(1)),
+        height: f64::from(cell_size.1.max(1)),
     }
 }
 
@@ -740,6 +786,9 @@ fn scrollback_indicator_geometry(
     if total == 0 || rows >= total || top.saturating_add(rows) >= total {
         return None;
     }
+    if widget_height <= TERMINAL_PADDING_PX * 2 {
+        return None;
+    }
     let track_height = widget_height.saturating_sub(TERMINAL_PADDING_PX * 2).max(1);
     let min_height = (SCROLLBACK_INDICATOR_WIDTH_PX as i32).min(track_height);
     let height = ((track_height as f64 * rows as f64 / total as f64).round() as i32)
@@ -794,9 +843,9 @@ mod tests {
     use forktty_terminal::ghostty::core::{TerminalCell, TerminalRgb, TerminalRow};
 
     #[test]
-    fn terminal_renderer_maps_theme_colors_to_ansi_palette() {
+    fn terminal_renderer_maps_default_colors_to_ansi_palette() {
         let config = config::AppConfig::default();
-        let palette = RendererPalette::from_terminal_colors(terminal_colors_for_config(&config));
+        let palette = RendererPalette::from_terminal_colors(&terminal_colors_for_config(&config));
 
         assert_eq!(palette.ansi.len(), 16);
         assert_eq!(palette.background.to_string(), "#181818");
@@ -809,6 +858,42 @@ mod tests {
         let renderer = TerminalRenderer::from_config_with_font(&config, font.clone());
 
         assert_eq!(renderer.font_description(), font);
+    }
+
+    #[test]
+    fn fitted_layout_x_scale_maps_text_width_to_cell_width() {
+        assert_eq!(fitted_layout_x_scale(30, 45.0), 1.5);
+        assert_eq!(fitted_layout_x_scale(0, 45.0), 1.0);
+    }
+
+    #[test]
+    fn terminal_cell_metrics_reserve_bottom_pixel_for_glyph_edges() {
+        let width_logical = gtk::pango::Rectangle::new(0, 0, 10, 23);
+        let height_logical = gtk::pango::Rectangle::new(0, 0, 10, 23);
+
+        assert_eq!(
+            terminal_cell_pixel_size(width_logical, height_logical),
+            (10, 24)
+        );
+    }
+
+    #[test]
+    fn terminal_cell_metrics_keep_normal_line_spacing_for_box_drawing() {
+        let width_logical = gtk::pango::Rectangle::new(0, 0, 10, 24);
+        let height_logical = gtk::pango::Rectangle::new(0, 0, 70, 24);
+
+        assert_eq!(
+            terminal_cell_pixel_size(width_logical, height_logical),
+            (10, 25)
+        );
+    }
+
+    #[test]
+    fn renderer_cell_metrics_use_resize_cell_size() {
+        let metrics = renderer_cell_metrics_from_size((11, 29));
+
+        assert_eq!(metrics.width, 11.0);
+        assert_eq!(metrics.height, 29.0);
     }
 
     #[test]
@@ -864,7 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_renderer_resolves_default_cells_from_config_palette() {
+    fn terminal_renderer_ignores_legacy_config_palette() {
         let mut config = config::AppConfig::default();
         config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
         let renderer = TerminalRenderer::from_config_with_font(
@@ -875,11 +960,11 @@ mod tests {
 
         assert_eq!(
             renderer.cell_background(&default_cell).to_string(),
-            DRACULA_TERMINAL_COLORS.background
+            TerminalColors::forktty_dark().background
         );
         assert_eq!(
             renderer.cell_foreground(&default_cell).to_string(),
-            DRACULA_TERMINAL_COLORS.foreground
+            TerminalColors::forktty_dark().foreground
         );
     }
 
@@ -939,7 +1024,7 @@ mod tests {
 
         assert_eq!(
             renderer.cell_foreground(&bold_cell).to_string(),
-            FORKTTY_DARK_TERMINAL_COLORS.bold
+            TerminalColors::forktty_dark().bold
         );
     }
 
@@ -1212,10 +1297,7 @@ mod tests {
 
     #[test]
     fn scrollback_indicator_geometry_handles_tiny_widget_height() {
-        assert_eq!(
-            scrollback_indicator_geometry(0, 1, 10, 2),
-            Some(ScrollbackIndicatorGeometry { y: 6, height: 1 })
-        );
+        assert_eq!(scrollback_indicator_geometry(0, 1, 10, 2), None);
     }
 
     #[test]

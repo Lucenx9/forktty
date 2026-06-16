@@ -39,9 +39,9 @@ fn configured_theme_colors() -> GhosttyThemeColors {
     let config = config::load_config().unwrap_or_default();
     let colors = terminal_colors_for_config(&config);
     GhosttyThemeColors {
-        foreground: parse_hex_rgb(colors.foreground),
-        background: parse_hex_rgb(colors.background),
-        palette: std::array::from_fn(|index| parse_hex_rgb(colors.ansi[index])),
+        foreground: parse_hex_rgb(&colors.foreground),
+        background: parse_hex_rgb(&colors.background),
+        palette: std::array::from_fn(|index| parse_hex_rgb(&colors.ansi[index])),
     }
 }
 
@@ -197,15 +197,13 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
-    pub(super) fn resize_pixels(
+    pub(super) fn resize_cells_with_cell_pixels(
         &mut self,
-        width_px: i32,
-        height_px: i32,
+        cols: u16,
+        rows: u16,
         cell_width_px: i32,
         cell_height_px: i32,
     ) -> Result<(), TerminalError> {
-        let cols = pixel_cells(width_px, cell_width_px);
-        let rows = pixel_cells(height_px, cell_height_px);
         self.last_cell_width_px = cell_pixel_dimension(cell_width_px);
         self.last_cell_height_px = cell_pixel_dimension(cell_height_px);
         self.resize_cells(cols, rows)
@@ -302,8 +300,10 @@ impl TerminalRuntime {
 
     /// Select-all clipboard text: soft-wrapped rows joined and invisible
     /// terminal cells omitted.
-    pub(super) fn visible_full_text_unwrapped(&self) -> String {
-        self.core.visible_full_text_unwrapped().unwrap_or_default()
+    pub(super) fn full_text_unwrapped_visible_cells(&self) -> String {
+        self.core
+            .full_text_unwrapped_visible_cells()
+            .unwrap_or_default()
     }
 
     /// Plain-text dump of at most the last `lines` scrollable rows.
@@ -373,11 +373,6 @@ impl TerminalRuntime {
     pub(super) fn core_resize_pixels(&self) -> Vec<(u32, u32)> {
         self.core_resize_pixels.clone()
     }
-}
-
-fn pixel_cells(pixels: i32, cell_pixels: i32) -> u16 {
-    let cell_pixels = cell_pixels.max(1);
-    ((pixels.max(1) / cell_pixels).max(1)).min(i32::from(u16::MAX)) as u16
 }
 
 fn cell_pixel_dimension(cell_pixels: i32) -> u32 {
@@ -466,11 +461,11 @@ impl TestTerminalRuntimeHarness {
             .unwrap_or_default()
     }
 
-    pub(super) fn resize_pixels(
+    pub(super) fn resize_cells_with_cell_pixels(
         &self,
         surface_id: &str,
-        width_px: i32,
-        height_px: i32,
+        cols: u16,
+        rows: u16,
         cell_width_px: i32,
         cell_height_px: i32,
     ) {
@@ -478,7 +473,7 @@ impl TestTerminalRuntimeHarness {
             .borrow_mut()
             .get_mut(surface_id)
             .unwrap()
-            .resize_pixels(width_px, height_px, cell_width_px, cell_height_px)
+            .resize_cells_with_cell_pixels(cols, rows, cell_width_px, cell_height_px)
             .unwrap();
     }
 
@@ -507,6 +502,7 @@ impl TestTerminalRuntimeHarness {
     pub(super) fn restart_pane(&self, surface_id: &str) {
         self.runtimes.borrow_mut().remove(surface_id);
         self.statuses.borrow_mut().remove(surface_id);
+        let _ = self.backend.forget_surface(surface_id);
         let mut request = SpawnRequest {
             surface_id: surface_id.to_string(),
             workspace_id: "workspace-1".to_string(),
@@ -568,7 +564,7 @@ mod tests {
     fn allocation_resize_updates_pty_and_core() {
         let harness = TestTerminalRuntimeHarness::new_ready("surface-1");
 
-        harness.resize_pixels("surface-1", 800, 480, 10, 20);
+        harness.resize_cells_with_cell_pixels("surface-1", 80, 24, 10, 20);
 
         assert_eq!(harness.runtime_size("surface-1"), Some((80, 24)));
     }
@@ -604,14 +600,29 @@ mod tests {
     }
 
     #[test]
-    fn resize_cells_uses_last_measured_cell_pixels_after_allocation() {
+    fn resize_cells_uses_last_measured_cell_pixels_after_widget_resize() {
         let mut runtime =
             TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
 
-        runtime.resize_pixels(880, 528, 11, 22).unwrap();
+        runtime
+            .resize_cells_with_cell_pixels(80, 24, 11, 22)
+            .unwrap();
         runtime.resize_cells(40, 10).unwrap();
 
         assert_eq!(runtime.core_resize_pixels().last(), Some(&(11, 22)));
+    }
+
+    #[test]
+    fn resize_cells_with_cell_pixels_updates_core_cell_pixels() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
+
+        runtime
+            .resize_cells_with_cell_pixels(40, 10, 13, 27)
+            .unwrap();
+
+        assert_eq!(runtime.size(), PtySize { cols: 40, rows: 10 });
+        assert_eq!(runtime.core_resize_pixels().last(), Some(&(13, 27)));
     }
 
     #[test]

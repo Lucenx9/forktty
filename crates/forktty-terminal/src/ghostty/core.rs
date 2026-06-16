@@ -593,7 +593,7 @@ impl GhosttyCore {
 
     /// Plain-text dump for clipboard select-all: scrollback plus screen,
     /// soft-wrapped rows rejoined, with invisible/spacer cells omitted.
-    pub fn visible_full_text_unwrapped(&self) -> Result<String> {
+    pub fn full_text_unwrapped_visible_cells(&self) -> Result<String> {
         let rows = self.visible_screen_rows()?;
         Ok(join_rows_honoring_wrap(rows.into_iter())
             .trim_end()
@@ -2052,7 +2052,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_full_text_unwrapped_omits_invisible_cells_in_scrollback() {
+    fn full_text_unwrapped_visible_cells_omits_invisible_cells_in_scrollback() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 20,
             rows: 2,
@@ -2064,7 +2064,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            core.visible_full_text_unwrapped()
+            core.full_text_unwrapped_visible_cells()
                 .unwrap()
                 .lines()
                 .collect::<Vec<_>>(),

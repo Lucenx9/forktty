@@ -142,6 +142,18 @@ pub(super) fn install_actions(
             controller.borrow().reset_focused_terminal();
         }
     });
+    add_action(app, "zoom-in", {
+        let controller = controller.clone();
+        move || controller.borrow_mut().zoom_terminal_in()
+    });
+    add_action(app, "zoom-out", {
+        let controller = controller.clone();
+        move || controller.borrow_mut().zoom_terminal_out()
+    });
+    add_action(app, "zoom-reset", {
+        let controller = controller.clone();
+        move || controller.borrow_mut().reset_terminal_zoom()
+    });
     add_action(app, "close-pane", {
         let window = window.clone();
         let state = state.clone();
@@ -212,6 +224,12 @@ pub(super) fn install_actions(
     app.set_accels_for_action("app.paste", &["<Control><Shift>V"]);
     app.set_accels_for_action("app.find", &["<Control><Shift>F"]);
     app.set_accels_for_action("app.select-all", &["<Control><Shift>A"]);
+    app.set_accels_for_action(
+        "app.zoom-in",
+        &["<Control>plus", "<Control>equal", "<Control>KP_Add"],
+    );
+    app.set_accels_for_action("app.zoom-out", &["<Control>minus", "<Control>KP_Subtract"]);
+    app.set_accels_for_action("app.zoom-reset", &["<Control>0", "<Control>KP_0"]);
     app.set_accels_for_action("app.close-pane", &["<Control><Shift>W"]);
     app.set_accels_for_action("app.toggle-maximize-pane", &["<Control><Shift>Return"]);
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);

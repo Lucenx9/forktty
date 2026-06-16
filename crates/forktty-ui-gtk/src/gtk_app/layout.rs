@@ -349,3 +349,11 @@ pub(super) fn active_tab_for_tabs(node: &PaneNode, target_tabs: &[String]) -> Op
             .find_map(|child| active_tab_for_tabs(child, target_tabs)),
     }
 }
+
+pub(super) fn active_tab_index_for_leaf(tabs: &[String], active: usize) -> Option<usize> {
+    if tabs.is_empty() {
+        None
+    } else {
+        Some(active.min(tabs.len() - 1))
+    }
+}

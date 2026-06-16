@@ -61,6 +61,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 - [x] Auto/Light/Dark theme-source selection in Settings.
 - [x] Per-pane Ghostty scrollback and audible-bell controls.
+- [x] Ghostty config appearance import for font, colors, `theme`, `config-file`, named colors, ANSI palette entries, and `scrollback-limit`.
 - [x] Sidebar position (`left`/`right`) and visibility persistence.
 
 ### Session, Config, and Security
@@ -103,8 +104,9 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] More complete command palette search/filter parity.
 - [ ] Rich branch picker UI with query highlighting.
 - [ ] Better notification inbox grouping and actions.
-- [ ] Full theme customization.
-- [ ] Ghostty theme import for the native Ghostty color palette.
+- [ ] Full theme customization beyond Ghostty-imported terminal appearance.
+- [ ] Broader Ghostty option compatibility where the GTK/libghostty-vt runtime exposes a real matching knob.
+- [ ] Replace the custom GTK/Pango/Cairo terminal renderer with an upstream Ghostty embeddable renderer/widget if Ghostty exposes a stable Linux API that fits ForkTTY panes, splits, socket automation, and session restore.
 - [ ] Multi-window support.
 - [ ] Browser visit recording and history/bookmark address-bar completion.
 - [ ] Remote-aware MCP/server integration.

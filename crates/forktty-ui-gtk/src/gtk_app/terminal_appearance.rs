@@ -1,11 +1,21 @@
 use super::*;
 use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 thread_local! {
     // A single display-global provider, reused across spawns and settings changes.
     // Adding a fresh provider on every call would accumulate stale rules on the display.
     static TERMINAL_CSS_PROVIDER: RefCell<Option<gtk::CssProvider>> = const { RefCell::new(None) };
 }
+
+const TERMINAL_ZOOM_BASE_PT: i32 = 12;
+const TERMINAL_ZOOM_MIN_LEVEL: i32 = -6;
+const TERMINAL_ZOOM_MAX_LEVEL: i32 = 12;
+// ponytail: mirrors forktty-terminal's byte-per-line budget; expose byte
+// scrollback in GhosttyCoreOptions if exact Ghostty scrollback-limit matters.
+const GHOSTTY_SCROLLBACK_BYTES_PER_LINE: usize = 2048;
+const MAX_TERMINAL_SCROLLBACK_LINES: usize = 500_000;
 
 pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
@@ -14,12 +24,9 @@ pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     gtk_widget.add_css_class("ghostty-terminal");
     gtk_widget.add_css_class("monospace");
     let colors = terminal_colors_for_config(&config);
-    // GTK CSS has no parser for pango font strings: `font: {pango}` fails with
-    // "Expected a number" and drops the whole declaration. Set the parts.
     let css = format!(
-        ".ghostty-terminal {{ font-family: \"{}\"; font-size: {}pt; background: {}; color: {}; }}",
+        ".ghostty-terminal {{ font-family: \"{}\"; background: {}; color: {}; }}",
         font.family().unwrap_or_else(|| "monospace".into()),
-        font.size() / gtk::pango::SCALE,
         colors.background,
         colors.foreground
     );
@@ -40,193 +47,639 @@ pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     });
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct GhosttyTerminalAppearance {
+    pub(super) font_family: Option<String>,
+    pub(super) font_size_pt: Option<f64>,
+    pub(super) scrollback_limit_bytes: Option<usize>,
+    pub(super) colors: TerminalColors,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TerminalColors {
-    pub(super) background: &'static str,
-    pub(super) foreground: &'static str,
-    pub(super) bold: &'static str,
-    pub(super) cursor: &'static str,
-    pub(super) cursor_foreground: &'static str,
-    pub(super) highlight: &'static str,
-    pub(super) highlight_foreground: &'static str,
-    pub(super) ansi: [&'static str; 16],
+    pub(super) background: String,
+    pub(super) foreground: String,
+    pub(super) bold: String,
+    pub(super) cursor: String,
+    pub(super) cursor_foreground: String,
+    pub(super) highlight: String,
+    pub(super) highlight_foreground: String,
+    pub(super) ansi: [String; 16],
 }
 
-pub(super) fn terminal_colors_for_config(config: &config::AppConfig) -> &'static TerminalColors {
-    let theme = config.appearance.terminal_theme.trim().to_ascii_lowercase();
-    match theme.as_str() {
-        config::TERMINAL_THEME_CATPPUCCIN_MOCHA => &CATPPUCCIN_MOCHA_TERMINAL_COLORS,
-        config::TERMINAL_THEME_ROSE_PINE => &ROSE_PINE_TERMINAL_COLORS,
-        config::TERMINAL_THEME_TOKYO_NIGHT => &TOKYO_NIGHT_TERMINAL_COLORS,
-        config::TERMINAL_THEME_DRACULA => &DRACULA_TERMINAL_COLORS,
-        config::TERMINAL_THEME_GRUVBOX_DARK => &GRUVBOX_DARK_TERMINAL_COLORS,
-        _ => &FORKTTY_DARK_TERMINAL_COLORS,
-    }
+pub(super) fn terminal_colors_for_config(config: &config::AppConfig) -> TerminalColors {
+    ghostty_terminal_appearance_for_config(config).colors
 }
 
-pub(super) const FORKTTY_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#181818",
-    foreground: "#d7d7d7",
-    bold: "#f0f0f0",
-    cursor: "#d7d7d7",
-    cursor_foreground: "#181818",
-    highlight: "#3a2a1f",
-    highlight_foreground: "#eeeeee",
-    ansi: [
-        "#2a2a2a", "#d36b6b", "#7ca982", "#c8a75d", "#6f8fbf", "#a083b8", "#6da7b3", "#d7d7d7",
-        "#5f5f5f", "#e07a7a", "#8bb892", "#d7b86f", "#83a4d4", "#b493c8", "#80b7c1", "#f0f0f0",
-    ],
-};
+pub(super) fn terminal_scrollback_lines_for_config(config: &config::AppConfig) -> usize {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_scrollback_lines_for_appearance(config, &appearance)
+}
 
-pub(super) const CATPPUCCIN_MOCHA_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#1e1e2e",
-    foreground: "#cdd6f4",
-    bold: "#cdd6f4",
-    cursor: "#f5e0dc",
-    cursor_foreground: "#1e1e2e",
-    highlight: "#f5e0dc",
-    highlight_foreground: "#1e1e2e",
-    ansi: [
-        "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
-        "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
-    ],
-};
-
-pub(super) const ROSE_PINE_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#191724",
-    foreground: "#e0def4",
-    bold: "#e0def4",
-    cursor: "#524f67",
-    cursor_foreground: "#e0def4",
-    highlight: "#403d52",
-    highlight_foreground: "#e0def4",
-    ansi: [
-        "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
-        "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
-    ],
-};
-
-pub(super) const TOKYO_NIGHT_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#1a1b26",
-    foreground: "#c0caf5",
-    bold: "#c0caf5",
-    cursor: "#c0caf5",
-    cursor_foreground: "#1a1b26",
-    highlight: "#283457",
-    highlight_foreground: "#c0caf5",
-    ansi: [
-        "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
-        "#414868", "#ff899d", "#9fe044", "#faba4a", "#8db0ff", "#c7a9ff", "#a4daff", "#c0caf5",
-    ],
-};
-
-pub(super) const DRACULA_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#282a36",
-    foreground: "#f8f8f2",
-    bold: "#ffffff",
-    cursor: "#f8f8f2",
-    cursor_foreground: "#282a36",
-    highlight: "#44475a",
-    highlight_foreground: "#ffffff",
-    ansi: [
-        "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
-        "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
-    ],
-};
-
-pub(super) const GRUVBOX_DARK_TERMINAL_COLORS: TerminalColors = TerminalColors {
-    background: "#282828",
-    foreground: "#ebdbb2",
-    bold: "#fbf1c7",
-    cursor: "#ebdbb2",
-    cursor_foreground: "#282828",
-    highlight: "#504945",
-    highlight_foreground: "#fbf1c7",
-    ansi: [
-        "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
-        "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
-    ],
-};
+pub(super) fn terminal_scrollback_lines_for_appearance(
+    config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> usize {
+    appearance
+        .scrollback_limit_bytes
+        .map(|bytes| {
+            bytes
+                .div_ceil(GHOSTTY_SCROLLBACK_BYTES_PER_LINE)
+                .min(MAX_TERMINAL_SCROLLBACK_LINES)
+        })
+        .unwrap_or(config.appearance.scrollback_lines as usize)
+}
 
 pub(super) fn terminal_font_description(
-    widget: &impl IsA<gtk::Widget>,
+    _widget: &impl IsA<gtk::Widget>,
     config: &config::AppConfig,
 ) -> gtk::pango::FontDescription {
-    let configured = config.appearance.font_family.trim();
-    let family = if configured.is_empty() {
-        default_terminal_font_family(&installed_font_families(widget))
-    } else {
-        configured.to_string()
-    };
-    terminal_font_description_with_family(config, family)
+    terminal_font_description_for_zoom_level(config, 0)
 }
 
-pub(super) fn terminal_font_description_with_family(
+#[cfg(test)]
+pub(super) fn default_terminal_font_description(
     config: &config::AppConfig,
-    default_family: String,
 ) -> gtk::pango::FontDescription {
-    let configured = config.appearance.font_family.trim();
-    let family = if configured.is_empty() {
-        default_family
-    } else {
-        configured.to_string()
-    };
-    gtk::pango::FontDescription::from_string(&format!("{} {}", family, config.appearance.font_size))
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    let mut font = gtk::pango::FontDescription::from_string("monospace");
+    if let Some(family) = appearance.font_family {
+        font.set_family(&family);
+    }
+    if let Some(size) = appearance.font_size_pt {
+        font.set_size((size * f64::from(gtk::pango::SCALE)).round() as i32);
+    }
+    font
 }
 
-pub(super) fn default_terminal_font_family(installed_families: &[String]) -> String {
-    for preferred in PREFERRED_TERMINAL_FONT_FAMILIES {
-        if installed_families
-            .iter()
-            .any(|family| family.eq_ignore_ascii_case(preferred))
-        {
-            return preferred.to_string();
+pub(super) fn next_terminal_zoom_level(current: i32, delta: i32) -> i32 {
+    current
+        .saturating_add(delta)
+        .clamp(TERMINAL_ZOOM_MIN_LEVEL, TERMINAL_ZOOM_MAX_LEVEL)
+}
+
+pub(super) fn terminal_font_description_for_zoom_level(
+    config: &config::AppConfig,
+    zoom_level: i32,
+) -> gtk::pango::FontDescription {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    let mut font = gtk::pango::FontDescription::from_string("monospace");
+    if let Some(family) = appearance.font_family {
+        font.set_family(&family);
+    }
+    let zoom_level = next_terminal_zoom_level(zoom_level, 0);
+    if zoom_level != 0 {
+        let base = appearance
+            .font_size_pt
+            .unwrap_or(f64::from(TERMINAL_ZOOM_BASE_PT));
+        let size = (base + f64::from(zoom_level)).max(1.0);
+        font.set_size((size * f64::from(gtk::pango::SCALE)).round() as i32);
+    } else if let Some(size) = appearance.font_size_pt {
+        font.set_size((size * f64::from(gtk::pango::SCALE)).round() as i32);
+    }
+    font
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GhosttyColorScheme {
+    Light,
+    Dark,
+}
+
+fn ghostty_terminal_appearance_for_config(config: &config::AppConfig) -> GhosttyTerminalAppearance {
+    ghostty_terminal_appearance(ghostty_color_scheme_for_config(config))
+}
+
+fn ghostty_color_scheme_for_config(config: &config::AppConfig) -> GhosttyColorScheme {
+    if config.general.theme_source.eq_ignore_ascii_case("light") {
+        GhosttyColorScheme::Light
+    } else {
+        GhosttyColorScheme::Dark
+    }
+}
+
+#[cfg(test)]
+fn ghostty_terminal_appearance(_color_scheme: GhosttyColorScheme) -> GhosttyTerminalAppearance {
+    GhosttyTerminalAppearance::default()
+}
+
+#[cfg(not(test))]
+fn ghostty_terminal_appearance(color_scheme: GhosttyColorScheme) -> GhosttyTerminalAppearance {
+    load_ghostty_terminal_appearance(
+        &ghostty_config_paths(),
+        &ghostty_theme_search_dirs(),
+        color_scheme,
+    )
+}
+
+#[cfg(not(test))]
+fn ghostty_config_paths() -> Vec<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
+    let Some(base) = base else {
+        return Vec::new();
+    };
+    let ghostty = base.join("ghostty");
+    vec![ghostty.join("config"), ghostty.join("config.ghostty")]
+}
+
+#[cfg(not(test))]
+fn ghostty_theme_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    let mut push = |path: PathBuf| {
+        let path = expand_home_path(path);
+        if seen.insert(path.clone()) {
+            dirs.push(path);
+        }
+    };
+
+    if let Some(resources) = std::env::var_os("GHOSTTY_RESOURCES_DIR") {
+        push(PathBuf::from(resources).join("themes"));
+    }
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        push(PathBuf::from(data_home).join("ghostty").join("themes"));
+    } else if let Some(home) = std::env::var_os("HOME") {
+        push(
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("ghostty")
+                .join("themes"),
+        );
+    }
+    if let Some(data_dirs) = std::env::var_os("XDG_DATA_DIRS") {
+        for dir in std::env::split_paths(&data_dirs) {
+            push(dir.join("ghostty").join("themes"));
         }
     }
-    installed_families
-        .iter()
-        .find(|family| family.eq_ignore_ascii_case("monospace"))
-        .cloned()
-        .unwrap_or_else(|| "monospace".to_string())
+    push(PathBuf::from("/usr/local/share/ghostty/themes"));
+    push(PathBuf::from("/usr/share/ghostty/themes"));
+    if let Some(home) = std::env::var_os("HOME") {
+        push(
+            PathBuf::from(home)
+                .join(".config")
+                .join("ghostty")
+                .join("themes"),
+        );
+    }
+
+    dirs
 }
 
-pub(super) fn installed_font_families(widget: &impl IsA<gtk::Widget>) -> Vec<String> {
-    pango_font_families(widget, false)
+#[cfg(test)]
+pub(super) fn ghostty_terminal_appearance_from_text(text: &str) -> GhosttyTerminalAppearance {
+    let mut appearance = GhosttyTerminalAppearance::default();
+    apply_ghostty_terminal_appearance_text(&mut appearance, text);
+    appearance
 }
 
-pub(super) fn installed_monospace_font_families(widget: &impl IsA<gtk::Widget>) -> Vec<String> {
-    pango_font_families(widget, true)
+#[cfg(test)]
+pub(super) fn ghostty_terminal_appearance_from_paths_for_test(
+    config_paths: &[PathBuf],
+    theme_dirs: &[PathBuf],
+    color_scheme: GhosttyColorScheme,
+) -> GhosttyTerminalAppearance {
+    load_ghostty_terminal_appearance(config_paths, theme_dirs, color_scheme)
 }
 
-pub(super) fn pango_font_families(
-    widget: &impl IsA<gtk::Widget>,
-    monospace_only: bool,
-) -> Vec<String> {
-    let context = widget.as_ref().pango_context();
-    let names = context
-        .list_families()
-        .into_iter()
-        .filter(|family| !monospace_only || family.is_monospace())
-        .map(|family| family.name().to_string());
-    dedupe_font_family_names(names)
+fn load_ghostty_terminal_appearance(
+    config_paths: &[PathBuf],
+    theme_dirs: &[PathBuf],
+    color_scheme: GhosttyColorScheme,
+) -> GhosttyTerminalAppearance {
+    let mut appearance = GhosttyTerminalAppearance::default();
+    let mut recursive_config_paths = Vec::new();
+    let mut loaded_recursive_config_paths = BTreeSet::new();
+
+    for path in config_paths {
+        load_ghostty_config_file(
+            &mut appearance,
+            path,
+            theme_dirs,
+            color_scheme,
+            &mut recursive_config_paths,
+            &mut loaded_recursive_config_paths,
+            false,
+        );
+    }
+
+    while !recursive_config_paths.is_empty() {
+        let path = recursive_config_paths.remove(0);
+        load_ghostty_config_file(
+            &mut appearance,
+            &path,
+            theme_dirs,
+            color_scheme,
+            &mut recursive_config_paths,
+            &mut loaded_recursive_config_paths,
+            true,
+        );
+    }
+
+    appearance
 }
 
-pub(super) fn resolved_system_monospace_family(widget: &impl IsA<gtk::Widget>) -> Option<String> {
-    let context = widget.as_ref().pango_context();
-    let description = gtk::pango::FontDescription::from_string("monospace");
-    context
-        .load_font(&description)
-        .and_then(|font| font.describe().family().map(|family| family.to_string()))
-        .filter(|family| !family.trim().is_empty())
-        .or_else(|| installed_monospace_font_families(widget).into_iter().next())
+fn load_ghostty_config_file(
+    appearance: &mut GhosttyTerminalAppearance,
+    path: &Path,
+    theme_dirs: &[PathBuf],
+    color_scheme: GhosttyColorScheme,
+    recursive_config_paths: &mut Vec<PathBuf>,
+    loaded_recursive_config_paths: &mut BTreeSet<PathBuf>,
+    mark_loaded_path: bool,
+) {
+    let path = expand_home_path(path.to_path_buf());
+    if mark_loaded_path && !loaded_recursive_config_paths.insert(path.clone()) {
+        return;
+    }
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return;
+    };
+    if !metadata.is_file() || metadata.len() == 0 {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+
+    apply_ghostty_terminal_appearance_text_with_themes(appearance, &text, theme_dirs, color_scheme);
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    collect_ghostty_config_file_directives(&text, parent, recursive_config_paths);
 }
 
-pub(super) fn dedupe_font_family_names(raw_names: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut names = BTreeSet::new();
-    for name in raw_names {
+fn apply_ghostty_terminal_appearance_text(appearance: &mut GhosttyTerminalAppearance, text: &str) {
+    for entry in text.lines().filter_map(parse_ghostty_config_entry) {
+        let Some(value) = entry.value else {
+            continue;
+        };
+        appearance.apply(&entry.key, value);
+    }
+}
+
+fn apply_ghostty_terminal_appearance_text_with_themes(
+    appearance: &mut GhosttyTerminalAppearance,
+    text: &str,
+    theme_dirs: &[PathBuf],
+    color_scheme: GhosttyColorScheme,
+) {
+    for entry in text.lines().filter_map(parse_ghostty_config_entry) {
+        let Some(value) = entry.value else {
+            continue;
+        };
+        if entry.key == "theme" {
+            load_ghostty_theme(appearance, &value, theme_dirs, color_scheme);
+        } else {
+            appearance.apply(&entry.key, value);
+        }
+    }
+}
+
+fn collect_ghostty_config_file_directives(
+    text: &str,
+    parent_dir: &Path,
+    recursive_config_paths: &mut Vec<PathBuf>,
+) {
+    for entry in text.lines().filter_map(parse_ghostty_config_entry) {
+        if entry.key != "config-file" {
+            continue;
+        }
+        let Some(value) = entry.value else {
+            continue;
+        };
+        apply_ghostty_config_file_directive(
+            value,
+            entry.value_was_quoted,
+            parent_dir,
+            recursive_config_paths,
+        );
+    }
+}
+
+fn apply_ghostty_config_file_directive(
+    value: String,
+    value_was_quoted: bool,
+    parent_dir: &Path,
+    recursive_config_paths: &mut Vec<PathBuf>,
+) {
+    let mut include_path = value;
+    if include_path.is_empty() {
+        recursive_config_paths.clear();
+        return;
+    }
+    if !value_was_quoted && include_path.starts_with('?') {
+        include_path.remove(0);
+        include_path = unquote_ghostty_value(include_path.trim());
+    }
+    if include_path.is_empty() {
+        return;
+    }
+
+    let expanded = expand_home_path(PathBuf::from(include_path));
+    if expanded.is_absolute() {
+        recursive_config_paths.push(expanded);
+    } else {
+        recursive_config_paths.push(parent_dir.join(expanded));
+    }
+}
+
+impl Default for GhosttyTerminalAppearance {
+    fn default() -> Self {
+        Self {
+            font_family: None,
+            font_size_pt: None,
+            scrollback_limit_bytes: None,
+            colors: TerminalColors::forktty_dark(),
+        }
+    }
+}
+
+impl GhosttyTerminalAppearance {
+    fn apply(&mut self, key: &str, value: String) {
+        match key {
+            "font-family" => self.font_family = (!value.is_empty()).then_some(value),
+            "font-size" => {
+                self.font_size_pt = value
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|size| size.is_finite() && *size > 0.0)
+            }
+            "scrollback-limit" => {
+                self.scrollback_limit_bytes = parse_ghostty_integer_literal(&value)
+            }
+            "background" => set_color(&mut self.colors.background, &value),
+            "foreground" => {
+                set_color(&mut self.colors.foreground, &value);
+                set_color(&mut self.colors.bold, &value);
+            }
+            "cursor-color" => set_color(&mut self.colors.cursor, &value),
+            "cursor-text" => set_color(&mut self.colors.cursor_foreground, &value),
+            "selection-background" => set_color(&mut self.colors.highlight, &value),
+            "selection-foreground" => set_color(&mut self.colors.highlight_foreground, &value),
+            "palette" => {
+                if let Some((index, color)) = value.split_once('=').and_then(|(index, color)| {
+                    Some((
+                        parse_palette_index(index.trim())?,
+                        normalize_ghostty_color(color.trim())?,
+                    ))
+                }) {
+                    if index < self.colors.ansi.len() {
+                        self.colors.ansi[index] = color;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl TerminalColors {
+    pub(super) fn forktty_dark() -> Self {
+        let ansi = [
+            "#2a2a2a", "#d36b6b", "#7ca982", "#c8a75d", "#6f8fbf", "#a083b8", "#6da7b3", "#d7d7d7",
+            "#5f5f5f", "#e07a7a", "#8bb892", "#d7b86f", "#83a4d4", "#b493c8", "#80b7c1", "#f0f0f0",
+        ];
+        Self {
+            background: "#181818".to_string(),
+            foreground: "#d7d7d7".to_string(),
+            bold: "#f0f0f0".to_string(),
+            cursor: "#d7d7d7".to_string(),
+            cursor_foreground: "#181818".to_string(),
+            highlight: "#3a2a1f".to_string(),
+            highlight_foreground: "#eeeeee".to_string(),
+            ansi: ansi.map(str::to_string),
+        }
+    }
+}
+
+fn set_color(target: &mut String, value: &str) {
+    if let Some(color) = normalize_ghostty_color(value) {
+        *target = color;
+    }
+}
+
+fn load_ghostty_theme(
+    appearance: &mut GhosttyTerminalAppearance,
+    raw_name: &str,
+    theme_dirs: &[PathBuf],
+    color_scheme: GhosttyColorScheme,
+) {
+    let resolved = resolve_ghostty_theme_name(raw_name, color_scheme);
+    if resolved.is_empty() {
+        return;
+    }
+
+    let expanded = expand_home_path(PathBuf::from(&resolved));
+    if expanded.is_absolute() {
+        if let Ok(text) = std::fs::read_to_string(expanded) {
+            apply_ghostty_terminal_appearance_text(appearance, &text);
+        }
+        return;
+    }
+
+    for candidate in ghostty_theme_name_candidates(&resolved) {
+        for dir in theme_dirs {
+            let path = dir.join(&candidate);
+            if let Ok(text) = std::fs::read_to_string(path) {
+                apply_ghostty_terminal_appearance_text(appearance, &text);
+                return;
+            }
+        }
+    }
+}
+
+fn resolve_ghostty_theme_name(raw_name: &str, color_scheme: GhosttyColorScheme) -> String {
+    let mut fallback_theme = None;
+    let mut light_theme = None;
+    let mut dark_theme = None;
+
+    for entry in raw_name
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let Some((key, value)) = entry.split_once(':') else {
+            fallback_theme.get_or_insert_with(|| entry.to_string());
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim().to_ascii_lowercase().as_str() {
+            "light" => {
+                light_theme.get_or_insert_with(|| value.to_string());
+            }
+            "dark" => {
+                dark_theme.get_or_insert_with(|| value.to_string());
+            }
+            _ => {
+                fallback_theme.get_or_insert_with(|| value.to_string());
+            }
+        }
+    }
+
+    match color_scheme {
+        GhosttyColorScheme::Light => light_theme.as_ref(),
+        GhosttyColorScheme::Dark => dark_theme.as_ref(),
+    }
+    .or(fallback_theme.as_ref())
+    .or(dark_theme.as_ref())
+    .or(light_theme.as_ref())
+    .cloned()
+    .unwrap_or_else(|| raw_name.trim().to_string())
+}
+
+fn ghostty_theme_name_candidates(raw_name: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut queue = vec![raw_name.trim().to_string()];
+
+    while let Some(name) = queue.pop() {
         let name = name.trim();
-        if !name.is_empty() {
-            names.insert(name.to_string());
+        if name.is_empty() {
+            continue;
+        }
+        push_ghostty_theme_candidate(&mut candidates, name);
+
+        let lower = name.to_ascii_lowercase();
+        if lower.starts_with("builtin ") {
+            let stripped = name["builtin ".len()..].trim();
+            push_ghostty_theme_candidate(&mut candidates, stripped);
+            queue.push(stripped.to_string());
+        }
+        if let Some(stripped) = name.strip_suffix("(builtin)") {
+            let stripped = stripped.trim();
+            push_ghostty_theme_candidate(&mut candidates, stripped);
+            queue.push(stripped.to_string());
         }
     }
-    names.into_iter().collect()
+
+    candidates
+}
+
+fn push_ghostty_theme_candidate(candidates: &mut Vec<String>, candidate: &str) {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return;
+    }
+    push_unique_case_sensitive(candidates, candidate);
+    match candidate.to_ascii_lowercase().as_str() {
+        "solarized light" => push_unique_case_sensitive(candidates, "iTerm2 Solarized Light"),
+        "iterm2 solarized light" => push_unique_case_sensitive(candidates, "Solarized Light"),
+        "solarized dark" => push_unique_case_sensitive(candidates, "iTerm2 Solarized Dark"),
+        "iterm2 solarized dark" => push_unique_case_sensitive(candidates, "Solarized Dark"),
+        _ => {}
+    }
+}
+
+fn push_unique_case_sensitive(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
+    }
+}
+
+struct GhosttyConfigEntry {
+    key: String,
+    value: Option<String>,
+    value_was_quoted: bool,
+}
+
+fn parse_ghostty_config_entry(line: &str) -> Option<GhosttyConfigEntry> {
+    let mut line = line.trim();
+    if let Some(stripped) = line.strip_prefix('\u{feff}') {
+        line = stripped.trim();
+    }
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let Some((key, value)) = line.split_once('=') else {
+        return Some(GhosttyConfigEntry {
+            key: line.trim().to_string(),
+            value: None,
+            value_was_quoted: false,
+        });
+    };
+
+    let key = key.trim().to_string();
+    let value = value.trim();
+    let value_was_quoted = value.len() >= 2 && value.starts_with('"') && value.ends_with('"');
+    Some(GhosttyConfigEntry {
+        key,
+        value: Some(unquote_ghostty_value(value)),
+        value_was_quoted,
+    })
+}
+
+fn normalize_ghostty_color(value: &str) -> Option<String> {
+    normalize_hex_color(value).or_else(|| normalize_gdk_color(value))
+}
+
+fn normalize_hex_color(value: &str) -> Option<String> {
+    let value = value.strip_prefix('#').unwrap_or(value);
+    if value.len() == 3 && value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        let mut expanded = String::from("#");
+        for ch in value.chars() {
+            expanded.push(ch.to_ascii_lowercase());
+            expanded.push(ch.to_ascii_lowercase());
+        }
+        return Some(expanded);
+    }
+    (value.len() == 6 && value.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .then(|| format!("#{}", value.to_ascii_lowercase()))
+}
+
+fn normalize_gdk_color(value: &str) -> Option<String> {
+    let rgba = gtk::gdk::RGBA::parse(value).ok()?;
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        color_component_to_u8(rgba.red()),
+        color_component_to_u8(rgba.green()),
+        color_component_to_u8(rgba.blue())
+    ))
+}
+
+fn color_component_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn parse_palette_index(value: &str) -> Option<usize> {
+    if let Some(value) = value.strip_prefix("0x") {
+        usize::from_str_radix(value, 16).ok()
+    } else if let Some(value) = value.strip_prefix("0o") {
+        usize::from_str_radix(value, 8).ok()
+    } else if let Some(value) = value.strip_prefix("0b") {
+        usize::from_str_radix(value, 2).ok()
+    } else {
+        value.parse().ok()
+    }
+}
+
+fn parse_ghostty_integer_literal(value: &str) -> Option<usize> {
+    value.replace('_', "").parse().ok()
+}
+
+fn unquote_ghostty_value(value: &str) -> String {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value)
+        .to_string()
+}
+
+fn expand_home_path(path: PathBuf) -> PathBuf {
+    let Some(raw) = path.to_str() else {
+        return path;
+    };
+    if raw == "~" {
+        return std::env::var_os("HOME").map(PathBuf::from).unwrap_or(path);
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    path
 }

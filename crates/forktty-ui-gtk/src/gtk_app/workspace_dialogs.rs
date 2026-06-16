@@ -133,13 +133,32 @@ pub(super) fn rename_workspace_gtk(
     Ok(())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn close_active_workspace(state: &SocketAppState) {
-    let (workspace, surface_ids, is_last_workspace) = {
+    let workspace_id = {
         let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
         };
         let Some(workspace) = model.active_workspace() else {
+            return;
+        };
+        workspace.id
+    };
+    close_workspace_by_id(state, &workspace_id);
+}
+
+pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) {
+    let (workspace, surface_ids, is_last_workspace) = {
+        let model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return,
+        };
+        let Some(workspace) = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+        else {
             return;
         };
         let surface_ids = model

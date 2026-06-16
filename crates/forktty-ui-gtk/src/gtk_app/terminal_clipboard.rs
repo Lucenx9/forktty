@@ -44,6 +44,14 @@ impl TerminalSelection {
         self.selecting
     }
 
+    pub(super) fn has_selected_payload(&self) -> bool {
+        self.text.is_some() || self.range.is_some()
+    }
+
+    pub(super) fn anchor(&self) -> Option<SelectionPoint> {
+        self.range.map(|(anchor, _)| anchor)
+    }
+
     /// The drag selection ordered start <= end (row-major), if any.
     pub(super) fn normalized_range(&self) -> Option<(SelectionPoint, SelectionPoint)> {
         let (anchor, head) = self.range?;
@@ -211,6 +219,17 @@ mod tests {
         selection.select_text("selected");
 
         assert_eq!(selection.selected_text().as_deref(), Some("selected"));
+    }
+
+    #[test]
+    fn terminal_selection_reports_payload_without_drag_range() {
+        let mut selection = TerminalSelection::default();
+        assert!(!selection.has_selected_payload());
+
+        selection.select_text("select all payload");
+
+        assert!(selection.has_selected_payload());
+        assert_eq!(selection.normalized_range(), None);
     }
 
     #[test]

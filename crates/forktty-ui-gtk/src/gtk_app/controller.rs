@@ -29,6 +29,7 @@ pub(super) struct TerminalController {
     pub(super) surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
     next_spawn_token: u64,
     pane_tab_strips: Rc<RefCell<Vec<PaneTabStrip>>>,
+    terminal_zoom_level: Cell<i32>,
     #[cfg(feature = "browser")]
     browser_panes: Rc<RefCell<BTreeMap<String, Rc<crate::browser_pane::BrowserPaneWidget>>>>,
 }
@@ -97,6 +98,7 @@ impl TerminalController {
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
             next_spawn_token: 0,
             pane_tab_strips: Rc::new(RefCell::new(Vec::new())),
+            terminal_zoom_level: Cell::new(0),
             #[cfg(feature = "browser")]
             browser_panes: Rc::new(RefCell::new(BTreeMap::new())),
         }
@@ -214,6 +216,9 @@ impl TerminalController {
                     );
                 }
                 apply_terminal_appearance(&widget);
+                if self.terminal_zoom_level.get() != 0 {
+                    widget.set_zoom_level(self.terminal_zoom_level.get());
+                }
                 if let Ok(model) = self.model.lock() {
                     if let Some(surface) = model.surface(&request.surface_id) {
                         widget
@@ -341,6 +346,28 @@ impl TerminalController {
         self.maximized_pane = !self.maximized_pane;
         self.last_layout_signature = None;
         self.rebuild_layout();
+    }
+
+    pub(super) fn zoom_terminal_in(&mut self) {
+        self.set_terminal_zoom_level(next_terminal_zoom_level(self.terminal_zoom_level.get(), 1));
+    }
+
+    pub(super) fn zoom_terminal_out(&mut self) {
+        self.set_terminal_zoom_level(next_terminal_zoom_level(self.terminal_zoom_level.get(), -1));
+    }
+
+    pub(super) fn reset_terminal_zoom(&mut self) {
+        self.set_terminal_zoom_level(0);
+    }
+
+    fn set_terminal_zoom_level(&mut self, zoom_level: i32) {
+        let zoom_level = next_terminal_zoom_level(zoom_level, 0);
+        if self.terminal_zoom_level.replace(zoom_level) == zoom_level {
+            return;
+        }
+        for widget in self.widgets.values() {
+            widget.set_zoom_level(zoom_level);
+        }
     }
 
     fn model_focused_widget(&self) -> Option<GhosttyTerminalWidget> {
@@ -711,17 +738,28 @@ impl TerminalController {
         // Push the latest url into the live webview on each refresh tick, and
         // drop panes for surfaces that no longer exist to avoid leaking them.
         #[cfg(feature = "browser")]
-        self.browser_panes.borrow_mut().retain(|surface_id, pane| {
-            if let Some((url, active)) = browser_targets.get(surface_id) {
-                // Safe to call every tick: BrowserPaneWidget edge-triggers on the
-                // last *requested* url, so an unchanged url is a no-op.
-                pane.load_uri(url);
-                pane.set_active(*active);
-                true
-            } else {
-                false
+        {
+            let stale = self
+                .browser_panes
+                .borrow()
+                .keys()
+                .filter(|surface_id| !browser_targets.contains_key(*surface_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            for surface_id in stale {
+                if let Some(pane) = self.browser_panes.borrow_mut().remove(&surface_id) {
+                    pane.prepare_close();
+                }
             }
-        });
+            for (surface_id, pane) in self.browser_panes.borrow().iter() {
+                if let Some((url, active)) = browser_targets.get(surface_id) {
+                    // Safe to call every tick: BrowserPaneWidget edge-triggers on the
+                    // last *requested* url, so an unchanged url is a no-op.
+                    pane.load_uri(url);
+                    pane.set_active(*active);
+                }
+            }
+        }
     }
 
     fn refresh_tab_strips(&self, updates: &[TabStripRefresh]) {
@@ -800,11 +838,19 @@ impl TerminalController {
     ) -> gtk::Widget {
         match node {
             PaneNode::Leaf { tabs, active } => {
-                let active_id = &tabs[*active];
+                let Some(active_index) = active_tab_index_for_leaf(tabs, *active) else {
+                    return missing_surface_placeholder(
+                        "empty-leaf",
+                        self.state.as_ref(),
+                        Some(&self.model),
+                    )
+                    .upcast();
+                };
+                let active_id = &tabs[active_index];
                 if tabs.len() == 1 {
                     self.pane_widget_for(active_id)
                 } else {
-                    self.leaf_widget_with_tabstrip(tabs, *active)
+                    self.leaf_widget_with_tabstrip(tabs, active_index)
                 }
             }
             PaneNode::Split {
@@ -845,6 +891,14 @@ impl TerminalController {
 
     /// Build a compact per-pane tab strip for leaves with >1 tab.
     fn leaf_widget_with_tabstrip(&self, tabs: &[String], active: usize) -> gtk::Widget {
+        let Some(active) = active_tab_index_for_leaf(tabs, active) else {
+            return missing_surface_placeholder(
+                "empty-tabs",
+                self.state.as_ref(),
+                Some(&self.model),
+            )
+            .upcast();
+        };
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         outer.set_hexpand(true);
         outer.set_vexpand(true);

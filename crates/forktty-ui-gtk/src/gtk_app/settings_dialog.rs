@@ -57,7 +57,7 @@ pub(super) fn show_settings_dialog(
     let terminal_nav = settings_nav_button(
         "forktty-terminal-symbolic",
         "Terminal",
-        "Shell, font, palette, scrollback",
+        "Shell, scrollback, behavior",
     );
     let interface_nav = settings_nav_button(
         "forktty-theme-symbolic",
@@ -101,7 +101,7 @@ pub(super) fn show_settings_dialog(
     nav.append(&advanced_nav);
 
     let (terminal_page, terminal_content) =
-        settings_page("Terminal", "Shell, text, palette, and terminal behavior.");
+        settings_page("Terminal", "Shell, scrollback, and terminal behavior.");
     let (shell_section, shell_list) = settings_section("Shell", "");
     let shell_entry = adw::EntryRow::builder()
         .title("Shell command")
@@ -113,32 +113,6 @@ pub(super) fn show_settings_dialog(
     shell_entry.set_input_purpose(gtk::InputPurpose::Terminal);
     shell_list.append(&shell_entry);
     terminal_content.append(&shell_section);
-
-    let (font_section, font_list) = settings_section("Text", "Applies to open panes immediately.");
-    let (font_family, font_family_ids) =
-        font_family_combo_row(parent, &loaded.appearance.font_family);
-    font_list.append(&font_family);
-
-    let font_size = settings_spin_row(
-        "Font size",
-        "Terminal text size, in points.",
-        8.0,
-        64.0,
-        1.0,
-        f64::from(loaded.appearance.font_size),
-    );
-    font_list.append(&font_size);
-    terminal_content.append(&font_section);
-
-    let (palette_section, palette_list) = settings_section("Palette", "");
-    let terminal_theme = settings_combo_row(
-        "Terminal palette",
-        "System uses ForkTTY's neutral dark palette; named themes use fixed dark palettes.",
-        TERMINAL_THEME_ITEMS,
-        &loaded.appearance.terminal_theme,
-    );
-    palette_list.append(&terminal_theme);
-    terminal_content.append(&palette_section);
 
     let (behavior_section, behavior_list) = settings_section("Behavior", "");
     let scrollback_lines = settings_spin_row(
@@ -328,51 +302,6 @@ pub(super) fn show_settings_dialog(
             }
         }
     });
-    font_family.connect_selected_notify({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        let font_family_ids = font_family_ids.clone();
-        move |row| {
-            if suppress_updates.get() {
-                return;
-            }
-            let Some(family) = font_family_ids.get(row.selected() as usize) else {
-                return;
-            };
-            let font_family = match family.as_str() {
-                DEFAULT_FONT_FAMILY_ID => String::new(),
-                SYSTEM_MONOSPACE_FONT_FAMILY_ID => "monospace".to_string(),
-                _ => decode_font_family_row_id(family),
-            };
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.appearance.font_family = font_family,
-                "Terminal font applied.",
-            );
-        }
-    });
-    font_size.connect_notify_local(Some("value"), {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row: &adw::SpinRow, _| {
-            if suppress_updates.get() {
-                return;
-            }
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.appearance.font_size = row.value() as u16,
-                "Font size applied.",
-            );
-        }
-    });
     scrollback_lines.connect_notify_local(Some("value"), {
         let dialog = dialog.clone();
         let current = current.clone();
@@ -387,7 +316,7 @@ pub(super) fn show_settings_dialog(
                 &current,
                 &on_apply,
                 |config| config.appearance.scrollback_lines = row.value() as u32,
-                "Scrollback updated.",
+                "Scrollback saved. Applies to new panes.",
             );
         }
     });
@@ -407,26 +336,6 @@ pub(super) fn show_settings_dialog(
                 |config| config.appearance.terminal_audible_bell = row.is_active(),
                 "Terminal bell updated.",
             );
-        }
-    });
-    terminal_theme.connect_selected_notify({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row| {
-            if suppress_updates.get() {
-                return;
-            }
-            if let Some(theme) = settings_choice_value(TERMINAL_THEME_ITEMS, row.selected()) {
-                persist_settings_change(
-                    &dialog,
-                    &current,
-                    &on_apply,
-                    |config| config.appearance.terminal_theme = theme.to_string(),
-                    "Terminal theme applied.",
-                );
-            }
         }
     });
     window_mode.connect_selected_notify({
@@ -615,12 +524,8 @@ pub(super) fn show_settings_dialog(
             let on_apply_for_reset = on_apply.clone();
             let suppress_updates_for_reset = suppress_updates.clone();
             let shell_entry_for_reset = shell_entry.clone();
-            let font_family_for_reset = font_family.clone();
-            let font_family_ids_for_reset = font_family_ids.clone();
-            let font_size_for_reset = font_size.clone();
             let scrollback_lines_for_reset = scrollback_lines.clone();
             let terminal_audible_bell_for_reset = terminal_audible_bell.clone();
-            let terminal_theme_for_reset = terminal_theme.clone();
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
@@ -637,22 +542,26 @@ pub(super) fn show_settings_dialog(
                 "Reset Settings",
                 move || {
                     let defaults = config::AppConfig::default();
+                    let saved = persist_settings_change(
+                        &dialog_for_reset,
+                        &current_for_reset,
+                        &on_apply_for_reset,
+                        {
+                            let defaults = defaults.clone();
+                            move |config| *config = defaults
+                        },
+                        "Defaults restored.",
+                    );
+                    if !saved {
+                        return;
+                    }
                     suppress_updates_for_reset.set(true);
                     shell_entry_for_reset.set_text(&defaults.general.shell);
                     shell_entry_for_reset.remove_css_class("error");
-                    font_family_for_reset.set_selected(settings_id_index(
-                        &font_family_ids_for_reset,
-                        DEFAULT_FONT_FAMILY_ID,
-                    ));
-                    font_size_for_reset.set_value(f64::from(defaults.appearance.font_size));
                     scrollback_lines_for_reset
                         .set_value(f64::from(defaults.appearance.scrollback_lines));
                     terminal_audible_bell_for_reset
                         .set_active(defaults.appearance.terminal_audible_bell);
-                    terminal_theme_for_reset.set_selected(settings_choice_index(
-                        TERMINAL_THEME_ITEMS,
-                        &defaults.appearance.terminal_theme,
-                    ));
                     window_mode_for_reset.set_selected(settings_choice_index(
                         WINDOW_MODE_ITEMS,
                         &defaults.appearance.window_mode,
@@ -673,13 +582,6 @@ pub(super) fn show_settings_dialog(
                     notification_sound_for_reset.set_active(defaults.notifications.sound);
                     anonymous_ping_for_reset.set_active(defaults.telemetry.anonymous_ping);
                     suppress_updates_for_reset.set(false);
-                    persist_settings_change(
-                        &dialog_for_reset,
-                        &current_for_reset,
-                        &on_apply_for_reset,
-                        |config| *config = defaults,
-                        "Defaults restored.",
-                    );
                 },
             );
         }
@@ -880,12 +782,6 @@ pub(super) fn settings_choice_index(items: &[(&str, &str)], value: &str) -> u32 
 
 pub(super) fn settings_choice_value<'a>(items: &'a [(&str, &str)], index: u32) -> Option<&'a str> {
     items.get(index as usize).map(|(id, _)| *id)
-}
-
-pub(super) fn settings_id_index(ids: &[String], id: &str) -> u32 {
-    ids.iter()
-        .position(|candidate| candidate == id)
-        .unwrap_or(0) as u32
 }
 
 pub(super) fn settings_combo_row(
@@ -1454,106 +1350,4 @@ pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
             false
         }
     }
-}
-
-pub(super) fn installed_font_family_row_id(name: &str) -> String {
-    format!("{INSTALLED_FONT_FAMILY_ID_PREFIX}{name}")
-}
-
-pub(super) fn decode_font_family_row_id(id: &str) -> String {
-    id.strip_prefix(INSTALLED_FONT_FAMILY_ID_PREFIX)
-        .unwrap_or(id)
-        .to_string()
-}
-
-pub(super) struct FontFamilyChoices {
-    pub(super) ids: Vec<String>,
-    pub(super) labels: Vec<String>,
-    pub(super) active_index: u32,
-}
-
-pub(super) fn font_family_choices(
-    all_names: &[String],
-    monospace_names: &[String],
-    system_monospace: &str,
-    active_family: &str,
-) -> FontFamilyChoices {
-    let active_family = active_family.trim();
-    let default_family = default_terminal_font_family(all_names);
-    let mut ids = vec![
-        DEFAULT_FONT_FAMILY_ID.to_string(),
-        SYSTEM_MONOSPACE_FONT_FAMILY_ID.to_string(),
-    ];
-    let mut labels = vec![
-        format!("Default terminal font ({default_family})"),
-        format!("System monospace ({system_monospace})"),
-    ];
-
-    let mut names = if monospace_names.is_empty() {
-        all_names.to_vec()
-    } else {
-        monospace_names.to_vec()
-    };
-    names.sort_by_key(|name| name.to_ascii_lowercase());
-    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-
-    let mut has_active =
-        active_family.is_empty() || active_family.eq_ignore_ascii_case("monospace");
-    for name in &names {
-        if name == active_family {
-            has_active = true;
-        }
-        ids.push(installed_font_family_row_id(name));
-        labels.push(name.clone());
-    }
-    if !has_active {
-        ids.push(installed_font_family_row_id(active_family));
-        labels.push(format!("{active_family} (saved)"));
-    }
-
-    let active_id = if active_family.is_empty() {
-        DEFAULT_FONT_FAMILY_ID.to_string()
-    } else if active_family.eq_ignore_ascii_case("monospace") {
-        SYSTEM_MONOSPACE_FONT_FAMILY_ID.to_string()
-    } else {
-        installed_font_family_row_id(active_family)
-    };
-    let active_index = settings_id_index(&ids, &active_id);
-    FontFamilyChoices {
-        ids,
-        labels,
-        active_index,
-    }
-}
-
-pub(super) fn font_family_combo_row(
-    parent: &impl IsA<gtk::Widget>,
-    active_family: &str,
-) -> (adw::ComboRow, Rc<Vec<String>>) {
-    let all_names = installed_font_families(parent);
-    let monospace_names = installed_monospace_font_families(parent);
-    let system_monospace =
-        resolved_system_monospace_family(parent).unwrap_or_else(|| "monospace".to_string());
-    let choices = font_family_choices(
-        &all_names,
-        &monospace_names,
-        &system_monospace,
-        active_family,
-    );
-    let labels: Vec<&str> = choices.labels.iter().map(String::as_str).collect();
-    let row = adw::ComboRow::builder()
-        .title("Font family")
-        .subtitle("Monospace font with symbol coverage.")
-        .subtitle_lines(0)
-        .model(&gtk::StringList::new(&labels))
-        .enable_search(true)
-        .expression(gtk::PropertyExpression::new(
-            gtk::StringObject::static_type(),
-            gtk::Expression::NONE,
-            "string",
-        ))
-        .build();
-    row.add_css_class("settings-row");
-    row.set_selected(choices.active_index);
-    (row, Rc::new(choices.ids))
 }

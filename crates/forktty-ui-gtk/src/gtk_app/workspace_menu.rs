@@ -270,11 +270,7 @@ pub(super) fn build_workspace_context_menu(
                 "Close Workspace?",
                 &body,
                 "Close Workspace",
-                move || {
-                    if focus_workspace(&state_confirm, &ws_id_confirm) {
-                        close_active_workspace(&state_confirm);
-                    }
-                },
+                move || close_workspace_by_id(&state_confirm, &ws_id_confirm),
             );
         },
     );

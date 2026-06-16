@@ -67,7 +67,7 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 
 1. A workspace or split creates a surface in `WorkspaceModel`.
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
-3. The Ghostty adapter creates a Ghostty-backed terminal, applies appearance (font, colors, scrollback) settings, and spawns the configured shell.
+3. The Ghostty adapter creates a Ghostty-backed terminal, applies font and color appearance from Ghostty's config plus ForkTTY scrollback settings, and spawns the configured shell. Runtime zoom shortcuts scale the open GTK panes without persisting font settings.
 4. Child processes inherit:
    - `TERM=xterm-256color`
    - `COLORTERM=truecolor`
@@ -114,14 +114,11 @@ enable_pr_lookup = false
 notification_command = ""
 
 [appearance]
-font_family = ""
-font_size = 14
 scrollback_lines = 20000
 terminal_audible_bell = true
 sidebar_position = "left"
 sidebar_visible = true
 terminal_renderer = "auto"
-terminal_theme = "system"
 window_mode = "normal"
 
 [notifications]
@@ -135,7 +132,7 @@ auto_check = true
 anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, font size, scrollback bounds, sidebar position, terminal theme, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, and notification command. `terminal_theme = "system"` uses ForkTTY's neutral dark palette; named values are fixed dark palettes (`catppuccin-mocha`, `rose-pine`, `tokyo-night`, `dracula`, `gruvbox-dark`). `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, scrollback bounds, sidebar position, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, and notification command. Legacy `font_family`, `font_size`, and `terminal_theme` keys are accepted on load for compatibility, omitted from new saves, and ignored by the GTK renderer; terminal font and color preferences come from Ghostty's config when present. The GTK runtime loads `~/.config/ghostty/config` and `config.ghostty`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family, foreground/background, cursor, selection, named colors, short/full hex colors, ANSI palette entries 0-15, and `scrollback-limit`. `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 ## Updates
 

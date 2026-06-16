@@ -309,6 +309,27 @@ fn gtk_terminal_backend_blocks_send_until_ready() {
 }
 
 #[test]
+fn gtk_terminal_backend_rejects_duplicate_spawn_without_clearing_ready() {
+    let (tx, rx) = mpsc::channel();
+    let backend = GtkTerminalBackend::new(tx);
+    backend.spawn(test_spawn_request()).unwrap();
+    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
+    backend.mark_surface_ready("surface-1").unwrap();
+
+    let err = backend.spawn(test_spawn_request()).unwrap_err();
+
+    assert!(err.to_string().contains("surface already exists"));
+    backend
+        .send_text("surface-1", "echo still-ready\n")
+        .unwrap();
+    assert!(matches!(
+        rx.recv().unwrap(),
+        GtkTerminalCommand::SendText { surface_id, text }
+            if surface_id == "surface-1" && text == "echo still-ready\n"
+    ));
+}
+
+#[test]
 fn terminal_widget_ops_reset_sends_form_feed() {
     let widget = TestTerminalWidget::default();
     widget.reset_and_clear();
@@ -350,7 +371,7 @@ fn ghostty_runtime_marks_surface_ready_after_spawn() {
 #[test]
 fn renderer_maps_theme_colors_to_ansi_palette() {
     let config = config::AppConfig::default();
-    let palette = RendererPalette::from_terminal_colors(terminal_colors_for_config(&config));
+    let palette = RendererPalette::from_terminal_colors(&terminal_colors_for_config(&config));
 
     assert_eq!(palette.ansi.len(), 16);
     assert_eq!(palette.background.to_string(), "#181818");
@@ -972,6 +993,15 @@ fn agent_hud_floats_unread_within_lifecycle_group() {
 }
 
 #[test]
+fn agent_reply_payload_preserves_significant_spaces() {
+    assert_eq!(
+        agent_reply_payload("  /review  "),
+        Some("  /review  \r".to_string())
+    );
+    assert_eq!(agent_reply_payload("   "), None);
+}
+
+#[test]
 fn agent_hud_tail_picks_last_nonempty_line() {
     assert_eq!(
         last_nonempty_line("running tests\n3 passed   \n\n  \n").as_deref(),
@@ -1409,6 +1439,44 @@ fn focus_workspace_does_not_respawn_failed_surface_until_restart() {
 }
 
 #[test]
+fn open_agent_surface_keeps_unread_when_workspace_select_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (active_workspace_id, agent_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let agent_workspace = model.create_workspace("agent", &project_cwd);
+        let agent_surface_id = agent_workspace.focused_surface_id;
+        assert!(model.set_surface_agent_session(
+            &agent_surface_id,
+            forktty_core::AgentKind::Codex,
+            "codex-session-1",
+        ));
+        assert!(model.mark_surface_unread(&agent_surface_id, true));
+        let active = model.create_workspace("active", &project_cwd);
+        (active.id, agent_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    assert!(!open_agent_surface(&state, &agent_surface_id, None));
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(active_workspace_id.as_str())
+    );
+    assert!(model.surface(&agent_surface_id).unwrap().unread);
+}
+
+#[test]
 fn close_active_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -1445,6 +1513,47 @@ fn close_active_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
     assert!(model.list_notifications().iter().any(|notification| {
         notification.title == "Close Workspace Failed" && notification.body.contains("spawn failed")
     }));
+}
+
+#[test]
+fn close_workspace_by_id_targets_captured_workspace_after_workspace_switch() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let other_dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (captured_workspace_id, captured_surface_id, active_workspace_id, active_surface_id) = {
+        let mut model = model.lock().unwrap();
+        let captured = model.create_workspace("project", project_dir.path());
+        let active = model.create_workspace("other", other_dir.path());
+        (
+            captured.id,
+            captured.focused_surface_id,
+            active.id,
+            active.focused_surface_id,
+        )
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    close_workspace_by_id(&state, &captured_workspace_id);
+
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(active_workspace_id.as_str())
+    );
+    assert!(model.surface(&captured_surface_id).is_none());
+    assert!(model.surface(&active_surface_id).is_some());
+    assert!(model
+        .list_workspaces()
+        .iter()
+        .all(|workspace| workspace.id != captured_workspace_id));
 }
 
 #[test]
@@ -1487,6 +1596,80 @@ fn close_active_workspace_keeps_model_when_backend_close_fails() {
             |notification| notification.title == "Close Workspace Failed"
                 && notification.body.contains("close failed")
         ));
+}
+
+#[test]
+fn restart_surface_records_failure_status_when_close_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = project_dir.path().to_path_buf();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(CloseFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", &project_cwd);
+        (workspace.id, workspace.focused_surface_id)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    assert!(!restart_surface(&state, &surface_id));
+
+    let model = model.lock().unwrap();
+    let statuses = model.list_status(&workspace_id);
+    let status = statuses
+        .iter()
+        .find(|status| status.key == surface_status_key(&surface_id))
+        .unwrap();
+    assert!(status.value.starts_with("Restart failed:"));
+}
+
+#[test]
+fn spawn_surface_gtk_skips_browser_and_rewrites_ssh() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (browser, ssh) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", "/tmp/project");
+        let browser = model
+            .open_browser(
+                &workspace.id,
+                "about:blank",
+                forktty_core::ProfileId::default(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+        let ssh = model
+            .open_ssh(
+                &workspace.id,
+                "user@example.com".to_string(),
+                SplitAxis::Horizontal,
+            )
+            .unwrap();
+        (browser, ssh)
+    };
+
+    spawn_surface_gtk(&state, &browser).unwrap();
+    assert!(terminal.surfaces().unwrap().is_empty());
+
+    spawn_surface_gtk(&state, &ssh).unwrap();
+    assert!(terminal.spawn_shell(&ssh.id).unwrap().ends_with("ssh"));
+    assert_eq!(
+        terminal.spawn_args(&ssh.id).unwrap(),
+        vec!["user@example.com".to_string()]
+    );
 }
 
 #[test]
@@ -1876,6 +2059,40 @@ fn worktree_create_preserves_existing_worktree_when_gtk_spawn_fails() {
 }
 
 #[test]
+fn worktree_open_uses_captured_base_cwd_after_active_workspace_changes() {
+    let repo_one = make_temp_repo();
+    let repo_two = make_temp_repo();
+    let branch_name = format!("feature/captured-cwd-{}", std::process::id());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let captured_cwd = repo_one.path().to_path_buf();
+    {
+        let mut model = model.lock().unwrap();
+        model.create_workspace("captured", &captured_cwd);
+        model.create_workspace("active-now", repo_two.path());
+    }
+
+    glib::MainContext::new()
+        .block_on(open_worktree_from_gtk_async_at_cwd(
+            &state,
+            &captured_cwd,
+            &branch_name,
+            WorktreeAction::Create,
+        ))
+        .unwrap();
+
+    assert!(repo_one.path().join(".worktrees").exists());
+    assert!(!repo_two.path().join(".worktrees").exists());
+}
+
+#[test]
 fn gtk_worktree_remove_keeps_worktree_when_terminal_close_fails() {
     let repo_dir = make_temp_repo();
     let branch_name = format!("feature/remove-close-fails-{}", std::process::id());
@@ -1952,6 +2169,42 @@ fn detects_exited_terminal_status_for_sidebar_badge() {
 
     assert!(status_entry_suggests_exited(&status));
     assert!(!status_entry_suggests_error(&status));
+}
+
+#[test]
+fn closed_terminal_status_blocks_auto_spawn() {
+    let status = StatusEntry {
+        key: surface_status_key("surface-1"),
+        label: "Terminal".to_string(),
+        value: "Closed".to_string(),
+        color: None,
+    };
+
+    assert!(status_entry_suggests_exited(&status));
+    assert!(surface_status_blocks_auto_spawn(&[status], "surface-1"));
+}
+
+#[test]
+fn stale_surface_notification_does_not_target_workspace() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+    let notification = model.create_notification(
+        "Continue?",
+        "",
+        NotificationKind::Prompt,
+        Some(workspace_id.clone()),
+        Some(surface_id.clone()),
+    );
+
+    assert!(model.close_surface(&surface_id).is_some());
+
+    assert!(!notification_targets_workspace(
+        &model,
+        &notification,
+        &workspace_id
+    ));
 }
 
 // Regression: a workspace running Claude in bypassPermissions stayed badged
@@ -2148,6 +2401,14 @@ fn active_layout_signature_ignores_active_tab_changes() {
         ),
         Some(first_surface_id)
     );
+}
+
+#[test]
+fn active_tab_index_for_leaf_clamps_or_returns_none() {
+    let tabs = vec!["surface-1".to_string()];
+
+    assert_eq!(active_tab_index_for_leaf(&tabs, 99), Some(0));
+    assert_eq!(active_tab_index_for_leaf(&[], 0), None);
 }
 
 #[test]
@@ -2586,15 +2847,157 @@ fn startup_workspace_prefers_home_over_launch_directory() {
 }
 
 #[test]
-fn builds_terminal_font_description_from_config() {
+fn terminal_font_description_uses_system_monospace_defaults() {
     let mut config = config::AppConfig::default();
     config.appearance.font_family = "JetBrains Mono".to_string();
     config.appearance.font_size = 16;
 
-    let description = terminal_font_description_with_family(&config, "JetBrains Mono".to_string());
+    let description = default_terminal_font_description(&config);
 
-    assert!(description.to_string().contains("JetBrains Mono"));
-    assert!(description.to_string().contains("16"));
+    assert_eq!(description.to_string(), "monospace");
+}
+
+#[test]
+fn ghostty_config_text_overrides_terminal_font_and_colors() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r##"
+        font-family = "JetBrains Mono Nerd Font"
+        font-size = 15
+        scrollback-limit = 10_000_000
+        background = 101010
+        foreground = #eeeeee
+        cursor-color = ffffff
+        cursor-text = 000000
+        selection-background = 333333
+        selection-foreground = f0f0f0
+        palette = 0=#111111
+        palette = 9=ff4444
+        "##,
+    );
+
+    assert_eq!(
+        appearance.font_family.as_deref(),
+        Some("JetBrains Mono Nerd Font")
+    );
+    assert_eq!(appearance.font_size_pt, Some(15.0));
+    assert_eq!(appearance.scrollback_limit_bytes, Some(10_000_000));
+    assert_eq!(appearance.colors.background, "#101010");
+    assert_eq!(appearance.colors.foreground, "#eeeeee");
+    assert_eq!(appearance.colors.cursor, "#ffffff");
+    assert_eq!(appearance.colors.cursor_foreground, "#000000");
+    assert_eq!(appearance.colors.highlight, "#333333");
+    assert_eq!(appearance.colors.highlight_foreground, "#f0f0f0");
+    assert_eq!(appearance.colors.ansi[0], "#111111");
+    assert_eq!(appearance.colors.ansi[9], "#ff4444");
+}
+
+#[test]
+fn ghostty_scrollback_limit_overrides_legacy_scrollback_lines() {
+    let mut config = config::AppConfig::default();
+    config.appearance.scrollback_lines = 777;
+
+    let appearance = ghostty_terminal_appearance_from_text("scrollback-limit = 4096");
+
+    assert_eq!(
+        terminal_scrollback_lines_for_appearance(&config, &appearance),
+        2
+    );
+}
+
+#[test]
+fn ghostty_config_loader_resolves_theme_and_recursive_config_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let themes = dir.path().join("themes");
+    std::fs::create_dir_all(&themes).unwrap();
+    std::fs::write(
+        themes.join("User Dark"),
+        r##"
+        background = #101010
+        foreground = #eeeeee
+        palette = 0=#000001
+        selection-background = #333
+        "##,
+    )
+    .unwrap();
+    std::fs::write(
+        themes.join("User Light"),
+        r##"
+        background = #fafafa
+        foreground = #111111
+        "##,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("included.conf"),
+        r##"
+        foreground = red
+        palette = 9=blue
+        config-file = ?missing.conf
+        "##,
+    )
+    .unwrap();
+    let config_path = dir.path().join("config.ghostty");
+    std::fs::write(
+        &config_path,
+        r##"
+        theme = light:User Light,dark:User Dark
+        config-file = included.conf
+        background = green
+        "##,
+    )
+    .unwrap();
+
+    let appearance = ghostty_terminal_appearance_from_paths_for_test(
+        &[config_path],
+        &[themes],
+        GhosttyColorScheme::Dark,
+    );
+
+    assert_eq!(appearance.colors.background, "#008000");
+    assert_eq!(appearance.colors.foreground, "#ff0000");
+    assert_eq!(appearance.colors.ansi[0], "#000001");
+    assert_eq!(appearance.colors.ansi[9], "#0000ff");
+    assert_eq!(appearance.colors.highlight, "#333333");
+}
+
+#[test]
+fn ghostty_config_text_accepts_short_hex_and_named_colors() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r##"
+        background = #abc
+        foreground = blue
+        cursor-color = white
+        palette = 15=black
+        "##,
+    );
+
+    assert_eq!(appearance.colors.background, "#aabbcc");
+    assert_eq!(appearance.colors.foreground, "#0000ff");
+    assert_eq!(appearance.colors.cursor, "#ffffff");
+    assert_eq!(appearance.colors.ansi[15], "#000000");
+}
+
+#[test]
+fn terminal_zoom_font_uses_default_at_reset_and_clamps_steps() {
+    let config = config::AppConfig::default();
+
+    assert_eq!(next_terminal_zoom_level(0, 1), 1);
+    assert_eq!(next_terminal_zoom_level(1, -1), 0);
+    assert_eq!(next_terminal_zoom_level(-99, -1), -6);
+    assert_eq!(next_terminal_zoom_level(99, 1), 12);
+
+    let reset = terminal_font_description_for_zoom_level(&config, 0);
+    assert_eq!(reset.to_string(), "monospace");
+
+    let zoomed = terminal_font_description_for_zoom_level(&config, 2);
+    assert_eq!(zoomed.family().as_deref(), Some("monospace"));
+    assert_eq!(zoomed.size(), 14 * gtk::pango::SCALE);
+
+    let smallest = terminal_font_description_for_zoom_level(&config, -99);
+    assert_eq!(smallest.size(), 6 * gtk::pango::SCALE);
+
+    let largest = terminal_font_description_for_zoom_level(&config, 99);
+    assert_eq!(largest.size(), 24 * gtk::pango::SCALE);
 }
 
 #[test]
@@ -2611,29 +3014,12 @@ fn terminal_theme_system_uses_dark_palette() {
 }
 
 #[test]
-fn named_terminal_theme_overrides_system_palette() {
+fn legacy_terminal_theme_config_is_ignored() {
     let mut config = config::AppConfig::default();
     config.general.theme_source = "light".to_string();
     config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
 
-    assert_eq!(terminal_colors_for_config(&config).background, "#282a36");
-}
-
-#[test]
-fn terminal_theme_presets_use_expected_ansi_values() {
-    let mut config = config::AppConfig::default();
-
-    config.appearance.terminal_theme = config::TERMINAL_THEME_CATPPUCCIN_MOCHA.to_string();
-    assert_eq!(terminal_colors_for_config(&config).ansi[5], "#f5c2e7");
-
-    config.appearance.terminal_theme = config::TERMINAL_THEME_ROSE_PINE.to_string();
-    assert_eq!(terminal_colors_for_config(&config).ansi[15], "#e0def4");
-
-    config.appearance.terminal_theme = config::TERMINAL_THEME_TOKYO_NIGHT.to_string();
-    assert_eq!(terminal_colors_for_config(&config).ansi[9], "#ff899d");
-
-    config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
-    assert_eq!(terminal_colors_for_config(&config).ansi[7], "#f8f8f2");
+    assert_eq!(terminal_colors_for_config(&config).background, "#181818");
 }
 
 #[test]
@@ -2650,9 +3036,10 @@ fn settings_change_rebases_onto_externally_modified_config() {
     config::save_config_to_path(&path, &base).unwrap();
 
     let next =
-        config::update_config_at_path(&path, |config| config.appearance.font_size = 18).unwrap();
+        config::update_config_at_path(&path, |config| config.appearance.scrollback_lines = 18_000)
+            .unwrap();
 
-    assert_eq!(next.appearance.font_size, 18);
+    assert_eq!(next.appearance.scrollback_lines, 18_000);
     assert_eq!(next.appearance.sidebar_visible, external_sidebar);
 }
 
@@ -2666,7 +3053,8 @@ fn settings_change_preserves_telemetry_config() {
     config::save_config_to_path(&path, &base).unwrap();
 
     let next =
-        config::update_config_at_path(&path, |config| config.appearance.font_size = 18).unwrap();
+        config::update_config_at_path(&path, |config| config.appearance.scrollback_lines = 18_000)
+            .unwrap();
 
     assert!(!next.telemetry.anonymous_ping);
 }
@@ -2697,51 +3085,12 @@ fn settings_choice_mapping_round_trips_known_values() {
         Some("sibling")
     );
     assert_eq!(settings_choice_value(WINDOW_MODE_ITEMS, 1), Some("quake"));
-    assert_eq!(
-        settings_choice_index(TERMINAL_THEME_ITEMS, config::TERMINAL_THEME_GRUVBOX_DARK),
-        5
-    );
 }
 
 #[test]
 fn settings_choice_mapping_falls_back_for_unknown_values() {
     assert_eq!(settings_choice_index(SIDEBAR_POSITION_ITEMS, "top"), 0);
     assert_eq!(settings_choice_value(SIDEBAR_POSITION_ITEMS, 99), None);
-    assert_eq!(settings_id_index(&["only".to_string()], "missing"), 0);
-}
-
-#[test]
-fn font_family_choices_selects_default_for_empty_family() {
-    let names = vec!["JetBrains Mono".to_string(), "Hack".to_string()];
-    let choices = font_family_choices(&names, &names, "Noto Sans Mono", "");
-    assert_eq!(choices.active_index, 0);
-    assert_eq!(choices.ids[0], DEFAULT_FONT_FAMILY_ID);
-    assert_eq!(choices.ids[1], SYSTEM_MONOSPACE_FONT_FAMILY_ID);
-    assert!(choices.labels[1].contains("Noto Sans Mono"));
-    assert_eq!(
-        &choices.labels[2..],
-        &["Hack".to_string(), "JetBrains Mono".to_string()]
-    );
-}
-
-#[test]
-fn font_family_choices_selects_system_monospace_alias() {
-    let names = vec!["Hack".to_string()];
-    let choices = font_family_choices(&names, &names, "Adwaita Mono", "Monospace");
-    assert_eq!(choices.active_index, 1);
-}
-
-#[test]
-fn font_family_choices_appends_saved_entry_for_missing_family() {
-    let names = vec!["Hack".to_string()];
-    let choices = font_family_choices(&names, &names, "Hack", "Vanished Font");
-    let last = choices.ids.len() - 1;
-    assert_eq!(choices.active_index as usize, last);
-    assert_eq!(choices.labels[last], "Vanished Font (saved)");
-    assert_eq!(
-        decode_font_family_row_id(&choices.ids[last]),
-        "Vanished Font"
-    );
 }
 
 #[test]
@@ -2751,6 +3100,7 @@ fn command_palette_search_matches_labels_and_shortcuts() {
     let settings = command_search_text("Settings", Some("Ctrl+,"));
     let sidebar = command_search_text("Toggle Sidebar", Some("Ctrl+B / F9"));
     let shortcuts = command_search_text("Keyboard Shortcuts", Some("F1"));
+    let zoom = command_search_text("Zoom In", Some(TERMINAL_ZOOM_IN_SHORTCUT));
 
     assert!(command_matches(&copy, "copy"));
     assert!(command_matches(&copy, "ctrl shift c"));
@@ -2760,6 +3110,8 @@ fn command_palette_search_matches_labels_and_shortcuts() {
     assert!(command_matches(&settings, "ctrl,"));
     assert!(command_matches(&sidebar, "f9"));
     assert!(command_matches(&shortcuts, "f1"));
+    assert!(command_matches(&zoom, "zoom in"));
+    assert!(command_matches(&zoom, "ctrl+"));
     assert!(!command_matches(&copy, "paste"));
 }
 
@@ -2792,33 +3144,6 @@ fn accessible_shortcut_text_uses_accessibility_key_names() {
     );
     assert_eq!(accessible_shortcut_text("Ctrl+,"), "Control+comma");
     assert_eq!(accessible_shortcut_text("Esc"), "Escape");
-}
-
-#[test]
-fn default_terminal_font_prefers_installed_nerd_font() {
-    let families = vec![
-        "Noto Sans Mono".to_string(),
-        "JetBrainsMono Nerd Font Mono".to_string(),
-    ];
-
-    assert_eq!(
-        default_terminal_font_family(&families),
-        "JetBrainsMono Nerd Font Mono"
-    );
-}
-
-#[test]
-fn dedupes_font_family_names() {
-    let families = dedupe_font_family_names([
-        " JetBrainsMono Nerd Font Mono ".to_string(),
-        "JetBrainsMono Nerd Font Mono".to_string(),
-        "".to_string(),
-        "Noto Sans Mono".to_string(),
-    ]);
-
-    assert_eq!(families.len(), 2);
-    assert!(families.contains(&"JetBrainsMono Nerd Font Mono".to_string()));
-    assert!(families.contains(&"Noto Sans Mono".to_string()));
 }
 
 #[test]

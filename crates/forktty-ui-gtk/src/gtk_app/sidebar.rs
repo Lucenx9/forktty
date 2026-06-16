@@ -809,15 +809,17 @@ pub(super) fn notification_targets_workspace(
     notification: &NotificationItem,
     workspace_id: &str,
 ) -> bool {
-    if notification.workspace_id.as_deref() == Some(workspace_id) {
-        return true;
+    if let Some(surface_id) = notification.surface_id.as_deref() {
+        let Some(surface) = model.surface(surface_id) else {
+            return false;
+        };
+        return surface.workspace_id == workspace_id
+            && notification
+                .workspace_id
+                .as_deref()
+                .is_none_or(|id| id == surface.workspace_id);
     }
-    notification
-        .surface_id
-        .as_deref()
-        .and_then(|surface_id| model.surface(surface_id))
-        .map(|surface| surface.workspace_id == workspace_id)
-        .unwrap_or(false)
+    notification.workspace_id.as_deref() == Some(workspace_id)
 }
 
 pub(super) fn workspace_status_badge(
@@ -944,7 +946,11 @@ pub(super) fn status_entry_suggests_exited(status: &StatusEntry) -> bool {
         .as_deref()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    value.contains("exited") || value.contains("stopped") || color == "yellow" || color == "warning"
+    value == "closed"
+        || value.contains("exited")
+        || value.contains("stopped")
+        || color == "yellow"
+        || color == "warning"
 }
 
 pub(super) fn format_workspace_activity_summary(

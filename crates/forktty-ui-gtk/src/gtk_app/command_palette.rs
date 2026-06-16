@@ -83,6 +83,9 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Paste", "Ctrl+Shift+V"),
             ("Select All", "Ctrl+Shift+A"),
             ("Find", "Ctrl+Shift+F"),
+            ("Zoom In", TERMINAL_ZOOM_IN_SHORTCUT),
+            ("Zoom Out", TERMINAL_ZOOM_OUT_SHORTCUT),
+            ("Reset Zoom", TERMINAL_ZOOM_RESET_SHORTCUT),
             ("Reset and Clear", "Command Palette / Context Menu"),
             ("Context Menu", "Right Click"),
         ],
@@ -469,6 +472,36 @@ pub(super) fn show_command_palette_with_query(
             }
         }
     });
+    command!("Zoom In", Some(TERMINAL_ZOOM_IN_SHORTCUT), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow_mut().zoom_terminal_in();
+            }
+            dialog.close();
+        }
+    });
+    command!("Zoom Out", Some(TERMINAL_ZOOM_OUT_SHORTCUT), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow_mut().zoom_terminal_out();
+            }
+            dialog.close();
+        }
+    });
+    command!("Reset Terminal Zoom", Some(TERMINAL_ZOOM_RESET_SHORTCUT), {
+        let controller = controller.clone();
+        let dialog = dialog.clone();
+        move || {
+            if let Some(controller) = &controller {
+                controller.borrow_mut().reset_terminal_zoom();
+            }
+            dialog.close();
+        }
+    });
     command!("Reset and Clear Terminal", None, {
         let controller = controller.clone();
         let dialog = dialog.clone();
@@ -567,13 +600,14 @@ pub(super) fn show_command_palette_with_query(
                 return;
             };
             let state_confirm = state.clone();
+            let workspace_id = workspace.id.clone();
             let body = close_workspace_confirmation_body(&workspace.name, &workspace.working_dir);
             show_destructive_confirmation(
                 &parent,
                 "Close Workspace?",
                 &body,
                 "Close Workspace",
-                move || close_active_workspace(&state_confirm),
+                move || close_workspace_by_id(&state_confirm, &workspace_id),
             );
         }
     });

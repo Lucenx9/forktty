@@ -52,6 +52,11 @@ impl TerminalBackend for GtkTerminalBackend {
             .surfaces
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
+        if surfaces.contains_key(&surface_id) {
+            return Err(TerminalError::Backend(format!(
+                "surface already exists: {surface_id}"
+            )));
+        }
         let previous = surfaces.insert(
             request.surface_id.clone(),
             TerminalSurfaceState {

@@ -60,9 +60,9 @@ pub struct GeneralConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppearanceConfig {
-    #[serde(default = "default_font_family")]
+    #[serde(default = "default_font_family", skip_serializing)]
     pub font_family: String,
-    #[serde(default = "default_font_size")]
+    #[serde(default = "default_font_size", skip_serializing)]
     pub font_size: u16,
     #[serde(default = "default_scrollback_lines")]
     pub scrollback_lines: u32,
@@ -74,7 +74,7 @@ pub struct AppearanceConfig {
     pub sidebar_visible: bool,
     #[serde(default = "default_terminal_renderer")]
     pub terminal_renderer: String,
-    #[serde(default = "default_terminal_theme")]
+    #[serde(default = "default_terminal_theme", skip_serializing)]
     pub terminal_theme: String,
     #[serde(default = "default_window_mode")]
     pub window_mode: String,
@@ -462,11 +462,6 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             "appearance.sidebar_position must be 'left' or 'right'".to_string(),
         ));
     }
-    if !(8..=64).contains(&config.appearance.font_size) {
-        return Err(ConfigError::Invalid(
-            "appearance.font_size must be between 8 and 64".to_string(),
-        ));
-    }
     if config.appearance.scrollback_lines > 500_000 {
         return Err(ConfigError::Invalid(
             "appearance.scrollback_lines must be 500000 or fewer".to_string(),
@@ -480,12 +475,6 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             "appearance.terminal_renderer must be one of: auto, dom, canvas, webgl, ghostty, vte"
                 .to_string(),
         ));
-    }
-    if !TERMINAL_THEME_CHOICES.contains(&config.appearance.terminal_theme.as_str()) {
-        return Err(ConfigError::Invalid(format!(
-            "appearance.terminal_theme must be one of: {}",
-            TERMINAL_THEME_CHOICES.join(", ")
-        )));
     }
     if !matches!(config.appearance.window_mode.as_str(), "normal" | "quake") {
         return Err(ConfigError::Invalid(
@@ -516,10 +505,10 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     .unwrap_or_else(default_worktree_layout);
     config.general.notification_command = config.general.notification_command.trim().to_string();
     // Drop a notification command whose program is missing or not executable:
-    // like the shell above, that is environment-dependent, so normalize like
-    // the `font_size` guard below instead of quarantining on load. Structural
-    // problems (unparseable quoting, shell `-c` trampolines) still fail
-    // validation and quarantine.
+    // like the shell above, that is environment-dependent, so normalize on load
+    // instead of quarantining the whole config. Structural problems
+    // (unparseable quoting, shell `-c` trampolines) still fail validation and
+    // quarantine.
     if let Ok(parts) = shell_words::split(&config.general.notification_command) {
         match parts.first() {
             Some(program) => {
@@ -551,10 +540,9 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     if config.appearance.font_size == 0 {
         config.appearance.font_size = default_font_size();
     }
-    // Clamp hand-edited numeric ranges so an out-of-bounds value normalizes like
-    // the `font_size == 0` guard above and the enum fields, instead of failing
-    // validation and quarantining the entire config on load. The bounds match
-    // `validate_config` so the normalized result always passes validation.
+    // Clamp hand-edited numeric ranges instead of quarantining the entire
+    // config on load. `font_size` is a legacy field ignored by the GTK
+    // renderer, but keeping it normalized makes old config round trips stable.
     config.appearance.font_size = config.appearance.font_size.clamp(8, 64);
     config.appearance.scrollback_lines = config.appearance.scrollback_lines.min(500_000);
     config
@@ -875,20 +863,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_out_of_range_font_size() {
+    fn validate_config_accepts_legacy_font_size() {
         let mut config = AppConfig::default();
         config.general.shell = dummy_executable_path();
         config.appearance.font_size = 7;
-        let err = validate_config(&config).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("appearance.font_size must be between 8 and 64"));
+        validate_config(&config).unwrap();
 
         config.appearance.font_size = 65;
-        let err = validate_config(&config).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("appearance.font_size must be between 8 and 64"));
+        validate_config(&config).unwrap();
     }
 
     #[test]
@@ -903,14 +885,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_invalid_terminal_theme() {
+    fn validate_config_accepts_legacy_terminal_theme() {
         let mut config = AppConfig::default();
         config.general.shell = dummy_executable_path();
         config.appearance.terminal_theme = "nonexistent_theme".to_string();
-        let err = validate_config(&config).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("appearance.terminal_theme must be one of:"));
+
+        validate_config(&config).unwrap();
     }
 
     #[test]
@@ -1133,14 +1113,21 @@ mod tests {
     }
 
     #[test]
-    fn saved_config_rejects_invalid_terminal_theme() {
+    fn saved_config_omits_legacy_terminal_appearance_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
         let mut config = AppConfig::default();
         config.general.shell = "/bin/sh".to_string();
+        config.appearance.font_family = "Hack".to_string();
+        config.appearance.font_size = 99;
         config.appearance.terminal_theme = "solarized".to_string();
 
-        let error = validate_config(&config).unwrap_err();
+        save_config_to_path(&path, &config).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
 
-        assert!(error.to_string().contains("terminal_theme"));
+        assert!(!saved.contains("font_family"));
+        assert!(!saved.contains("font_size"));
+        assert!(!saved.contains("terminal_theme"));
     }
 
     fn assert_recovery_and_get_quarantined_path(

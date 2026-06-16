@@ -217,9 +217,9 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 
 - **Impact**: medium. **Cost**: ongoing.
 - cmux has deeper shortcut/theme/preferences/update/product plumbing.
-- ForkTTY has native settings and several validated config fields, but full
-  theme customization, richer shortcut editing, and Ghostty config import are
-  still backlog.
+- ForkTTY has native settings and imports Ghostty terminal appearance config,
+  but full theme customization, richer shortcut editing, and broader Ghostty
+  app-option parity are still backlog.
 
 ## Non-Goals
 
