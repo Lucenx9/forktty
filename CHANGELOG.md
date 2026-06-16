@@ -23,6 +23,8 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Worktree merge selected by worktree name now merges that worktree's branch even when an unrelated local branch shares the worktree's derived name (e.g. worktree `feat-a` for branch `feat/a` alongside a separate `feat-a` branch), matching the worktree the cleanliness check already validates instead of silently merging the wrong branch.
+- Config loading now normalizes a `notification_command` that tokenizes to zero words (for example an inline shell comment like `"# disabled"`) to an empty command instead of rejecting it and quarantining the entire config, so a benign command value no longer resets every other setting to defaults.
 - Nested worktree creation now appends `.worktrees/` to `.git/info/exclude` even when the existing exclude file contains non-UTF-8 bytes, instead of failing before creating the worktree.
 - Agent session-end hooks now mark the persisted agent binding as ended when clearing its live status, so agents whose providers emit a session-end event no longer remain shown as running in the Agent HUD.
 - Chromium bookmark import, browser bookmark loading, and browser profile metadata loading now reject or skip non-regular files before reading, preventing local FIFO/device paths from blocking the import or profile workflows.
