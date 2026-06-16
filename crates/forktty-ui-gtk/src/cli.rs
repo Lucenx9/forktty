@@ -184,6 +184,7 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "statusline"
             | "status-line"
             | "status:summary"
+            | "top"
             | "ssh"
     )
 }
@@ -1306,6 +1307,7 @@ mod tests {
             "statusline",
             "status-line",
             "status:summary",
+            "top",
         ] {
             assert!(is_socket_cli_command(command), "{command}");
         }

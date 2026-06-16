@@ -184,6 +184,16 @@ impl TerminalController {
                         },
                     );
                     if let Some(state) = &spawn_state_for_ready {
+                        if let Ok(pid) = u32::try_from(pid.0) {
+                            if let Err(err) =
+                                state.terminal.mark_surface_pid(&spawn_surface_id, pid)
+                            {
+                                eprintln!(
+                                    "Failed to record terminal surface pid {}: {err}",
+                                    spawn_surface_id
+                                );
+                            }
+                        }
                         if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
                             eprintln!(
                                 "Failed to mark terminal surface ready {}: {err}",

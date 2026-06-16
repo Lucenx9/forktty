@@ -163,12 +163,11 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   send-input, capture-tail, inspect-liveness, attach, and detach, with tmux only
   as the first adapter.
 - ForkTTY covers core workspace/surface/pane-tab/metadata/worktree/browser
-  verbs, plus read-only `topology.tree`, terminal `read-screen`, and
-  `capture-tail` primitives. It still lacks `top`, `send-key`, move/reorder,
+  verbs, plus read-only `topology.tree`, `system.top`, terminal `read-screen`,
+  and `capture-tail` primitives. It still lacks `send-key`, move/reorder,
   join/swap/split-off, buffers, pipe/wait, and broader tmux-compatible
   manipulation.
-- Scope: add `top`/health-style inspection next, then mutating verbs with clear
-  model invariants and tests.
+- Scope: add mutating verbs only with clear model invariants and tests.
 
 ### 11. Prompt Composer / TextBox
 

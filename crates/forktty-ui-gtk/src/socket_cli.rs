@@ -56,6 +56,7 @@ Usage:
   forktty read-screen [--surface-id <id>] [--scope visible|all] [--max-bytes <n>] [--json]
   forktty capture-tail [--surface-id <id>] [--lines <n>] [--max-bytes <n>] [--json]
   forktty tree [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty top [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty worktree-list [--cwd <repo>]
   forktty worktree-status [--path <worktree>] [--cwd <worktree>]
   forktty worktree-create <branch> [--cwd <repo>]
@@ -751,6 +752,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
             handle_capture_tail(&context, args)
         }
         "tree" | "topology-tree" | "topology:tree" => handle_tree(&context, args),
+        "top" => handle_top(&context, args),
         "worktree-list" | "worktree:list" => handle_worktree_list(&context, args),
         "worktree-status" | "worktree:status" => handle_worktree_status(&context, args),
         "worktree-create" | "worktree:create" => {
@@ -2591,6 +2593,25 @@ fn handle_tree(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     format_topology_tree(&result)
 }
 
+fn handle_top(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "top")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name"],
+        "top",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "system.top",
+        Value::Object(build_target_params(&parsed.options, "top")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    format_system_top(&result)
+}
+
 fn resolve_terminal_read_surface_id(
     context: &CliContext,
     parsed: &ParsedFlags,
@@ -2630,6 +2651,111 @@ fn format_topology_tree(value: &Value) -> CliResult<()> {
         }
     }
     Ok(())
+}
+
+fn format_system_top(value: &Value) -> CliResult<()> {
+    if let Some(totals) = value.get("totals") {
+        let workspaces = totals
+            .get("workspaces")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let surfaces = totals.get("surfaces").and_then(Value::as_u64).unwrap_or(0);
+        let unread = totals
+            .get("unread_surfaces")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let agents = totals.get("agents").and_then(Value::as_u64).unwrap_or(0);
+        write_stdout_line(&format!(
+            "workspaces {workspaces} surfaces {surfaces} unread {unread} agents {agents}"
+        ))?;
+    }
+    let Some(workspaces) = value.get("workspaces").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if workspaces.is_empty() {
+        return write_stdout_line("No workspaces");
+    }
+    for workspace in workspaces {
+        let active = workspace
+            .get("active")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let marker = if active { "*" } else { " " };
+        let name = safe_string_field(workspace, "name").unwrap_or_else(|| "(unnamed)".to_string());
+        let id = safe_string_field(workspace, "id").unwrap_or_else(|| "(unknown)".to_string());
+        let dir = safe_string_field(workspace, "working_dir").unwrap_or_default();
+        let surface_items = workspace.get("surfaces").and_then(Value::as_array);
+        let unread = workspace
+            .get("unread_surface_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let count = workspace
+            .get("surface_count")
+            .and_then(Value::as_u64)
+            .or_else(|| surface_items.map(|surfaces| surfaces.len() as u64))
+            .unwrap_or(0);
+        write_stdout_line(&format!(
+            "{marker} {name} [{id}] surfaces {count} unread {unread} {dir}"
+        ))?;
+        if let Some(surfaces) = surface_items {
+            for surface in surfaces {
+                write_stdout_line(&format!("  {}", format_top_surface_line(surface)))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_top_surface_line(surface: &Value) -> String {
+    let focused = surface
+        .get("focused")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let marker = if focused { ">" } else { "-" };
+    let id = safe_string_field(surface, "id").unwrap_or_else(|| "(unknown)".to_string());
+    let kind = safe_string_field(surface, "kind").unwrap_or_else(|| "surface".to_string());
+    let state = if surface
+        .get("unread")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "unread"
+    } else {
+        "read"
+    };
+    let title = safe_string_field(surface, "title")
+        .map(|title| format!(" {title}"))
+        .unwrap_or_default();
+    let cwd = safe_string_field(surface, "cwd")
+        .map(|cwd| format!(" {cwd}"))
+        .unwrap_or_default();
+    let shell = safe_string_field(surface, "shell")
+        .map(|shell| format!(" shell {shell}"))
+        .unwrap_or_default();
+    let pid = surface
+        .get("pid")
+        .and_then(Value::as_u64)
+        .map(|pid| format!(" pid {pid}"))
+        .unwrap_or_default();
+    let size = match (
+        surface.get("cols").and_then(Value::as_u64),
+        surface.get("rows").and_then(Value::as_u64),
+    ) {
+        (Some(cols), Some(rows)) => format!(" {cols}x{rows}"),
+        _ => String::new(),
+    };
+    let agent = surface
+        .get("agent")
+        .filter(|agent| !agent.is_null())
+        .and_then(|agent| {
+            let provider = safe_string_field(agent, "agent")?;
+            let lifecycle = safe_string_field(agent, "lifecycle")
+                .map(|value| format!("#{value}"))
+                .unwrap_or_default();
+            Some(format!(" agent {provider}{lifecycle}"))
+        })
+        .unwrap_or_default();
+    format!("{marker} {id} {kind} {state}{title}{cwd}{shell}{pid}{size}{agent}")
 }
 
 fn surface_id_from_args(parsed: &ParsedFlags, command: &str) -> CliResult<Option<String>> {
@@ -11275,6 +11401,52 @@ mod tests {
             },
         );
         assert_eq!(request["method"], "topology.tree");
+        assert_eq!(request["params"]["workspace_id"], "workspace-1");
+    }
+
+    #[test]
+    fn top_requests_system_top_with_workspace_selector() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "totals": {
+                            "workspaces": 1,
+                            "surfaces": 1,
+                            "unread_surfaces": 0,
+                            "agents": 0
+                        },
+                        "workspaces": [{
+                            "id": "workspace-1",
+                            "name": "main",
+                            "active": true,
+                            "working_dir": "/tmp",
+                            "focused_surface_id": "surface-1",
+                            "surfaces": [{
+                                "id": "surface-1",
+                                "kind": "terminal",
+                                "focused": true,
+                                "unread": false,
+                                "cwd": "/tmp"
+                            }],
+                            "status": [],
+                            "progress": []
+                        }]
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_top(
+                    &ctx_for(socket_path),
+                    strings(&["--workspace-id", "workspace-1"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "system.top");
         assert_eq!(request["params"]["workspace_id"], "workspace-1");
     }
 

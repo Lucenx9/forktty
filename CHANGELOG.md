@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- `forktty top` / `system.top` now return a read-only workspace and surface
+  health snapshot with focus, unread, kind, cwd, shell, size, PID when known,
+  agent lifecycle, status, and progress fields.
+
 ### Changed
 - Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
 - Repeated Ghostty `font-family`, `font-family-bold`, `font-family-italic`, and `font-family-bold-italic` entries now build Pango fallback lists, and empty entries reset each list.

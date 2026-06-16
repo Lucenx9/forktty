@@ -2,6 +2,16 @@
 
 This roadmap tracks the native GTK/Ghostty implementation that replaced the old Tauri/React path.
 
+## Near-Term Direction
+
+- [ ] Close the practical cmux gap through ForkTTY's control plane first, not by
+  copying every panel: after `top`/health inspection, continue with a durable
+  feed/approval bridge, repo-local `forktty.json` actions, and real agent
+  hibernate/reclaim.
+- [ ] Keep richer sidebars, remote daemon depth, multi-window routing, and plugin
+  surfaces behind those primitives; they need real state/events before extra UI
+  pays for itself.
+
 ## Implemented
 
 ### Native Runtime
@@ -12,6 +22,8 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Direct Unix socket JSON-RPC dispatch without a frontend bridge.
 - [x] Native socket CLI and agent hook installer in the `forktty` binary over the socket API.
 - [x] `events.subscribe` NDJSON change stream and `system.capabilities` discovery, with `forktty events`/`forktty capabilities` CLI.
+- [x] Read-only `system.top` / `forktty top` health snapshot for workspaces,
+  surfaces, runtime size/PID, unread state, agents, status, and progress.
 - [x] Browser pane SP1: WebKitGTK6 pane kind + `browser.open`/`browser.navigate` + in-pane address bar (behind the `browser` cargo feature).
 - [x] Browser pane SP2: scriptable verbs (`browser.snapshot`/`click`/`fill`/`eval`) + socket-driven `back`/`forward`/`reload` via socket→GTK command channel + `forktty browser snapshot|click|fill|eval|back|forward|reload` CLI (behind the `browser` cargo feature).
 - [x] Browser pane SP3 P1/P2: persistent per-profile WebKit sessions, `ProfileId` on browser surfaces, profile metadata store, `browser.profile.*` socket methods, and `forktty browser profile ...` CLI.
@@ -93,7 +105,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Project actions: repo-local validated `forktty.json` actions exposed in the command palette and socket.
 - [ ] Right-sidebar/Dock ecosystem: files/find/vault/session/feed style panels, panel persistence, and optional custom sidebar contributors.
 - [ ] Workspace organization: groups, pin/collapse/reorder, and saved layout intent.
-- [ ] Expanded socket topology and tmux-compatible verbs: `top` inspection, send key, move/reorder/join/swap/split-off, buffers, and pipe/wait primitives. Initial read-only `tree`, `read-screen`, and `capture-tail` primitives are available through socket/CLI/MCP.
+- [ ] Expanded socket topology and tmux-compatible verbs: send key, move/reorder/join/swap/split-off, buffers, and pipe/wait primitives. Initial read-only `tree`, `read-screen`, and `capture-tail` primitives are available through socket/CLI/MCP; `top` is available through socket/CLI.
 - [ ] Prompt composer/TextBox surface for reusable prompt drafting and dispatch.
 - [ ] Agent/skill catalog: installable prompt packs, provider-specific workflow skills, and project-scoped reusable guidance.
 - [ ] File/project panels: file explorer, markdown preview, diff/comment review flows.

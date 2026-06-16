@@ -5,11 +5,11 @@ use forktty_core::{
     validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
     AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
     JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
-    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    SurfaceKind, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
-    TerminalTextCapture,
+    TerminalSurfaceState, TerminalTextCapture,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -121,6 +121,7 @@ pub const METHODS: &[&str] = &[
     "status.summary",
     "system.capabilities",
     "system.ping",
+    "system.top",
     "topology.tree",
     "workspace.close",
     "workspace.create",
@@ -166,6 +167,7 @@ pub const METHODS: &[&str] = &[
     "status.summary",
     "system.capabilities",
     "system.ping",
+    "system.top",
     "topology.tree",
     "workspace.close",
     "workspace.create",
@@ -752,6 +754,27 @@ pub async fn dispatch(
                 .map_err(|_| "Lock poisoned".to_string())?;
             status_summary(&model, &workspace_id)
                 .ok_or(DispatchError::NotFound("workspace".to_string()))
+        }
+        "system.top" => {
+            let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    model
+                        .workspace_id_for(selector)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                ),
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
+            };
+            Ok(system_top(
+                &model,
+                workspace_id.as_deref(),
+                terminal_surfaces,
+            ))
         }
         "workspace.list" => {
             let model = state
@@ -2273,6 +2296,107 @@ fn topology_tree(model: &WorkspaceModel, workspace_id: Option<&str>) -> Value {
         })
         .collect::<Vec<_>>();
     json!({ "workspaces": workspaces })
+}
+
+fn system_top(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    terminal_surfaces: Vec<TerminalSurfaceState>,
+) -> Value {
+    let terminal_by_id = terminal_surfaces
+        .into_iter()
+        .map(|surface| (surface.surface_id.clone(), surface))
+        .collect::<HashMap<_, _>>();
+    let mut total_surfaces = 0usize;
+    let mut unread_surfaces = 0usize;
+    let mut agents = 0usize;
+
+    let workspaces = model
+        .list_workspaces()
+        .into_iter()
+        .filter(|workspace| workspace_id.is_none_or(|id| workspace.id == id))
+        .map(|workspace| {
+            let surfaces = model.list_surfaces(Some(&workspace.id));
+            total_surfaces += surfaces.len();
+            unread_surfaces += surfaces.iter().filter(|surface| surface.unread).count();
+            agents += surfaces
+                .iter()
+                .filter(|surface| surface.agent_session.is_some())
+                .count();
+            let surface_rows = surfaces
+                .iter()
+                .map(|surface| {
+                    let runtime = terminal_by_id.get(&surface.id);
+                    let agent = surface
+                        .agent_session
+                        .as_ref()
+                        .map(|agent| {
+                            json!({
+                                "agent": agent.agent,
+                                "session_id": agent.session_id,
+                                "resume_cwd": agent.resume_cwd,
+                                "permission_mode": agent.permission_mode,
+                                "lifecycle": agent.lifecycle,
+                                "last_activity_ms": agent.last_activity_ms,
+                            })
+                        })
+                        .unwrap_or(Value::Null);
+                    json!({
+                        "id": surface.id,
+                        "workspace_id": surface.workspace_id,
+                        "title": surface.title,
+                        "kind": surface_kind_label(&surface.kind),
+                        "focused": workspace.focused_surface_id == surface.id,
+                        "unread": surface.unread,
+                        "needs_attention": surface.needs_attention,
+                        "cwd": surface.cwd,
+                        "shell": runtime.map(|surface| surface.shell.clone()),
+                        "cols": runtime.map(|surface| surface.cols),
+                        "rows": runtime.map(|surface| surface.rows),
+                        "pid": runtime.and_then(|surface| surface.pid),
+                        "agent": agent,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "id": workspace.id,
+                "name": workspace.name,
+                "active": workspace.active,
+                "working_dir": workspace.working_dir,
+                "git_branch": workspace.git_branch,
+                "worktree_name": workspace.worktree_name,
+                "focused_surface_id": workspace.focused_surface_id,
+                "needs_attention": workspace.needs_attention,
+                "listening_ports": workspace.listening_ports,
+                "surface_count": surface_rows.len(),
+                "unread_surface_count": surface_rows
+                    .iter()
+                    .filter(|surface| surface["unread"].as_bool().unwrap_or(false))
+                    .count(),
+                "surfaces": surface_rows,
+                "status": model.list_status(&workspace.id),
+                "progress": model.list_progress(&workspace.id),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "totals": {
+            "workspaces": workspaces.len(),
+            "surfaces": total_surfaces,
+            "unread_surfaces": unread_surfaces,
+            "agents": agents,
+        },
+        "workspaces": workspaces,
+    })
+}
+
+fn surface_kind_label(kind: &SurfaceKind) -> &'static str {
+    match kind {
+        SurfaceKind::Terminal => "terminal",
+        SurfaceKind::Browser { .. } => "browser",
+        SurfaceKind::Ssh { .. } => "ssh",
+    }
 }
 
 fn current_unix_epoch_ms() -> u64 {
@@ -5148,6 +5272,7 @@ mod tests {
                         shell: request.shell,
                         cols: 80,
                         rows: 24,
+                        pid: None,
                     },
                 );
             Ok(())
@@ -5227,6 +5352,7 @@ mod tests {
                         shell: request.shell,
                         cols: 80,
                         rows: 24,
+                        pid: None,
                     },
                 );
             Ok(())
@@ -5314,6 +5440,7 @@ mod tests {
                         shell: request.shell,
                         cols: 80,
                         rows: 24,
+                        pid: None,
                     },
                 );
             Ok(())
@@ -5394,6 +5521,7 @@ mod tests {
                         shell: request.shell,
                         cols: 80,
                         rows: 24,
+                        pid: None,
                     },
                 );
             Ok(())
@@ -5799,6 +5927,61 @@ mod tests {
         assert_eq!(result["workspaces"][0]["focused_surface_id"], surface_id);
         assert_eq!(result["workspaces"][0]["surfaces"][0]["id"], surface_id);
         assert_eq!(result["workspaces"][0]["pane_tree"]["type"], "leaf");
+    }
+
+    #[tokio::test]
+    async fn dispatches_system_top_summary() {
+        let (state, backend) = test_state();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.mark_surface_unread(&surface_id, true));
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model
+                .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 42_000));
+            model
+                .set_status(
+                    &workspace.id,
+                    "agent:codex",
+                    "Codex",
+                    "Idle",
+                    Some("green".into()),
+                )
+                .unwrap();
+            (workspace.id, surface_id)
+        };
+        backend.resize(&surface_id, 120, 40).unwrap();
+
+        let result = dispatch(&state, "system.top", json!({})).await.unwrap();
+
+        assert_eq!(result["totals"]["workspaces"], 1);
+        assert_eq!(result["totals"]["surfaces"], 1);
+        assert_eq!(result["totals"]["unread_surfaces"], 1);
+        assert_eq!(result["totals"]["agents"], 1);
+        assert_eq!(result["workspaces"][0]["id"], workspace_id);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["id"], surface_id);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["focused"], true);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["unread"], true);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["kind"], "terminal");
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["shell"], "/bin/sh");
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["cols"], 120);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["rows"], 40);
+        assert_eq!(result["workspaces"][0]["surfaces"][0]["pid"], Value::Null);
+        assert_eq!(
+            result["workspaces"][0]["surfaces"][0]["agent"]["session_id"],
+            "codex-session-1"
+        );
+        assert_eq!(
+            result["workspaces"][0]["surfaces"][0]["agent"]["lifecycle"],
+            "idle"
+        );
+        assert_eq!(result["workspaces"][0]["status"][0]["key"], "agent:codex");
     }
 
     #[tokio::test]
@@ -7620,6 +7803,7 @@ mod tests {
             shell: "/bin/sh".to_string(),
             cols: 80,
             rows: 24,
+            pid: None,
         }));
         let state = SocketAppState::new(
             model.clone(),
@@ -7811,6 +7995,7 @@ mod tests {
             shell: "/bin/sh".to_string(),
             cols: 80,
             rows: 24,
+            pid: None,
         }));
         let state = SocketAppState::new(
             model,
@@ -8553,6 +8738,7 @@ mod tests {
             shell: "/bin/sh".to_string(),
             cols: 80,
             rows: 24,
+            pid: None,
         }));
         let state = SocketAppState::new(
             model,
@@ -8599,6 +8785,7 @@ mod tests {
                 shell: "/bin/sh".to_string(),
                 cols: 80,
                 rows: 24,
+                pid: None,
             },
             model.clone(),
         ));
@@ -9090,6 +9277,7 @@ mod tests {
             shell: "/bin/sh".to_string(),
             cols: 80,
             rows: 24,
+            pid: None,
         }));
         let state = SocketAppState::new(
             model,
@@ -9162,6 +9350,7 @@ mod tests {
                 shell: "/bin/sh".to_string(),
                 cols: 80,
                 rows: 24,
+                pid: None,
             },
             worktree_cwd.join("dirty-after-close.txt"),
         ));
