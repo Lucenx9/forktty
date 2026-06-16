@@ -1012,6 +1012,50 @@ impl WorkspaceModel {
         true
     }
 
+    pub fn clear_surface_agent_session(&mut self, surface_id: &str) -> Option<AgentSession> {
+        self.surfaces.get_mut(surface_id)?.agent_session.take()
+    }
+
+    pub fn restore_surface_agent_session(
+        &mut self,
+        surface_id: &str,
+        mut agent_session: AgentSession,
+    ) -> bool {
+        let session_id = agent_session.session_id.trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        agent_session.session_id = session_id.to_string();
+
+        if agent_session
+            .resume_cwd
+            .as_ref()
+            .is_some_and(|cwd| cwd.as_os_str().is_empty() || !cwd.is_absolute())
+        {
+            return false;
+        }
+
+        if let Some(permission_mode) = agent_session.permission_mode.take() {
+            let permission_mode = permission_mode.trim();
+            if permission_mode.is_empty()
+                || permission_mode.len() > 64
+                || permission_mode.chars().any(char::is_control)
+            {
+                return false;
+            }
+            agent_session.permission_mode = Some(permission_mode.to_string());
+        }
+
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        if surface.agent_session.is_some() {
+            return false;
+        }
+        surface.agent_session = Some(agent_session);
+        true
+    }
+
     pub fn set_surface_agent_session_resume_cwd(
         &mut self,
         surface_id: &str,
@@ -2665,6 +2709,60 @@ mod tests {
                 .lifecycle,
             crate::model::AgentSessionLifecycle::Ended
         );
+    }
+
+    #[test]
+    fn clearing_agent_session_forgets_metadata_without_closing_surface() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            crate::agents::AgentKind::Codex,
+            "codex-session-1"
+        ));
+        assert_eq!(model.to_session_data().surfaces.len(), 1);
+
+        let forgotten = model
+            .clear_surface_agent_session(&surface_id)
+            .expect("agent session should be forgotten");
+        assert_eq!(forgotten.session_id, "codex-session-1");
+        assert!(model.surface(&surface_id).is_some());
+        assert!(model.surface(&surface_id).unwrap().agent_session.is_none());
+        assert!(model.to_session_data().surfaces.is_empty());
+        assert!(model.clear_surface_agent_session(&surface_id).is_none());
+        assert!(model
+            .clear_surface_agent_session("missing-surface")
+            .is_none());
+
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            crate::agents::AgentKind::ClaudeCode,
+            "new-session"
+        ));
+        assert!(!model.restore_surface_agent_session(&surface_id, forgotten.clone()));
+        assert_eq!(
+            model
+                .surface(&surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .session_id,
+            "new-session"
+        );
+        assert_eq!(
+            model
+                .clear_surface_agent_session(&surface_id)
+                .unwrap()
+                .session_id,
+            "new-session"
+        );
+
+        assert!(model.restore_surface_agent_session(&surface_id, forgotten));
+        assert!(model.surface(&surface_id).unwrap().agent_session.is_some());
+        assert_eq!(model.to_session_data().surfaces.len(), 1);
     }
 
     #[test]

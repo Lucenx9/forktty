@@ -1029,6 +1029,47 @@ fn agent_hud_focuses_existing_agent_surface() {
 }
 
 #[test]
+fn agent_hud_forget_removes_and_can_restore_tracked_agent() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_id = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp/main");
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            forktty_core::AgentKind::Codex,
+            "codex-session",
+        ));
+        surface_id
+    };
+
+    let forgotten = forget_agent_surface(&state, &surface_id).expect("agent session forgotten");
+    {
+        let model = model.lock().unwrap();
+        assert!(model.surface(&surface_id).is_some());
+        assert!(agent_hud_rows(&model, 1_700_000_300_000).is_empty());
+    }
+
+    assert!(restore_forgotten_agent_surface(
+        &state,
+        &surface_id,
+        forgotten
+    ));
+    let model = model.lock().unwrap();
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].agent_label, "Codex");
+}
+
+#[test]
 fn update_stamp_waits_24h_and_honors_rate_limit_deadline() {
     let dir = tempfile::tempdir().unwrap();
     let stamp = dir.path().join("update-check.json");

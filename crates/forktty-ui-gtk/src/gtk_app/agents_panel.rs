@@ -160,6 +160,7 @@ pub(super) fn refresh_agent_indicator(
 #[derive(Clone)]
 struct AgentPanelUi {
     dialog: gtk::Window,
+    toast_overlay: adw::ToastOverlay,
     state: SocketAppState,
     controller: Option<Rc<RefCell<TerminalController>>>,
     body: gtk::Box,
@@ -275,14 +276,7 @@ impl AgentPanelUi {
         list.add_css_class("agent-list");
         list.update_property(&[gtk::accessible::Property::Label("Agents list")]);
         for row in rows {
-            append_agent_row(
-                &list,
-                &self.dialog,
-                &self.state,
-                self.controller.as_ref(),
-                row,
-                tail_labels,
-            );
+            append_agent_row(&list, self, row, tail_labels);
         }
         // Enter (or a click outside the buttons) on a row focuses that agent.
         let surface_ids: Vec<String> = rows.iter().map(|row| row.surface_id.clone()).collect();
@@ -365,11 +359,14 @@ pub(super) fn show_agent_panel(
     root.append(&header);
     root.append(&body);
     root.append(&footer);
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&root));
     dialog.set_default_widget(Some(&close));
-    dialog.set_child(Some(&root));
+    dialog.set_child(Some(&toast_overlay));
 
     let ui = AgentPanelUi {
         dialog: dialog.clone(),
+        toast_overlay,
         state: state.clone(),
         controller,
         body,
@@ -433,11 +430,32 @@ pub(super) fn open_agent_surface(
     }
 }
 
+pub(super) fn forget_agent_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Option<forktty_core::AgentSession> {
+    state
+        .model
+        .lock()
+        .ok()?
+        .clear_surface_agent_session(surface_id)
+}
+
+pub(super) fn restore_forgotten_agent_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+    agent_session: forktty_core::AgentSession,
+) -> bool {
+    state
+        .model
+        .lock()
+        .map(|mut model| model.restore_surface_agent_session(surface_id, agent_session))
+        .unwrap_or(false)
+}
+
 fn append_agent_row(
     list: &gtk::ListBox,
-    dialog: &gtk::Window,
-    state: &SocketAppState,
-    controller: Option<&Rc<RefCell<TerminalController>>>,
+    ui: &AgentPanelUi,
     row: &AgentHudRow,
     tail_labels: &mut BTreeMap<String, gtk::Label>,
 ) {
@@ -507,12 +525,12 @@ fn append_agent_row(
     // A waiting agent can be answered without leaving the HUD: the entry
     // types the reply (plus Enter) straight into the agent's terminal. The
     // hook-driven lifecycle flip back to Running then removes the entry.
-    if row.needs_input && controller.is_some() {
+    if row.needs_input && ui.controller.is_some() {
         let reply = gtk::Entry::builder()
             .placeholder_text("Reply and press Enter…")
             .build();
         reply.add_css_class("agent-reply");
-        let controller_for_reply = controller.cloned();
+        let controller_for_reply = ui.controller.clone();
         let surface_for_reply = row.surface_id.clone();
         reply.connect_activate(move |entry| {
             let text = entry.text();
@@ -546,10 +564,14 @@ fn append_agent_row(
     } else {
         "This agent session cannot be resumed safely"
     }));
+    let forget = gtk::Button::with_label("Forget");
+    forget.set_tooltip_text(Some(
+        "Stop tracking this agent session; terminal and provider data are unchanged",
+    ));
 
-    let state_for_focus = state.clone();
-    let controller_for_focus = controller.cloned();
-    let dialog_for_focus = dialog.clone();
+    let state_for_focus = ui.state.clone();
+    let controller_for_focus = ui.controller.clone();
+    let dialog_for_focus = ui.dialog.clone();
     let surface_for_focus = row.surface_id.clone();
     focus.connect_clicked(move |_| {
         if open_agent_surface(
@@ -561,9 +583,9 @@ fn append_agent_row(
         }
     });
 
-    let state_for_resume = state.clone();
-    let controller_for_resume = controller.cloned();
-    let dialog_for_resume = dialog.clone();
+    let state_for_resume = ui.state.clone();
+    let controller_for_resume = ui.controller.clone();
+    let dialog_for_resume = ui.dialog.clone();
     let surface_for_resume = row.surface_id.clone();
     resume.connect_clicked(move |button| {
         button.set_sensitive(false);
@@ -576,12 +598,66 @@ fn append_agent_row(
         );
     });
 
+    let state_for_forget = ui.state.clone();
+    let surface_for_forget = row.surface_id.clone();
+    let toast_overlay_for_forget = ui.toast_overlay.clone();
+    let ui_for_forget = ui.clone();
+    forget.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        let Some(forgotten) = forget_agent_surface(&state_for_forget, &surface_for_forget) else {
+            create_global_notification(
+                &state_for_forget,
+                "Forget Agent Failed",
+                "The agent session is no longer tracked.",
+                NotificationKind::Error,
+            );
+            button.set_sensitive(true);
+            return;
+        };
+        save_session_from_state(&state_for_forget);
+        ui_for_forget.refresh(false);
+        show_agent_forget_toast(
+            &toast_overlay_for_forget,
+            state_for_forget.clone(),
+            ui_for_forget.clone(),
+            surface_for_forget.clone(),
+            forgotten,
+        );
+    });
+
     actions.append(&focus);
     actions.append(&resume);
+    actions.append(&forget);
     container.append(&text);
     container.append(&actions);
     list_row.set_child(Some(&container));
     list.append(&list_row);
+}
+
+fn show_agent_forget_toast(
+    toast_overlay: &adw::ToastOverlay,
+    state: SocketAppState,
+    ui: AgentPanelUi,
+    surface_id: String,
+    forgotten: forktty_core::AgentSession,
+) {
+    let toast = adw::Toast::new("Agent forgotten");
+    toast.set_button_label(Some("Undo"));
+    toast.connect_button_clicked(move |toast| {
+        if restore_forgotten_agent_surface(&state, &surface_id, forgotten.clone()) {
+            save_session_from_state(&state);
+            ui.refresh(false);
+        } else {
+            create_global_notification(
+                &state,
+                "Restore Agent Failed",
+                "The agent surface is no longer available.",
+                NotificationKind::Error,
+            );
+        }
+        toast.dismiss();
+    });
+    toast_overlay.add_toast(toast);
 }
 
 fn resume_agent_from_hud(

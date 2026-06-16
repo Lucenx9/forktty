@@ -19,6 +19,7 @@ All notable changes to ForkTTY are documented here.
 - The GTK app now sends at most one anonymous daily usage ping when `telemetry.anonymous_ping = true` (the default). The payload contains only schema/kind/app/version/date, can be disabled in Settings or config, and crash uploads remain unimplemented.
 - The GTK app now checks GitHub Releases at most once per day when `updates.auto_check = true`, shows update availability in-app, opens the release page for non-AppImage installs, and can self-update writable AppImages after explicit confirmation by downloading the AppImage plus `SHA256SUMS`, verifying SHA256, and atomically replacing the current file.
 - Release AppImages can now embed AppImage update information and ship a matching `.zsync` asset when `APPIMAGE_UPDATE_INFO=1` is used during packaging; release CI enables this and includes `.zsync` in `SHA256SUMS`.
+- Agent HUD rows now include a Forget action with Undo, so stale tracked sessions can be removed from the HUD without closing the terminal or deleting provider data.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
