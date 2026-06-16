@@ -234,7 +234,8 @@ pub(super) fn apply_ghostty_events_to_model(
                                 Some("blue".to_string()),
                             );
                         }
-                        TerminalMetadataAction::Chunk { .. } => {}
+                        TerminalMetadataAction::Chunk { .. }
+                        | TerminalMetadataAction::EncodedChunk { .. } => {}
                         TerminalMetadataAction::Ignore => {}
                     }
                 }
@@ -285,6 +286,11 @@ enum TerminalMetadataAction {
         body: String,
         done: bool,
     },
+    EncodedChunk {
+        id: String,
+        body: String,
+        done: bool,
+    },
     Status,
     Ignore,
 }
@@ -317,38 +323,47 @@ fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
     let payload_type = osc99_metadata_value(metadata, "p").unwrap_or("title");
     match payload_type {
         "title" | "body" => {
-            let decoded = if osc99_metadata_value(metadata, "e") == Some("1") {
-                let Ok(bytes) =
-                    base64::engine::general_purpose::STANDARD.decode(notification_payload.trim())
-                else {
-                    return TerminalMetadataAction::Ignore;
-                };
-                let Ok(text) = String::from_utf8(bytes) else {
-                    return TerminalMetadataAction::Ignore;
-                };
-                text
-            } else {
-                notification_payload.to_string()
-            };
-            if decoded.trim().is_empty() {
-                return TerminalMetadataAction::Ignore;
-            }
             let done = osc99_metadata_value(metadata, "d") != Some("0");
+            let encoded = osc99_metadata_value(metadata, "e") == Some("1");
             if let Some(id) = osc99_metadata_value(metadata, "i").filter(|id| !id.is_empty()) {
-                TerminalMetadataAction::Chunk {
-                    id: id.to_string(),
-                    body: decoded,
-                    done,
+                if encoded {
+                    TerminalMetadataAction::EncodedChunk {
+                        id: id.to_string(),
+                        body: notification_payload.trim().to_string(),
+                        done,
+                    }
+                } else {
+                    TerminalMetadataAction::Chunk {
+                        id: id.to_string(),
+                        body: notification_payload.to_string(),
+                        done,
+                    }
                 }
-            } else if done {
-                TerminalMetadataAction::Notify(truncate_single_line(decoded.trim(), 240))
-            } else {
+            } else if !done {
                 TerminalMetadataAction::Ignore
+            } else {
+                let Some(decoded) = osc99_decoded_payload(notification_payload, encoded) else {
+                    return TerminalMetadataAction::Ignore;
+                };
+                if decoded.trim().is_empty() {
+                    return TerminalMetadataAction::Ignore;
+                }
+                TerminalMetadataAction::Notify(truncate_single_line(decoded.trim(), 240))
             }
         }
         "close" | "alive" | "?" | "icon" | "buttons" => TerminalMetadataAction::Ignore,
         _ => TerminalMetadataAction::Status,
     }
+}
+
+fn osc99_decoded_payload(payload: &str, encoded: bool) -> Option<String> {
+    if !encoded {
+        return Some(payload.to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .ok()?;
+    String::from_utf8(bytes).ok()
 }
 
 fn osc99_metadata_value<'a>(metadata: &'a str, key: &str) -> Option<&'a str> {
@@ -358,10 +373,14 @@ fn osc99_metadata_value<'a>(metadata: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|(candidate, value)| (candidate == key).then_some(value))
 }
 
+const OSC99_MAX_INCOMPLETE_CHUNKS: usize = 64;
+const OSC99_MAX_INCOMPLETE_CHUNK_TOTAL_BYTES: usize = 256 * 1024;
+
 #[derive(Debug, Default)]
 pub(super) struct TerminalMetadataNotificationLimiter {
     recent: BTreeMap<String, Instant>,
     chunks: BTreeMap<String, String>,
+    encoded_chunks: BTreeSet<String>,
 }
 
 impl TerminalMetadataNotificationLimiter {
@@ -371,17 +390,93 @@ impl TerminalMetadataNotificationLimiter {
         surface_id: &str,
         action: TerminalMetadataAction,
     ) -> TerminalMetadataAction {
-        let TerminalMetadataAction::Chunk { id, body, done } = action else {
-            return action;
+        let (id, body, done, encoded) = match action {
+            TerminalMetadataAction::Chunk { id, body, done } => (id, body, done, false),
+            TerminalMetadataAction::EncodedChunk { id, body, done } => (id, body, done, true),
+            _ => return action,
         };
         let key = format!("{workspace_id}\n{surface_id}\n{id}");
         if done {
-            let mut body = self.chunks.remove(&key).unwrap_or_default() + &body;
-            body = truncate_single_line(&body, 240);
-            return TerminalMetadataAction::Notify(body);
+            let prior = self.chunks.remove(&key);
+            let prior_encoded = self.encoded_chunks.remove(&key);
+            if prior.is_some() && prior_encoded != encoded {
+                return TerminalMetadataAction::Ignore;
+            }
+            let mut complete_body = prior.unwrap_or_default();
+            complete_body.push_str(&body);
+            return self.notify_from_chunk_body(complete_body, encoded);
         }
-        self.chunks.entry(key).or_default().push_str(&body);
+        self.store_incomplete_chunk(key, body, encoded);
         TerminalMetadataAction::Ignore
+    }
+
+    fn store_incomplete_chunk(&mut self, key: String, body: String, encoded: bool) {
+        if body.len() > OSC99_MAX_INCOMPLETE_CHUNK_TOTAL_BYTES {
+            self.remove_chunk(&key);
+            return;
+        }
+        if self
+            .chunks
+            .get(&key)
+            .is_some_and(|_| self.encoded_chunks.contains(&key) != encoded)
+        {
+            self.remove_chunk(&key);
+        }
+        let existing_len = self.chunks.get(&key).map(String::len).unwrap_or_default();
+        if existing_len + body.len() > OSC99_MAX_INCOMPLETE_CHUNK_TOTAL_BYTES {
+            self.remove_chunk(&key);
+            return;
+        }
+        while !self.chunks.contains_key(&key) && self.chunks.len() >= OSC99_MAX_INCOMPLETE_CHUNKS {
+            if !self.discard_one_chunk_except(&key) {
+                return;
+            }
+        }
+        while self.chunk_bytes() + body.len() > OSC99_MAX_INCOMPLETE_CHUNK_TOTAL_BYTES {
+            if !self.discard_one_chunk_except(&key) {
+                self.remove_chunk(&key);
+                return;
+            }
+        }
+
+        self.chunks.entry(key.clone()).or_default().push_str(&body);
+        if encoded {
+            self.encoded_chunks.insert(key);
+        } else {
+            self.encoded_chunks.remove(&key);
+        }
+    }
+
+    fn notify_from_chunk_body(&self, body: String, encoded: bool) -> TerminalMetadataAction {
+        let Some(decoded) = osc99_decoded_payload(&body, encoded) else {
+            return TerminalMetadataAction::Ignore;
+        };
+        if decoded.trim().is_empty() {
+            return TerminalMetadataAction::Ignore;
+        }
+        TerminalMetadataAction::Notify(truncate_single_line(decoded.trim(), 240))
+    }
+
+    fn chunk_bytes(&self) -> usize {
+        self.chunks.values().map(String::len).sum()
+    }
+
+    fn discard_one_chunk_except(&mut self, retained_key: &str) -> bool {
+        let Some(victim) = self
+            .chunks
+            .keys()
+            .find(|key| key.as_str() != retained_key)
+            .cloned()
+        else {
+            return false;
+        };
+        self.remove_chunk(&victim);
+        true
+    }
+
+    fn remove_chunk(&mut self, key: &str) {
+        self.chunks.remove(key);
+        self.encoded_chunks.remove(key);
     }
 
     fn should_dispatch(&mut self, workspace_id: &str, surface_id: &str) -> bool {
@@ -707,6 +802,96 @@ mod ghostty_tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].body, "Hello world");
         assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_base64_chunked_notification_decodes_after_final_chunk() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=body:e=1:d=0;SGVsb".to_string(),
+            })],
+            &mut limiter,
+        );
+        assert!(model.lock().unwrap().list_notifications().is_empty());
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=body:e=1:d=1;G8gd29ybGQ=".to_string(),
+            })],
+            &mut limiter,
+        );
+
+        let model = model.lock().unwrap();
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].body, "Hello world");
+        assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_chunk_buffer_discards_excess_incomplete_chunk_ids() {
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        for index in 0..80 {
+            assert_eq!(
+                limiter.resolve_action(
+                    "workspace",
+                    "surface",
+                    TerminalMetadataAction::Chunk {
+                        id: format!("chunk-{index}"),
+                        body: "x".repeat(4096),
+                        done: false,
+                    },
+                ),
+                TerminalMetadataAction::Ignore
+            );
+        }
+
+        let total_bytes: usize = limiter.chunks.values().map(String::len).sum();
+        assert!(limiter.chunks.len() <= OSC99_MAX_INCOMPLETE_CHUNKS);
+        assert!(total_bytes <= OSC99_MAX_INCOMPLETE_CHUNK_TOTAL_BYTES);
+    }
+
+    #[test]
+    fn ghostty_osc99_chunk_buffer_discards_oversized_partial_payload() {
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        for _ in 0..70 {
+            assert_eq!(
+                limiter.resolve_action(
+                    "workspace",
+                    "surface",
+                    TerminalMetadataAction::Chunk {
+                        id: "chunk".to_string(),
+                        body: "x".repeat(4096),
+                        done: false,
+                    },
+                ),
+                TerminalMetadataAction::Ignore
+            );
+        }
+
+        let stored_bytes = limiter
+            .chunks
+            .values()
+            .next()
+            .map(String::len)
+            .unwrap_or_default();
+        assert!(stored_bytes <= OSC99_MAX_INCOMPLETE_CHUNK_TOTAL_BYTES);
     }
 
     #[test]
