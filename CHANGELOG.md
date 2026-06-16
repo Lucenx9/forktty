@@ -23,6 +23,15 @@ All notable changes to ForkTTY are documented here.
 - Agent HUD rows now show an accent unread dot when an agent has produced output you have not viewed since last focusing it, and float those rows up within their lifecycle group — so a finished (idle) agent whose result is still unseen stands out instead of sinking to the bottom of the list.
 
 ### Fixed
+- Worktree list/status reporting now treats registered worktree paths replaced by files, symlinks, or invalid directories as unknown instead of clean/dirty.
+- Command palette and Settings selection states now use neutral row highlights instead of heavy accent rails.
+- Settings toggles are now smaller and use a subtler checked state.
+- Settings sidebar navigation is now more compact, with item descriptions kept in tooltips and accessibility labels instead of visible subtitles.
+- Settings pages now use shorter page and section copy, hiding redundant section descriptions.
+- Settings, Agent HUD, and Notifications now expose a maximize/restore titlebar control and enforce minimum window sizes, while Command Palette windows stay fixed-size.
+- Settings now labels the privacy and reset page as Privacy instead of Advanced.
+- Agent HUD now relies on its titlebar close button and Esc instead of showing a duplicate Close footer button.
+- Agent HUD now opens shorter when sessions are present, keeps its empty state unclipped, uses flatter rows, and gives row actions clearer visual hierarchy.
 - Worktree merge selected by worktree name now merges that worktree's branch even when an unrelated local branch shares the worktree's derived name (e.g. worktree `feat-a` for branch `feat/a` alongside a separate `feat-a` branch), matching the worktree the cleanliness check already validates instead of silently merging the wrong branch.
 - Config loading now normalizes a `notification_command` that tokenizes to zero words (for example an inline shell comment like `"# disabled"`) to an empty command instead of rejecting it and quarantining the entire config, so a benign command value no longer resets every other setting to defaults.
 - Nested worktree creation now appends `.worktrees/` to `.git/info/exclude` even when the existing exclude file contains non-UTF-8 bytes, instead of failing before creating the worktree.

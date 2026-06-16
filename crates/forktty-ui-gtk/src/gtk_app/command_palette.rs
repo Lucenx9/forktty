@@ -13,6 +13,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         .title("Keyboard Shortcuts")
         .transient_for(parent)
         .modal(true)
+        .resizable(false)
         .default_width(460)
         .default_height(440)
         .build();
@@ -163,6 +164,7 @@ pub(super) fn show_command_palette_with_query(
         .title("Command Palette")
         .transient_for(parent)
         .modal(true)
+        .resizable(false)
         .default_width(420)
         .default_height(360)
         .build();

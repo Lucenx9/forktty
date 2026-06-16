@@ -323,12 +323,14 @@ pub(super) fn show_agent_panel(
         .title("Agents")
         .transient_for(parent)
         .modal(true)
+        .resizable(true)
         .default_width(620)
-        .default_height(if has_agents { 460 } else { 300 })
+        .default_height(if has_agents { 320 } else { 300 })
         .build();
+    dialog.set_size_request(480, 300);
     dialog.add_css_class("ft-dialog");
     dialog.add_css_class("agent-panel");
-    apply_dialog_chrome(&dialog);
+    apply_resizable_dialog_chrome(&dialog);
     install_escape_close(&dialog);
     restore_focus_after_hide(&dialog, parent);
 
@@ -345,23 +347,11 @@ pub(super) fn show_agent_panel(
     body.add_css_class("ft-dialog-body");
     body.set_vexpand(true);
 
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    footer.add_css_class("ft-dialog-footer");
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    let close = gtk::Button::with_label("Close");
-    let dialog_for_close = dialog.clone();
-    close.connect_clicked(move |_| dialog_for_close.close());
-    footer.append(&spacer);
-    footer.append(&close);
-
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&header);
     root.append(&body);
-    root.append(&footer);
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&root));
-    dialog.set_default_widget(Some(&close));
     dialog.set_child(Some(&toast_overlay));
 
     let ui = AgentPanelUi {
@@ -556,8 +546,10 @@ fn append_agent_row(
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.set_valign(gtk::Align::Center);
     let focus = gtk::Button::with_label("Focus");
+    focus.add_css_class("agent-primary-action");
     focus.set_tooltip_text(Some("Focus this agent surface"));
     let resume = gtk::Button::with_label("Resume");
+    resume.add_css_class("agent-secondary-action");
     resume.set_sensitive(row.can_resume);
     resume.set_tooltip_text(Some(if row.can_resume {
         "Resume this agent session in a new tab"
@@ -565,6 +557,7 @@ fn append_agent_row(
         "This agent session cannot be resumed safely"
     }));
     let forget = gtk::Button::with_label("Forget");
+    forget.add_css_class("agent-danger-action");
     forget.set_tooltip_text(Some(
         "Stop tracking this agent session; terminal and provider data are unchanged",
     ));

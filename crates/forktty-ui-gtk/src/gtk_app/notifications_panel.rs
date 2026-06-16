@@ -169,12 +169,14 @@ pub(super) fn show_notification_panel(
         .title("Notifications")
         .transient_for(parent)
         .modal(true)
+        .resizable(true)
         .default_width(440)
         .default_height(if has_notifications { 420 } else { 300 })
         .build();
+    dialog.set_size_request(380, 300);
     dialog.add_css_class("ft-dialog");
     dialog.add_css_class("notification-panel");
-    apply_dialog_chrome(&dialog);
+    apply_resizable_dialog_chrome(&dialog);
     install_escape_close(&dialog);
     restore_focus_after_hide(&dialog, parent);
 

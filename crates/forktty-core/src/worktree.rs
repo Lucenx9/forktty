@@ -192,7 +192,7 @@ pub fn create(
     let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
     if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, branch_name)? {
         let setup_warning = run_setup_hook_advisory(&existing_path);
-        let mut info = info(branch_name.to_string(), existing_path, existing_name);
+        let mut info = info(&repo, branch_name.to_string(), existing_path, existing_name);
         info.setup_warning = setup_warning;
         return Ok(info);
     }
@@ -236,7 +236,7 @@ pub fn create(
         return Err(err.into());
     }
     let setup_warning = run_setup_hook_advisory(&wt_path);
-    let mut info = info(branch, wt_path, worktree_name);
+    let mut info = info(&repo, branch, wt_path, worktree_name);
     info.created = true;
     info.branch_created = branch_was_created;
     info.setup_warning = setup_warning;
@@ -257,7 +257,7 @@ pub fn attach(
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
     if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, &branch)? {
         let setup_warning = run_setup_hook_advisory(&existing_path);
-        let mut info = info(branch, existing_path, existing_name);
+        let mut info = info(&repo, branch, existing_path, existing_name);
         info.setup_warning = setup_warning;
         return Ok(info);
     }
@@ -272,7 +272,7 @@ pub fn attach(
     opts.reference(Some(&branch_ref));
     repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
     let setup_warning = run_setup_hook_advisory(&wt_path);
-    let mut info = info(branch, wt_path, worktree_name);
+    let mut info = info(&repo, branch, wt_path, worktree_name);
     info.created = true;
     info.setup_warning = setup_warning;
     Ok(info)
@@ -286,7 +286,7 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
         if let Ok(wt) = repo.find_worktree(name) {
             let wt_path = wt.path().to_path_buf();
             let branch = get_registered_worktree_branch(&repo, name, &wt_path);
-            result.push(info(branch, wt_path, name.to_string()));
+            result.push(info(&repo, branch, wt_path, name.to_string()));
         }
     }
     Ok(result)
@@ -433,7 +433,21 @@ pub fn merge(repo_path: &str, selector: &str) -> Result<String, WorktreeError> {
 }
 
 pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
+    let path = Path::new(worktree_path);
     let repo = open_repo(worktree_path)?;
+    if is_registered_worktree_path(&repo, path) {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|_| WorktreeError::NotARepo(path_label(path)))?;
+        let file_type = metadata.file_type();
+        if !file_type.is_dir() || file_type.is_symlink() {
+            return Err(WorktreeError::NotARepo(path_label(path)));
+        }
+        let registered_repo =
+            Repository::open(path).map_err(|_| WorktreeError::NotARepo(path_label(path)))?;
+        if !registered_repo.is_worktree() {
+            return Err(WorktreeError::NotARepo(path_label(path)));
+        }
+    }
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(false);
     let statuses = repo.statuses(Some(&mut opts))?;
@@ -447,6 +461,10 @@ pub fn status(worktree_path: &str) -> Result<String, WorktreeError> {
         }
     }
     Ok(if has_changes { "dirty" } else { "clean" }.to_string())
+}
+
+fn path_label(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 pub fn repository_root(repo_path: &str) -> Result<PathBuf, WorktreeError> {
@@ -534,8 +552,8 @@ fn open_worktree_admin_repo(path: &str) -> Result<Repository, WorktreeError> {
     Ok(repo)
 }
 
-fn info(branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
-    let status = worktree_status_label(&path);
+fn info(repo: &Repository, branch: String, path: PathBuf, worktree_name: String) -> WorktreeInfo {
+    let status = worktree_status_label(repo, &worktree_name, &path);
     WorktreeInfo {
         name: branch.clone(),
         path: path.to_string_lossy().to_string(),
@@ -564,12 +582,44 @@ fn run_setup_hook_advisory(wt_path: &Path) -> Option<String> {
     }
 }
 
-fn worktree_status_label(path: &Path) -> String {
+fn worktree_status_label(repo: &Repository, worktree_name: &str, path: &Path) -> String {
     match std::fs::symlink_metadata(path) {
-        Ok(_) => status(&path.to_string_lossy()).unwrap_or_else(|_| "unknown".to_string()),
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            if !file_type.is_dir() || file_type.is_symlink() {
+                return "unknown".to_string();
+            }
+            let Ok(path) = verify_linked_worktree_path(repo, worktree_name, path) else {
+                return "unknown".to_string();
+            };
+            status(&path.to_string_lossy()).unwrap_or_else(|_| "unknown".to_string())
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => "missing".to_string(),
         Err(_) => "unknown".to_string(),
     }
+}
+
+fn is_registered_worktree_path(repo: &Repository, path: &Path) -> bool {
+    let path = absolute_path(path);
+    repo.worktrees()
+        .ok()
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.ok().flatten())
+                .filter_map(|name| repo.find_worktree(name).ok())
+                .any(|wt| absolute_path(wt.path()) == path)
+        })
+        .unwrap_or(false)
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn get_worktree_branch(worktree_path: &Path) -> String {
@@ -1440,6 +1490,86 @@ mod tests {
         assert_eq!(list(repo_path).unwrap().len(), 1);
     }
 
+    fn only_worktree_status(repo_path: &str) -> String {
+        let listed = list(repo_path).unwrap();
+        assert_eq!(listed.len(), 1);
+        listed[0].status.clone()
+    }
+
+    #[test]
+    fn list_reports_unknown_when_registered_worktree_path_is_regular_file() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let info = create(repo_path, "file-replaced-status", "nested").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+        fs::write(&info.path, "not a worktree directory").unwrap();
+
+        assert_eq!(only_worktree_status(repo_path), "unknown");
+        assert!(status(&info.path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_reports_unknown_when_registered_worktree_path_is_symlink_to_file() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let info = create(repo_path, "symlink-file-status", "nested").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+        let outside = dir.path().join("outside-file");
+        fs::write(&outside, "not a worktree directory").unwrap();
+        symlink(&outside, &info.path).unwrap();
+
+        assert_eq!(only_worktree_status(repo_path), "unknown");
+        assert!(status(&info.path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_reports_unknown_when_registered_worktree_path_is_symlink_to_outside_directory() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let info = create(repo_path, "symlink-dir-status", "nested").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+        let outside = dir.path().join("outside-dir");
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, &info.path).unwrap();
+
+        assert_eq!(only_worktree_status(repo_path), "unknown");
+        assert!(status(&info.path).is_err());
+    }
+
+    #[test]
+    fn list_reports_unknown_when_registered_worktree_path_is_empty_directory() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let info = create(repo_path, "empty-dir-status", "nested").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+        fs::create_dir(&info.path).unwrap();
+
+        assert_eq!(only_worktree_status(repo_path), "unknown");
+        assert!(status(&info.path).is_err());
+    }
+
+    #[test]
+    fn list_reports_missing_when_registered_worktree_path_is_missing() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let info = create(repo_path, "missing-status", "nested").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+
+        assert_eq!(only_worktree_status(repo_path), "missing");
+    }
+
+    #[test]
+    fn list_reports_clean_for_valid_clean_worktree() {
+        let dir = make_repo();
+        let repo_path = dir.path().to_str().unwrap();
+        let info = create(repo_path, "clean-status", "nested").unwrap();
+
+        assert_eq!(only_worktree_status(repo_path), "clean");
+        assert_eq!(status(&info.path).unwrap(), "clean");
+    }
+
     #[test]
     fn nested_worktree_layout_does_not_dirty_target_checkout() {
         let dir = make_repo();
@@ -1958,6 +2088,19 @@ mod tests {
 
         fs::write(nested.join("new.txt"), "dirty\n").unwrap();
         assert_eq!(status(nested.to_str().unwrap()).unwrap(), "dirty");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn status_discovers_repo_from_symlink_to_normal_repo_subdirectory() {
+        let dir = make_repo();
+        let nested = dir.path().join("src/deep");
+        fs::create_dir_all(&nested).unwrap();
+        let links = tempfile::tempdir().unwrap();
+        let link = links.path().join("linked-src");
+        symlink(&nested, &link).unwrap();
+
+        assert_eq!(status(link.to_str().unwrap()).unwrap(), "clean");
     }
 
     #[cfg(unix)]

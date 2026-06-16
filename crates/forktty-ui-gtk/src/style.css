@@ -1796,7 +1796,7 @@ window.ft-dialog,
 }
 
 .settings-nav {
-  min-width: 216px;
+  min-width: 192px;
   padding: 12px 10px 16px 10px;
   background: #141414;
   border-right: 1px solid #292929;
@@ -1812,8 +1812,8 @@ window.ft-dialog,
 }
 
 .settings-nav-item {
-  min-height: 50px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 9px;
   border: 1px solid transparent;
   border-radius: 7px;
   color: #8a8a8a;
@@ -1827,10 +1827,10 @@ window.ft-dialog,
 }
 
 .settings-nav-item:checked {
-  background: #1b1b1b;
-  border-color: #292929;
+  background: #232323;
+  border-color: #343434;
   color: #d7d7d7;
-  box-shadow: inset 2px 0 0 #e88745, 0 1px 0 alpha(#000000, 0.18);
+  box-shadow: inset 0 1px 0 alpha(#d7d7d7, 0.04), 0 1px 0 alpha(#000000, 0.18);
 }
 
 .settings-nav-icon {
@@ -1839,7 +1839,7 @@ window.ft-dialog,
 }
 
 .settings-nav-item:checked .settings-nav-icon {
-  color: #e88745;
+  color: #b7b7b7;
 }
 
 .settings-nav-copy {
@@ -1848,18 +1848,8 @@ window.ft-dialog,
 
 .settings-nav-label {
   color: inherit;
-  font-size: 0.88em;
+  font-size: 0.90em;
   font-weight: 700;
-}
-
-.settings-nav-subtitle {
-  color: #626262;
-  font-size: 0.76em;
-  font-weight: 500;
-}
-
-.settings-nav-item:checked .settings-nav-subtitle {
-  color: #8a8a8a;
 }
 
 .settings-stack {
@@ -1962,7 +1952,8 @@ window.ft-dialog,
 }
 
 .settings-list row:focus-within {
-  box-shadow: inset 2px 0 0 #e88745;
+  background: #202020;
+  box-shadow: inset 0 0 0 1px alpha(#d7d7d7, 0.06);
 }
 
 .settings-list row image {
@@ -2046,8 +2037,31 @@ window.ft-dialog,
 }
 
 .settings-list switch {
-  min-width: 44px;
-  min-height: 24px;
+  min-width: 36px;
+  min-height: 20px;
+  padding: 2px;
+  background: #252525;
+  border-color: #3a3a3a;
+}
+
+.settings-list switch:checked {
+  background: #2f2a26;
+  border-color: #7a553b;
+}
+
+.settings-list switch slider {
+  min-width: 14px;
+  min-height: 14px;
+  background: #8a8a8a;
+  box-shadow: none;
+}
+
+.settings-list switch:checked slider {
+  background: #e88745;
+}
+
+.settings-list switch:focus-visible {
+  outline-width: 1px;
 }
 
 .ft-form-row {
@@ -2184,8 +2198,7 @@ entry.search.command-search:focus-within,
 }
 
 /* Suppress the global 2px accent outline on command-list rows; the
- * `:selected` inset rail below already marks the active item without
- * the noisier ring. */
+ * selected fill already marks the active item without the noisier ring. */
 .command-list row:focus-visible {
   outline: none;
 }
@@ -2195,8 +2208,8 @@ entry.search.command-search:focus-within,
 }
 
 .command-list row:selected {
-  background: #232323;
-  box-shadow: inset 2px 0 0 #e88745;
+  background: #262626;
+  box-shadow: inset 0 0 0 1px #343434;
 }
 
 .command-list row:selected:hover {
@@ -2406,7 +2419,7 @@ entry.search.command-search:focus-within,
 }
 
 .agent-panel .ft-dialog-body {
-  padding: 8px 14px 14px 14px;
+  padding: 8px 14px 18px 14px;
 }
 
 .agent-list {
@@ -2416,21 +2429,25 @@ entry.search.command-search:focus-within,
 .agent-list row {
   background: transparent;
   border-radius: 7px;
-  margin: 0 0 6px 0;
+  margin: 0 0 4px 0;
   padding: 0;
 }
 
 .agent-row {
-  padding: 10px 10px;
-  border: 1px solid #292929;
-  border-radius: 7px;
-  background: #1b1b1b;
+  padding: 9px 10px;
+  border: 1px solid #242424;
+  border-radius: 6px;
+  background: #191919;
+}
+
+.agent-list row:hover .agent-row {
+  border-color: #303030;
+  background: #1d1d1d;
 }
 
 .agent-row.needs-input {
   border-color: #3b2a1f;
   background: #1f1b18;
-  box-shadow: inset 3px 0 0 #e88745;
 }
 
 .agent-row-top {
@@ -2464,9 +2481,10 @@ entry.search.command-search:focus-within,
   color: #8f8f8f;
   font-family: monospace;
   font-size: 0.78em;
-  padding: 3px 6px;
+  padding: 2px 6px;
   border-radius: 4px;
-  background: #141414;
+  background: #181818;
+  border: 1px solid #232323;
 }
 
 /* Needs-input rows show what the agent is waiting on, not raw output. */
@@ -2512,6 +2530,36 @@ entry.agent-reply {
 .agent-lifecycle.ended {
   color: #8a8a8a;
   background: #232323;
+}
+
+button.agent-primary-action {
+  color: #d7d7d7;
+  background: #232323;
+  border-color: #3a3a3a;
+  box-shadow: none;
+  font-weight: 700;
+}
+
+button.agent-primary-action:hover {
+  background: #282828;
+  border-color: #4a4a4a;
+}
+
+button.agent-secondary-action,
+button.agent-danger-action {
+  background: transparent;
+  border-color: #303030;
+  box-shadow: none;
+}
+
+button.agent-danger-action {
+  color: #b98585;
+}
+
+button.agent-danger-action:hover {
+  color: #d36b6b;
+  background: #251b1b;
+  border-color: #4a2a2a;
 }
 
 /* --------------------------------------------------------------------------

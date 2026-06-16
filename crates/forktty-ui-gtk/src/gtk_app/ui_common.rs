@@ -168,10 +168,37 @@ pub(super) fn labeled_icon_button_parts(
 }
 
 pub(super) fn apply_dialog_chrome(dialog: &gtk::Window) {
+    apply_dialog_chrome_inner(dialog, false);
+}
+
+pub(super) fn apply_resizable_dialog_chrome(dialog: &gtk::Window) {
+    apply_dialog_chrome_inner(dialog, true);
+}
+
+fn apply_dialog_chrome_inner(dialog: &gtk::Window, show_maximize: bool) {
     let titlebar = gtk::HeaderBar::new();
     titlebar.set_show_title_buttons(false);
     titlebar.add_css_class("ft-dialog-titlebar");
     titlebar.set_title_widget(Some(&gtk::Label::new(None)));
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+    if show_maximize {
+        let maximize = gtk::Button::builder()
+            .icon_name("forktty-window-maximize-symbolic")
+            .tooltip_text("Maximize or Restore")
+            .build();
+        maximize.add_css_class("flat");
+        maximize.add_css_class("ft-dialog-close");
+        set_accessible_button_text(&maximize, "Maximize or Restore", None);
+        let dialog_for_maximize = dialog.clone();
+        maximize.connect_clicked(move |_| {
+            if dialog_for_maximize.is_maximized() {
+                dialog_for_maximize.unmaximize();
+            } else {
+                dialog_for_maximize.maximize();
+            }
+        });
+        controls.append(&maximize);
+    }
     let close = gtk::Button::builder()
         .icon_name("forktty-close-symbolic")
         .tooltip_text("Close")
@@ -181,7 +208,8 @@ pub(super) fn apply_dialog_chrome(dialog: &gtk::Window) {
     set_accessible_button_text(&close, "Close", Some("Esc"));
     let dialog_for_close = dialog.clone();
     close.connect_clicked(move |_| dialog_for_close.close());
-    titlebar.pack_end(&close);
+    controls.append(&close);
+    titlebar.pack_end(&controls);
     dialog.set_titlebar(Some(&titlebar));
 }
 
