@@ -199,7 +199,11 @@ pub(super) fn apply_ghostty_events_to_model(
             }
             GhosttyEvent::Metadata(metadata) => {
                 if let Ok(mut model) = model.lock() {
-                    match terminal_metadata_action(metadata) {
+                    match metadata_notification_limiter.resolve_action(
+                        workspace_id,
+                        surface_id,
+                        terminal_metadata_action(metadata),
+                    ) {
                         TerminalMetadataAction::Notify(body) => {
                             if model.surface(surface_id).is_none() {
                                 continue;
@@ -230,6 +234,7 @@ pub(super) fn apply_ghostty_events_to_model(
                                 Some("blue".to_string()),
                             );
                         }
+                        TerminalMetadataAction::Chunk { .. } => {}
                         TerminalMetadataAction::Ignore => {}
                     }
                 }
@@ -275,6 +280,11 @@ pub(super) fn apply_ghostty_events_to_model(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TerminalMetadataAction {
     Notify(String),
+    Chunk {
+        id: String,
+        body: String,
+        done: bool,
+    },
     Status,
     Ignore,
 }
@@ -304,9 +314,6 @@ fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
     let Some((metadata, notification_payload)) = payload.split_once(';') else {
         return TerminalMetadataAction::Status;
     };
-    if osc99_metadata_value(metadata, "d").is_some_and(|done| done == "0") {
-        return TerminalMetadataAction::Ignore;
-    }
     let payload_type = osc99_metadata_value(metadata, "p").unwrap_or("title");
     match payload_type {
         "title" | "body" => {
@@ -323,9 +330,21 @@ fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
             } else {
                 notification_payload.to_string()
             };
-            non_empty_terminal_metadata_payload(&decoded)
-                .map(TerminalMetadataAction::Notify)
-                .unwrap_or(TerminalMetadataAction::Ignore)
+            if decoded.trim().is_empty() {
+                return TerminalMetadataAction::Ignore;
+            }
+            let done = osc99_metadata_value(metadata, "d") != Some("0");
+            if let Some(id) = osc99_metadata_value(metadata, "i").filter(|id| !id.is_empty()) {
+                TerminalMetadataAction::Chunk {
+                    id: id.to_string(),
+                    body: decoded,
+                    done,
+                }
+            } else if done {
+                TerminalMetadataAction::Notify(truncate_single_line(decoded.trim(), 240))
+            } else {
+                TerminalMetadataAction::Ignore
+            }
         }
         "close" | "alive" | "?" | "icon" | "buttons" => TerminalMetadataAction::Ignore,
         _ => TerminalMetadataAction::Status,
@@ -342,9 +361,29 @@ fn osc99_metadata_value<'a>(metadata: &'a str, key: &str) -> Option<&'a str> {
 #[derive(Debug, Default)]
 pub(super) struct TerminalMetadataNotificationLimiter {
     recent: BTreeMap<String, Instant>,
+    chunks: BTreeMap<String, String>,
 }
 
 impl TerminalMetadataNotificationLimiter {
+    fn resolve_action(
+        &mut self,
+        workspace_id: &str,
+        surface_id: &str,
+        action: TerminalMetadataAction,
+    ) -> TerminalMetadataAction {
+        let TerminalMetadataAction::Chunk { id, body, done } = action else {
+            return action;
+        };
+        let key = format!("{workspace_id}\n{surface_id}\n{id}");
+        if done {
+            let mut body = self.chunks.remove(&key).unwrap_or_default() + &body;
+            body = truncate_single_line(&body, 240);
+            return TerminalMetadataAction::Notify(body);
+        }
+        self.chunks.entry(key).or_default().push_str(&body);
+        TerminalMetadataAction::Ignore
+    }
+
     fn should_dispatch(&mut self, workspace_id: &str, surface_id: &str) -> bool {
         let now = Instant::now();
         self.recent.retain(|_, last_seen| {
@@ -629,6 +668,44 @@ mod ghostty_tests {
 
         let model = model.lock().unwrap();
         assert!(model.list_notifications().is_empty());
+        assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_chunked_notification_accumulates_until_done() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=body:d=0;Hello ".to_string(),
+            })],
+            &mut limiter,
+        );
+        assert!(model.lock().unwrap().list_notifications().is_empty());
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=body:d=1;world".to_string(),
+            })],
+            &mut limiter,
+        );
+
+        let model = model.lock().unwrap();
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].body, "Hello world");
         assert!(model.list_status(&workspace_id).is_empty());
     }
 

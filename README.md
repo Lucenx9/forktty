@@ -471,7 +471,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - libadwaita 1.4+ are required by the native terminal integration.
 - The AppImage bundles GTK4/libadwaita/Ghostty but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
 - PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
-- OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads are decoded, while update/close controls, activation reports, buttons, icon payloads, and full chunk aggregation remain partial.
+- OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded, while update/close controls, activation reports, buttons, icon payloads, and broader chunk lifecycle behavior remain partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
 - Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback across restarts, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
