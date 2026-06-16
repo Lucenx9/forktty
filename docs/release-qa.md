@@ -11,6 +11,7 @@ cargo run -p xtask -- check
 cargo test --workspace --no-default-features --features gtk-ghostty
 cargo clippy --workspace --no-default-features --features gtk-ghostty -- -D warnings
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
+scripts/gtk-ghostty-smoke.sh
 cargo test -p forktty-ui-gtk --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
@@ -42,6 +43,13 @@ Manual QA below should focus on runtime integration that headless tests cannot
 fully prove (GTK/Ghostty lifecycle, desktop environment integration, and
 packaging/runtime service availability). Browser panes are source-only and
 experimental in this alpha; they have a separate opt-in smoke section.
+
+`scripts/gtk-ghostty-smoke.sh` runs a short GTK/Ghostty launch in a fresh
+DBus session against isolated config/data/state/socket paths under
+`$XDG_RUNTIME_DIR`, and verifies socket ping, surface listing, terminal
+input/readback, and split creation. The temporary config disables desktop
+notifications and telemetry so the smoke does not depend on host notification
+services. It uses the current display or `xvfb-run` when available.
 
 ## Manual Runtime Smoke
 

@@ -6,9 +6,11 @@ All notable changes to ForkTTY are documented here.
 
 ### Changed
 - Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
+- Repeated Ghostty `font-family` entries now build a Pango fallback list, and an empty `font-family =` resets the list.
 - Terminal panes now support runtime zoom with `Ctrl++`/`Ctrl+=`, `Ctrl+-`, and `Ctrl+0` without adding persistent font settings.
 
 ### Fixed
+- Ghostty config and theme appearance loading now enforces the oversized-file guard before reading or applying colors.
 - Sidebar badges, duplicate GTK spawns, closed-terminal status handling, corrupt tab leaves, and scrollback settings copy now handle stale or delayed terminal state without misleading UI or backend readiness loss.
 - Terminal panes now size rows from one shared widget-measured cell size plus a small vertical guard, preventing agent TUIs from being clipped after resizes without inflating terminal line spacing.
 - Terminal styled text runs now fit the terminal cell grid, preventing colored inline-code spans from leaving visual gaps between words.

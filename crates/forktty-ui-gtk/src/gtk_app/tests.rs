@@ -2892,6 +2892,31 @@ fn ghostty_config_text_overrides_terminal_font_and_colors() {
 }
 
 #[test]
+fn ghostty_config_text_accumulates_font_family_fallbacks_and_resets() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r#"
+        font-family = JetBrains Mono
+        font-family = Symbols Nerd Font
+        "#,
+    );
+
+    assert_eq!(
+        appearance.font_family.as_deref(),
+        Some("JetBrains Mono, Symbols Nerd Font")
+    );
+
+    let reset = ghostty_terminal_appearance_from_text(
+        r#"
+        font-family = JetBrains Mono
+        font-family =
+        font-family = Menlo
+        "#,
+    );
+
+    assert_eq!(reset.font_family.as_deref(), Some("Menlo"));
+}
+
+#[test]
 fn ghostty_scrollback_limit_overrides_legacy_scrollback_lines() {
     let mut config = config::AppConfig::default();
     config.appearance.scrollback_lines = 777;
@@ -2958,6 +2983,47 @@ fn ghostty_config_loader_resolves_theme_and_recursive_config_files() {
     assert_eq!(appearance.colors.ansi[0], "#000001");
     assert_eq!(appearance.colors.ansi[9], "#0000ff");
     assert_eq!(appearance.colors.highlight, "#333333");
+}
+
+#[test]
+fn ghostty_config_loader_ignores_oversized_config_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.ghostty");
+    let huge_config = format!("background = #123456\n{}", "#".repeat(2 * 1024 * 1024));
+    std::fs::write(&config_path, huge_config).unwrap();
+
+    let appearance = ghostty_terminal_appearance_from_paths_for_test(
+        &[config_path],
+        &[],
+        GhosttyColorScheme::Dark,
+    );
+
+    assert_eq!(
+        appearance.colors.background,
+        TerminalColors::forktty_dark().background
+    );
+}
+
+#[test]
+fn ghostty_config_loader_ignores_oversized_theme_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let themes = dir.path().join("themes");
+    std::fs::create_dir_all(&themes).unwrap();
+    let huge_theme = format!("background = #123456\n{}", "#".repeat(2 * 1024 * 1024));
+    std::fs::write(themes.join("Huge Theme"), huge_theme).unwrap();
+    let config_path = dir.path().join("config.ghostty");
+    std::fs::write(&config_path, "theme = Huge Theme\n").unwrap();
+
+    let appearance = ghostty_terminal_appearance_from_paths_for_test(
+        &[config_path],
+        &[themes],
+        GhosttyColorScheme::Dark,
+    );
+
+    assert_eq!(
+        appearance.colors.background,
+        TerminalColors::forktty_dark().background
+    );
 }
 
 #[test]

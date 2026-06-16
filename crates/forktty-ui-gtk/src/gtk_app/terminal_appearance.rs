@@ -15,6 +15,7 @@ const TERMINAL_ZOOM_MAX_LEVEL: i32 = 12;
 // ponytail: mirrors forktty-terminal's byte-per-line budget; expose byte
 // scrollback in GhosttyCoreOptions if exact Ghostty scrollback-limit matters.
 const GHOSTTY_SCROLLBACK_BYTES_PER_LINE: usize = 2048;
+const MAX_GHOSTTY_APPEARANCE_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_TERMINAL_SCROLLBACK_LINES: usize = 500_000;
 
 pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
@@ -295,13 +296,7 @@ fn load_ghostty_config_file(
     if mark_loaded_path && !loaded_recursive_config_paths.insert(path.clone()) {
         return;
     }
-    let Ok(metadata) = std::fs::metadata(&path) else {
-        return;
-    };
-    if !metadata.is_file() || metadata.len() == 0 {
-        return;
-    }
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Some(text) = read_ghostty_appearance_file(&path) else {
         return;
     };
 
@@ -399,7 +394,7 @@ impl Default for GhosttyTerminalAppearance {
 impl GhosttyTerminalAppearance {
     fn apply(&mut self, key: &str, value: String) {
         match key {
-            "font-family" => self.font_family = (!value.is_empty()).then_some(value),
+            "font-family" => self.apply_font_family(value),
             "font-size" => {
                 self.font_size_pt = value
                     .parse::<f64>()
@@ -431,6 +426,20 @@ impl GhosttyTerminalAppearance {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn apply_font_family(&mut self, value: String) {
+        if value.is_empty() {
+            self.font_family = None;
+            return;
+        }
+        match &mut self.font_family {
+            Some(existing) => {
+                existing.push_str(", ");
+                existing.push_str(&value);
+            }
+            None => self.font_family = Some(value),
         }
     }
 }
@@ -473,7 +482,7 @@ fn load_ghostty_theme(
 
     let expanded = expand_home_path(PathBuf::from(&resolved));
     if expanded.is_absolute() {
-        if let Ok(text) = std::fs::read_to_string(expanded) {
+        if let Some(text) = read_ghostty_appearance_file(&expanded) {
             apply_ghostty_terminal_appearance_text(appearance, &text);
         }
         return;
@@ -482,12 +491,23 @@ fn load_ghostty_theme(
     for candidate in ghostty_theme_name_candidates(&resolved) {
         for dir in theme_dirs {
             let path = dir.join(&candidate);
-            if let Ok(text) = std::fs::read_to_string(path) {
+            if let Some(text) = read_ghostty_appearance_file(&path) {
                 apply_ghostty_terminal_appearance_text(appearance, &text);
                 return;
             }
         }
     }
+}
+
+fn read_ghostty_appearance_file(path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_GHOSTTY_APPEARANCE_FILE_BYTES
+    {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
 }
 
 fn resolve_ghostty_theme_name(raw_name: &str, color_scheme: GhosttyColorScheme) -> String {
