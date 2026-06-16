@@ -66,6 +66,7 @@ impl TerminalBackend for GtkTerminalBackend {
                 shell: request.shell.clone(),
                 cols: 80,
                 rows: 24,
+                pid: None,
             },
         );
         drop(surfaces);
@@ -264,6 +265,18 @@ impl TerminalBackend for GtkTerminalBackend {
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?
             .remove(surface_id);
+        Ok(())
+    }
+
+    fn mark_surface_pid(&self, surface_id: &str, pid: u32) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get_mut(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        surface.pid = Some(pid);
         Ok(())
     }
 

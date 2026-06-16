@@ -66,6 +66,7 @@ impl TerminalBackend for SecondSpawnFailsBackend {
                     shell: request.shell,
                     cols: 80,
                     rows: 24,
+                    pid: None,
                 },
             );
         Ok(())
@@ -118,6 +119,7 @@ impl TerminalBackend for CloseFailsBackend {
                     shell: request.shell,
                     cols: 80,
                     rows: 24,
+                    pid: None,
                 },
             );
         Ok(())
@@ -190,6 +192,7 @@ impl TerminalBackend for CloseObservesModelLockBackend {
                     shell: request.shell,
                     cols: 80,
                     rows: 24,
+                    pid: None,
                 },
             );
         Ok(())

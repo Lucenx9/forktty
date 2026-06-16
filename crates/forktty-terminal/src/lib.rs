@@ -125,6 +125,8 @@ pub struct TerminalSurfaceState {
     pub shell: String,
     pub cols: u16,
     pub rows: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -271,6 +273,9 @@ pub trait TerminalBackend: Send + Sync {
     fn mark_surface_not_ready(&self, _surface_id: &str) -> Result<(), TerminalError> {
         Ok(())
     }
+    fn mark_surface_pid(&self, _surface_id: &str, _pid: u32) -> Result<(), TerminalError> {
+        Ok(())
+    }
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.close(surface_id)
     }
@@ -362,6 +367,7 @@ impl TerminalBackend for HeadlessTerminalBackend {
                     shell: request.shell,
                     cols: 80,
                     rows: 24,
+                    pid: None,
                 },
                 args: request.args,
                 sent_text: Vec::new(),
