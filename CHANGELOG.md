@@ -6,6 +6,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Changed
 - Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
+- Repeated Ghostty `font-family` entries now build a Pango fallback list, and an empty `font-family =` resets the list.
 - Terminal panes now support runtime zoom with `Ctrl++`/`Ctrl+=`, `Ctrl+-`, and `Ctrl+0` without adding persistent font settings.
 
 ### Fixed

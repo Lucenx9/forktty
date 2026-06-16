@@ -394,7 +394,7 @@ impl Default for GhosttyTerminalAppearance {
 impl GhosttyTerminalAppearance {
     fn apply(&mut self, key: &str, value: String) {
         match key {
-            "font-family" => self.font_family = (!value.is_empty()).then_some(value),
+            "font-family" => self.apply_font_family(value),
             "font-size" => {
                 self.font_size_pt = value
                     .parse::<f64>()
@@ -426,6 +426,20 @@ impl GhosttyTerminalAppearance {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn apply_font_family(&mut self, value: String) {
+        if value.is_empty() {
+            self.font_family = None;
+            return;
+        }
+        match &mut self.font_family {
+            Some(existing) => {
+                existing.push_str(", ");
+                existing.push_str(&value);
+            }
+            None => self.font_family = Some(value),
         }
     }
 }

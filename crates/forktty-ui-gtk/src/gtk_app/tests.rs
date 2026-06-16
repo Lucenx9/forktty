@@ -2892,6 +2892,31 @@ fn ghostty_config_text_overrides_terminal_font_and_colors() {
 }
 
 #[test]
+fn ghostty_config_text_accumulates_font_family_fallbacks_and_resets() {
+    let appearance = ghostty_terminal_appearance_from_text(
+        r#"
+        font-family = JetBrains Mono
+        font-family = Symbols Nerd Font
+        "#,
+    );
+
+    assert_eq!(
+        appearance.font_family.as_deref(),
+        Some("JetBrains Mono, Symbols Nerd Font")
+    );
+
+    let reset = ghostty_terminal_appearance_from_text(
+        r#"
+        font-family = JetBrains Mono
+        font-family =
+        font-family = Menlo
+        "#,
+    );
+
+    assert_eq!(reset.font_family.as_deref(), Some("Menlo"));
+}
+
+#[test]
 fn ghostty_scrollback_limit_overrides_legacy_scrollback_lines() {
     let mut config = config::AppConfig::default();
     config.appearance.scrollback_lines = 777;
