@@ -743,6 +743,7 @@ name = "forktty-ui-gtk"
 version = "0.2.0-alpha.13"
 dependencies = [
  "async-channel",
+ "base64",
  "chrono",
  "dirs",
  "forktty-core",

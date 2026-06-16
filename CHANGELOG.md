@@ -18,6 +18,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Ghostty config and theme appearance loading now enforces the oversized-file guard before reading or applying colors.
+- OSC 99 terminal notifications now decode `e=1` base64 title/body payloads instead of dropping them as unsupported metadata.
 - Sidebar badges, duplicate GTK spawns, closed-terminal status handling, corrupt tab leaves, and scrollback settings copy now handle stale or delayed terminal state without misleading UI or backend readiness loss.
 - Terminal panes now size rows from one shared widget-measured cell size plus a small vertical guard, preventing agent TUIs from being clipped after resizes without inflating terminal line spacing.
 - Terminal styled text runs now fit the terminal cell grid, preventing colored inline-code spans from leaving visual gaps between words.

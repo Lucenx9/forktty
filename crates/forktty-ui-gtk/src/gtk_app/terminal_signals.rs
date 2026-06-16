@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine;
 #[cfg(feature = "gtk-ghostty")]
 use forktty_terminal::ghostty::events::{GhosttyEvent, TerminalMetadataEvent};
 
@@ -308,12 +309,24 @@ fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
     }
     let payload_type = osc99_metadata_value(metadata, "p").unwrap_or("title");
     match payload_type {
-        "title" | "body" if osc99_metadata_value(metadata, "e") == Some("1") => {
-            TerminalMetadataAction::Status
+        "title" | "body" => {
+            let decoded = if osc99_metadata_value(metadata, "e") == Some("1") {
+                let Ok(bytes) =
+                    base64::engine::general_purpose::STANDARD.decode(notification_payload.trim())
+                else {
+                    return TerminalMetadataAction::Ignore;
+                };
+                let Ok(text) = String::from_utf8(bytes) else {
+                    return TerminalMetadataAction::Ignore;
+                };
+                text
+            } else {
+                notification_payload.to_string()
+            };
+            non_empty_terminal_metadata_payload(&decoded)
+                .map(TerminalMetadataAction::Notify)
+                .unwrap_or(TerminalMetadataAction::Ignore)
         }
-        "title" | "body" => non_empty_terminal_metadata_payload(notification_payload)
-            .map(TerminalMetadataAction::Notify)
-            .unwrap_or(TerminalMetadataAction::Ignore),
         "close" | "alive" | "?" | "icon" | "buttons" => TerminalMetadataAction::Ignore,
         _ => TerminalMetadataAction::Status,
     }
@@ -536,6 +549,32 @@ mod ghostty_tests {
             &surface_id,
             &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
                 payload: ";Hello world".to_string(),
+            })],
+        );
+
+        let model = model.lock().unwrap();
+        let notifications = model.list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title, "Terminal notification");
+        assert_eq!(notifications[0].body, "Hello world");
+        assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_base64_notification_creates_surface_notification() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_events(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "e=1:p=body;SGVsbG8gd29ybGQ=".to_string(),
             })],
         );
 

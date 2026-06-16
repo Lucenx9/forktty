@@ -391,7 +391,7 @@ Residual risks:
   directories still fail inside that CLI.
 - `agent.reclaim.plan` is advisory only; actual suspend/kill/reopen behavior is
   not implemented yet.
-- Advanced OSC 99 compatibility remains partial; base64 payloads, notification update/close controls, activation reports, buttons, and full chunk aggregation are not yet implemented.
+- Advanced OSC 99 compatibility remains partial; title/body base64 payloads are decoded, but notification update/close controls, activation reports, buttons, icon payloads, and full chunk aggregation are not yet implemented.
 
 ## Test Strategy
 
