@@ -6,7 +6,8 @@ All notable changes to ForkTTY are documented here.
 
 ### Added
 - Experimental embedded Ghostty panes now snapshot their scrollback tail into
-  the session (on child exit and via a throttled poll) when
+  the session (on child exit, on programmatic close/restart, and via a throttled
+  poll) when
   `appearance.persistent_scrollback_lines > 0`, matching classic panes, so a
   later session save keeps recent embedded output. Restoring that scrollback on
   respawn/session restore is wired through an optional
@@ -15,10 +16,10 @@ All notable changes to ForkTTY are documented here.
   (an IO-thread `inject_output` mailbox message routed to
   `Termio.processOutput`), so an embedding library built from the current pin
   restores embedded scrollback; libraries built before it degrade to a safe
-  no-op. The end-to-end restore is still pending verification on the Ghostty GTK
-  Probe runner because the embedding `.so` cannot be linked on the local
-  toolchain. See `docs/ghostty-renderer-embedding-spike.md` for the Ghostty-side
-  design.
+  no-op. The Ghostty GTK Probe now builds the embedding `.so` on Ubuntu and
+  verifies an embedded pane restart preserves a pre-restart scrollback marker in
+  `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
+  Ghostty-side design.
 - Bumped the vendored Ghostty pin to
   `2d6400f56af4af03cc59ac5b87754de717cf6bdc`, which adds the
   `ghostty_gtk_surface_restore_scrollback` GTK embedding ABI.

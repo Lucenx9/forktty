@@ -92,13 +92,12 @@ pinned fork exports it: an IO-thread `inject_output` mailbox message routed to
 GTK-main-thread feed was rejected — it races the IO thread's PTY reader). The
 design is detailed in
 [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md). The
-embedded restore round-trip is not yet probe-verified end-to-end: the
-embedding `.so` cannot be built on the current local toolchain (Zig 0.15.2
-linker bug, see the spike doc), so the symbol's runtime effect must be confirmed
-on the Ubuntu runner via the **Ghostty GTK Probe** workflow before parity row 3
-flips to `pass`. A library built before this symbol degrades to a safe no-op.
-The snapshot half (reading the tail through `ghostty_gtk_surface_read_text` into
-the session) already works.
+embedded restore round-trip is verified by the **Ghostty GTK Probe** workflow:
+the Ubuntu runner builds the `.so`, restarts an embedded pane, and confirms a
+pre-restart marker is present in `capture_tail` after restore. A library built
+before this symbol degrades to a safe no-op. The snapshot half reads the tail
+through `ghostty_gtk_surface_read_text` into the session on child exit,
+programmatic close/restart, and a throttled poll.
 
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. When `scripts/ghostty-gtk-lib-probe.sh` has produced

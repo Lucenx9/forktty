@@ -101,7 +101,7 @@ plain-text read ABIs for socket send/read/capture operations.
 Do not replace ForkTTY's current renderer until the parity matrix is all `pass`
 and the embedding library ships in release artifacts by default.
 
-## Landed (pending probe): scrollback restore ABI
+## Landed and probe-verified: scrollback restore ABI
 
 Embedded panes can already *snapshot* their scrollback into the session (ForkTTY
 reads the tail through `ghostty_gtk_surface_read_text` and stores it on the
@@ -121,12 +121,11 @@ submodule pin (and `GHOSTTY_VENDOR_REV`) is bumped to it. The fork commit was
 verified locally as far as the toolchain allows — `zig fmt --check`,
 `zig ast-check`, and the full `zig build test -Dapp-runtime=none` core suite
 (which executes the `@sizeOf(Message) == 40` assertion and compiles
-`Surface.injectOutput`) all pass. The **end-to-end restore round-trip is not yet
-probe-verified**: the embedding `.so` still cannot be linked on the local
-toolchain (the `gtk_blueprint_compiler` build helper hits the Zig 0.15.2 /
-GCC 16.1.1 `.sframe` `R_X86_64_PC64` linker bug below, before the library is
-linked), so the symbol's runtime effect must be confirmed on the Ubuntu runner
-via the **Ghostty GTK Probe** workflow before parity row 3 flips to `pass`.
+`Surface.injectOutput`) all pass. The **end-to-end restore round-trip is
+probe-verified** by the manual **Ghostty GTK Probe** workflow: the Ubuntu runner
+builds the embedding `.so`, launches ForkTTY under Xvfb with embedded panes,
+restarts a pane, and confirms a pre-restart marker is present in `capture_tail`
+after restore.
 
 ### Why not a GTK-main-thread feed
 
@@ -225,9 +224,8 @@ This change landed on `Lucenx9/ghostty` (branch `forktty-gtk-embed`,
 `2d6400f56af4af03cc59ac5b87754de717cf6bdc`), and the submodule pin +
 `GHOSTTY_VENDOR_REV` + the pin in `ghostty-full-vendor.md` are bumped to it.
 ForkTTY's loader picks up the symbol automatically with no further Rust changes.
-The end-to-end restore must still be verified through the Ghostty GTK Probe (the
-`.so` cannot be built on the current local toolchain — see below) before parity
-row 3 flips to `pass`.
+The end-to-end restore is covered by the Ghostty GTK Probe workflow because the
+`.so` cannot be built on the current local toolchain — see below.
 
 ## Build Probe
 
@@ -270,6 +268,5 @@ fails on the same relocation. Forcing `use_lld = true` changes the command to
 `-flld`, but the helper compile terminates without a useful diagnostic. The
 submodule was restored after this probe; no unverified Ghostty patch is kept.
 
-If the workflow passes, the next implementation attempt is the minimal
-`GtkWidget*` embedding API. If the workflow fails the same way, fix or pin the
-Ghostty GTK build toolchain first.
+The GitHub Ghostty GTK Probe remains the runtime source of truth for this
+embedding path until the local Zig/linker stack can build the `.so` again.
