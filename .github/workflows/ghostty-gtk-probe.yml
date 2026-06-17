@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config git \
             meson ninja-build python3 python3-gi libxml2-utils \
-            libgtk-4-dev libadwaita-1-dev dbus-x11 xvfb
+            libgtk-4-dev libadwaita-1-dev dbus-x11 xvfb gdb
 
       - name: Install blueprint-compiler
         run: |
@@ -70,5 +70,20 @@ jobs:
           NO_AT_BRIDGE: "1"
         run: |
           cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
+          set +e
           timeout 60s xvfb-run -a dbus-run-session -- \
             target/debug/forktty ghostty-gtk-probe
+          status=$?
+          set -e
+          if [ "${status}" -eq 139 ]; then
+            echo "::group::Ghostty GTK probe gdb backtrace"
+            timeout 60s xvfb-run -a dbus-run-session -- \
+              gdb -batch \
+                -ex "set pagination off" \
+                -ex "run" \
+                -ex "thread apply all bt full" \
+                -ex "quit" \
+                --args target/debug/forktty ghostty-gtk-probe || true
+            echo "::endgroup::"
+          fi
+          exit "${status}"
