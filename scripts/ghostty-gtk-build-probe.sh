@@ -17,4 +17,5 @@ zig build \
   -Di18n=false \
   -Dsimd=false \
   -Dcpu=baseline \
+  -fno-sys=gtk4-layer-shell \
   --summary failures
