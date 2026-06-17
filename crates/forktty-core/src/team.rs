@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -18,6 +19,7 @@ const MAX_SHORT_TEXT_BYTES: usize = 512;
 const MAX_LONG_TEXT_BYTES: usize = 16 * 1024;
 const DEFAULT_QUERY_LIMIT: usize = 50;
 const MAX_QUERY_LIMIT: usize = 200;
+static TEAM_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Error)]
 pub enum TeamError {
@@ -88,6 +90,12 @@ pub struct TeamWorker {
     pub assigned_task_id: Option<String>,
     #[serde(default)]
     pub last_heartbeat_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub launched_at_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub last_nudge_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub shutdown_requested_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +169,23 @@ pub struct TeamWorkerUpsert {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamWorkerLaunch {
+    pub team_id: String,
+    pub worker_id: String,
+    pub role: Option<String>,
+    pub agent: String,
+    pub surface_id: String,
+    pub worktree_name: Option<String>,
+    pub assigned_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamWorkerAction {
+    pub team_id: String,
+    pub worker_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamHeartbeat {
     pub team_id: String,
     pub worker_id: String,
@@ -229,6 +254,10 @@ fn default_team_version() -> u32 {
 
 fn default_next_event_seq() -> u64 {
     1
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
 }
 
 impl Default for TeamStoreData {
@@ -371,6 +400,9 @@ impl TeamStoreData {
                     status: "idle".to_string(),
                     assigned_task_id: None,
                     last_heartbeat_ms: 0,
+                    launched_at_ms: 0,
+                    last_nudge_ms: 0,
+                    shutdown_requested_at_ms: 0,
                 });
                 team.workers.len() - 1
             }
@@ -399,6 +431,78 @@ impl TeamStoreData {
         self.push_event(
             &team_id,
             "team.worker.upserted",
+            format!("worker {}", worker.id),
+            now_ms,
+        );
+        Ok(worker)
+    }
+
+    pub fn launch_worker(
+        &mut self,
+        input: TeamWorkerLaunch,
+        now_ms: u64,
+    ) -> Result<TeamWorker, TeamError> {
+        let team_id = clean_id("team_id", &input.team_id)?;
+        let worker_id = clean_id("worker_id", &input.worker_id)?;
+        let role = clean_optional_short("role", input.role.as_deref())?;
+        let agent = clean_short("agent", &input.agent)?;
+        let surface_id = clean_id("surface_id", &input.surface_id)?;
+        let worktree_name = clean_optional_id("worktree_name", input.worktree_name.as_deref())?;
+        let assigned_task_id =
+            clean_optional_id("assigned_task_id", input.assigned_task_id.as_deref())?;
+        let team = self.team_mut(&team_id)?;
+        if let Some(task_id) = assigned_task_id.as_deref() {
+            ensure_task_exists(team, task_id)?;
+        }
+        let index = match team
+            .workers
+            .iter()
+            .position(|worker| worker.id == worker_id)
+        {
+            Some(index) => index,
+            None => {
+                if team.workers.len() >= MAX_WORKERS_PER_TEAM {
+                    return Err(TeamError::Invalid(format!(
+                        "team worker list is full (limit {MAX_WORKERS_PER_TEAM})"
+                    )));
+                }
+                team.workers.push(TeamWorker {
+                    id: worker_id.clone(),
+                    role: None,
+                    agent: None,
+                    surface_id: None,
+                    worktree_name: None,
+                    status: "idle".to_string(),
+                    assigned_task_id: None,
+                    last_heartbeat_ms: 0,
+                    launched_at_ms: 0,
+                    last_nudge_ms: 0,
+                    shutdown_requested_at_ms: 0,
+                });
+                team.workers.len() - 1
+            }
+        };
+        let worker = &mut team.workers[index];
+        if role.is_some() {
+            worker.role = role;
+        }
+        worker.agent = Some(agent);
+        worker.surface_id = Some(surface_id);
+        if worktree_name.is_some() {
+            worker.worktree_name = worktree_name;
+        }
+        if assigned_task_id.is_some() {
+            worker.assigned_task_id = assigned_task_id;
+        }
+        worker.status = "running".to_string();
+        worker.launched_at_ms = now_ms;
+        worker.last_heartbeat_ms = now_ms;
+        worker.shutdown_requested_at_ms = 0;
+        team.updated_at_ms = now_ms;
+        let worker = worker.clone();
+        self.push_event(
+            &team_id,
+            "team.worker.launched",
             format!("worker {}", worker.id),
             now_ms,
         );
@@ -436,6 +540,57 @@ impl TeamStoreData {
         self.push_event(
             &team_id,
             "team.worker.heartbeat",
+            format!("worker {}", worker.id),
+            now_ms,
+        );
+        Ok(worker)
+    }
+
+    pub fn mark_worker_nudged(
+        &mut self,
+        input: TeamWorkerAction,
+        now_ms: u64,
+    ) -> Result<TeamWorker, TeamError> {
+        let team_id = clean_id("team_id", &input.team_id)?;
+        let worker_id = clean_id("worker_id", &input.worker_id)?;
+        let team = self.team_mut(&team_id)?;
+        let worker = team
+            .workers
+            .iter_mut()
+            .find(|worker| worker.id == worker_id)
+            .ok_or_else(|| TeamError::WorkerNotFound(worker_id.clone()))?;
+        worker.last_nudge_ms = now_ms;
+        team.updated_at_ms = now_ms;
+        let worker = worker.clone();
+        self.push_event(
+            &team_id,
+            "team.worker.nudged",
+            format!("worker {}", worker.id),
+            now_ms,
+        );
+        Ok(worker)
+    }
+
+    pub fn request_worker_shutdown(
+        &mut self,
+        input: TeamWorkerAction,
+        now_ms: u64,
+    ) -> Result<TeamWorker, TeamError> {
+        let team_id = clean_id("team_id", &input.team_id)?;
+        let worker_id = clean_id("worker_id", &input.worker_id)?;
+        let team = self.team_mut(&team_id)?;
+        let worker = team
+            .workers
+            .iter_mut()
+            .find(|worker| worker.id == worker_id)
+            .ok_or_else(|| TeamError::WorkerNotFound(worker_id.clone()))?;
+        worker.status = "shutdown_requested".to_string();
+        worker.shutdown_requested_at_ms = now_ms;
+        team.updated_at_ms = now_ms;
+        let worker = worker.clone();
+        self.push_event(
+            &team_id,
+            "team.worker.shutdown_requested",
             format!("worker {}", worker.id),
             now_ms,
         );
@@ -530,7 +685,7 @@ impl TeamStoreData {
         let body = clean_long("body", &input.body)?;
         let message_id = match input.message_id {
             Some(id) => clean_id("message_id", &id)?,
-            None => format!("msg-{}", now_ms),
+            None => format!("msg-{}-{}", now_ms, self.next_event_seq),
         };
         let team = self.team_mut(&team_id)?;
         if let Some(worker_id) = to_worker_id.as_deref() {
@@ -617,9 +772,12 @@ impl TeamStoreData {
             .iter()
             .filter(|message| query.include_delivered || !message.delivered)
             .filter(|message| {
-                worker_id
-                    .as_deref()
-                    .is_none_or(|worker_id| message.to_worker_id.as_deref() == Some(worker_id))
+                worker_id.as_deref().is_none_or(|worker_id| {
+                    message
+                        .to_worker_id
+                        .as_deref()
+                        .is_none_or(|target| target == worker_id)
+                })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -776,10 +934,11 @@ pub fn save_teams_to_path(path: &Path, data: &TeamStoreData) -> Result<(), TeamE
             .mode(0o600)
             .open(&tmp)?;
         file.write_all(&bytes)?;
-        file.flush()?;
+        file.sync_all()?;
     }
     fs::rename(&tmp, path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    sync_parent_dir(path)?;
     Ok(())
 }
 
@@ -794,10 +953,22 @@ pub fn update_teams_at_path<F, T>(path: &Path, update: F) -> Result<T, TeamError
 where
     F: FnOnce(&mut TeamStoreData) -> Result<T, TeamError>,
 {
+    let _guard = TEAM_STORE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| TeamError::Invalid("team store lock poisoned".to_string()))?;
     let mut data = load_teams_from_path(path)?;
     let result = update(&mut data)?;
     save_teams_to_path(path, &data)?;
     Ok(result)
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), TeamError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 pub fn team_store_path() -> Result<PathBuf, TeamError> {
@@ -870,6 +1041,18 @@ fn validate_team_references(team: &TeamState) -> Result<(), TeamError> {
         )));
     }
     for worker in &team.workers {
+        if let Some(role) = &worker.role {
+            clean_short("worker.role", role)?;
+        }
+        if let Some(agent) = &worker.agent {
+            clean_short("worker.agent", agent)?;
+        }
+        if let Some(surface_id) = &worker.surface_id {
+            clean_id("worker.surface_id", surface_id)?;
+        }
+        if let Some(worktree_name) = &worker.worktree_name {
+            clean_id("worker.worktree_name", worktree_name)?;
+        }
         clean_short("worker.status", &worker.status)?;
         if let Some(task_id) = worker.assigned_task_id.as_deref() {
             if !task_ids.contains(task_id) {
@@ -1148,6 +1331,78 @@ mod tests {
                 .unwrap()
                 .len(),
             6
+        );
+    }
+
+    #[test]
+    fn generated_messages_are_unique_and_team_wide_messages_reach_worker_inbox() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: None,
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: None,
+                    surface_id: None,
+                    worktree_name: None,
+                    status: None,
+                    assigned_task_id: None,
+                },
+                2,
+            )
+            .unwrap();
+        let first = store
+            .send_message(
+                TeamMessageSend {
+                    team_id: "team-1".to_string(),
+                    message_id: None,
+                    from: "leader".to_string(),
+                    to_worker_id: None,
+                    task_id: None,
+                    body: "all".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+        let second = store
+            .send_message(
+                TeamMessageSend {
+                    team_id: "team-1".to_string(),
+                    message_id: None,
+                    from: "leader".to_string(),
+                    to_worker_id: Some("worker-1".to_string()),
+                    task_id: None,
+                    body: "direct".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(
+            store
+                .inbox(&TeamInboxQuery {
+                    team_id: "team-1".to_string(),
+                    worker_id: Some("worker-1".to_string()),
+                    include_delivered: false,
+                    limit: None,
+                })
+                .unwrap()
+                .len(),
+            2
         );
     }
 

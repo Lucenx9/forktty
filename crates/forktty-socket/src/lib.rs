@@ -63,6 +63,7 @@ const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 /// spawning one OS thread per socket request.
 const NOTIFICATION_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
+const DEFAULT_TEAM_WORKER_STALE_MS: u64 = 5 * 60 * 1_000;
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -127,12 +128,17 @@ pub const METHODS: &[&str] = &[
     "team.get",
     "team.inbox",
     "team.list",
+    "team.message.dispatch",
     "team.message.ack",
     "team.message.send",
     "team.summary",
     "team.task.upsert",
     "team.upsert",
     "team.worker.heartbeat",
+    "team.worker.health",
+    "team.worker.launch",
+    "team.worker.nudge",
+    "team.worker.shutdown",
     "team.worker.upsert",
     "topology.tree",
     "workspace.close",
@@ -185,12 +191,17 @@ pub const METHODS: &[&str] = &[
     "team.get",
     "team.inbox",
     "team.list",
+    "team.message.dispatch",
     "team.message.ack",
     "team.message.send",
     "team.summary",
     "team.task.upsert",
     "team.upsert",
     "team.worker.heartbeat",
+    "team.worker.health",
+    "team.worker.launch",
+    "team.worker.nudge",
+    "team.worker.shutdown",
     "team.worker.upsert",
     "topology.tree",
     "workspace.close",
@@ -828,6 +839,105 @@ pub async fn dispatch(
             .map_err(DispatchError::from)?;
             Ok(json!(worker))
         }
+        "team.worker.launch" => {
+            let team_id = required_trimmed_string(&params, "team_id")?.to_string();
+            let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
+            let agent = required_trimmed_string(&params, "agent")?.to_string();
+            let role = optional_non_blank_string_param(&params, "role")?.map(str::to_string);
+            let assigned_task_id =
+                optional_non_blank_string_param(&params, "assigned_task_id")?.map(str::to_string);
+            let worktree_name =
+                optional_non_blank_string_param(&params, "worktree_name")?.map(str::to_string);
+            let extra_args = optional_string_array_param(&params, "args")?.unwrap_or_default();
+            let (program, args) = team_worker_launch_command(&agent, extra_args)?;
+            let surface = create_team_worker_surface(state, &team_id, &worker_id)?;
+            let request =
+                SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
+                    .with_args(args.clone());
+            if let Err(err) = state.terminal.spawn(request) {
+                rollback_surface_creation(state, &surface.id)?;
+                return Err(err.into());
+            }
+            let launch = forktty_core::TeamWorkerLaunch {
+                team_id,
+                worker_id,
+                role,
+                agent,
+                surface_id: surface.id.clone(),
+                worktree_name,
+                assigned_task_id,
+            };
+            let worker =
+                match forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                    store.launch_worker(launch, forktty_core::team_now_ms())
+                }) {
+                    Ok(worker) => worker,
+                    Err(err) => {
+                        let _ = close_terminal_surface_if_present(state, &surface.id);
+                        rollback_surface_creation(state, &surface.id)?;
+                        return Err(DispatchError::from(err));
+                    }
+                };
+            let argv = std::iter::once(program).chain(args).collect::<Vec<_>>();
+            Ok(json!({
+                "surface": surface,
+                "worker": worker,
+                "argv": argv,
+            }))
+        }
+        "team.worker.health" => {
+            let team_id = required_trimmed_string(&params, "team_id")?;
+            let stale_after_ms = optional_u64_param(&params, "stale_after_ms")?
+                .unwrap_or(DEFAULT_TEAM_WORKER_STALE_MS);
+            let store = forktty_core::load_teams_from_path(team_store_path(state)?)
+                .map_err(DispatchError::from)?;
+            let team = store
+                .get(team_id)
+                .ok_or(DispatchError::NotFound("team".to_string()))?;
+            Ok(team_worker_health_rows(state, &team, stale_after_ms)?)
+        }
+        "team.worker.nudge" => {
+            let team_id = required_trimmed_string(&params, "team_id")?.to_string();
+            let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
+            let text = team_worker_action_text(
+                optional_string_param(&params, "text")?,
+                "Still with us? Please send a ForkTTY team.worker.heartbeat update.\r",
+            )?;
+            let surface_id = team_worker_surface_id(state, &team_id, &worker_id)?;
+            state
+                .terminal
+                .send_text(&surface_id, &text)
+                .map_err(DispatchError::from)?;
+            let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.mark_worker_nudged(
+                    forktty_core::TeamWorkerAction { team_id, worker_id },
+                    forktty_core::team_now_ms(),
+                )
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!({"sent": true, "surface_id": surface_id, "worker": worker}))
+        }
+        "team.worker.shutdown" => {
+            let team_id = required_trimmed_string(&params, "team_id")?.to_string();
+            let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
+            let text = team_worker_action_text(
+                optional_string_param(&params, "text")?,
+                "Please stop after your current safe checkpoint and report shutdown.\r",
+            )?;
+            let surface_id = team_worker_surface_id(state, &team_id, &worker_id)?;
+            state
+                .terminal
+                .send_text(&surface_id, &text)
+                .map_err(DispatchError::from)?;
+            let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.request_worker_shutdown(
+                    forktty_core::TeamWorkerAction { team_id, worker_id },
+                    forktty_core::team_now_ms(),
+                )
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!({"sent": true, "surface_id": surface_id, "worker": worker}))
+        }
         "team.task.upsert" => {
             let input = forktty_core::TeamTaskUpsert {
                 team_id: required_trimmed_string(&params, "team_id")?.to_string(),
@@ -861,6 +971,30 @@ pub async fn dispatch(
             })
             .map_err(DispatchError::from)?;
             Ok(json!(message))
+        }
+        "team.message.dispatch" => {
+            let team_id = required_trimmed_string(&params, "team_id")?.to_string();
+            let message_id = required_trimmed_string(&params, "message_id")?.to_string();
+            let worker_id =
+                optional_non_blank_string_param(&params, "worker_id")?.map(str::to_string);
+            let (surface_id, text) =
+                team_message_dispatch_target(state, &team_id, &message_id, worker_id.as_deref())?;
+            state
+                .terminal
+                .send_text(&surface_id, &text)
+                .map_err(DispatchError::from)?;
+            let message = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.ack_message(
+                    forktty_core::TeamMessageAck {
+                        team_id,
+                        message_id,
+                        worker_id,
+                    },
+                    forktty_core::team_now_ms(),
+                )
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!({"sent": true, "surface_id": surface_id, "message": message}))
         }
         "team.message.ack" => {
             let input = forktty_core::TeamMessageAck {
@@ -3469,6 +3603,63 @@ fn optional_string_array_param(
     }
 }
 
+fn team_worker_launch_command(
+    agent: &str,
+    extra_args: Vec<String>,
+) -> Result<(String, Vec<String>), DispatchError> {
+    let program = match agent.trim().to_ascii_lowercase().as_str() {
+        "codex" => "codex",
+        "claude" | "claude_code" | "claude-code" => "claude",
+        "gemini" => "gemini",
+        "opencode" | "open_code" | "open-code" => "opencode",
+        "antigravity" | "agy" => "agy",
+        _ => {
+            return Err(DispatchError::InvalidParam(format!(
+                "unsupported team worker agent: {agent}"
+            )));
+        }
+    };
+    if extra_args.len() > 64 {
+        return Err(DispatchError::InvalidParam(
+            "team worker launch args exceed 64 entries".to_string(),
+        ));
+    }
+    for arg in &extra_args {
+        if arg.len() > 4096 || arg.chars().any(char::is_control) {
+            return Err(DispatchError::InvalidParam(
+                "team worker launch args must be non-control UTF-8 strings under 4096 bytes"
+                    .to_string(),
+            ));
+        }
+    }
+    if forktty_core::command_safety::is_shell_trampoline(program, &extra_args) {
+        return Err(DispatchError::InvalidParam(
+            "team worker launch rejects shell trampolines".to_string(),
+        ));
+    }
+    Ok((program.to_string(), extra_args))
+}
+
+fn team_worker_action_text(
+    text: Option<&str>,
+    default_text: &'static str,
+) -> Result<String, DispatchError> {
+    let text = text.unwrap_or(default_text);
+    if text.is_empty() {
+        return Err(DispatchError::InvalidParam(
+            "team worker action text must not be empty".to_string(),
+        ));
+    }
+    if text.len() > MAX_SEND_TEXT_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field: "text",
+            limit: MAX_SEND_TEXT_BYTES,
+            actual: text.len(),
+        });
+    }
+    Ok(text.to_string())
+}
+
 fn team_store_path(state: &SocketAppState) -> Result<&Path, DispatchError> {
     state
         .team_store_path
@@ -3562,6 +3753,173 @@ fn team_workspace_selector_from_params(
             Ok(Some(WorkspaceSelector::WorktreeName(selector.value)))
         }
     }
+}
+
+fn create_team_worker_surface(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+) -> Result<forktty_core::Surface, DispatchError> {
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let team = store
+        .get(team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let near_surface_id = match team.leader_surface_id.as_deref() {
+        Some(surface_id) if model.surface(surface_id).is_some() => surface_id.to_string(),
+        Some(_) => return Err(DispatchError::NotFound("surface".to_string())),
+        None => match team.workspace_id.as_deref() {
+            Some(workspace_id) => model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .map(|workspace| workspace.focused_surface_id)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+            None => model
+                .active_workspace()
+                .map(|workspace| workspace.focused_surface_id)
+                .ok_or_else(|| {
+                    DispatchError::PreconditionFailed(
+                        "team.worker.launch requires a team workspace, leader surface, or active workspace"
+                            .to_string(),
+                    )
+                })?,
+        },
+    };
+    let surface = model
+        .add_tab(&near_surface_id)
+        .ok_or(DispatchError::NotFound("surface".to_string()))?;
+    let _ = model.set_surface_title(&surface.id, format!("worker:{worker_id}"));
+    Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
+}
+
+fn team_worker_surface_id(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+) -> Result<String, DispatchError> {
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let team = store
+        .get(team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let worker = team
+        .workers
+        .iter()
+        .find(|worker| worker.id == worker_id)
+        .ok_or(DispatchError::NotFound("worker".to_string()))?;
+    let surface_id = worker.surface_id.clone().ok_or_else(|| {
+        DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
+    })?;
+    ensure_model_surface_exists(state, &surface_id)?;
+    Ok(surface_id)
+}
+
+fn team_message_dispatch_target(
+    state: &SocketAppState,
+    team_id: &str,
+    message_id: &str,
+    worker_id: Option<&str>,
+) -> Result<(String, String), DispatchError> {
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let team = store
+        .get(team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let message = team
+        .messages
+        .iter()
+        .find(|message| message.id == message_id)
+        .ok_or(DispatchError::NotFound("message".to_string()))?;
+    if message.delivered {
+        return Err(DispatchError::Conflict(
+            "message already delivered".to_string(),
+        ));
+    }
+    if let (Some(expected), Some(actual)) = (message.to_worker_id.as_deref(), worker_id) {
+        if expected != actual {
+            return Err(DispatchError::InvalidParam(
+                "worker_id does not match message target".to_string(),
+            ));
+        }
+    }
+    let worker_id = message
+        .to_worker_id
+        .as_deref()
+        .or(worker_id)
+        .ok_or_else(|| {
+            DispatchError::InvalidParam(
+                "team.message.dispatch requires worker_id for team-wide messages".to_string(),
+            )
+        })?;
+    let worker = team
+        .workers
+        .iter()
+        .find(|worker| worker.id == worker_id)
+        .ok_or(DispatchError::NotFound("worker".to_string()))?;
+    let surface_id = worker.surface_id.clone().ok_or_else(|| {
+        DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
+    })?;
+    ensure_model_surface_exists(state, &surface_id)?;
+    Ok((surface_id, message.body.clone()))
+}
+
+fn team_worker_health_rows(
+    state: &SocketAppState,
+    team: &forktty_core::TeamState,
+    stale_after_ms: u64,
+) -> Result<Value, DispatchError> {
+    let now = forktty_core::team_now_ms();
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let workers = team
+        .workers
+        .iter()
+        .map(|worker| {
+            let surface_alive = worker
+                .surface_id
+                .as_deref()
+                .is_some_and(|surface_id| model.surface(surface_id).is_some());
+            let heartbeat_age_ms = (worker.last_heartbeat_ms > 0)
+                .then(|| now.saturating_sub(worker.last_heartbeat_ms));
+            let stale = heartbeat_age_ms.is_some_and(|age| age > stale_after_ms);
+            let lifecycle = if worker.shutdown_requested_at_ms > 0 {
+                "shutdown_requested"
+            } else if worker.surface_id.is_none() {
+                "unlaunched"
+            } else if !surface_alive {
+                "surface_missing"
+            } else if stale {
+                "stale"
+            } else {
+                worker.status.as_str()
+            };
+            json!({
+                "worker_id": worker.id,
+                "agent": worker.agent,
+                "status": worker.status,
+                "lifecycle": lifecycle,
+                "surface_id": worker.surface_id,
+                "surface_alive": surface_alive,
+                "heartbeat_age_ms": heartbeat_age_ms,
+                "launched_at_ms": worker.launched_at_ms,
+                "last_heartbeat_ms": worker.last_heartbeat_ms,
+                "last_nudge_ms": worker.last_nudge_ms,
+                "shutdown_requested_at_ms": worker.shutdown_requested_at_ms,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "team_id": team.id,
+        "stale_after_ms": stale_after_ms,
+        "workers": workers,
+    }))
 }
 
 fn validate_optional_surface_id(
@@ -6554,7 +6912,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatches_team_orchestration_runtime_methods() {
-        let (mut state, _backend) = test_state();
+        let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));
         let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -6606,6 +6964,28 @@ mod tests {
         .unwrap();
         assert_eq!(task["assigned_worker_id"], "worker-1");
 
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-2",
+                "agent": "codex",
+                "role": "reviewer",
+                "assigned_task_id": "task-1",
+                "args": ["--model", "test"]
+            }),
+        )
+        .await
+        .unwrap();
+        let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+        assert_eq!(launched["worker"]["surface_id"], launched_surface_id);
+        assert_eq!(backend.spawn_shell(launched_surface_id).unwrap(), "codex");
+        assert_eq!(
+            backend.spawn_args(launched_surface_id).unwrap(),
+            vec!["--model".to_string(), "test".to_string()]
+        );
+
         let heartbeat = dispatch(
             &state,
             "team.worker.heartbeat",
@@ -6655,10 +7035,78 @@ mod tests {
         .unwrap();
         assert_eq!(ack["delivered"], true);
 
+        let dispatchable = dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-2",
+                "from": "leader",
+                "to_worker_id": "worker-2",
+                "body": "review this\r"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dispatchable["delivered"], false);
+        let dispatched = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-2"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dispatched["message"]["delivered"], true);
+        assert_eq!(
+            backend.sent_text(launched_surface_id).unwrap(),
+            vec!["review this\r".to_string()]
+        );
+
+        let nudged = dispatch(
+            &state,
+            "team.worker.nudge",
+            json!({"team_id": "team-1", "worker_id": "worker-2", "text": "ping\r"}),
+        )
+        .await
+        .unwrap();
+        assert!(nudged["worker"]["last_nudge_ms"].as_u64().unwrap() > 0);
+        let shutdown = dispatch(
+            &state,
+            "team.worker.shutdown",
+            json!({"team_id": "team-1", "worker_id": "worker-2", "text": "stop\r"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(shutdown["worker"]["status"], "shutdown_requested");
+        assert_eq!(
+            backend.sent_text(launched_surface_id).unwrap(),
+            vec![
+                "review this\r".to_string(),
+                "ping\r".to_string(),
+                "stop\r".to_string()
+            ]
+        );
+
+        let health = dispatch(
+            &state,
+            "team.worker.health",
+            json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+        )
+        .await
+        .unwrap();
+        let worker_health = health["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|worker| worker["worker_id"] == "worker-2")
+            .unwrap();
+        assert_eq!(worker_health["lifecycle"], "shutdown_requested");
+        assert_eq!(worker_health["surface_alive"], true);
+
         let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
             .await
             .unwrap();
-        assert_eq!(summary["workers_total"], 1);
+        assert_eq!(summary["workers_total"], 2);
         assert_eq!(summary["workers_active"], 1);
         assert_eq!(summary["tasks_open"], 1);
         assert_eq!(summary["messages_pending"], 0);
@@ -6670,11 +7118,11 @@ mod tests {
         let fetched = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
             .await
             .unwrap();
-        assert_eq!(fetched["workers"].as_array().unwrap().len(), 1);
+        assert_eq!(fetched["workers"].as_array().unwrap().len(), 2);
         let events = dispatch(&state, "team.events", json!({"team_id": "team-1"}))
             .await
             .unwrap();
-        assert!(events.as_array().unwrap().len() >= 6);
+        assert!(events.as_array().unwrap().len() >= 10);
     }
 
     #[tokio::test]

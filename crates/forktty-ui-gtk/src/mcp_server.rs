@@ -607,6 +607,72 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "team_worker_launch" => {
+            reject_unexpected(
+                args,
+                &[
+                    "team_id",
+                    "worker_id",
+                    "agent",
+                    "role",
+                    "assigned_task_id",
+                    "worktree_name",
+                    "args",
+                ],
+                name,
+            )?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+                ("agent", required_non_blank(args, "agent")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "role")?;
+            insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
+            insert_optional_non_blank_param(args, &mut params, "worktree_name")?;
+            if let Some(extra_args) = optional_string_array(args, "args")? {
+                params.insert(
+                    "args".to_string(),
+                    Value::Array(extra_args.into_iter().map(Value::String).collect()),
+                );
+            }
+            SocketCall {
+                method: "team.worker.launch",
+                params,
+            }
+        }
+        "team_worker_health" => {
+            reject_unexpected(args, &["team_id", "stale_after_ms"], name)?;
+            let mut params = map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]);
+            insert_optional_u64_param(args, &mut params, "stale_after_ms")?;
+            SocketCall {
+                method: "team.worker.health",
+                params,
+            }
+        }
+        "team_worker_nudge" => {
+            reject_unexpected(args, &["team_id", "worker_id", "text"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+            ]);
+            insert_optional_string_param(args, &mut params, "text")?;
+            SocketCall {
+                method: "team.worker.nudge",
+                params,
+            }
+        }
+        "team_worker_shutdown" => {
+            reject_unexpected(args, &["team_id", "worker_id", "text"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+            ]);
+            insert_optional_string_param(args, &mut params, "text")?;
+            SocketCall {
+                method: "team.worker.shutdown",
+                params,
+            }
+        }
         "team_task_upsert" => {
             reject_unexpected(
                 args,
@@ -663,6 +729,18 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_non_blank_param(args, &mut params, "task_id")?;
             SocketCall {
                 method: "team.message.send",
+                params,
+            }
+        }
+        "team_message_dispatch" => {
+            reject_unexpected(args, &["team_id", "message_id", "worker_id"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("message_id", required_non_blank(args, "message_id")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "worker_id")?;
+            SocketCall {
+                method: "team.message.dispatch",
                 params,
             }
         }
@@ -1247,8 +1325,13 @@ fn success_text(name: &str, result: &Value) -> String {
         "team_upsert" => "Updated ForkTTY team state.".to_string(),
         "team_worker_upsert" => "Updated ForkTTY team worker state.".to_string(),
         "team_worker_heartbeat" => "Recorded ForkTTY team worker heartbeat.".to_string(),
+        "team_worker_launch" => "Launched ForkTTY team worker pane.".to_string(),
+        "team_worker_health" => "Read ForkTTY team worker health.".to_string(),
+        "team_worker_nudge" => "Nudged ForkTTY team worker pane.".to_string(),
+        "team_worker_shutdown" => "Requested ForkTTY team worker shutdown.".to_string(),
         "team_task_upsert" => "Updated ForkTTY team task state.".to_string(),
         "team_message_send" => "Queued ForkTTY team message.".to_string(),
+        "team_message_dispatch" => "Dispatched ForkTTY team message to a worker pane.".to_string(),
         "team_message_ack" => "Acknowledged ForkTTY team message.".to_string(),
         "team_inbox" => "Read ForkTTY team inbox.".to_string(),
         "team_summary" => "Summarized ForkTTY team state.".to_string(),
@@ -1503,6 +1586,61 @@ fn tool_specs() -> Vec<ToolSpec> {
             ),
         },
         ToolSpec {
+            name: "team_worker_launch",
+            annotations: mutating_annotations(false, false),
+            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. Supported agents are codex, claude, gemini, opencode, and antigravity.",
+            input_schema: object_schema(
+                &["team_id", "worker_id", "agent"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "agent": string_prop("Provider to launch: codex, claude, gemini, opencode, or antigravity."),
+                    "role": string_prop("Worker role."),
+                    "assigned_task_id": string_prop("Task id currently assigned to this worker."),
+                    "worktree_name": string_prop("Worktree name assigned to this worker."),
+                    "args": string_array_prop("Extra argv entries appended after the provider executable."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_health",
+            annotations: read_only_annotations(),
+            description: "Read per-worker team health including stale heartbeat, surface presence, nudge, launch, and shutdown-request timestamps.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "stale_after_ms": integer_prop("Heartbeat age after which running workers are reported stale."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_nudge",
+            annotations: mutating_annotations(false, false),
+            description: "Send a nudge message to a team worker's attached terminal pane and record the nudge timestamp after delivery succeeds.",
+            input_schema: object_schema(
+                &["team_id", "worker_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "text": string_prop("Optional exact text to send; defaults to a heartbeat request."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_shutdown",
+            annotations: mutating_annotations(false, false),
+            description: "Request safe shutdown by sending text to a team worker's attached terminal pane and marking the worker shutdown_requested after delivery succeeds.",
+            input_schema: object_schema(
+                &["team_id", "worker_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "text": string_prop("Optional exact shutdown request text."),
+                }),
+            ),
+        },
+        ToolSpec {
             name: "team_task_upsert",
             annotations: mutating_annotations(false, true),
             description: "Create or update a ForkTTY team task. Dependencies must form a DAG.",
@@ -1532,6 +1670,19 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "to_worker_id": string_prop("Target worker id. Omit for team-wide messages."),
                     "task_id": string_prop("Related task id."),
                     "body": string_prop("Message body. Whitespace is preserved."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_message_dispatch",
+            annotations: mutating_annotations(false, false),
+            description: "Send a queued ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the text.",
+            input_schema: object_schema(
+                &["team_id", "message_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "message_id": string_prop("Message id."),
+                    "worker_id": string_prop("Required when dispatching a team-wide message."),
                 }),
             ),
         },
@@ -2124,6 +2275,44 @@ mod tests {
         assert_eq!(params["assigned_task_id"], "task-1");
 
         let (method, params) = build_socket_call_for_test(
+            "team_worker_launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-2",
+                "agent": "codex",
+                "args": ["--model", "test"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.launch");
+        assert_eq!(params["agent"], "codex");
+        assert_eq!(params["args"], json!(["--model", "test"]));
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_health",
+            json!({"team_id": "team-1", "stale_after_ms": 123}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.health");
+        assert_eq!(params["stale_after_ms"], 123);
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_nudge",
+            json!({"team_id": "team-1", "worker_id": "worker-2", "text": "ping\r"}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.nudge");
+        assert_eq!(params["text"], "ping\r");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_shutdown",
+            json!({"team_id": "team-1", "worker_id": "worker-2"}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.shutdown");
+        assert_eq!(params["worker_id"], "worker-2");
+
+        let (method, params) = build_socket_call_for_test(
             "team_task_upsert",
             json!({
                 "team_id": "team-1",
@@ -2147,6 +2336,14 @@ mod tests {
         .unwrap();
         assert_eq!(method, "team.message.send");
         assert_eq!(params["body"], "  continue\n");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_message_dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1", "worker_id": "worker-1"}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.message.dispatch");
+        assert_eq!(params["message_id"], "msg-1");
 
         let (method, params) = build_socket_call_for_test(
             "team_inbox",

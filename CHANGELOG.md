@@ -8,7 +8,9 @@ All notable changes to ForkTTY are documented here.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
-  heartbeats, summaries, and event polling without adding parity UI yet.
+  heartbeats, provider worker launch into tabs, pane dispatch confirmations,
+  worker health/lifecycle snapshots, idle nudges, safe shutdown requests,
+  summaries, and event polling without adding parity UI yet.
 - `feed.list` and `forktty feed` now expose a minimal read-only feed snapshot
   that normalizes current notifications, approval prompts, status, and progress
   without adding durable feed history yet.

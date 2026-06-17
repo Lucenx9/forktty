@@ -90,10 +90,10 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - ForkTTY now owns a minimal provider-neutral team control plane through
   `team.*`, `forktty team-*`, and MCP `team_*`: leader/workspace metadata,
   worker records, task DAG validation, mailbox/inbox, heartbeats, summaries,
-  event polling, and optional surface/worktree references.
-- Remaining scope: teammate/provider launchers, dispatch confirmations that
-  drive panes, richer worker health/lifecycle, safe shutdown/idle nudges, and
-  parity UI for supervising teams.
+  event polling, optional surface/worktree references, provider worker launch
+  into tabs, dispatch confirmations that write to worker panes, worker health
+  snapshots, idle nudges, and safe shutdown requests.
+- Remaining scope: parity UI for supervising teams.
 
 ### 4. Feed And Approval Bridge
 

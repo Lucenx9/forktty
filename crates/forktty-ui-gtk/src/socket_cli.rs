@@ -52,8 +52,13 @@ Usage:
   forktty team-upsert <team-id> [--workspace-id <id>] [--leader-surface-id <id>] [--name <name>] [--status <status>] [--goal <text>] [--json]
   forktty team-worker-upsert <team-id> <worker-id> [--role <role>] [--agent <agent>] [--surface-id <id>] [--worktree-name <name>] [--status <status>] [--assigned-task-id <id>] [--json]
   forktty team-worker-heartbeat <team-id> <worker-id> [--status <status>] [--assigned-task-id <id>] [--json]
+  forktty team-worker-launch <team-id> <worker-id> --agent <agent> [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--args <comma-list>] [--json]
+  forktty team-worker-health <team-id> [--stale-after-ms <ms>] [--json]
+  forktty team-worker-nudge <team-id> <worker-id> [--text <text>] [--json]
+  forktty team-worker-shutdown <team-id> <worker-id> [--text <text>] [--json]
   forktty team-task-upsert <team-id> <task-id> [--title <title>] [--status <status>] [--detail <text>] [--depends-on <comma-list>] [--assigned-worker-id <id>] [--json]
   forktty team-message-send <team-id> --from <id> --body <text> [--message-id <id>] [--to-worker-id <id>] [--task-id <id>] [--json]
+  forktty team-message-dispatch <team-id> <message-id> [--worker-id <id>] [--json]
   forktty team-message-ack <team-id> <message-id> [--worker-id <id>] [--json]
   forktty team-inbox <team-id> [--worker-id <id>] [--include-delivered] [--limit <n>] [--json]
   forktty team-summary <team-id> [--json]
@@ -760,11 +765,26 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "team-worker-heartbeat" | "team:worker-heartbeat" | "team.worker.heartbeat" => {
             handle_team_worker_heartbeat(&context, args)
         }
+        "team-worker-launch" | "team:worker-launch" | "team.worker.launch" => {
+            handle_team_worker_launch(&context, args)
+        }
+        "team-worker-health" | "team:worker-health" | "team.worker.health" => {
+            handle_team_worker_health(&context, args)
+        }
+        "team-worker-nudge" | "team:worker-nudge" | "team.worker.nudge" => {
+            handle_team_worker_nudge(&context, args)
+        }
+        "team-worker-shutdown" | "team:worker-shutdown" | "team.worker.shutdown" => {
+            handle_team_worker_shutdown(&context, args)
+        }
         "team-task-upsert" | "team:task-upsert" | "team.task.upsert" => {
             handle_team_task_upsert(&context, args)
         }
         "team-message-send" | "team:message-send" | "team.message.send" => {
             handle_team_message_send(&context, args)
+        }
+        "team-message-dispatch" | "team:message-dispatch" | "team.message.dispatch" => {
+            handle_team_message_dispatch(&context, args)
         }
         "team-message-ack" | "team:message-ack" | "team.message.ack" => {
             handle_team_message_ack(&context, args)
@@ -2458,6 +2478,128 @@ fn handle_team_worker_heartbeat(context: &CliContext, args: Vec<String>) -> CliR
     print_result_or_json(context, format_team_worker_line(&result), result)
 }
 
+fn handle_team_worker_launch(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["agent", "role", "assigned-task-id", "worktree-name", "args"],
+        "team-worker-launch",
+    )?;
+    let positionals = required_positionals(
+        &parsed.positionals,
+        "team-worker-launch",
+        &["team-id", "worker-id"],
+    )?;
+    let agent = non_blank_string_option(&parsed.options, "agent", "--agent")?
+        .ok_or_else(|| CliError::new("team-worker-launch requires --agent"))?;
+    let mut params = Map::new();
+    params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
+    params.insert(
+        "worker_id".to_string(),
+        Value::String(positionals[1].clone()),
+    );
+    params.insert("agent".to_string(), Value::String(agent.trim().to_string()));
+    insert_optional_cli_string_param(&mut params, &parsed.options, "role", "role")?;
+    insert_optional_cli_string_param(
+        &mut params,
+        &parsed.options,
+        "assigned-task-id",
+        "assigned_task_id",
+    )?;
+    insert_optional_cli_string_param(
+        &mut params,
+        &parsed.options,
+        "worktree-name",
+        "worktree_name",
+    )?;
+    if let Some(args) = comma_list_option(&parsed.options, "args", "--args")? {
+        params.insert(
+            "args".to_string(),
+            Value::Array(args.into_iter().map(Value::String).collect()),
+        );
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "team.worker.launch",
+        Value::Object(params),
+    )?;
+    print_result_or_json(context, format_team_worker_launch_line(&result), result)
+}
+
+fn handle_team_worker_health(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["stale-after-ms"], "team-worker-health")?;
+    let positionals =
+        required_positionals(&parsed.positionals, "team-worker-health", &["team-id"])?;
+    let mut params = Map::new();
+    params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
+    insert_optional_cli_u64_param(
+        &mut params,
+        &parsed.options,
+        "stale-after-ms",
+        "stale_after_ms",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "team.worker.health",
+        Value::Object(params),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    for worker in result
+        .get("workers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        write_stdout_line(&format_team_worker_health_line(worker))?;
+    }
+    Ok(())
+}
+
+fn handle_team_worker_nudge(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    team_worker_text_action(
+        context,
+        args,
+        "team.worker.nudge",
+        "team-worker-nudge",
+        "Nudged",
+    )
+}
+
+fn handle_team_worker_shutdown(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    team_worker_text_action(
+        context,
+        args,
+        "team.worker.shutdown",
+        "team-worker-shutdown",
+        "Shutdown requested",
+    )
+}
+
+fn team_worker_text_action(
+    context: &CliContext,
+    args: Vec<String>,
+    method: &str,
+    command: &str,
+    message: &str,
+) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["text"], command)?;
+    let positionals =
+        required_positionals(&parsed.positionals, command, &["team-id", "worker-id"])?;
+    let mut params = Map::new();
+    params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
+    params.insert(
+        "worker_id".to_string(),
+        Value::String(positionals[1].clone()),
+    );
+    insert_optional_cli_raw_string_param(&mut params, &parsed.options, "text", "text")?;
+    let result = send_socket_request(&context.socket_path, method, Value::Object(params))?;
+    print_result_or_json(context, format!("{message} {}", positionals[1]), result)
+}
+
 fn handle_team_task_upsert(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(
@@ -2514,7 +2656,15 @@ fn handle_team_message_send(context: &CliContext, args: Vec<String>) -> CliResul
     }
     let team_id = trimmed_positional(&parsed.positionals[0], "team-message-send", "team-id")?;
     let body = match string_option(&parsed.options, "body", "--body")? {
-        Some(body) => body.to_string(),
+        Some(body) => {
+            if parsed.positionals.len() > 1 {
+                return Err(CliError::new(format!(
+                    "team-message-send: unexpected argument {}",
+                    parsed.positionals[1]
+                )));
+            }
+            body.to_string()
+        }
         None if parsed.positionals.len() > 1 => parsed.positionals[1..].join(" "),
         None => return Err(CliError::new("team-message-send requires --body")),
     };
@@ -2533,6 +2683,29 @@ fn handle_team_message_send(context: &CliContext, args: Vec<String>) -> CliResul
         Value::Object(params),
     )?;
     print_result_or_json(context, format_team_message_line(&result), result)
+}
+
+fn handle_team_message_dispatch(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["worker-id"], "team-message-dispatch")?;
+    let positionals = required_positionals(
+        &parsed.positionals,
+        "team-message-dispatch",
+        &["team-id", "message-id"],
+    )?;
+    let mut params = Map::new();
+    params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
+    params.insert(
+        "message_id".to_string(),
+        Value::String(positionals[1].clone()),
+    );
+    insert_optional_cli_string_param(&mut params, &parsed.options, "worker-id", "worker_id")?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "team.message.dispatch",
+        Value::Object(params),
+    )?;
+    print_result_or_json(context, format_team_message_dispatch_line(&result), result)
 }
 
 fn handle_team_message_ack(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -2569,8 +2742,16 @@ fn handle_team_inbox(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let mut params = Map::new();
     params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
     insert_optional_cli_string_param(&mut params, &parsed.options, "worker-id", "worker_id")?;
-    if parsed.options.contains_key("include-delivered") {
-        params.insert("include_delivered".to_string(), Value::Bool(true));
+    match bool_option(&parsed.options, "include-delivered") {
+        Some(true) => {
+            params.insert("include_delivered".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team-inbox: --include-delivered expects true or false",
+            ));
+        }
     }
     insert_optional_cli_u64_param(&mut params, &parsed.options, "limit", "limit")?;
     let result = send_socket_request(&context.socket_path, "team.inbox", Value::Object(params))?;
@@ -2788,6 +2969,41 @@ fn format_team_worker_line(worker: &Value) -> String {
     format!("worker {id} {status}{role}{agent}{surface}{worktree}{task}{heartbeat}")
 }
 
+fn format_team_worker_launch_line(result: &Value) -> String {
+    let worker = result.get("worker").unwrap_or(&Value::Null);
+    let surface = result.get("surface").unwrap_or(&Value::Null);
+    let worker_id = safe_string_field(worker, "id").unwrap_or_else(|| "(worker)".to_string());
+    let surface_id = safe_string_field(surface, "id").unwrap_or_else(|| "(surface)".to_string());
+    let argv = result
+        .get("argv")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(sanitize_for_terminal)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    format!("Launched worker {worker_id} in {surface_id}: {argv}")
+}
+
+fn format_team_worker_health_line(worker: &Value) -> String {
+    let id = safe_string_field(worker, "worker_id").unwrap_or_else(|| "(worker)".to_string());
+    let lifecycle = safe_string_field(worker, "lifecycle").unwrap_or_else(|| "unknown".to_string());
+    let status = safe_string_field(worker, "status").unwrap_or_else(|| "unknown".to_string());
+    let surface = safe_string_field(worker, "surface_id")
+        .map(|surface| format!(" surface {surface}"))
+        .unwrap_or_default();
+    let heartbeat = worker
+        .get("heartbeat_age_ms")
+        .and_then(Value::as_u64)
+        .map(|age| format!(" heartbeat_age_ms {age}"))
+        .unwrap_or_default();
+    format!("worker {id} {lifecycle} status {status}{surface}{heartbeat}")
+}
+
 fn format_team_task_line(task: &Value) -> String {
     let id = safe_string_field(task, "id").unwrap_or_else(|| "(task)".to_string());
     let title = safe_string_field(task, "title").unwrap_or_else(|| id.clone());
@@ -2827,6 +3043,14 @@ fn format_team_message_line(message: &Value) -> String {
     let state = if delivered { "delivered" } else { "pending" };
     let body = safe_string_field(message, "body").unwrap_or_default();
     format!("message {id} {state} from {from}{worker}{task}: {body}")
+}
+
+fn format_team_message_dispatch_line(result: &Value) -> String {
+    let surface_id =
+        safe_string_field(result, "surface_id").unwrap_or_else(|| "(surface)".to_string());
+    let message = result.get("message").unwrap_or(&Value::Null);
+    let message_id = safe_string_field(message, "id").unwrap_or_else(|| "(message)".to_string());
+    format!("Dispatched message {message_id} to {surface_id}")
 }
 
 fn format_team_summary_line(summary: &Value) -> String {
@@ -12010,6 +12234,94 @@ mod tests {
     }
 
     #[test]
+    fn team_worker_launch_requests_team_worker_launch() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "surface": {"id": "surface-2"},
+                        "worker": {"id": "worker-2"},
+                        "argv": ["codex", "--model", "test"]
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_team_worker_launch(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "team-1",
+                        "worker-2",
+                        "--agent",
+                        "codex",
+                        "--role",
+                        "reviewer",
+                        "--assigned-task-id",
+                        "task-1",
+                        "--args=--model,test",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.worker.launch");
+        assert_eq!(request["params"]["team_id"], "team-1");
+        assert_eq!(request["params"]["worker_id"], "worker-2");
+        assert_eq!(request["params"]["agent"], "codex");
+        assert_eq!(request["params"]["role"], "reviewer");
+        assert_eq!(request["params"]["assigned_task_id"], "task-1");
+        assert_eq!(request["params"]["args"], json!(["--model", "test"]));
+    }
+
+    #[test]
+    fn team_worker_health_requests_team_worker_health() {
+        let request = with_socket_response(
+            |req| json!({"id": req["id"], "ok": true, "result": {"workers": []}}).to_string(),
+            |socket_path| {
+                handle_team_worker_health(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "--stale-after-ms", "1000"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.worker.health");
+        assert_eq!(request["params"]["team_id"], "team-1");
+        assert_eq!(request["params"]["stale_after_ms"], 1000);
+    }
+
+    #[test]
+    fn team_worker_text_actions_preserve_text() {
+        let nudge = with_socket_response(
+            |req| json!({"id": req["id"], "ok": true, "result": {"sent": true}}).to_string(),
+            |socket_path| {
+                handle_team_worker_nudge(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "worker-2", "--text", "ping\r"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(nudge["method"], "team.worker.nudge");
+        assert_eq!(nudge["params"]["text"], "ping\r");
+
+        let shutdown = with_socket_response(
+            |req| json!({"id": req["id"], "ok": true, "result": {"sent": true}}).to_string(),
+            |socket_path| {
+                handle_team_worker_shutdown(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "worker-2"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(shutdown["method"], "team.worker.shutdown");
+        assert_eq!(shutdown["params"]["worker_id"], "worker-2");
+    }
+
+    #[test]
     fn team_task_upsert_requests_team_task_upsert_with_dependencies() {
         let request = with_socket_response(
             |req| {
@@ -12094,6 +12406,43 @@ mod tests {
     }
 
     #[test]
+    fn team_message_send_rejects_extra_args_when_body_flag_is_used() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_team_message_send(
+                &ctx,
+                strings(&["team-1", "ignored", "--from", "leader", "--body", "body"]),
+            ),
+            "unexpected argument ignored",
+        );
+    }
+
+    #[test]
+    fn team_message_dispatch_requests_team_message_dispatch() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"sent": true, "message": {"id": "msg-1"}},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_team_message_dispatch(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "msg-1", "--worker-id", "worker-1"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.message.dispatch");
+        assert_eq!(request["params"]["team_id"], "team-1");
+        assert_eq!(request["params"]["message_id"], "msg-1");
+        assert_eq!(request["params"]["worker_id"], "worker-1");
+    }
+
+    #[test]
     fn team_inbox_requests_team_inbox_with_include_delivered() {
         let request = with_socket_response(
             |req| json!({"id": req["id"], "ok": true, "result": []}).to_string(),
@@ -12117,6 +12466,22 @@ mod tests {
         assert_eq!(request["params"]["worker_id"], "worker-1");
         assert_eq!(request["params"]["include_delivered"], true);
         assert_eq!(request["params"]["limit"], 20);
+    }
+
+    #[test]
+    fn team_inbox_include_delivered_false_is_not_sent_as_true() {
+        let request = with_socket_response(
+            |req| json!({"id": req["id"], "ok": true, "result": []}).to_string(),
+            |socket_path| {
+                handle_team_inbox(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "--include-delivered=false"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.inbox");
+        assert!(request["params"].get("include_delivered").is_none());
     }
 
     #[test]
