@@ -61,6 +61,9 @@ cat >"$XDG_CONFIG_HOME/forktty/config.toml" <<'EOF'
 desktop = false
 sound = false
 
+[appearance]
+persistent_scrollback_lines = 200
+
 [telemetry]
 anonymous_ping = false
 EOF
@@ -164,6 +167,27 @@ wait_surface_contains() {
   exit 1
 }
 
+capture_tail_contains() {
+  local id="$1"
+  local needle="$2"
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$id" --lines 80 2>/dev/null | grep -q "$needle"
+}
+
+wait_capture_tail_contains() {
+  local id="$1"
+  local needle="$2"
+  local label="$3"
+  for _ in {1..40}; do
+    if capture_tail_contains "$id" "$needle"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "gtk-ghostty smoke: $label did not appear in capture-tail for surface $id" >&2
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$id" --lines 80 >&2 || true
+  exit 1
+}
+
 wait_surface_not_writable() {
   local id="$1"
   local label="$2"
@@ -204,6 +228,15 @@ if ! wait_surface_pid "$surface_id"; then
   cat "$TMP_DIR/forktty.stderr" >&2 || true
   exit 1
 fi
+
+scrollback_restore_marker="forktty-smoke-scrollback-restore-before-restart"
+send_text_wait "$surface_id" $'echo forktty-smoke-scrollback-restore-before-restart\r' "scrollback restore source terminal"
+wait_surface_contains "$surface_id" "$scrollback_restore_marker" "scrollback restore source marker"
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" focus-surface "$surface_id" >/dev/null
+gapplication action dev.forktty.forktty restart-pane >/dev/null
+send_text_wait "$surface_id" $'echo forktty-smoke-after-restart\r' "restarted terminal"
+wait_surface_contains "$surface_id" "forktty-smoke-after-restart" "restarted terminal readback"
+wait_capture_tail_contains "$surface_id" "$scrollback_restore_marker" "restored scrollback marker"
 
 base_cols="$(snapshot_field cols)"
 base_rows="$(snapshot_field rows)"
