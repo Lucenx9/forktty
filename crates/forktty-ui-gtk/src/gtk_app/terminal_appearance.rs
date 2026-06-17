@@ -142,6 +142,11 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_family_bold: Option<String>,
     pub(super) font_family_italic: Option<String>,
     pub(super) font_family_bold_italic: Option<String>,
+    pub(super) font_features: Vec<String>,
+    pub(super) font_variation: Option<String>,
+    pub(super) font_variation_bold: Option<String>,
+    pub(super) font_variation_italic: Option<String>,
+    pub(super) font_variation_bold_italic: Option<String>,
     pub(super) font_size_pt: Option<f64>,
     pub(super) scrollback_limit_bytes: Option<usize>,
     pub(super) image_storage_limit_bytes: Option<u64>,
@@ -177,6 +182,7 @@ pub(super) struct GhosttyTerminalAppearance {
 }
 
 pub(super) struct TerminalFontVariants {
+    pub(super) font_features: Option<String>,
     pub(super) bold: Option<gtk::pango::FontDescription>,
     pub(super) italic: Option<gtk::pango::FontDescription>,
     pub(super) bold_italic: Option<gtk::pango::FontDescription>,
@@ -395,6 +401,7 @@ pub(super) fn default_terminal_font_description(
     if let Some(family) = appearance.font_family {
         font.set_family(&family);
     }
+    apply_font_variation(&mut font, appearance.font_variation.as_deref());
     if let Some(size) = appearance.font_size_pt {
         font.set_size((size * f64::from(gtk::pango::SCALE)).round() as i32);
     }
@@ -416,6 +423,7 @@ pub(super) fn terminal_font_description_for_zoom_level(
     if let Some(family) = appearance.font_family {
         font.set_family(&family);
     }
+    apply_font_variation(&mut font, appearance.font_variation.as_deref());
     let zoom_level = next_terminal_zoom_level(zoom_level, 0);
     if zoom_level != 0 {
         let base = appearance
@@ -434,36 +442,54 @@ pub(super) fn terminal_font_variants_for_appearance(
     base: &gtk::pango::FontDescription,
 ) -> TerminalFontVariants {
     TerminalFontVariants {
-        bold: appearance
-            .font_family_bold
-            .as_deref()
-            .map(|family| styled_terminal_font_description(base, family, true, false)),
-        italic: appearance
-            .font_family_italic
-            .as_deref()
-            .map(|family| styled_terminal_font_description(base, family, false, true)),
-        bold_italic: appearance
-            .font_family_bold_italic
-            .as_deref()
-            .map(|family| styled_terminal_font_description(base, family, true, true)),
+        font_features: (!appearance.font_features.is_empty())
+            .then(|| appearance.font_features.join(", ")),
+        bold: styled_terminal_font_description(
+            base,
+            appearance.font_family_bold.as_deref(),
+            true,
+            false,
+            appearance.font_variation_bold.as_deref(),
+        ),
+        italic: styled_terminal_font_description(
+            base,
+            appearance.font_family_italic.as_deref(),
+            false,
+            true,
+            appearance.font_variation_italic.as_deref(),
+        ),
+        bold_italic: styled_terminal_font_description(
+            base,
+            appearance.font_family_bold_italic.as_deref(),
+            true,
+            true,
+            appearance.font_variation_bold_italic.as_deref(),
+        ),
     }
 }
 
 fn styled_terminal_font_description(
     base: &gtk::pango::FontDescription,
-    family: &str,
+    family: Option<&str>,
     bold: bool,
     italic: bool,
-) -> gtk::pango::FontDescription {
+    variation: Option<&str>,
+) -> Option<gtk::pango::FontDescription> {
+    if family.is_none() && variation.is_none() {
+        return None;
+    }
     let mut font = base.clone();
-    font.set_family(family);
+    if let Some(family) = family {
+        font.set_family(family);
+    }
     if bold {
         font.set_weight(gtk::pango::Weight::Bold);
     }
     if italic {
         font.set_style(gtk::pango::Style::Italic);
     }
-    font
+    apply_font_variation(&mut font, variation);
+    Some(font)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,6 +738,11 @@ impl Default for GhosttyTerminalAppearance {
             font_family_bold: None,
             font_family_italic: None,
             font_family_bold_italic: None,
+            font_features: Vec::new(),
+            font_variation: None,
+            font_variation_bold: None,
+            font_variation_italic: None,
+            font_variation_bold_italic: None,
             font_size_pt: None,
             scrollback_limit_bytes: None,
             image_storage_limit_bytes: None,
@@ -757,6 +788,17 @@ impl GhosttyTerminalAppearance {
             "font-family-italic" => apply_font_family_value(&mut self.font_family_italic, value),
             "font-family-bold-italic" => {
                 apply_font_family_value(&mut self.font_family_bold_italic, value);
+            }
+            "font-feature" => self.apply_font_feature(&value),
+            "font-variation" => apply_font_variation_value(&mut self.font_variation, &value),
+            "font-variation-bold" => {
+                apply_font_variation_value(&mut self.font_variation_bold, &value);
+            }
+            "font-variation-italic" => {
+                apply_font_variation_value(&mut self.font_variation_italic, &value);
+            }
+            "font-variation-bold-italic" => {
+                apply_font_variation_value(&mut self.font_variation_bold_italic, &value);
             }
             "font-size" => {
                 self.font_size_pt = value
@@ -1020,6 +1062,15 @@ impl GhosttyTerminalAppearance {
         apply_font_family_value(&mut self.font_family, value);
     }
 
+    fn apply_font_feature(&mut self, value: &str) {
+        if value.trim().is_empty() {
+            self.font_features.clear();
+            return;
+        }
+        self.font_features
+            .extend(value.split(',').filter_map(parse_font_feature));
+    }
+
     fn apply_unfocused_split_fill(&mut self, value: &str) {
         set_color(&mut self.unfocused_split_fill, value);
     }
@@ -1084,6 +1135,95 @@ fn apply_font_family_value(target: &mut Option<String>, value: String) {
             existing.push_str(&value);
         }
         None => *target = Some(value),
+    }
+}
+
+fn apply_font_variation(font: &mut gtk::pango::FontDescription, variation: Option<&str>) {
+    if let Some(variation) = variation.filter(|value| !value.trim().is_empty()) {
+        font.set_variations(Some(variation));
+    }
+}
+
+fn apply_font_variation_value(target: &mut Option<String>, value: &str) {
+    if value.trim().is_empty() {
+        *target = None;
+        return;
+    }
+    if let Some(value) = parse_font_variation(value) {
+        append_csv_value(target, &value);
+    }
+}
+
+fn parse_font_variation(value: &str) -> Option<String> {
+    let (axis, value) = value.trim().split_once('=')?;
+    let axis = strip_font_tag_quotes(axis.trim());
+    if axis.chars().count() != 4 {
+        return None;
+    }
+    let value = value.trim();
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())?;
+    Some(format!("{axis}={value}"))
+}
+
+fn parse_font_feature(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some((feature, setting)) = value.split_once('=') {
+        return Some(format!(
+            "{}={}",
+            clean_font_feature_name(feature),
+            setting.trim()
+        ));
+    }
+
+    let mut parts = value.split_whitespace();
+    let feature = parts.next()?;
+    let setting = parts.next();
+    if parts.next().is_some() {
+        return Some(value.to_string());
+    }
+
+    match setting {
+        Some("on") | Some("true") => Some(format!("{}=1", clean_font_feature_name(feature))),
+        Some("off") | Some("false") => Some(format!("{}=0", clean_font_feature_name(feature))),
+        Some(number) if number.parse::<i32>().is_ok() => {
+            Some(format!("{}={number}", clean_font_feature_name(feature)))
+        }
+        Some(_) => Some(value.to_string()),
+        None => Some(clean_font_feature_name(feature)),
+    }
+}
+
+fn clean_font_feature_name(value: &str) -> String {
+    if let Some(feature) = value.trim().strip_prefix('+') {
+        return format!("+{}", strip_font_tag_quotes(feature));
+    }
+    if let Some(feature) = value.trim().strip_prefix('-') {
+        return format!("-{}", strip_font_tag_quotes(feature));
+    }
+    strip_font_tag_quotes(value)
+}
+
+fn strip_font_tag_quotes(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string()
+}
+
+fn append_csv_value(target: &mut Option<String>, value: &str) {
+    match target {
+        Some(existing) => {
+            existing.push_str(", ");
+            existing.push_str(value);
+        }
+        None => *target = Some(value.to_string()),
     }
 }
 
@@ -1467,6 +1607,61 @@ mod tests {
 
         assert_eq!(appearance.unfocused_split_opacity, 0.72);
         assert_eq!(appearance.unfocused_split_fill, "#102030");
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_font_features_and_variations() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            r#"
+            font-feature = -calt, liga=0
+            font-feature = ss01 on
+            font-variation = wght=450
+            font-variation = slnt=-8
+            font-variation-bold = wght=700
+            font-variation-italic = ital=1
+            font-variation-bold-italic = wght=700
+            "#,
+        );
+
+        assert_eq!(appearance.font_features, vec!["-calt", "liga=0", "ss01=1"]);
+        assert_eq!(
+            appearance.font_variation.as_deref(),
+            Some("wght=450, slnt=-8")
+        );
+        assert_eq!(appearance.font_variation_bold.as_deref(), Some("wght=700"));
+        assert_eq!(appearance.font_variation_italic.as_deref(), Some("ital=1"));
+        assert_eq!(
+            appearance.font_variation_bold_italic.as_deref(),
+            Some("wght=700")
+        );
+
+        let mut base = gtk::pango::FontDescription::from_string("monospace 12");
+        apply_font_variation(&mut base, appearance.font_variation.as_deref());
+        assert_eq!(base.variations().as_deref(), Some("wght=450, slnt=-8"));
+
+        let variants = terminal_font_variants_for_appearance(&appearance, &base);
+        assert_eq!(
+            variants.font_features.as_deref(),
+            Some("-calt, liga=0, ss01=1")
+        );
+        assert_eq!(
+            variants.bold.unwrap().variations().as_deref(),
+            Some("wght=700")
+        );
+        assert_eq!(
+            variants.italic.unwrap().variations().as_deref(),
+            Some("ital=1")
+        );
+        assert_eq!(
+            variants.bold_italic.unwrap().variations().as_deref(),
+            Some("wght=700")
+        );
+
+        let reset = ghostty_terminal_appearance_from_text(
+            "font-feature = liga\nfont-feature =\nfont-variation = wght=450\nfont-variation =",
+        );
+        assert!(reset.font_features.is_empty());
+        assert_eq!(reset.font_variation, None);
     }
 
     #[test]

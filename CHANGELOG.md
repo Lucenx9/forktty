@@ -52,6 +52,7 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
 - Repeated Ghostty `font-family`, `font-family-bold`, `font-family-italic`, and `font-family-bold-italic` entries now build Pango fallback lists, and empty entries reset each list.
+- Ghostty `font-feature` and `font-variation*` entries now apply to GTK terminal text through Pango.
 - Ghostty `cell-foreground`/`cell-background` cursor and selection color references, plus legacy `cursor-invert-fg-bg` and `selection-invert-fg-bg`, are now honored by GTK terminal panes.
 - Ghostty `bold-color` and legacy `bold-is-bright` are now honored by GTK terminal panes, including bright ANSI mapping for bold base-color text.
 - Ghostty `cursor-opacity` now controls the GTK terminal cursor overlay.

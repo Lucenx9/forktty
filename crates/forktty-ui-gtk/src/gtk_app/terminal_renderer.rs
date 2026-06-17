@@ -134,6 +134,7 @@ fn renderer_palette_ansi_defaults(palette: &RendererPalette) -> [RendererColor; 
 pub(super) struct TerminalRenderer {
     palette: RendererPalette,
     font: gtk::pango::FontDescription,
+    font_features: Option<String>,
     bold_font: Option<gtk::pango::FontDescription>,
     italic_font: Option<gtk::pango::FontDescription>,
     bold_italic_font: Option<gtk::pango::FontDescription>,
@@ -271,6 +272,7 @@ impl TerminalRenderer {
         Self {
             palette: RendererPalette::from_terminal_colors(&appearance.colors),
             font,
+            font_features: variants.font_features,
             bold_font: variants.bold,
             italic_font: variants.italic,
             bold_italic_font: variants.bold_italic,
@@ -312,11 +314,13 @@ impl TerminalRenderer {
             .as_ref()
             .create_pango_layout(Some(TERMINAL_CELL_WIDTH_PROBE));
         width_layout.set_font_description(Some(&self.font));
+        apply_font_features(&width_layout, self.font_features.as_deref());
         let (_width_ink, width_logical) = width_layout.pixel_extents();
         let height_layout = widget
             .as_ref()
             .create_pango_layout(Some(TERMINAL_CELL_HEIGHT_PROBE));
         height_layout.set_font_description(Some(&self.font));
+        apply_font_features(&height_layout, self.font_features.as_deref());
         let (_height_ink, height_logical) = height_layout.pixel_extents();
         adjusted_cell_pixel_size(
             terminal_cell_pixel_size(width_logical, height_logical),
@@ -740,6 +744,7 @@ impl TerminalRenderer {
             let layout = pangocairo::functions::create_layout(cr);
             let font = self.font_for_cell_style(run.bold, run.italic);
             layout.set_font_description(Some(&font));
+            apply_font_features(&layout, self.font_features.as_deref());
             layout.set_text(&run.text);
             let text_y = adjusted_text_y(y, metrics.height, &self.text_metric_adjustments);
             draw_layout_fitted_to_cells(
@@ -851,6 +856,7 @@ impl TerminalRenderer {
         let layout = pangocairo::functions::create_layout(cr);
         let font = self.font_for_cell_style(cursor.bold, cursor.italic);
         layout.set_font_description(Some(&font));
+        apply_font_features(&layout, self.font_features.as_deref());
         layout.set_text(&cursor.text);
         let text_y = adjusted_text_y(y, metrics.height, &self.text_metric_adjustments);
         draw_layout_fitted_to_cells(cr, &layout, x, text_y, width);
@@ -882,6 +888,15 @@ impl TerminalRenderer {
         }
         font
     }
+}
+
+fn apply_font_features(layout: &gtk::pango::Layout, features: Option<&str>) {
+    let Some(features) = features.filter(|value| !value.trim().is_empty()) else {
+        return;
+    };
+    let attributes = gtk::pango::AttrList::new();
+    attributes.insert(gtk::pango::AttrFontFeatures::new(features));
+    layout.set_attributes(Some(&attributes));
 }
 
 fn draw_layout_fitted_to_cells(
@@ -1239,11 +1254,32 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_applies_font_feature_attributes_to_layouts() {
+        let surface =
+            gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 16, 16).expect("surface");
+        let cr = gtk::cairo::Context::new(&surface).expect("context");
+        let layout = pangocairo::functions::create_layout(&cr);
+
+        apply_font_features(&layout, Some("-calt, liga=0"));
+
+        let attributes = layout.attributes().expect("layout attributes");
+        let attribute = attributes
+            .iterator()
+            .get(gtk::pango::AttrType::FontFeatures)
+            .expect("font features attribute");
+        let font_features = attribute
+            .downcast_ref::<gtk::pango::AttrFontFeatures>()
+            .expect("font features");
+        assert_eq!(font_features.features().as_str(), "-calt, liga=0");
+    }
+
+    #[test]
     fn terminal_renderer_uses_configured_styled_fonts() {
         let config = config::AppConfig::default();
         let renderer = TerminalRenderer {
             palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(&config)),
             font: gtk::pango::FontDescription::from_string("Base Mono 12"),
+            font_features: None,
             bold_font: Some(gtk::pango::FontDescription::from_string("ForkTTYBold 12")),
             italic_font: Some(gtk::pango::FontDescription::from_string("ForkTTYItalic 12")),
             bold_italic_font: Some(gtk::pango::FontDescription::from_string(
@@ -1529,6 +1565,7 @@ mod tests {
         let renderer = TerminalRenderer {
             palette: RendererPalette::from_terminal_colors(&colors),
             font: gtk::pango::FontDescription::from_string("monospace 12"),
+            font_features: None,
             bold_font: None,
             italic_font: None,
             bold_italic_font: None,
