@@ -32,9 +32,12 @@ pub use model::{
     has_uri_scheme, normalize_browser_url, validated_browser_url, AgentSession,
     AgentSessionLifecycle, LogEntry, LogLevel, MovePosition, NotificationItem, NotificationKind,
     PaneNode, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata, Surface, SurfaceId,
-    SurfaceKind, Workspace, WorkspaceId, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    SurfaceKind, TerminalNotificationMetadata, Workspace, WorkspaceId, WorkspaceModel,
+    WorkspaceSelector, MAX_BROWSER_URL_BYTES, MAX_PERSISTED_SCROLLBACK_BYTES,
 };
-pub use notification::{dispatch_notification, NotificationDispatchError};
+pub use notification::{
+    close_desktop_notification, dispatch_notification, NotificationDispatchError,
+};
 pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};

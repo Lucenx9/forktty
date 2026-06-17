@@ -5038,6 +5038,7 @@ mod tests {
                 host: "user@example.test".to_string(),
             },
             agent_session: None,
+            persisted_scrollback: None,
         };
 
         spawn_terminal_surfaces(&state, &[surface]).unwrap();
@@ -5061,6 +5062,7 @@ mod tests {
                 needs_attention: false,
                 kind: forktty_core::SurfaceKind::Terminal,
                 agent_session: None,
+                persisted_scrollback: None,
             },
             "/bin/sh",
             "/tmp/forktty.sock",
@@ -5114,6 +5116,7 @@ mod tests {
                 lifecycle: AgentSessionLifecycle::Running,
                 last_activity_ms: 12_345,
             }),
+            persisted_scrollback: None,
         };
 
         let request = spawn_request_for_surface(
@@ -5152,6 +5155,7 @@ mod tests {
                 lifecycle: AgentSessionLifecycle::Running,
                 last_activity_ms: 12_345,
             }),
+            persisted_scrollback: None,
         };
 
         let request = spawn_request_for_surface(
@@ -5208,6 +5212,7 @@ mod tests {
                 lifecycle: AgentSessionLifecycle::Running,
                 last_activity_ms: 12_345,
             }),
+            persisted_scrollback: None,
         };
 
         let request = spawn_request_for_surface(

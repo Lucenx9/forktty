@@ -294,6 +294,7 @@ pub struct TerminalCell {
     pub width: TerminalCellWidth,
     pub bold: bool,
     pub italic: bool,
+    pub faint: bool,
     pub underline: bool,
     pub strikethrough: bool,
     pub inverse: bool,
@@ -672,6 +673,7 @@ impl GhosttyCore {
                     width,
                     bold: style.bold,
                     italic: style.italic,
+                    faint: style.faint,
                     underline: !matches!(style.underline, libghostty_vt::style::Underline::None),
                     strikethrough: style.strikethrough,
                     inverse: style.inverse,
@@ -1802,6 +1804,23 @@ mod tests {
 
         assert_eq!(frame.rows[0].cells[0].text, "s");
         assert!(frame.rows[0].cells[0].invisible);
+    }
+
+    #[test]
+    fn core_render_frame_marks_faint_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[2mfaint\x1b[0m").unwrap();
+
+        let frame = core.render_frame().unwrap();
+
+        assert_eq!(frame.rows[0].cells[0].text, "f");
+        assert!(frame.rows[0].cells[0].faint);
     }
 
     #[test]

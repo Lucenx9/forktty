@@ -292,6 +292,16 @@ impl TerminalRuntime {
         Ok(events)
     }
 
+    pub(super) fn restore_persisted_scrollback(&mut self, text: &str) {
+        let bytes = persisted_scrollback_output_bytes(text);
+        if bytes.is_empty() {
+            return;
+        }
+        if let Err(err) = self.feed_pty_bytes(&bytes) {
+            eprintln!("Failed to restore persisted terminal scrollback: {err}");
+        }
+    }
+
     /// Plain-text dump of scrollback plus the active screen; line `i` maps to
     /// grid row `i` counted from the top of the scrollback.
     pub(super) fn full_text(&self) -> String {
@@ -384,6 +394,23 @@ fn exit_status_code(status: std::process::ExitStatus) -> i32 {
         .code()
         .or_else(|| status.signal().map(|signal| 128 + signal))
         .unwrap_or(1)
+}
+
+fn persisted_scrollback_output_bytes(text: &str) -> Vec<u8> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = Vec::with_capacity(normalized.len() + 2);
+    for ch in normalized.chars() {
+        if ch == '\n' {
+            out.extend_from_slice(b"\r\n");
+        } else if !ch.is_control() || ch == '\t' {
+            let mut buffer = [0; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
+        }
+    }
+    if !out.is_empty() && !normalized.ends_with('\n') {
+        out.extend_from_slice(b"\r\n");
+    }
+    out
 }
 
 #[cfg(test)]
@@ -558,6 +585,18 @@ mod tests {
         harness.controller_send_text("surface-1", "echo ok\n");
 
         assert_eq!(harness.pty_writes("surface-1"), vec![b"echo ok\n".to_vec()]);
+    }
+
+    #[test]
+    fn restored_scrollback_text_seeds_core_without_pty_write() {
+        let mut runtime =
+            TerminalRuntime::spawn(&test_request(), PtySize { cols: 80, rows: 24 }).unwrap();
+
+        runtime.restore_persisted_scrollback("old output\nlast line");
+
+        assert!(runtime.full_text().contains("old output"));
+        assert!(runtime.full_text().contains("last line"));
+        assert!(runtime.pty_writes().is_empty());
     }
 
     #[test]

@@ -65,7 +65,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Compact status/HUD export through `status.summary`, `forktty statusline`, and MCP `status_summary`.
 - [x] GTK Agent HUD for persisted agent lifecycle, last activity, needs-input attention, focus, and resume.
 - [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
-- [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream and rate-limited per surface.
+- [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream and rate-limited per surface, including same-id update/close, desktop replacement/closing, in-app report replies, support/alive query replies, basic same-id buttons, icon names, application/type metadata filtering, occasion filtering, urgency/expiry/sound hints, bounded `p=icon` data caching, and in-app/desktop binary icon rendering where GTK/notification servers can decode the image.
 - [x] Ghostty bell and child-exit notifications.
 - [x] Explicit notification `kind` support.
 
@@ -73,7 +73,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 - [x] Auto/Light/Dark theme-source selection in Settings.
 - [x] Per-pane Ghostty scrollback and audible-bell controls.
-- [x] Ghostty config appearance import for font, colors, `theme`, `config-file`, named colors, ANSI palette entries, and `scrollback-limit`.
+- [x] Ghostty config appearance import for font, colors, `theme`, `config-file`, named colors, ANSI palette entries, `scrollback-limit`, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming.
 - [x] Sidebar position (`left`/`right`) and visibility persistence.
 
 ### Session, Config, and Security
@@ -92,6 +92,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Native `.deb` package installing `forktty`.
 - [x] Desktop entry and icon under `packaging/linux`.
 - [x] CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
+- [x] Runtime GTK/Ghostty smoke script for isolated socket boot, terminal input/readback, runtime zoom reflow/reset, GTK action split/focus behavior, socket split readback, and notification CLI create/list/clear.
 - [x] GitHub prerelease workflow that uploads the Debian package, experimental AppImage, and shared `SHA256SUMS`.
 
 ## Backlog
@@ -109,10 +110,8 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Prompt composer/TextBox surface for reusable prompt drafting and dispatch.
 - [ ] Agent/skill catalog: installable prompt packs, provider-specific workflow skills, and project-scoped reusable guidance.
 - [ ] File/project panels: file explorer, markdown preview, diff/comment review flows.
-- [ ] Complete advanced OSC 99 support: notification updates/close, activation reports, buttons, icon payloads, and broader chunk lifecycle behavior.
-- [ ] Runtime GTK/Ghostty smoke tests for keyboard, split, notification, and socket workflows.
 - [ ] Manual QA matrix for `.deb` across Debian/Ubuntu, Fedora-family, Arch/CachyOS.
-- [ ] Persistent scrollback, opt-in and bounded.
+- [x] Persistent scrollback, opt-in and bounded.
 - [ ] More complete command palette search/filter parity.
 - [ ] Rich branch picker UI with query highlighting.
 - [ ] Better notification inbox grouping and actions.

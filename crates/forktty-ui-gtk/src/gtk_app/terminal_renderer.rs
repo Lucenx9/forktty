@@ -6,9 +6,6 @@ use forktty_terminal::ghostty::core::{
 };
 use std::{f64::consts::PI, fmt};
 
-/// Ghostty-style inactive split dim: enough to clarify focus without making
-/// background panes unreadable.
-const UNFOCUSED_SPLIT_DIM_ALPHA: f64 = 0.08;
 const SCROLLBACK_INDICATOR_WIDTH_PX: f64 = 4.0;
 const SCROLLBACK_INDICATOR_ALPHA: f64 = 0.25;
 const VISUAL_BELL_BORDER_PX: f64 = 2.0;
@@ -47,6 +44,15 @@ impl RendererColor {
             f64::from(self.red) / 255.0,
             f64::from(self.green) / 255.0,
             f64::from(self.blue) / 255.0,
+        );
+    }
+
+    fn set_cairo_source_rgba(self, cr: &gtk::cairo::Context, alpha: f64) {
+        cr.set_source_rgba(
+            f64::from(self.red) / 255.0,
+            f64::from(self.green) / 255.0,
+            f64::from(self.blue) / 255.0,
+            alpha.clamp(0.0, 1.0),
         );
     }
 
@@ -131,25 +137,38 @@ pub(super) struct TerminalRenderer {
     bold_font: Option<gtk::pango::FontDescription>,
     italic_font: Option<gtk::pango::FontDescription>,
     bold_italic_font: Option<gtk::pango::FontDescription>,
+    cursor_opacity: f64,
+    faint_opacity: f64,
+    cell_width_adjustment: Option<GhosttyMetricAdjustment>,
+    cell_height_adjustment: Option<GhosttyMetricAdjustment>,
+    unfocused_split_dim: UnfocusedSplitDim,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UnfocusedSplitDim {
+    fill: RendererColor,
+    alpha: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct RendererCellStyle {
     foreground: RendererColor,
     background: RendererColor,
+    opacity: f64,
     bold: bool,
     italic: bool,
     underline: bool,
     strikethrough: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct RendererTextRun {
     start_col: usize,
     cell_span: usize,
     text: String,
     foreground: RendererColor,
     background: RendererColor,
+    opacity: f64,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -163,7 +182,7 @@ struct RendererBackgroundRun {
     background: RendererColor,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct RendererCursorOverlay {
     col: usize,
     row: usize,
@@ -172,6 +191,7 @@ struct RendererCursorOverlay {
     text: String,
     foreground: RendererColor,
     background: RendererColor,
+    opacity: f64,
     bold: bool,
     italic: bool,
 }
@@ -233,13 +253,22 @@ impl TerminalRenderer {
         config: &config::AppConfig,
         font: gtk::pango::FontDescription,
     ) -> Self {
-        let variants = terminal_font_variants_for_config(config, &font);
+        let appearance = ghostty_terminal_appearance_for_config(config);
+        let variants = terminal_font_variants_for_appearance(&appearance, &font);
         Self {
-            palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(config)),
+            palette: RendererPalette::from_terminal_colors(&appearance.colors),
             font,
             bold_font: variants.bold,
             italic_font: variants.italic,
             bold_italic_font: variants.bold_italic,
+            cursor_opacity: appearance.cursor_opacity,
+            faint_opacity: appearance.faint_opacity,
+            cell_width_adjustment: appearance.adjust_cell_width,
+            cell_height_adjustment: appearance.adjust_cell_height,
+            unfocused_split_dim: unfocused_split_dim_from_appearance(
+                appearance.unfocused_split_opacity,
+                &appearance.unfocused_split_fill,
+            ),
         }
     }
 
@@ -267,7 +296,11 @@ impl TerminalRenderer {
             .create_pango_layout(Some(TERMINAL_CELL_HEIGHT_PROBE));
         height_layout.set_font_description(Some(&self.font));
         let (_height_ink, height_logical) = height_layout.pixel_extents();
-        terminal_cell_pixel_size(width_logical, height_logical)
+        adjusted_cell_pixel_size(
+            terminal_cell_pixel_size(width_logical, height_logical),
+            self.cell_width_adjustment,
+            self.cell_height_adjustment,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -375,7 +408,7 @@ impl TerminalRenderer {
             cursor_state.has_siblings,
             cursor_state.model_focused,
         ) {
-            paint_unfocused_split_dim(cr, width, height);
+            paint_unfocused_split_dim(cr, width, height, self.unfocused_split_dim);
         }
         if let Some(viewport) = viewport {
             if let Some(indicator) =
@@ -450,6 +483,7 @@ impl TerminalRenderer {
             let style = RendererCellStyle {
                 foreground: self.cell_foreground_with_defaults(cell, defaults),
                 background: self.cell_background_with_defaults(cell, defaults),
+                opacity: if cell.faint { self.faint_opacity } else { 1.0 },
                 bold: cell.bold,
                 italic: cell.italic,
                 underline: cell.underline
@@ -503,6 +537,7 @@ impl TerminalRenderer {
             text,
             foreground: self.palette.cursor_foreground,
             background: self.palette.cursor,
+            opacity: self.cursor_opacity,
             bold: cell.bold,
             italic: cell.italic,
         })
@@ -622,7 +657,9 @@ impl TerminalRenderer {
         link_cols: Option<(usize, usize)>,
     ) {
         for run in self.text_runs_for_frame_row(frame, row, link_cols) {
-            color.unwrap_or(run.foreground).set_cairo_source(cr);
+            color
+                .unwrap_or(run.foreground)
+                .set_cairo_source_rgba(cr, run.opacity);
             let layout = pangocairo::functions::create_layout(cr);
             let font = self.font_for_cell_style(run.bold, run.italic);
             layout.set_font_description(Some(&font));
@@ -669,7 +706,7 @@ impl TerminalRenderer {
     ) {
         let x = f64::from(grid.origin_x) + cursor.col as f64 * metrics.width;
         let y = f64::from(grid.origin_y) + cursor.row as f64 * metrics.height;
-        cursor.background.set_cairo_source(cr);
+        cursor.background.set_cairo_source_rgba(cr, cursor.opacity);
         let width = cursor.cell_span as f64 * metrics.width;
         match cursor.style {
             RendererCursorStyle::Bar => {
@@ -703,7 +740,7 @@ impl TerminalRenderer {
             return;
         }
 
-        cursor.foreground.set_cairo_source(cr);
+        cursor.foreground.set_cairo_source_rgba(cr, cursor.opacity);
         let layout = pangocairo::functions::create_layout(cr);
         let font = self.font_for_cell_style(cursor.bold, cursor.italic);
         layout.set_font_description(Some(&font));
@@ -776,6 +813,30 @@ fn terminal_cell_pixel_size(
     )
 }
 
+fn adjusted_cell_pixel_size(
+    cell_size: (i32, i32),
+    width_adjustment: Option<GhosttyMetricAdjustment>,
+    height_adjustment: Option<GhosttyMetricAdjustment>,
+) -> (i32, i32) {
+    (
+        adjust_cell_pixel_dimension(cell_size.0, width_adjustment),
+        adjust_cell_pixel_dimension(cell_size.1, height_adjustment),
+    )
+}
+
+fn adjust_cell_pixel_dimension(size: i32, adjustment: Option<GhosttyMetricAdjustment>) -> i32 {
+    let size = size.max(1);
+    match adjustment {
+        Some(GhosttyMetricAdjustment::Pixels(delta)) => size.saturating_add(delta).max(1),
+        Some(GhosttyMetricAdjustment::Percent(percent)) => {
+            (f64::from(size) * (1.0 + percent / 100.0))
+                .round()
+                .clamp(1.0, f64::from(i32::MAX)) as i32
+        }
+        None => size,
+    }
+}
+
 fn renderer_cell_metrics_from_size(cell_size: (i32, i32)) -> RendererCellMetrics {
     RendererCellMetrics {
         width: f64::from(cell_size.0.max(1)),
@@ -791,6 +852,7 @@ impl RendererTextRun {
             text: text.to_string(),
             foreground: style.foreground,
             background: style.background,
+            opacity: style.opacity,
             bold: style.bold,
             italic: style.italic,
             underline: style.underline,
@@ -802,6 +864,7 @@ impl RendererTextRun {
         RendererCellStyle {
             foreground: self.foreground,
             background: self.background,
+            opacity: self.opacity,
             bold: self.bold,
             italic: self.italic,
             underline: self.underline,
@@ -832,8 +895,25 @@ fn should_dim_pane(focused: bool, has_siblings: bool, model_focused: bool) -> bo
     has_siblings && !focused && !model_focused
 }
 
-fn paint_unfocused_split_dim(cr: &gtk::cairo::Context, width: i32, height: i32) {
-    cr.set_source_rgba(0.0, 0.0, 0.0, UNFOCUSED_SPLIT_DIM_ALPHA);
+fn unfocused_split_dim_from_appearance(opacity: f64, fill: &str) -> UnfocusedSplitDim {
+    UnfocusedSplitDim {
+        fill: RendererColor::parse(fill),
+        alpha: (1.0 - opacity.clamp(0.15, 1.0)).clamp(0.0, 0.85),
+    }
+}
+
+fn paint_unfocused_split_dim(
+    cr: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
+    dim: UnfocusedSplitDim,
+) {
+    cr.set_source_rgba(
+        f64::from(dim.fill.red) / 255.0,
+        f64::from(dim.fill.green) / 255.0,
+        f64::from(dim.fill.blue) / 255.0,
+        dim.alpha,
+    );
     cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
     let _ = cr.fill();
 }
@@ -932,6 +1012,11 @@ mod tests {
             bold_italic_font: Some(gtk::pango::FontDescription::from_string(
                 "ForkTTYBoldItalic 12",
             )),
+            cursor_opacity: 1.0,
+            faint_opacity: 0.5,
+            cell_width_adjustment: None,
+            cell_height_adjustment: None,
+            unfocused_split_dim: unfocused_split_dim_from_appearance(0.92, "#181818"),
         };
 
         assert_eq!(
@@ -985,6 +1070,34 @@ mod tests {
     }
 
     #[test]
+    fn cell_size_adjustments_apply_pixels_and_percentages() {
+        assert_eq!(
+            adjusted_cell_pixel_size(
+                (10, 20),
+                Some(GhosttyMetricAdjustment::Pixels(2)),
+                Some(GhosttyMetricAdjustment::Percent(10.0)),
+            ),
+            (12, 22)
+        );
+        assert_eq!(
+            adjusted_cell_pixel_size(
+                (10, 20),
+                Some(GhosttyMetricAdjustment::Percent(-50.0)),
+                None
+            ),
+            (5, 20)
+        );
+        assert_eq!(
+            adjusted_cell_pixel_size(
+                (10, 20),
+                Some(GhosttyMetricAdjustment::Pixels(-99)),
+                Some(GhosttyMetricAdjustment::Percent(-100.0)),
+            ),
+            (1, 1)
+        );
+    }
+
+    #[test]
     fn terminal_renderer_groups_cells_by_visual_style() {
         let config = config::AppConfig::default();
         let renderer = TerminalRenderer::from_config_with_font(
@@ -1034,6 +1147,28 @@ mod tests {
             runs[1].background,
             RendererColor::from_terminal_rgb(default_bg)
         );
+    }
+
+    #[test]
+    fn terminal_renderer_applies_faint_opacity_to_text_runs() {
+        let config = config::AppConfig::default();
+        let mut renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        renderer.faint_opacity = 0.35;
+        let mut faint = test_cell("f", None, None);
+        faint.faint = true;
+        let row = TerminalRow {
+            cells: vec![faint, test_cell("n", None, None)],
+            wrapped: false,
+        };
+
+        let runs = renderer.text_runs_for_row(&row);
+
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].opacity, 0.35);
+        assert_eq!(runs[1].opacity, 1.0);
     }
 
     #[test]
@@ -1126,6 +1261,11 @@ mod tests {
             bold_font: None,
             italic_font: None,
             bold_italic_font: None,
+            cursor_opacity: 1.0,
+            faint_opacity: 0.5,
+            cell_width_adjustment: None,
+            cell_height_adjustment: None,
+            unfocused_split_dim: unfocused_split_dim_from_appearance(0.92, "#181818"),
         };
         let mut red_cell = test_cell("x", Some(parse_rgb(&colors.ansi[1])), None);
         red_cell.bold = true;
@@ -1340,6 +1480,37 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_applies_cursor_opacity_to_overlay() {
+        let config = config::AppConfig::default();
+        let mut renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        renderer.cursor_opacity = 0.42;
+        let frame = test_frame(
+            TerminalRgb {
+                red: 0xd7,
+                green: 0xd7,
+                blue: 0xd7,
+            },
+            TerminalRgb {
+                red: 0x18,
+                green: 0x18,
+                blue: 0x18,
+            },
+            TerminalRow {
+                cells: vec![test_cell("a", None, None)],
+                wrapped: false,
+            },
+        )
+        .with_cursor(0, 0);
+
+        let overlay = renderer.cursor_overlay_for_frame(&frame).unwrap();
+
+        assert_eq!(overlay.opacity, 0.42);
+    }
+
+    #[test]
     fn terminal_renderer_preserves_non_block_cursor_shape() {
         let config = config::AppConfig::default();
         let renderer = TerminalRenderer::from_config_with_font(
@@ -1390,6 +1561,14 @@ mod tests {
         assert!(!should_dim_pane(false, false, true));
         // A sibling that is neither GTK- nor model-focused still dims.
         assert!(should_dim_pane(false, true, false));
+    }
+
+    #[test]
+    fn unfocused_split_dim_uses_ghostty_opacity_and_fill() {
+        let dim = unfocused_split_dim_from_appearance(0.72, "#102030");
+
+        assert_eq!(dim.fill.to_string(), "#102030");
+        assert!((dim.alpha - 0.28).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1468,6 +1647,7 @@ mod tests {
             width: TerminalCellWidth::Narrow,
             bold: false,
             italic: false,
+            faint: false,
             underline: false,
             strikethrough: false,
             inverse: false,

@@ -416,6 +416,7 @@ notification_command = ""
 font_family = ""
 font_size = 14
 scrollback_lines = 20000
+persistent_scrollback_lines = 0
 terminal_audible_bell = true
 sidebar_position = "left" # "left" or "right"
 sidebar_visible = true
@@ -426,6 +427,8 @@ window_mode = "normal" # "normal" or "quake"
 [notifications]
 desktop = true
 sound = true
+blocked_terminal_apps = []
+blocked_terminal_types = []
 
 [updates]
 auto_check = true
@@ -434,9 +437,9 @@ auto_check = true
 anonymous_ping = true
 ```
 
-`notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path, and notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`.
+`notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path. Notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`; OSC 99 `f`/`t` metadata is exposed as `FORKTTY_NOTIFICATION_TERMINAL_APP` and `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` suppress terminal-originated OSC 99 notifications whose exact `f` application or `t` type matches one of the listed strings.
 
-`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. Terminal font, colors, and `scrollback-limit` come from Ghostty's config (`~/.config/ghostty/config` and `config.ghostty`) when present, including `config-file`, `theme`, named colors, and 16-color palette entries; legacy ForkTTY font/theme keys are kept only for config compatibility. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
+`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Terminal font, colors, `scrollback-limit`, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config` and `config.ghostty`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; legacy ForkTTY font/theme keys are kept only for config compatibility. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty.
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 
@@ -452,7 +455,7 @@ GTK/Ghostty sessions are stored as:
 ~/.local/share/forktty/session-v2.json
 ```
 
-ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. Restore does not preserve running PTY processes or scrollback; new Ghostty-backed terminals are spawned for restored panes. Corrupt or structurally invalid session files are quarantined.
+ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. Restore does not preserve running PTY processes; new Ghostty-backed terminals are spawned for restored panes. Scrollback restore is limited to the opt-in plain-text tail controlled by `persistent_scrollback_lines`. Corrupt or structurally invalid session files are quarantined.
 
 ## Security Summary
 
@@ -470,10 +473,10 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 - Linux only. There are no supported macOS or Windows builds.
 - libadwaita 1.4+ are required by the native terminal integration.
 - The AppImage bundles GTK4/libadwaita/Ghostty but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
-- PTYs and scrollback are not persisted across restart; restored sessions spawn fresh shells.
-- OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded, while update/close controls, activation reports, buttons, icon payloads, and broader chunk lifecycle behavior remain partial.
+- PTYs are not persisted across restart; restored sessions spawn fresh shells. Scrollback persistence is opt-in, plain-text only, and bounded.
+- OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded with multipart title/body kept separate, same-id update/close controls affect ForkTTY's notification model, and in-app Open/Dismiss/Clear All plus basic same-id buttons can send OSC 99 reports. Icon names, application-name icon fallback, application/type filtering metadata, occasion filtering, urgency, expiry, and sound metadata feed notification handling, positive `w` expiry values dismiss in-app notifications, and bounded `p=icon` data can be cached by `g`; broader chunk lifecycle behavior remains partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
-- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, persistent scrollback across restarts, and browser history/bookmark GTK address-bar integration are backlog items.
+- Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, and browser history/bookmark GTK address-bar integration are backlog items.
 - Browser panes are source-only and experimental in this alpha; use `--features browser` only when intentionally testing that path.
 
 ## Troubleshooting

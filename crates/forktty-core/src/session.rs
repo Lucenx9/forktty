@@ -1,6 +1,9 @@
 use crate::backup::BackupReservationKind;
 use crate::command_safety::is_valid_ssh_host;
-use crate::model::{PaneNode, SplitAxis, Surface, SurfaceKind, Workspace, MAX_SESSION_SPLIT_DEPTH};
+use crate::model::{
+    PaneNode, SplitAxis, Surface, SurfaceKind, Workspace, MAX_PERSISTED_SCROLLBACK_BYTES,
+    MAX_SESSION_SPLIT_DEPTH,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -240,6 +243,11 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
         ensure_session_parent_dir(parent)?;
     }
     let json = serde_json::to_string_pretty(data)?;
+    if json.len() as u64 > MAX_SESSION_SIZE_BYTES {
+        return Err(SessionError::InvalidData(
+            "session data is too large".to_string(),
+        ));
+    }
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -755,6 +763,23 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
             if !is_valid_ssh_host(host) {
                 return Err(SessionError::InvalidData(format!(
                     "persisted ssh surface has invalid host: {}",
+                    surface.id
+                )));
+            }
+        }
+        if let Some(scrollback) = surface.persisted_scrollback.as_deref() {
+            if scrollback.len() > MAX_PERSISTED_SCROLLBACK_BYTES {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface scrollback is too large: {}",
+                    surface.id
+                )));
+            }
+            if scrollback
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+            {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface scrollback contains control characters: {}",
                     surface.id
                 )));
             }
@@ -1517,6 +1542,87 @@ mod tests {
 
         let err = validate_session_data(&data).unwrap_err();
         assert!(err.to_string().contains("invalid host"));
+    }
+
+    #[test]
+    fn rejects_oversized_persisted_scrollback() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.surfaces = vec![Surface {
+            id: data.workspaces[0].focused_surface_id.clone(),
+            workspace_id: data.workspaces[0].id.clone(),
+            cwd: data.workspaces[0].working_dir.clone(),
+            title: "shell".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: SurfaceKind::Terminal,
+            agent_session: None,
+            persisted_scrollback: Some("x".repeat(MAX_PERSISTED_SCROLLBACK_BYTES + 1)),
+        }];
+
+        let err = validate_session_data(&data).unwrap_err();
+        assert!(err.to_string().contains("scrollback is too large"));
+    }
+
+    #[test]
+    fn rejects_persisted_scrollback_control_characters() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.surfaces = vec![Surface {
+            id: data.workspaces[0].focused_surface_id.clone(),
+            workspace_id: data.workspaces[0].id.clone(),
+            cwd: data.workspaces[0].working_dir.clone(),
+            title: "shell".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: SurfaceKind::Terminal,
+            agent_session: None,
+            persisted_scrollback: Some("ok\x08bad".to_string()),
+        }];
+
+        let err = validate_session_data(&data).unwrap_err();
+        assert!(err.to_string().contains("control characters"));
+    }
+
+    #[test]
+    fn save_session_to_path_rejects_serialized_session_over_load_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session-v2.json");
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        let workspace_id = data.workspaces[0].id.clone();
+        let cwd = data.workspaces[0].working_dir.clone();
+        let ids = (0..20)
+            .map(|index| format!("surface-{index}"))
+            .collect::<Vec<_>>();
+        data.workspaces[0].pane_tree = PaneNode::Leaf {
+            tabs: ids.clone(),
+            active: 0,
+        };
+        data.workspaces[0].focused_surface_id = ids[0].clone();
+        data.surfaces = ids
+            .iter()
+            .map(|id| Surface {
+                id: id.clone(),
+                workspace_id: workspace_id.clone(),
+                cwd: cwd.clone(),
+                title: "shell".to_string(),
+                unread: false,
+                needs_attention: false,
+                kind: SurfaceKind::Terminal,
+                agent_session: None,
+                persisted_scrollback: Some("x".repeat(MAX_PERSISTED_SCROLLBACK_BYTES)),
+            })
+            .collect();
+
+        let err = save_session_to_path(&path, &data).unwrap_err();
+        assert!(
+            matches!(err, SessionError::InvalidData(message) if message == "session data is too large")
+        );
+        assert!(!path.exists());
     }
 
     #[test]

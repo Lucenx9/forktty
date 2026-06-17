@@ -66,6 +66,8 @@ pub struct AppearanceConfig {
     pub font_size: u16,
     #[serde(default = "default_scrollback_lines")]
     pub scrollback_lines: u32,
+    #[serde(default)]
+    pub persistent_scrollback_lines: u32,
     #[serde(default = "default_terminal_audible_bell")]
     pub terminal_audible_bell: bool,
     #[serde(default = "default_sidebar_position")]
@@ -86,6 +88,10 @@ pub struct NotificationConfig {
     pub desktop: bool,
     #[serde(default = "default_true")]
     pub sound: bool,
+    #[serde(default)]
+    pub blocked_terminal_apps: Vec<String>,
+    #[serde(default)]
+    pub blocked_terminal_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -114,8 +120,11 @@ pub const TERMINAL_THEME_CHOICES: &[&str] = &[
     TERMINAL_THEME_DRACULA,
     TERMINAL_THEME_GRUVBOX_DARK,
 ];
+pub const MAX_PERSISTENT_SCROLLBACK_LINES: u32 = 1_000;
 
 const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+const MAX_NOTIFICATION_FILTER_VALUES: usize = 64;
+const MAX_NOTIFICATION_FILTER_VALUE_CHARS: usize = 120;
 
 static CONFIG_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -137,6 +146,7 @@ impl Default for AppearanceConfig {
             font_family: default_font_family(),
             font_size: default_font_size(),
             scrollback_lines: default_scrollback_lines(),
+            persistent_scrollback_lines: 0,
             terminal_audible_bell: default_terminal_audible_bell(),
             sidebar_position: default_sidebar_position(),
             sidebar_visible: default_sidebar_visible(),
@@ -152,6 +162,8 @@ impl Default for NotificationConfig {
         Self {
             desktop: true,
             sound: true,
+            blocked_terminal_apps: Vec::new(),
+            blocked_terminal_types: Vec::new(),
         }
     }
 }
@@ -467,6 +479,11 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             "appearance.scrollback_lines must be 500000 or fewer".to_string(),
         ));
     }
+    if config.appearance.persistent_scrollback_lines > MAX_PERSISTENT_SCROLLBACK_LINES {
+        return Err(ConfigError::Invalid(format!(
+            "appearance.persistent_scrollback_lines must be {MAX_PERSISTENT_SCROLLBACK_LINES} or fewer"
+        )));
+    }
     if !matches!(
         config.appearance.terminal_renderer.as_str(),
         "auto" | "dom" | "canvas" | "webgl" | "ghostty" | "vte"
@@ -481,6 +498,14 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             "appearance.window_mode must be one of: normal, quake".to_string(),
         ));
     }
+    validate_notification_filter_values(
+        "notifications.blocked_terminal_apps",
+        &config.notifications.blocked_terminal_apps,
+    )?;
+    validate_notification_filter_values(
+        "notifications.blocked_terminal_types",
+        &config.notifications.blocked_terminal_types,
+    )?;
     validate_notification_command(&config.general.notification_command)?;
     Ok(())
 }
@@ -545,7 +570,25 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     // renderer, but keeping it normalized makes old config round trips stable.
     config.appearance.font_size = config.appearance.font_size.clamp(8, 64);
     config.appearance.scrollback_lines = config.appearance.scrollback_lines.min(500_000);
+    config.appearance.persistent_scrollback_lines = config
+        .appearance
+        .persistent_scrollback_lines
+        .min(MAX_PERSISTENT_SCROLLBACK_LINES);
+    config.notifications.blocked_terminal_apps =
+        normalize_notification_filter_values(config.notifications.blocked_terminal_apps);
+    config.notifications.blocked_terminal_types =
+        normalize_notification_filter_values(config.notifications.blocked_terminal_types);
     config
+}
+
+fn normalize_notification_filter_values(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_string())
+        })
+        .collect()
 }
 
 fn normalize_config_choice(value: &str, allowed: &[&str]) -> Option<String> {
@@ -586,6 +629,25 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
         return Err(ConfigError::Invalid(format!(
             "general.notification_command must start with an absolute path to an executable file: {program}"
         )));
+    }
+    Ok(())
+}
+
+fn validate_notification_filter_values(name: &str, values: &[String]) -> Result<(), ConfigError> {
+    if values.len() > MAX_NOTIFICATION_FILTER_VALUES {
+        return Err(ConfigError::Invalid(format!(
+            "{name} must contain {MAX_NOTIFICATION_FILTER_VALUES} values or fewer"
+        )));
+    }
+    for value in values {
+        if value.trim().is_empty()
+            || value.trim() != value
+            || value.chars().count() > MAX_NOTIFICATION_FILTER_VALUE_CHARS
+        {
+            return Err(ConfigError::Invalid(format!(
+                "{name} entries must be non-empty, trimmed, and {MAX_NOTIFICATION_FILTER_VALUE_CHARS} characters or fewer"
+            )));
+        }
     }
     Ok(())
 }
@@ -767,6 +829,7 @@ mod tests {
         let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
         assert_eq!(config.appearance.font_size, 14);
         assert_eq!(config.appearance.scrollback_lines, 20_000);
+        assert_eq!(config.appearance.persistent_scrollback_lines, 0);
         assert!(config.appearance.terminal_audible_bell);
         assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_SYSTEM);
         assert!(!config.general.enable_pr_lookup);
@@ -1128,6 +1191,46 @@ mod tests {
         assert!(!saved.contains("font_family"));
         assert!(!saved.contains("font_size"));
         assert!(!saved.contains("terminal_theme"));
+    }
+
+    #[test]
+    fn loaded_config_normalizes_terminal_notification_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            shell = "/bin/sh"
+
+            [notifications]
+            blocked_terminal_apps = [" make ", "", " cargo "]
+            blocked_terminal_types = [" build.error ", "ci"]
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+
+        assert_eq!(
+            config.notifications.blocked_terminal_apps,
+            ["make", "cargo"]
+        );
+        assert_eq!(
+            config.notifications.blocked_terminal_types,
+            ["build.error", "ci"]
+        );
+    }
+
+    #[test]
+    fn validate_config_rejects_overlong_terminal_notification_filter() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.notifications.blocked_terminal_apps =
+            vec!["x".repeat(MAX_NOTIFICATION_FILTER_VALUE_CHARS + 1)];
+
+        let err = validate_config(&normalize_loaded_config(config)).unwrap_err();
+        assert!(err.to_string().contains("blocked_terminal_apps entries"));
     }
 
     fn assert_recovery_and_get_quarantined_path(
@@ -1493,6 +1596,17 @@ mod tests {
         let error = validate_config(&config).unwrap_err();
 
         assert!(error.to_string().contains("scrollback_lines"));
+    }
+
+    #[test]
+    fn persistent_scrollback_lines_are_bounded() {
+        let mut config = AppConfig::default();
+        config.general.shell = "/bin/sh".to_string();
+        config.appearance.persistent_scrollback_lines = 1_001;
+
+        let error = validate_config(&config).unwrap_err();
+
+        assert!(error.to_string().contains("persistent_scrollback_lines"));
     }
 
     #[test]

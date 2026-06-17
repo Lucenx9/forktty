@@ -86,11 +86,18 @@ done
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
   python3 -c 'import json,sys; assert len(json.load(sys.stdin)) >= 1'
 
+workspace_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["workspace_id"])')"
 surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["surface_id"])')"
 
+read_surface_json() {
+  local id="$1"
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$id" --json
+}
+
 read_screen_json() {
-  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" --json
+  read_surface_json "$surface_id"
 }
 
 snapshot_field() {
@@ -98,27 +105,52 @@ snapshot_field() {
   read_screen_json | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$field"
 }
 
-sent=0
-for _ in {1..40}; do
-  if "$BIN" --socket "$FORKTTY_SOCKET_PATH" send-text --surface-id "$surface_id" $'echo forktty-smoke-ok\r' >/dev/null 2>&1; then
-    sent=1
-    break
-  fi
-  sleep 0.25
-done
-if [[ "$sent" != "1" ]]; then
-  echo "gtk-ghostty smoke: terminal did not become writable" >&2
+surface_count() {
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
+    python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
+}
+
+focused_surface_id() {
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --json |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["surface_id"])'
+}
+
+send_text_wait() {
+  local id="$1"
+  local text="$2"
+  local label="$3"
+  for _ in {1..40}; do
+    if "$BIN" --socket "$FORKTTY_SOCKET_PATH" send-text --surface-id "$id" "$text" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "gtk-ghostty smoke: $label did not become writable" >&2
   exit 1
-fi
+}
 
-for _ in {1..40}; do
-  if "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-ok"; then
-    break
-  fi
-  sleep 0.25
-done
+surface_contains() {
+  local id="$1"
+  local needle="$2"
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$id" | grep -q "$needle"
+}
 
-"$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-ok"
+wait_surface_contains() {
+  local id="$1"
+  local needle="$2"
+  local label="$3"
+  for _ in {1..40}; do
+    if surface_contains "$id" "$needle"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "gtk-ghostty smoke: $label did not appear on surface $id" >&2
+  exit 1
+}
+
+send_text_wait "$surface_id" $'echo forktty-smoke-ok\r' "initial terminal"
+wait_surface_contains "$surface_id" "forktty-smoke-ok" "initial terminal readback"
 
 base_cols="$(snapshot_field cols)"
 base_rows="$(snapshot_field rows)"
@@ -157,8 +189,68 @@ if [[ "$zoom_reset" != "1" ]]; then
   exit 1
 fi
 
-"$BIN" --socket "$FORKTTY_SOCKET_PATH" split-surface --surface-id "$surface_id" --axis vertical >/dev/null
+action_split_count="$(surface_count)"
+gapplication action dev.forktty.forktty split-horizontal >/dev/null
+action_surface_id=""
+for _ in {1..40}; do
+  candidate="$(focused_surface_id)"
+  count="$(surface_count)"
+  if (( count > action_split_count )) && [[ "$candidate" != "$surface_id" ]]; then
+    action_surface_id="$candidate"
+    break
+  fi
+  sleep 0.25
+done
+if [[ -z "$action_surface_id" ]]; then
+  echo "gtk-ghostty smoke: split-horizontal action did not create and focus a new surface" >&2
+  exit 1
+fi
+send_text_wait "$action_surface_id" $'echo forktty-smoke-action-split-ok\r' "action split terminal"
+wait_surface_contains "$action_surface_id" "forktty-smoke-action-split-ok" "action split terminal readback"
+
+new_surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" split-surface --surface-id "$surface_id" --axis vertical --json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
-  python3 -c 'import json,sys; assert len(json.load(sys.stdin)) >= 2'
+  python3 -c 'import json,sys; ids={item["id"] for item in json.load(sys.stdin)}; assert sys.argv[1] in ids and sys.argv[2] in ids' "$surface_id" "$new_surface_id"
+
+send_text_wait "$new_surface_id" $'echo forktty-smoke-split-ok\r' "split terminal"
+wait_surface_contains "$new_surface_id" "forktty-smoke-split-ok" "split terminal readback"
+
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" focus-surface "$surface_id" >/dev/null
+gapplication action dev.forktty.forktty focus-next-pane >/dev/null
+next_focus_id=""
+for _ in {1..40}; do
+  candidate="$(focused_surface_id)"
+  if [[ "$candidate" != "$surface_id" ]]; then
+    next_focus_id="$candidate"
+    break
+  fi
+  sleep 0.25
+done
+if [[ -z "$next_focus_id" ]]; then
+  echo "gtk-ghostty smoke: focus-next-pane action did not move focus" >&2
+  exit 1
+fi
+
+gapplication action dev.forktty.forktty focus-previous-pane >/dev/null
+previous_focus_ok=0
+for _ in {1..40}; do
+  if [[ "$(focused_surface_id)" == "$surface_id" ]]; then
+    previous_focus_ok=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$previous_focus_ok" != "1" ]]; then
+  echo "gtk-ghostty smoke: focus-previous-pane action did not restore focus" >&2
+  exit 1
+fi
+
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" notify --workspace-id "$workspace_id" --title "Smoke Notification" --kind prompt --body "forktty-smoke-notification" >/dev/null
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" notifications --json |
+  python3 -c 'import json,sys; items=json.load(sys.stdin); assert any(item.get("workspace_id") == sys.argv[1] and item.get("body") == "forktty-smoke-notification" for item in items)' "$workspace_id"
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" clear-notifications >/dev/null
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" notifications --json |
+  python3 -c 'import json,sys; assert json.load(sys.stdin) == []'
 
 echo "gtk-ghostty smoke: ok"

@@ -75,6 +75,8 @@ pub struct Surface {
     pub kind: SurfaceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<AgentSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persisted_scrollback: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +95,24 @@ pub struct AgentSession {
 
 fn is_zero_u64(value: &u64) -> bool {
     *value == 0
+}
+
+fn normalize_persisted_scrollback(text: String) -> Option<String> {
+    let text = text
+        .chars()
+        .filter(|ch| !ch.is_control() || matches!(*ch, '\n' | '\r' | '\t'))
+        .collect::<String>();
+    if text.is_empty() {
+        return None;
+    }
+    if text.len() <= MAX_PERSISTED_SCROLLBACK_BYTES {
+        return Some(text);
+    }
+    let mut start = text.len() - MAX_PERSISTED_SCROLLBACK_BYTES;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    Some(text[start..].to_string())
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,6 +195,33 @@ pub struct NotificationItem {
     pub workspace_id: Option<WorkspaceId>,
     #[serde(default)]
     pub surface_id: Option<SurfaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_metadata: Option<TerminalNotificationMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalNotificationMetadata {
+    pub id: String,
+    pub report_activation: bool,
+    pub report_close: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buttons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub icon_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_data: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_cache_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgency: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_after_ms: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notification_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -256,6 +303,7 @@ pub struct WorkspaceModel {
 }
 
 const MAX_LOG_ENTRIES: usize = 200;
+pub const MAX_PERSISTED_SCROLLBACK_BYTES: usize = 64 * 1024;
 /// Upper bound on retained notifications. Notifications accumulate for the life
 /// of the process (they are never persisted), so without a cap a long-running
 /// instance with a flapping agent would grow this `Vec` without bound. When the
@@ -288,6 +336,7 @@ impl WorkspaceModel {
             needs_attention: false,
             kind: SurfaceKind::Terminal,
             agent_session: None,
+            persisted_scrollback: None,
         };
         let workspace = Workspace {
             id: id.clone(),
@@ -383,6 +432,7 @@ impl WorkspaceModel {
                         needs_attention: false,
                         kind: SurfaceKind::Terminal,
                         agent_session: None,
+                        persisted_scrollback: None,
                     },
                 };
                 self.next_surface = self.next_surface.max(numeric_suffix(&surface.id));
@@ -421,7 +471,9 @@ impl WorkspaceModel {
             .surfaces
             .values()
             .filter(|surface| {
-                !matches!(surface.kind, SurfaceKind::Terminal) || surface.agent_session.is_some()
+                !matches!(surface.kind, SurfaceKind::Terminal)
+                    || surface.agent_session.is_some()
+                    || surface.persisted_scrollback.is_some()
             })
             .cloned()
             .collect();
@@ -539,6 +591,7 @@ impl WorkspaceModel {
                                 needs_attention: false,
                                 kind: SurfaceKind::Terminal,
                                 agent_session: None,
+                                persisted_scrollback: None,
                             },
                         );
                         changed = true;
@@ -744,6 +797,7 @@ impl WorkspaceModel {
             needs_attention: false,
             kind: SurfaceKind::Ssh { host },
             agent_session: None,
+            persisted_scrollback: None,
         };
         let workspace = Workspace {
             id: id.clone(),
@@ -794,6 +848,7 @@ impl WorkspaceModel {
             needs_attention: false,
             kind,
             agent_session: None,
+            persisted_scrollback: None,
         };
         let workspace = self
             .workspaces
@@ -871,6 +926,7 @@ impl WorkspaceModel {
             needs_attention: false,
             kind: SurfaceKind::Terminal,
             agent_session: None,
+            persisted_scrollback: None,
         };
         let workspace = self
             .workspaces
@@ -1152,6 +1208,7 @@ impl WorkspaceModel {
             needs_attention: false,
             kind: SurfaceKind::Terminal,
             agent_session: None,
+            persisted_scrollback: None,
         })
     }
 
@@ -1207,6 +1264,7 @@ impl WorkspaceModel {
                     needs_attention: false,
                     kind: SurfaceKind::Terminal,
                     agent_session: None,
+                    persisted_scrollback: None,
                 }
             }
         };
@@ -1255,6 +1313,18 @@ impl WorkspaceModel {
         true
     }
 
+    pub fn set_surface_persisted_scrollback(
+        &mut self,
+        surface_id: &str,
+        text: Option<String>,
+    ) -> bool {
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        surface.persisted_scrollback = text.and_then(normalize_persisted_scrollback);
+        true
+    }
+
     /// Replace a workspace's listening-port hint. Returns `true` when the set of
     /// ports actually changed, so callers can skip redundant UI refreshes.
     pub fn set_listening_ports(&mut self, workspace_id: &str, mut ports: Vec<u16>) -> bool {
@@ -1300,20 +1370,12 @@ impl WorkspaceModel {
             read: false,
             workspace_id,
             surface_id,
+            terminal_metadata: None,
         };
-        if let Some(surface_id) = &item.surface_id {
-            if !self.mark_surface_unread(surface_id, true) {
-                if let Some(workspace_id) = &item.workspace_id {
-                    if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
-                        workspace.needs_attention = true;
-                    }
-                }
-            }
-        } else if let Some(workspace_id) = &item.workspace_id {
-            if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
-                workspace.needs_attention = true;
-            }
-        }
+        self.mark_notification_target_unread(
+            item.workspace_id.as_deref(),
+            item.surface_id.as_deref(),
+        );
         self.notifications.push(item.clone());
         if self.notifications.len() > MAX_NOTIFICATIONS {
             let overflow = self.notifications.len() - MAX_NOTIFICATIONS;
@@ -1322,8 +1384,48 @@ impl WorkspaceModel {
         item
     }
 
+    pub fn update_notification(
+        &mut self,
+        notification_id: &str,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        kind: NotificationKind,
+    ) -> Option<NotificationItem> {
+        let index = self
+            .notifications
+            .iter()
+            .position(|notification| notification.id == notification_id)?;
+        {
+            let notification = &mut self.notifications[index];
+            notification.title = title.into();
+            notification.body = body.into();
+            notification.kind = kind;
+            notification.created_at_ms = now_ms().max(notification.created_at_ms.saturating_add(1));
+            notification.read = false;
+        }
+        let item = self.notifications[index].clone();
+        self.mark_notification_target_unread(
+            item.workspace_id.as_deref(),
+            item.surface_id.as_deref(),
+        );
+        Some(item)
+    }
+
     pub fn list_notifications(&self) -> Vec<NotificationItem> {
         self.notifications.clone()
+    }
+
+    pub fn set_notification_terminal_metadata(
+        &mut self,
+        notification_id: &str,
+        metadata: Option<TerminalNotificationMetadata>,
+    ) -> Option<NotificationItem> {
+        let notification = self
+            .notifications
+            .iter_mut()
+            .find(|notification| notification.id == notification_id)?;
+        notification.terminal_metadata = metadata;
+        Some(notification.clone())
     }
 
     pub fn unread_notification_count(&self) -> usize {
@@ -1623,6 +1725,26 @@ impl WorkspaceModel {
     fn next_notification_id(&mut self) -> String {
         self.next_notification += 1;
         format!("notification-{}", self.next_notification)
+    }
+
+    fn mark_notification_target_unread(
+        &mut self,
+        workspace_id: Option<&str>,
+        surface_id: Option<&str>,
+    ) {
+        if let Some(surface_id) = surface_id {
+            if !self.mark_surface_unread(surface_id, true) {
+                if let Some(workspace_id) = workspace_id {
+                    if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
+                        workspace.needs_attention = true;
+                    }
+                }
+            }
+        } else if let Some(workspace_id) = workspace_id {
+            if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
+                workspace.needs_attention = true;
+            }
+        }
     }
 
     fn recompute_workspace_attention(&mut self, workspace_id: &str) {
@@ -2709,6 +2831,38 @@ mod tests {
                 .lifecycle,
             crate::model::AgentSessionLifecycle::Ended
         );
+    }
+
+    #[test]
+    fn persisted_scrollback_makes_terminal_surface_persistable() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+
+        assert!(model.to_session_data().surfaces.is_empty());
+        assert!(model.set_surface_persisted_scrollback(&surface_id, Some("one\ntwo\n".to_string())));
+
+        let data = model.to_session_data();
+        crate::session::validate_session_data(&data).unwrap();
+        assert_eq!(data.surfaces.len(), 1);
+        assert_eq!(
+            data.surfaces[0].persisted_scrollback.as_deref(),
+            Some("one\ntwo\n")
+        );
+
+        let mut restored = WorkspaceModel::new();
+        restored.restore_session(data);
+        assert_eq!(
+            restored
+                .surface(&surface_id)
+                .unwrap()
+                .persisted_scrollback
+                .as_deref(),
+            Some("one\ntwo\n")
+        );
+
+        assert!(model.set_surface_persisted_scrollback(&surface_id, None));
+        assert!(model.to_session_data().surfaces.is_empty());
     }
 
     #[test]
@@ -4042,6 +4196,7 @@ mod tests {
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
                 agent_session: None,
+                persisted_scrollback: None,
             },
         );
 
@@ -4162,6 +4317,7 @@ mod tests {
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
                 agent_session: None,
+                persisted_scrollback: None,
             },
         );
 
@@ -4307,6 +4463,7 @@ mod tests {
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
                 agent_session: None,
+                persisted_scrollback: None,
             },
         );
         // Also inject a surface tied to a no-longer-present workspace.
@@ -4322,6 +4479,7 @@ mod tests {
                 needs_attention: false,
                 kind: SurfaceKind::Terminal,
                 agent_session: None,
+                persisted_scrollback: None,
             },
         );
 

@@ -138,6 +138,7 @@ pub(super) fn open_notification_target(
     }
 
     if let Some(surface_id) = surface_id.as_deref() {
+        send_terminal_notification_activation_report(controller, notification);
         if let Ok(mut model) = state.model.lock() {
             let _ = model.mark_surface_unread(surface_id, false);
         }
@@ -146,6 +147,155 @@ pub(super) fn open_notification_target(
         controller.borrow_mut().rebuild_layout();
     }
     true
+}
+
+fn send_terminal_notification_activation_report(
+    controller: Option<&Rc<RefCell<TerminalController>>>,
+    notification: &NotificationItem,
+) {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return;
+    };
+    if !metadata.report_activation {
+        return;
+    }
+    let Some(surface_id) = notification.surface_id.as_deref() else {
+        return;
+    };
+    send_terminal_notification_report(
+        controller,
+        surface_id,
+        &terminal_notification_activation_report(metadata),
+    );
+}
+
+fn send_terminal_notification_close_report(
+    controller: Option<&Rc<RefCell<TerminalController>>>,
+    notification: &NotificationItem,
+) {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return;
+    };
+    if !metadata.report_close {
+        return;
+    }
+    let Some(surface_id) = notification.surface_id.as_deref() else {
+        return;
+    };
+    send_terminal_notification_report(
+        controller,
+        surface_id,
+        &terminal_notification_close_report(metadata),
+    );
+}
+
+fn send_terminal_notification_button_report(
+    controller: Option<&Rc<RefCell<TerminalController>>>,
+    notification: &NotificationItem,
+    button_number: usize,
+) {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return;
+    };
+    if !metadata.report_activation {
+        return;
+    }
+    let Some(surface_id) = notification.surface_id.as_deref() else {
+        return;
+    };
+    send_terminal_notification_report(
+        controller,
+        surface_id,
+        &terminal_notification_button_report(metadata, button_number),
+    );
+}
+
+fn send_terminal_notification_report(
+    controller: Option<&Rc<RefCell<TerminalController>>>,
+    surface_id: &str,
+    report: &str,
+) {
+    let Some(controller) = controller else {
+        return;
+    };
+    let Ok(controller) = controller.try_borrow() else {
+        return;
+    };
+    let _ = controller.send_text_to_surface(surface_id, report);
+}
+
+fn terminal_notification_activation_report(metadata: &TerminalNotificationMetadata) -> String {
+    format!("\x1b]99;i={};\x1b\\", metadata.id)
+}
+
+fn terminal_notification_close_report(metadata: &TerminalNotificationMetadata) -> String {
+    format!("\x1b]99;i={}:p=close;\x1b\\", metadata.id)
+}
+
+fn terminal_notification_button_report(
+    metadata: &TerminalNotificationMetadata,
+    button_number: usize,
+) -> String {
+    format!("\x1b]99;i={};{button_number}\x1b\\", metadata.id)
+}
+
+fn terminal_notification_icon_name(metadata: &TerminalNotificationMetadata) -> Option<&str> {
+    if let Some(name) = metadata.icon_names.first() {
+        Some(match name.as_str() {
+            "error" => "dialog-error",
+            "warn" | "warning" => "dialog-warning",
+            "info" => "dialog-information",
+            "question" => "dialog-question",
+            "help" => "help-browser",
+            "file-manager" => "system-file-manager",
+            "system-monitor" => "utilities-system-monitor",
+            "text-editor" => "accessories-text-editor",
+            other => other,
+        })
+    } else {
+        metadata.app_name.as_deref()
+    }
+}
+
+fn terminal_notification_icon_pixbuf(data: &[u8]) -> Option<gtk::gdk_pixbuf::Pixbuf> {
+    gtk::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(data.to_vec())).ok()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalNotificationIconSource<'a> {
+    Name(&'a str),
+    Data(&'a [u8]),
+}
+
+fn terminal_notification_icon_source(
+    metadata: &TerminalNotificationMetadata,
+) -> Option<TerminalNotificationIconSource<'_>> {
+    terminal_notification_icon_name(metadata)
+        .map(TerminalNotificationIconSource::Name)
+        .or_else(|| {
+            metadata
+                .icon_data
+                .as_deref()
+                .map(TerminalNotificationIconSource::Data)
+        })
+}
+
+fn terminal_notification_icon_widget(
+    metadata: &TerminalNotificationMetadata,
+) -> Option<gtk::Widget> {
+    match terminal_notification_icon_source(metadata)? {
+        TerminalNotificationIconSource::Name(icon_name) => {
+            let icon = gtk::Image::from_icon_name(icon_name);
+            icon.add_css_class("notification-icon");
+            Some(icon.upcast())
+        }
+        TerminalNotificationIconSource::Data(data) => {
+            let pixbuf = terminal_notification_icon_pixbuf(data)?;
+            let icon = gtk::Image::from_pixbuf(Some(&pixbuf));
+            icon.add_css_class("notification-icon");
+            Some(icon.upcast())
+        }
+    }
 }
 
 pub(super) fn show_notification_panel(
@@ -294,6 +444,13 @@ pub(super) fn show_notification_panel(
             }
 
             let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            if let Some(icon) = notification
+                .terminal_metadata
+                .as_ref()
+                .and_then(terminal_notification_icon_widget)
+            {
+                top.append(&icon);
+            }
             let badge = gtk::Label::new(Some(notification_kind_label(notification.kind)));
             badge.add_css_class("notification-kind");
             badge.add_css_class(notification_kind_class(notification.kind));
@@ -342,21 +499,31 @@ pub(super) fn show_notification_panel(
             dismiss.add_css_class("notification-dismiss");
             set_accessible_button_text(&dismiss, "Dismiss notification", None);
             let state_for_dismiss = state.clone();
+            let controller_for_dismiss = controller.clone();
+            let notification_for_dismiss = notification.clone();
             let notification_id = notification.id.clone();
             let row_for_dismiss = row.clone();
             let subtitle_for_dismiss = subtitle.clone();
             let show_empty_for_dismiss = show_empty_state.clone();
             let refresh_jump_for_dismiss = refresh_jump_state.clone();
             dismiss.connect_clicked(move |_| {
+                let mut removed = false;
                 let remaining = state_for_dismiss
                     .model
                     .lock()
                     .ok()
                     .map(|mut model| {
-                        model.dismiss_notification(&notification_id);
+                        removed = model.dismiss_notification(&notification_id);
                         model.list_notifications().len()
                     })
                     .unwrap_or(0);
+                if removed {
+                    close_desktop_notification(&notification_id);
+                    send_terminal_notification_close_report(
+                        controller_for_dismiss.as_ref(),
+                        &notification_for_dismiss,
+                    );
+                }
                 row_for_dismiss.set_visible(false);
                 if remaining == 0 {
                     show_empty_for_dismiss();
@@ -383,6 +550,29 @@ pub(super) fn show_notification_panel(
 
             card.append(&top);
             card.append(&body_label);
+            if let Some(metadata) = notification
+                .terminal_metadata
+                .as_ref()
+                .filter(|metadata| metadata.report_activation && !metadata.buttons.is_empty())
+            {
+                let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                actions.add_css_class("notification-actions");
+                for (index, label) in metadata.buttons.iter().enumerate() {
+                    let button = gtk::Button::with_label(label);
+                    button.add_css_class("flat");
+                    let controller_for_button = controller.clone();
+                    let notification_for_button = notification.clone();
+                    button.connect_clicked(move |_| {
+                        send_terminal_notification_button_report(
+                            controller_for_button.as_ref(),
+                            &notification_for_button,
+                            index + 1,
+                        );
+                    });
+                    actions.append(&button);
+                }
+                card.append(&actions);
+            }
             if let Some(target) = notification_target_label(state, notification) {
                 let target_label = gtk::Label::builder()
                     .label(target)
@@ -421,10 +611,19 @@ pub(super) fn show_notification_panel(
     }
 
     let state_for_clear = state.clone();
+    let controller_for_clear = controller.clone();
     let show_empty_for_clear = show_empty_state.clone();
     clear.connect_clicked(move |_| {
-        if let Ok(mut model) = state_for_clear.model.lock() {
+        let notifications = if let Ok(mut model) = state_for_clear.model.lock() {
+            let notifications = model.list_notifications();
             model.clear_notifications();
+            notifications
+        } else {
+            Vec::new()
+        };
+        for notification in notifications {
+            close_desktop_notification(&notification.id);
+            send_terminal_notification_close_report(controller_for_clear.as_ref(), &notification);
         }
         show_empty_for_clear();
     });
@@ -439,5 +638,101 @@ pub(super) fn show_notification_panel(
         jump.grab_focus();
     } else if clear.is_visible() && clear.is_sensitive() {
         clear.grab_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    #[test]
+    fn terminal_notification_reports_use_osc99_reply_sequences() {
+        let metadata = TerminalNotificationMetadata {
+            id: "build".to_string(),
+            report_activation: true,
+            report_close: true,
+            buttons: vec!["Retry".to_string(), "Open logs".to_string()],
+            icon_names: vec!["warning".to_string()],
+            icon_data: None,
+            icon_cache_id: None,
+            urgency: None,
+            sound_name: None,
+            expires_after_ms: None,
+            app_name: None,
+            notification_types: Vec::new(),
+        };
+
+        assert_eq!(
+            terminal_notification_icon_name(&metadata),
+            Some("dialog-warning")
+        );
+        assert_eq!(
+            terminal_notification_activation_report(&metadata),
+            "\x1b]99;i=build;\x1b\\"
+        );
+        assert_eq!(
+            terminal_notification_close_report(&metadata),
+            "\x1b]99;i=build:p=close;\x1b\\"
+        );
+        assert_eq!(
+            terminal_notification_button_report(&metadata, 2),
+            "\x1b]99;i=build;2\x1b\\"
+        );
+    }
+
+    #[test]
+    fn terminal_notification_app_name_falls_back_to_in_app_icon() {
+        let metadata = TerminalNotificationMetadata {
+            id: "build".to_string(),
+            report_activation: false,
+            report_close: false,
+            buttons: Vec::new(),
+            icon_names: Vec::new(),
+            icon_data: None,
+            icon_cache_id: None,
+            urgency: None,
+            sound_name: None,
+            expires_after_ms: None,
+            app_name: Some("make".to_string()),
+            notification_types: Vec::new(),
+        };
+
+        assert_eq!(terminal_notification_icon_name(&metadata), Some("make"));
+    }
+
+    #[test]
+    fn terminal_notification_icon_name_takes_precedence_over_icon_data() {
+        let metadata = TerminalNotificationMetadata {
+            id: "build".to_string(),
+            report_activation: false,
+            report_close: false,
+            buttons: Vec::new(),
+            icon_names: vec!["warning".to_string()],
+            icon_data: Some(b"PNG".to_vec()),
+            icon_cache_id: Some("icon-1".to_string()),
+            urgency: None,
+            sound_name: None,
+            expires_after_ms: None,
+            app_name: None,
+            notification_types: Vec::new(),
+        };
+
+        assert_eq!(
+            terminal_notification_icon_source(&metadata),
+            Some(TerminalNotificationIconSource::Name("dialog-warning"))
+        );
+    }
+
+    #[test]
+    fn terminal_notification_icon_data_decodes_png_pixbuf() {
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExURf8AAP///0EdNBEAAAABYktHRAH/Ai3eAAAAB3RJTUUH6gYQFTsXAd47HwAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNi0wNi0xNlQyMTo1OToyMyswMDowMPXxEoYAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjYtMDYtMTZUMjE6NTk6MjMrMDA6MDCErKo6AAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA2LTE2VDIxOjU5OjIzKzAwOjAw07mL5QAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=")
+            .unwrap();
+
+        let pixbuf = terminal_notification_icon_pixbuf(&png).unwrap();
+
+        assert_eq!(pixbuf.width(), 1);
+        assert_eq!(pixbuf.height(), 1);
     }
 }

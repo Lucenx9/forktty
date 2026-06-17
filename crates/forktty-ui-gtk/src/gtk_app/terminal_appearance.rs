@@ -17,6 +17,28 @@ const TERMINAL_ZOOM_MAX_LEVEL: i32 = 12;
 const GHOSTTY_SCROLLBACK_BYTES_PER_LINE: usize = 2048;
 const MAX_GHOSTTY_APPEARANCE_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_TERMINAL_SCROLLBACK_LINES: usize = 500_000;
+const DEFAULT_UNFOCUSED_SPLIT_OPACITY: f64 = 0.92;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MouseScrollMultipliers {
+    pub(super) precision: f64,
+    pub(super) discrete: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum GhosttyMetricAdjustment {
+    Pixels(i32),
+    Percent(f64),
+}
+
+impl Default for MouseScrollMultipliers {
+    fn default() -> Self {
+        Self {
+            precision: 1.0,
+            discrete: 3.0,
+        }
+    }
+}
 
 pub(super) fn apply_terminal_appearance(widget: &GhosttyTerminalWidget) {
     let config = config::load_config().unwrap_or_default();
@@ -56,6 +78,13 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_family_bold_italic: Option<String>,
     pub(super) font_size_pt: Option<f64>,
     pub(super) scrollback_limit_bytes: Option<usize>,
+    pub(super) cursor_opacity: f64,
+    pub(super) faint_opacity: f64,
+    pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
+    pub(super) adjust_cell_width: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_cell_height: Option<GhosttyMetricAdjustment>,
+    pub(super) unfocused_split_opacity: f64,
+    pub(super) unfocused_split_fill: String,
     pub(super) colors: TerminalColors,
     bold_color_explicit: bool,
 }
@@ -86,6 +115,12 @@ pub(super) fn terminal_colors_for_config(config: &config::AppConfig) -> Terminal
 pub(super) fn terminal_scrollback_lines_for_config(config: &config::AppConfig) -> usize {
     let appearance = ghostty_terminal_appearance_for_config(config);
     terminal_scrollback_lines_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_mouse_scroll_multipliers_for_config(
+    config: &config::AppConfig,
+) -> MouseScrollMultipliers {
+    ghostty_terminal_appearance_for_config(config).mouse_scroll_multipliers
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -152,11 +187,10 @@ pub(super) fn terminal_font_description_for_zoom_level(
     font
 }
 
-pub(super) fn terminal_font_variants_for_config(
-    config: &config::AppConfig,
+pub(super) fn terminal_font_variants_for_appearance(
+    appearance: &GhosttyTerminalAppearance,
     base: &gtk::pango::FontDescription,
 ) -> TerminalFontVariants {
-    let appearance = ghostty_terminal_appearance_for_config(config);
     TerminalFontVariants {
         bold: appearance
             .font_family_bold
@@ -196,7 +230,9 @@ pub(super) enum GhosttyColorScheme {
     Dark,
 }
 
-fn ghostty_terminal_appearance_for_config(config: &config::AppConfig) -> GhosttyTerminalAppearance {
+pub(super) fn ghostty_terminal_appearance_for_config(
+    config: &config::AppConfig,
+) -> GhosttyTerminalAppearance {
     ghostty_terminal_appearance(ghostty_color_scheme_for_config(config))
 }
 
@@ -428,6 +464,7 @@ fn apply_ghostty_config_file_directive(
 
 impl Default for GhosttyTerminalAppearance {
     fn default() -> Self {
+        let colors = TerminalColors::forktty_dark();
         Self {
             font_family: None,
             font_family_bold: None,
@@ -435,7 +472,14 @@ impl Default for GhosttyTerminalAppearance {
             font_family_bold_italic: None,
             font_size_pt: None,
             scrollback_limit_bytes: None,
-            colors: TerminalColors::forktty_dark(),
+            cursor_opacity: 1.0,
+            faint_opacity: 0.5,
+            mouse_scroll_multipliers: MouseScrollMultipliers::default(),
+            adjust_cell_width: None,
+            adjust_cell_height: None,
+            unfocused_split_opacity: DEFAULT_UNFOCUSED_SPLIT_OPACITY,
+            unfocused_split_fill: "#000000".to_string(),
+            colors,
             bold_color_explicit: false,
         }
     }
@@ -496,6 +540,21 @@ impl GhosttyTerminalAppearance {
                 &self.colors.foreground,
                 &self.colors.background,
             ),
+            "cursor-opacity" => {
+                if let Some(opacity) = value.parse::<f64>().ok().filter(|value| value.is_finite()) {
+                    self.cursor_opacity = opacity.clamp(0.0, 1.0);
+                }
+            }
+            "faint-opacity" => {
+                if let Some(opacity) = value.parse::<f64>().ok().filter(|value| value.is_finite()) {
+                    self.faint_opacity = opacity.clamp(0.0, 1.0);
+                }
+            }
+            "adjust-cell-width" => self.adjust_cell_width = parse_ghostty_metric_adjustment(&value),
+            "adjust-cell-height" => {
+                self.adjust_cell_height = parse_ghostty_metric_adjustment(&value);
+            }
+            "mouse-scroll-multiplier" => self.apply_mouse_scroll_multiplier(&value),
             "cursor-invert-fg-bg" => {
                 if parse_ghostty_bool(&value) {
                     self.colors.cursor = self.colors.foreground.clone();
@@ -532,6 +591,12 @@ impl GhosttyTerminalAppearance {
                     }
                 }
             }
+            "unfocused-split-opacity" => {
+                if let Some(opacity) = value.parse::<f64>().ok().filter(|value| value.is_finite()) {
+                    self.unfocused_split_opacity = opacity.clamp(0.15, 1.0);
+                }
+            }
+            "unfocused-split-fill" => self.apply_unfocused_split_fill(&value),
             _ => {}
         }
     }
@@ -539,6 +604,58 @@ impl GhosttyTerminalAppearance {
     fn apply_font_family(&mut self, value: String) {
         apply_font_family_value(&mut self.font_family, value);
     }
+
+    fn apply_unfocused_split_fill(&mut self, value: &str) {
+        set_color(&mut self.unfocused_split_fill, value);
+    }
+
+    fn apply_mouse_scroll_multiplier(&mut self, value: &str) {
+        for part in value
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            if let Some(value) = part.strip_prefix("precision:") {
+                if let Some(multiplier) = parse_mouse_scroll_multiplier(value) {
+                    self.mouse_scroll_multipliers.precision = multiplier;
+                }
+            } else if let Some(value) = part.strip_prefix("discrete:") {
+                if let Some(multiplier) = parse_mouse_scroll_multiplier(value) {
+                    self.mouse_scroll_multipliers.discrete = multiplier;
+                }
+            } else if let Some(multiplier) = parse_mouse_scroll_multiplier(part) {
+                self.mouse_scroll_multipliers = MouseScrollMultipliers {
+                    precision: multiplier,
+                    discrete: multiplier,
+                };
+            }
+        }
+    }
+}
+
+fn parse_mouse_scroll_multiplier(value: &str) -> Option<f64> {
+    value
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(0.01, 10_000.0))
+}
+
+fn parse_ghostty_metric_adjustment(value: &str) -> Option<GhosttyMetricAdjustment> {
+    let value = value.trim();
+    if let Some(percent) = value.strip_suffix('%') {
+        return percent
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(GhosttyMetricAdjustment::Percent);
+    }
+    value
+        .parse::<i32>()
+        .ok()
+        .map(GhosttyMetricAdjustment::Pixels)
 }
 
 fn apply_font_family_value(target: &mut Option<String>, value: String) {
@@ -834,4 +951,99 @@ fn expand_home_path(path: PathBuf) -> PathBuf {
         }
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ghostty_appearance_reads_unfocused_split_style() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            r#"
+            unfocused-split-opacity = 0.72
+            unfocused-split-fill = #102030
+            "#,
+        );
+
+        assert_eq!(appearance.unfocused_split_opacity, 0.72);
+        assert_eq!(appearance.unfocused_split_fill, "#102030");
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_cursor_opacity() {
+        let appearance = ghostty_terminal_appearance_from_text("cursor-opacity = 0.42");
+        assert_eq!(appearance.cursor_opacity, 0.42);
+
+        let clamped = ghostty_terminal_appearance_from_text("cursor-opacity = 2");
+        assert_eq!(clamped.cursor_opacity, 1.0);
+
+        let clamped = ghostty_terminal_appearance_from_text("cursor-opacity = -1");
+        assert_eq!(clamped.cursor_opacity, 0.0);
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_faint_opacity() {
+        let appearance = ghostty_terminal_appearance_from_text("faint-opacity = 0.35");
+        assert_eq!(appearance.faint_opacity, 0.35);
+
+        let clamped = ghostty_terminal_appearance_from_text("faint-opacity = 2");
+        assert_eq!(clamped.faint_opacity, 1.0);
+
+        let clamped = ghostty_terminal_appearance_from_text("faint-opacity = -1");
+        assert_eq!(clamped.faint_opacity, 0.0);
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_mouse_scroll_multiplier() {
+        let appearance = ghostty_terminal_appearance_from_text("mouse-scroll-multiplier = 2");
+        assert_eq!(
+            appearance.mouse_scroll_multipliers,
+            MouseScrollMultipliers {
+                precision: 2.0,
+                discrete: 2.0
+            }
+        );
+
+        let appearance = ghostty_terminal_appearance_from_text(
+            "mouse-scroll-multiplier = precision:0.25,discrete:4",
+        );
+        assert_eq!(
+            appearance.mouse_scroll_multipliers,
+            MouseScrollMultipliers {
+                precision: 0.25,
+                discrete: 4.0
+            }
+        );
+
+        let appearance = ghostty_terminal_appearance_from_text(
+            "mouse-scroll-multiplier = precision:0,discrete:20000",
+        );
+        assert_eq!(
+            appearance.mouse_scroll_multipliers,
+            MouseScrollMultipliers {
+                precision: 0.01,
+                discrete: 10_000.0
+            }
+        );
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_cell_size_adjustments() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            r#"
+            adjust-cell-width = 2
+            adjust-cell-height = 10%
+            "#,
+        );
+
+        assert_eq!(
+            appearance.adjust_cell_width,
+            Some(GhosttyMetricAdjustment::Pixels(2))
+        );
+        assert_eq!(
+            appearance.adjust_cell_height,
+            Some(GhosttyMetricAdjustment::Percent(10.0))
+        );
+    }
 }

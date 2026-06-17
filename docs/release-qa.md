@@ -47,10 +47,10 @@ experimental in this alpha; they have a separate opt-in smoke section.
 `scripts/gtk-ghostty-smoke.sh` runs a short GTK/Ghostty launch in a fresh
 DBus session against isolated config/data/state/socket paths under
 `$XDG_RUNTIME_DIR`, and verifies socket ping, surface listing, terminal
-input/readback, runtime zoom reflow/reset, and split creation. The temporary
-config disables desktop notifications and telemetry so the smoke does not
-depend on host notification services. It uses the current display or `xvfb-run`
-when available.
+input/readback, runtime zoom reflow/reset, GTK action split/focus behavior,
+socket split readback, and the socket notification create/list/clear flow. The temporary config disables desktop
+notifications and telemetry so the smoke does not depend on host notification
+services. It uses the current display or `xvfb-run` when available.
 
 ## Manual Runtime Smoke
 
