@@ -148,6 +148,8 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Full theme customization beyond Ghostty-imported terminal appearance.
 - [ ] Broader Ghostty option compatibility where the GTK/libghostty-vt runtime exposes a real matching knob.
 - [x] Pin full upstream Ghostty source in-tree for a cmux-style renderer/widget integration spike.
+- [x] Confirm upstream Ghostty's current C embedding API is macOS/iOS-only and does not yet expose the Linux GTK `GhosttySurface` widget.
+- [ ] Add or upstream a minimal Ghostty GTK embedding API that returns a packable `GtkWidget*` for ForkTTY panes.
 - [ ] Replace the custom GTK/Pango/Cairo terminal renderer with an upstream Ghostty embeddable renderer/widget or a small Ghostty fork patch if Linux exposes no stable API that fits ForkTTY panes, splits, socket automation, and session restore.
 - [ ] Multi-window support.
 - [ ] Browser visit recording and history/bookmark address-bar completion.

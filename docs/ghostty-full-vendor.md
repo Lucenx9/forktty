@@ -15,6 +15,9 @@ The current Linux GTK runtime still links through `vendor/libghostty-rs` and
 draws with ForkTTY's GTK renderer. `vendor/ghostty` is the source pin for the
 next renderer bridge spike, not a release-runtime dependency yet.
 
+See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
+for the current upstream embedding status and the next Ghostty-side API cut.
+
 ## Setup
 
 ```bash

@@ -8,6 +8,9 @@ All notable changes to ForkTTY are documented here.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
   cmux-style renderer/widget integration spike; release builds still use the
   existing GTK/libghostty-vt runtime until that bridge is proven.
+- The Ghostty renderer spike is now documented: upstream's current public C
+  surface embedding API is macOS/iOS-only, so ForkTTY's next renderer step is a
+  minimal Ghostty-side GTK widget embedding API instead of more parity shims.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
