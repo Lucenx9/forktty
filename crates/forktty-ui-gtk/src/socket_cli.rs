@@ -75,6 +75,8 @@ Usage:
   forktty capture-tail [--surface-id <id>] [--lines <n>] [--max-bytes <n>] [--json]
   forktty tree [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty top [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty remotes [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty remote-status [--surface-id <id>|--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty worktree-list [--cwd <repo>]
   forktty worktree-status [--path <worktree>] [--cwd <worktree>]
   forktty worktree-create <branch> [--cwd <repo>]
@@ -823,6 +825,8 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         }
         "tree" | "topology-tree" | "topology:tree" => handle_tree(&context, args),
         "top" => handle_top(&context, args),
+        "remotes" | "remote-list" | "remote:list" | "remote.list" => handle_remotes(&context, args),
+        "remote-status" | "remote:status" | "remote.status" => handle_remote_status(&context, args),
         "worktree-list" | "worktree:list" => handle_worktree_list(&context, args),
         "worktree-status" | "worktree:status" => handle_worktree_status(&context, args),
         "worktree-create" | "worktree:create" => {
@@ -2060,6 +2064,82 @@ fn format_surface_line(surface: &Value) -> String {
         .map(|cwd| format!(" {cwd}"))
         .unwrap_or_default();
     format!("{id} [{workspace_id}] {state}{title}{cwd}")
+}
+
+fn handle_remotes(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "remotes")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name"],
+        "remotes",
+    )?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "remote.list",
+        Value::Object(build_target_params(&parsed.options, "remotes")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    let Some(items) = result.as_array() else {
+        return Ok(());
+    };
+    if items.is_empty() {
+        write_stdout_line("No remotes")?;
+    } else {
+        for remote in items {
+            write_stdout_line(&format_remote_line(remote))?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_remote_status(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "remote-status")?;
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "surface-id",
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+        ],
+        "remote-status",
+    )?;
+    let mut params = build_target_params(&parsed.options, "remote-status")?;
+    if let Some(surface_id) =
+        non_blank_string_option(&parsed.options, "surface-id", "--surface-id")?
+    {
+        params.insert(
+            "surface_id".to_string(),
+            Value::String(surface_id.trim().to_string()),
+        );
+    }
+    let result = send_socket_request(&context.socket_path, "remote.status", Value::Object(params))?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_remote_line(&result))
+}
+
+fn format_remote_line(remote: &Value) -> String {
+    let host = safe_string_field(remote, "host").unwrap_or_else(|| "(unknown)".to_string());
+    let workspace = safe_string_field(remote, "workspace_name")
+        .or_else(|| safe_string_field(remote, "workspace_id"))
+        .unwrap_or_default();
+    let surface = safe_string_field(remote, "surface_id").unwrap_or_default();
+    let state = if remote
+        .get("connected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "connected"
+    } else {
+        "disconnected"
+    };
+    format!("{host} [{workspace}] {surface} {state}")
 }
 
 fn handle_agents(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -10461,9 +10541,8 @@ mod tests {
         assert!(context.contains("workspace_list, surface_list, topology_tree"));
         assert!(context.contains("surface_read_text"));
         assert!(context.contains("worktree_create creates an isolated git worktree"));
-        assert!(context.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface."
-        ));
+        assert!(context.contains("SSH remote inventory"));
+        assert!(context.contains("remote_list/status"));
         assert!(context.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
         ));
@@ -13955,6 +14034,57 @@ mod tests {
         assert_eq!(request["params"]["host"], "user@example.com");
         assert_eq!(request["params"]["name"], "prod");
         assert_eq!(request["params"]["workingDir"], "/tmp/project");
+    }
+
+    #[test]
+    fn remotes_requests_remote_list_with_workspace_selector() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [{
+                        "workspace_id": "w1",
+                        "workspace_name": "prod",
+                        "surface_id": "s1",
+                        "host": "user@example.com",
+                        "connected": true
+                    }],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_remotes(&ctx_for(socket_path), strings(&["--workspace-id", "w1"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "remote.list");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn remote_status_requests_remote_status_with_surface_id() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "workspace_id": "w1",
+                        "workspace_name": "prod",
+                        "surface_id": "s1",
+                        "host": "user@example.com",
+                        "connected": false
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_remote_status(&ctx_for(socket_path), strings(&["--surface-id", "s1"]))
+                    .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "remote.status");
+        assert_eq!(request["params"]["surface_id"], "s1");
     }
 
     #[test]

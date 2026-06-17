@@ -37,6 +37,13 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Surface split, focus, close, workspace select, workspace create, and workspace close.
 - [x] Per-pane tabs: `pane.new_tab`/`pane.select_tab` socket methods, `forktty new-tab`/`select-tab` CLI, and pane-chrome/command-palette tab controls.
 - [x] SSH remote workspaces: `SurfaceKind::Ssh` panes spawned as `ssh <host>`, `workspace.create_ssh` socket method, `forktty ssh` CLI, sidebar `ssh:<host>` hints, and respawn on session restore.
+- [x] Read-only SSH remote inventory/status through `remote.list`,
+  `remote.status`, `forktty remotes`, `forktty remote-status`, and MCP
+  `remote_list` / `remote_status`.
+- [x] Initial SSH/stdio remote-helper handshake through
+  `forktty remote-helper hello`.
+- [x] Minimal SSH/stdio remote-helper PTY relay through
+  `forktty remote-helper pty -- <program> [args...]`.
 - [x] Sidebar refresh from the Rust model with active/unread/worktree/metadata state.
 - [x] Listening-TCP-port hints in the sidebar, auto-detected from each workspace's pane child-process tree via `/proc`.
 - [x] Linked-PR hints in the sidebar (`#number state`), resolved per branch via `gh` on a background thread.
@@ -115,7 +122,12 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
   durable feed history, and `feed.approval.respond` / `forktty feed respond`
   records approval decisions for workflow consumers.
 - [ ] Expanded HUD/statusline export: active-mode, worker, token, health, and notification fields for provider statusline integrations; workspace/status/progress/session summary is available through `status.summary`/`forktty statusline`/MCP and GTK now includes the persisted-agent HUD.
-- [ ] Remote daemon/SSH depth: persistent remote ForkTTY helper, reconnect/disconnect semantics, CLI relay, and remote PTY/session ownership beyond plain `ssh <host>`.
+- [ ] Remote daemon/SSH depth: read-only SSH inventory/status is available;
+  socket/CLI/MCP access, SSH/stdio helper hello, and raw PTY relay are
+  available; remaining scope is
+  message framing, resize events, local GTK integration, a persistent remote
+  ForkTTY helper, reconnect/disconnect semantics, CLI relay, and remote
+  PTY/session ownership beyond plain `ssh <host>`.
 - [x] Project actions: repo-local validated `forktty.json` actions are exposed
   through socket and CLI; command-palette UI remains part of parity UI scope.
 - [ ] Right-sidebar/Dock ecosystem: files/find/vault/session/feed style panels, panel persistence, and optional custom sidebar contributors.

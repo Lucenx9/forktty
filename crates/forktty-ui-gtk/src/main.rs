@@ -28,6 +28,13 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         cli::CliAction::Doctor(options) => ExitCode::from(cli::run_doctor(options) as u8),
+        cli::CliAction::RemoteHelper(cli::RemoteHelperCommand::Hello) => {
+            cli::print_remote_helper_hello();
+            ExitCode::SUCCESS
+        }
+        cli::CliAction::RemoteHelper(cli::RemoteHelperCommand::Pty { argv }) => {
+            ExitCode::from(cli::run_remote_helper_pty(argv).clamp(0, 255) as u8)
+        }
         cli::CliAction::SocketCli(args) => {
             ExitCode::from(socket_cli::run(args).clamp(0, 255) as u8)
         }

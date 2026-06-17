@@ -34,6 +34,15 @@ All notable changes to ForkTTY are documented here.
 - `forktty top` / `system.top` now return a read-only workspace and surface
   health snapshot with focus, unread, kind, cwd, shell, size, PID when known,
   agent lifecycle, status, and progress fields.
+- `remote.list` / `remote.status`, `forktty remotes` /
+  `forktty remote-status`, and MCP `remote_list` / `remote_status` now expose
+  read-only SSH workspace inventory and connection state without adding a
+  remote daemon yet.
+- `forktty remote-helper hello` now prints a one-shot stdio JSON handshake for
+  future SSH-launched remote helpers.
+- `forktty remote-helper pty -- <program> [args...]` now runs an argv command
+  under a PTY and relays stdin/stdout bytes over stdio as the first remote
+  helper PTY path.
 - `appearance.persistent_scrollback_lines` can opt into saving a bounded
   plain-text terminal tail per surface and restoring it with the session.
 - OSC 99 terminal notifications can now keep activation/close report metadata,

@@ -448,6 +448,37 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params: workspace_target_params(args, true)?,
             }
         }
+        "remote_list" => {
+            reject_unexpected(
+                args,
+                &["workspace_id", "workspace_name", "worktree_name"],
+                name,
+            )?;
+            SocketCall {
+                method: "remote.list",
+                params: workspace_target_params(args, true)?,
+            }
+        }
+        "remote_status" => {
+            reject_unexpected(
+                args,
+                &[
+                    "surface_id",
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            if let Some(surface_id) = optional_non_blank(args, "surface_id")? {
+                params.insert("surface_id".to_string(), Value::String(surface_id));
+            }
+            SocketCall {
+                method: "remote.status",
+                params,
+            }
+        }
         "agent_list" => {
             reject_unexpected(
                 args,
@@ -1500,6 +1531,8 @@ fn success_text(name: &str, result: &Value) -> String {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
         "topology_tree" => "Built ForkTTY topology tree.".to_string(),
+        "remote_list" => "Listed ForkTTY SSH remotes.".to_string(),
+        "remote_status" => "Read ForkTTY SSH remote status.".to_string(),
         "agent_list" => "Listed ForkTTY agent sessions.".to_string(),
         "agent_health" => "Checked ForkTTY agent session readiness.".to_string(),
         "agent_reclaim_plan" => "Planned ForkTTY agent session reclaim candidates.".to_string(),
@@ -1646,6 +1679,33 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "workspace_id": string_prop("Workspace id to inspect."),
                     "workspace_name": string_prop("Workspace name to inspect."),
                     "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "remote_list",
+            annotations: read_only_annotations(),
+            description: "List SSH remote workspaces/surfaces known to ForkTTY with connection state. This is read-only inventory; it does not open SSH or run remote commands.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "remote_status",
+            annotations: read_only_annotations(),
+            description: "Read one SSH remote surface status, or the focused SSH surface for a selected/default workspace. This does not reconnect or start a remote helper.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "surface_id": string_prop("SSH surface id to inspect."),
+                    "workspace_id": string_prop("Workspace id whose focused SSH surface should be inspected."),
+                    "workspace_name": string_prop("Workspace name whose focused SSH surface should be inspected."),
+                    "worktree_name": string_prop("Worktree name whose focused SSH surface should be inspected."),
                 }),
             ),
         },
@@ -2445,9 +2505,7 @@ mod tests {
         let resource_text = responses[2]["result"]["contents"][0]["text"]
             .as_str()
             .unwrap();
-        assert!(resource_text.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface."
-        ));
+        assert!(resource_text.contains("SSH remote inventory"));
         assert!(resource_text.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
         ));
@@ -2460,6 +2518,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(prompt_text.contains("Read-only first"));
+        assert!(prompt_text.contains("remote_list"));
+        assert!(prompt_text.contains("remote_status"));
         assert!(prompt_text.contains("surface_read_text"));
         assert!(prompt_text.contains("surface_send_text"));
     }
@@ -2581,6 +2641,26 @@ mod tests {
 
         assert_eq!(method, "agent.resume");
         assert_eq!(params["surface_id"], "surface-1");
+    }
+
+    #[test]
+    fn remote_tools_are_advertised_read_only_and_map_to_socket_methods() {
+        let specs = tool_specs();
+        for name in ["remote_list", "remote_status"] {
+            let spec = specs.iter().find(|tool| tool.name == name).unwrap();
+            assert_eq!(spec.annotations["readOnlyHint"], true);
+            assert_eq!(spec.annotations["openWorldHint"], false);
+        }
+
+        let (method, params) =
+            build_socket_call_for_test("remote_list", json!({"workspace_name": "prod"})).unwrap();
+        assert_eq!(method, "remote.list");
+        assert_eq!(params["workspace_name"], "prod");
+
+        let (method, params) =
+            build_socket_call_for_test("remote_status", json!({"surface_id": "s1"})).unwrap();
+        assert_eq!(method, "remote.status");
+        assert_eq!(params["surface_id"], "s1");
     }
 
     #[test]

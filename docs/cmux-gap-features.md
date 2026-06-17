@@ -35,8 +35,9 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   incomplete.
 - Browser panes/import/profiles: partial and source-only; excluded here except
   where a non-browser cmux feature depends on the same infrastructure.
-- SSH remote workspaces: partial. ForkTTY can spawn `ssh <host>` surfaces and
-  restore them, but cmux has deeper remote-daemon semantics.
+- SSH remote workspaces: partial. ForkTTY can spawn `ssh <host>` surfaces,
+  restore them, and report read-only remote inventory/status, but cmux has
+  deeper remote-daemon semantics.
 - Agent hooks/status: partial. ForkTTY has hook templates, status/progress/log
   metadata, notifications, and now per-surface persisted agent session ids,
   lifecycle, last activity, resume health, explicit resume, and read-only
@@ -119,9 +120,25 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - **Impact**: high for remote users. **Cost**: high.
 - cmux remote support includes a remote daemon spec, reconnect/disconnect
   behavior, persistent remote PTY/session ownership, and CLI relay concepts.
-- ForkTTY currently launches plain local `ssh <host>` surfaces.
-- Scope: remote helper lifecycle, auth/ownership checks, reconnection model,
-  remote command routing, remote session metadata, and failure recovery.
+- ForkTTY currently launches plain local `ssh <host>` surfaces and exposes
+  `remote.list` / `remote.status` plus `forktty remotes` /
+  `forktty remote-status` and MCP `remote_list` / `remote_status` as a
+  read-only inventory over those SSH surfaces.
+- ForkTTY also has the first helper handshake:
+  `forktty remote-helper hello` emits a one-shot stdio JSON capability report
+  suitable for `ssh <host> forktty remote-helper hello`.
+  `forktty remote-helper pty -- <program> [args...]` can run a remote argv
+  command under a PTY and relay raw bytes over stdio.
+- Minimum next contract:
+  - keep bootstrap over SSH and stdio first; SSH owns authentication;
+  - keep using the same `forktty` binary remotely as an optional helper;
+  - do not open a remote TCP listener;
+  - keep all child process launches argv-only, not shell strings;
+  - add framing, resize events, and local GTK renderer integration before
+    adding persistent remote session ownership.
+- Remaining scope: persistent remote helper lifecycle, remote Unix-socket
+  ownership checks, reconnect/disconnect model, remote command routing,
+  remote session metadata, and failure recovery.
 
 ### 6. Project Actions And Layout Config
 

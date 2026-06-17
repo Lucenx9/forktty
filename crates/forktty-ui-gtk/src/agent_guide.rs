@@ -2,18 +2,18 @@ pub(crate) const OPERATING_GUIDE_URI: &str = "forktty://agent/operating-guide";
 pub(crate) const OPERATING_GUIDE_PROMPT: &str = "forktty_operating_guide";
 
 pub(crate) fn mcp_server_instructions() -> &'static str {
-    "ForkTTY tools bridge this local stdio MCP process to the owner-only ForkTTY Unix socket; no network listener is opened. Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface. For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files. Start with read-only tools before mutating UI or orchestration state. The full operating guide is available as resource forktty://agent/operating-guide and prompt forktty_operating_guide."
+    "ForkTTY tools bridge this local stdio MCP process to the owner-only ForkTTY Unix socket; no network listener is opened. Use ForkTTY tools when the task involves panes, workspaces, SSH remote inventory, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface. For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files. Start with read-only tools before mutating UI or orchestration state. The full operating guide is available as resource forktty://agent/operating-guide and prompt forktty_operating_guide."
 }
 
 pub(crate) fn operating_guide_text() -> &'static str {
     "\
 ForkTTY operating guide for coding agents
 
-Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface.
+Use ForkTTY tools when the task involves panes, workspaces, SSH remote inventory, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface.
 
 For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files.
 
-Read-only first: use workspace_list, surface_list, topology_tree, surface_read_text, surface_capture_tail, agent_list, agent_health, agent_reclaim_plan, status_summary, workflow_list, workflow_get, workflow_replay, team_list, team_get, team_inbox, team_summary, and team_events to inspect state before changing focus, sending text, resuming agents, changing team state, or changing worktrees.
+Read-only first: use workspace_list, surface_list, topology_tree, remote_list, remote_status, surface_read_text, surface_capture_tail, agent_list, agent_health, agent_reclaim_plan, status_summary, workflow_list, workflow_get, workflow_replay, team_list, team_get, team_inbox, team_summary, and team_events to inspect state before changing focus, sending text, resuming agents, changing team state, or changing worktrees.
 
 Target deliberately: workspace and surface ids from FORKTTY_WORKSPACE_ID and FORKTTY_SURFACE_ID are defaults, but inspect with workspace_list or surface_list before acting on a different pane.
 
@@ -25,9 +25,9 @@ Security boundary: the MCP server is local stdio over ForkTTY's owner-only Unix 
 
 pub(crate) fn session_context_lines() -> [&'static str; 4] {
     [
-        "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface.",
+        "Use ForkTTY tools when the task involves panes, workspaces, SSH remote inventory, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface.",
         "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files.",
-        "Read-only first: workspace_list, surface_list, topology_tree, surface_read_text, surface_capture_tail, agent_list, agent_health, agent_reclaim_plan, status_summary, workflow_list/get/replay, team_list/get/inbox/summary/events inspect state before any mutating ForkTTY action.",
+        "Read-only first: workspace_list, surface_list, topology_tree, remote_list/status, surface_read_text, surface_capture_tail, agent_list, agent_health, agent_reclaim_plan, status_summary, workflow_list/get/replay, team_list/get/inbox/summary/events inspect state before any mutating ForkTTY action.",
         "Mutating coordination tools: surface_focus, surface_send_text, agent_hibernate/reclaim/resume, workflow_upsert/plan_set/evidence_add, team_upsert/worker/task/message tools, worktree_create/attach/remove/merge, status_set, and notification_create.",
     ]
 }

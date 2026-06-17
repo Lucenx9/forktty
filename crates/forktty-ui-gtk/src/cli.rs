@@ -3,6 +3,7 @@ use forktty_socket::socket_path_from_env;
 use serde_json::json;
 use std::ffi::OsString;
 use std::fs;
+use std::io;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,10 @@ USAGE:
     forktty hooks setup     Install Codex, Claude Code, Gemini, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty mcp             Run the ForkTTY MCP stdio server.
+    forktty remote-helper hello
+                           Print a remote-helper stdio handshake JSON object.
+    forktty remote-helper pty -- <program> [args...]
+                           Run argv under a PTY and relay bytes over stdio.
     forktty ping            Check the ForkTTY socket daemon.
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
@@ -35,8 +40,15 @@ pub enum CliAction {
     PrintVersion,
     PrintHelp,
     Doctor(DoctorOptions),
+    RemoteHelper(RemoteHelperCommand),
     SocketCli(Vec<OsString>),
     Unknown(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteHelperCommand {
+    Hello,
+    Pty { argv: Vec<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +86,10 @@ where
             Ok(options) => CliAction::Doctor(options),
             Err(message) => CliAction::Unknown(message),
         },
+        Some("remote-helper") => match parse_remote_helper_command(&rest[1..]) {
+            Ok(command) => CliAction::RemoteHelper(command),
+            Err(message) => CliAction::Unknown(message),
+        },
         Some(command) if is_socket_cli_command(command) => return CliAction::SocketCli(rest),
         Some(option) if is_socket_cli_global_option(option) => return CliAction::SocketCli(rest),
         Some(other) => return CliAction::Unknown(unknown_argument(other)),
@@ -85,7 +101,10 @@ where
             // Unknown already carries the precise parse error (e.g. the
             // doctor flag-ordering hint); don't overwrite it with a generic
             // unknown-argument message for the trailing token.
-            CliAction::SocketCli(_) | CliAction::Doctor(_) | CliAction::Unknown(_)
+            CliAction::SocketCli(_)
+                | CliAction::Doctor(_)
+                | CliAction::RemoteHelper(_)
+                | CliAction::Unknown(_)
         )
     {
         let extra = &rest[1];
@@ -95,6 +114,43 @@ where
         };
     }
     action
+}
+
+fn parse_remote_helper_command(args: &[OsString]) -> Result<RemoteHelperCommand, String> {
+    let Some(command) = args.first() else {
+        return Err("remote-helper requires a subcommand: hello or pty".to_string());
+    };
+    let Some(command) = command.to_str() else {
+        return Err(unknown_argument("<non-utf8>"));
+    };
+    match command {
+        "hello" => {
+            if args.len() > 1 {
+                let extra = args[1].to_str().unwrap_or("<non-utf8>");
+                return Err(format!("remote-helper hello: unexpected argument {extra}"));
+            }
+            Ok(RemoteHelperCommand::Hello)
+        }
+        "pty" => parse_remote_helper_pty_args(&args[1..]),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_remote_helper_pty_args(args: &[OsString]) -> Result<RemoteHelperCommand, String> {
+    if args.first().and_then(|arg| arg.to_str()) != Some("--") {
+        return Err("remote-helper pty requires -- <program> [args...]".to_string());
+    }
+    let mut argv = Vec::new();
+    for arg in &args[1..] {
+        let Some(arg) = arg.to_str() else {
+            return Err(unknown_argument("<non-utf8>"));
+        };
+        argv.push(arg.to_string());
+    }
+    if argv.is_empty() {
+        return Err("remote-helper pty requires -- <program> [args...]".to_string());
+    }
+    Ok(RemoteHelperCommand::Pty { argv })
 }
 
 fn unknown_argument(argument: &str) -> String {
@@ -255,6 +311,13 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "status-line"
             | "status:summary"
             | "top"
+            | "remotes"
+            | "remote-list"
+            | "remote:list"
+            | "remote.list"
+            | "remote-status"
+            | "remote:status"
+            | "remote.status"
             | "ssh"
     )
 }
@@ -265,6 +328,139 @@ pub fn print_version() {
 
 pub fn print_help() {
     print!("{HELP_TEXT}");
+}
+
+pub fn print_remote_helper_hello() {
+    println!("{}", remote_helper_hello_json());
+}
+
+#[cfg(feature = "gtk-ghostty")]
+pub fn run_remote_helper_pty(argv: Vec<String>) -> i32 {
+    match run_remote_helper_pty_inner(argv) {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("forktty remote-helper pty: {err}");
+            1
+        }
+    }
+}
+
+#[cfg(not(feature = "gtk-ghostty"))]
+pub fn run_remote_helper_pty(_argv: Vec<String>) -> i32 {
+    eprintln!("forktty remote-helper pty requires the gtk-ghostty feature");
+    1
+}
+
+#[cfg(feature = "gtk-ghostty")]
+fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
+    use forktty_terminal::ghostty::pty::{PtySession, PtySize};
+    use std::io::Read;
+
+    let cwd = std::env::current_dir()?;
+    let request = remote_helper_pty_request(argv, cwd)?;
+    let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 })?;
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut stdin = io::stdin().lock();
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdin.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) if tx.send(buf[..n].to_vec()).is_err() => break,
+                Ok(_) => {}
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+    });
+    let mut stdout = io::stdout().lock();
+    loop {
+        for bytes in rx.try_iter() {
+            session.write_all(&bytes)?;
+        }
+        write_pty_output(&mut session, &mut stdout)?;
+        if let Some(status) = session.try_wait()? {
+            write_pty_output(&mut session, &mut stdout)?;
+            return Ok(status.code().unwrap_or(1));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(feature = "gtk-ghostty")]
+fn write_pty_output<W: std::io::Write>(
+    session: &mut forktty_terminal::ghostty::pty::PtySession,
+    stdout: &mut W,
+) -> io::Result<()> {
+    let output = session.read_available()?;
+    if !output.is_empty() {
+        stdout.write_all(&output)?;
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
+fn remote_helper_pty_request(
+    argv: Vec<String>,
+    cwd: PathBuf,
+) -> io::Result<forktty_terminal::SpawnRequest> {
+    let mut argv = argv.into_iter();
+    let shell = argv.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "remote-helper pty requires a program",
+        )
+    })?;
+    Ok(forktty_terminal::SpawnRequest {
+        surface_id: "remote-helper".to_string(),
+        workspace_id: "remote-helper".to_string(),
+        shell,
+        args: argv.collect(),
+        cwd,
+        socket_path: PathBuf::new(),
+        extra_env: Vec::new(),
+    })
+}
+
+fn remote_helper_hello_json() -> String {
+    remote_helper_hello_payload(std::env::current_dir().ok(), local_hostname()).to_string()
+}
+
+fn remote_helper_hello_payload(
+    cwd: Option<PathBuf>,
+    hostname: Option<String>,
+) -> serde_json::Value {
+    json!({
+        "schema": 1,
+        "kind": "forktty.remote.hello",
+        "protocol": "forktty-remote-stdio",
+        "protocol_version": 1,
+        "transport": "stdio",
+        "version": VERSION,
+        "cwd": cwd.map(|path| path.display().to_string()),
+        "hostname": hostname,
+        "platform": {
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        },
+        "capabilities": ["hello", "pty"],
+    })
+}
+
+fn local_hostname() -> Option<String> {
+    std::env::var("HOSTNAME")
+        .ok()
+        .and_then(non_empty_trimmed)
+        .or_else(|| {
+            fs::read_to_string("/etc/hostname")
+                .ok()
+                .and_then(non_empty_trimmed)
+        })
+}
+
+fn non_empty_trimmed(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 /// Run the local diagnostics report and return a process exit code.
@@ -1232,6 +1428,63 @@ mod tests {
                 strict: false
             })
         );
+    }
+
+    #[test]
+    fn parse_remote_helper_hello() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "remote-helper", "hello"]),
+            CliAction::RemoteHelper(RemoteHelperCommand::Hello)
+        );
+    }
+
+    #[test]
+    fn parse_remote_helper_pty_argv() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "remote-helper", "pty", "--", "/bin/echo", "hi"]),
+            CliAction::RemoteHelper(RemoteHelperCommand::Pty {
+                argv: vec!["/bin/echo".to_string(), "hi".to_string()]
+            })
+        );
+    }
+
+    #[test]
+    fn parse_remote_helper_pty_requires_argv() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "remote-helper", "pty", "--"]),
+            CliAction::Unknown("remote-helper pty requires -- <program> [args...]".to_string())
+        );
+    }
+
+    #[test]
+    fn remote_helper_pty_request_preserves_argv() {
+        let request = remote_helper_pty_request(
+            vec!["/bin/echo".to_string(), "hi".to_string()],
+            PathBuf::from("/repo"),
+        )
+        .unwrap();
+
+        assert_eq!(request.shell, "/bin/echo");
+        assert_eq!(request.args, vec!["hi"]);
+        assert_eq!(request.cwd, PathBuf::from("/repo"));
+        assert_eq!(request.socket_path, PathBuf::new());
+    }
+
+    #[test]
+    fn remote_helper_hello_payload_reports_minimal_capabilities() {
+        let payload = remote_helper_hello_payload(
+            Some(PathBuf::from("/repo")),
+            Some("build-host".to_string()),
+        );
+
+        assert_eq!(payload["schema"], 1);
+        assert_eq!(payload["kind"], "forktty.remote.hello");
+        assert_eq!(payload["protocol"], "forktty-remote-stdio");
+        assert_eq!(payload["protocol_version"], 1);
+        assert_eq!(payload["transport"], "stdio");
+        assert_eq!(payload["cwd"], "/repo");
+        assert_eq!(payload["hostname"], "build-host");
+        assert_eq!(payload["capabilities"], serde_json::json!(["hello", "pty"]));
     }
 
     #[test]
