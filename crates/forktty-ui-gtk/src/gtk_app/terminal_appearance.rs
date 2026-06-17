@@ -49,6 +49,19 @@ pub(super) enum TerminalCopyOnSelect {
     Clipboard,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ClipboardCodepointMapping {
+    pub(super) start: char,
+    pub(super) end: char,
+    pub(super) replacement: String,
+}
+
+impl ClipboardCodepointMapping {
+    fn contains(&self, ch: char) -> bool {
+        self.start <= ch && ch <= self.end
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct GhosttyScrollToBottom {
     pub(super) keystroke: bool,
@@ -138,6 +151,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) selection_clear_on_copy: Option<bool>,
     pub(super) selection_word_chars: Option<Vec<char>>,
     pub(super) clipboard_trim_trailing_spaces: bool,
+    pub(super) clipboard_codepoint_map: Vec<ClipboardCodepointMapping>,
     pub(super) copy_on_select: TerminalCopyOnSelect,
     pub(super) right_click_action: Option<TerminalRightClickAction>,
     pub(super) scroll_to_bottom: GhosttyScrollToBottom,
@@ -260,6 +274,38 @@ pub(super) fn terminal_clipboard_trim_trailing_spaces_for_config(
     config: &config::AppConfig,
 ) -> bool {
     ghostty_terminal_appearance_for_config(config).clipboard_trim_trailing_spaces
+}
+
+pub(super) fn terminal_clipboard_codepoint_map_for_config(
+    config: &config::AppConfig,
+) -> Vec<ClipboardCodepointMapping> {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_clipboard_codepoint_map_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_clipboard_codepoint_map_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> Vec<ClipboardCodepointMapping> {
+    appearance.clipboard_codepoint_map.clone()
+}
+
+pub(super) fn apply_clipboard_codepoint_map(
+    text: &str,
+    map: &[ClipboardCodepointMapping],
+) -> String {
+    if map.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Some(mapping) = map.iter().rev().find(|mapping| mapping.contains(ch)) {
+            out.push_str(&mapping.replacement);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 pub(super) fn terminal_copy_on_select_for_config(
@@ -668,6 +714,7 @@ impl Default for GhosttyTerminalAppearance {
             selection_clear_on_copy: None,
             selection_word_chars: None,
             clipboard_trim_trailing_spaces: false,
+            clipboard_codepoint_map: Vec::new(),
             copy_on_select: TerminalCopyOnSelect::Selection,
             right_click_action: None,
             scroll_to_bottom: GhosttyScrollToBottom::default(),
@@ -721,6 +768,7 @@ impl GhosttyTerminalAppearance {
             "clipboard-trim-trailing-spaces" => {
                 self.clipboard_trim_trailing_spaces = parse_ghostty_bool(&value);
             }
+            "clipboard-codepoint-map" => self.apply_clipboard_codepoint_map(&value),
             "copy-on-select" => self.apply_copy_on_select(&value),
             "right-click-action" => self.apply_right_click_action(&value),
             "scroll-to-bottom" => self.apply_scroll_to_bottom(&value),
@@ -886,6 +934,16 @@ impl GhosttyTerminalAppearance {
         } else {
             Some(value.chars().collect())
         };
+    }
+
+    fn apply_clipboard_codepoint_map(&mut self, value: &str) {
+        if value.trim().is_empty() {
+            self.clipboard_codepoint_map.clear();
+            return;
+        }
+        if let Some(mappings) = parse_clipboard_codepoint_map(value) {
+            self.clipboard_codepoint_map.extend(mappings);
+        }
     }
 
     fn apply_mouse_shift_capture(&mut self, value: &str) {
@@ -1067,6 +1125,42 @@ fn parse_ghostty_optional_bool(value: &str) -> Option<bool> {
         "0" | "false" | "f" | "no" | "n" | "off" => Some(false),
         _ => None,
     }
+}
+
+fn parse_clipboard_codepoint_map(value: &str) -> Option<Vec<ClipboardCodepointMapping>> {
+    let (ranges, replacement) = value.split_once('=')?;
+    let replacement = parse_ghostty_codepoint(replacement.trim())
+        .map(|ch| ch.to_string())
+        .unwrap_or_else(|| replacement.trim().to_string());
+    let mut mappings = Vec::new();
+    for range in ranges
+        .split(',')
+        .map(str::trim)
+        .filter(|range| !range.is_empty())
+    {
+        let (start, end) = parse_ghostty_codepoint_range(range)?;
+        mappings.push(ClipboardCodepointMapping {
+            start,
+            end,
+            replacement: replacement.clone(),
+        });
+    }
+    Some(mappings)
+}
+
+fn parse_ghostty_codepoint_range(value: &str) -> Option<(char, char)> {
+    let (start, end) = value.split_once('-').unwrap_or((value, value));
+    let start = parse_ghostty_codepoint(start)?;
+    let end = parse_ghostty_codepoint(end)?;
+    (start <= end).then_some((start, end))
+}
+
+fn parse_ghostty_codepoint(value: &str) -> Option<char> {
+    let value = value.trim();
+    let hex = value
+        .strip_prefix("U+")
+        .or_else(|| value.strip_prefix("u+"))?;
+    u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
 }
 
 fn load_ghostty_theme(
@@ -1566,6 +1660,30 @@ mod tests {
         let disabled =
             ghostty_terminal_appearance_from_text("clipboard-trim-trailing-spaces = false");
         assert!(!disabled.clipboard_trim_trailing_spaces);
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_clipboard_codepoint_map() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            "clipboard-codepoint-map = U+2500=U+002D\n\
+             clipboard-codepoint-map = U+2502=|\n\
+             clipboard-codepoint-map = U+2500-U+2502=box",
+        );
+
+        assert_eq!(
+            apply_clipboard_codepoint_map("─│┌", &appearance.clipboard_codepoint_map),
+            "boxbox┌"
+        );
+
+        let reset = ghostty_terminal_appearance_from_text(
+            "clipboard-codepoint-map = U+2500=U+002D\n\
+             clipboard-codepoint-map =",
+        );
+        assert!(terminal_clipboard_codepoint_map_for_appearance(
+            &config::AppConfig::default(),
+            &reset
+        )
+        .is_empty());
     }
 
     #[test]

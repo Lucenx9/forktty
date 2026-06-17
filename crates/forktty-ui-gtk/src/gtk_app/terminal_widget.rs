@@ -109,6 +109,7 @@ pub(super) struct GhosttyTerminalWidget {
     selection_clear_on_typing: bool,
     selection_clear_on_copy: bool,
     clipboard_trim_trailing_spaces: bool,
+    clipboard_codepoint_map: Rc<Vec<ClipboardCodepointMapping>>,
     copy_on_select: TerminalCopyOnSelect,
     scroll_to_bottom: GhosttyScrollToBottom,
     mouse_reporting: bool,
@@ -200,6 +201,7 @@ impl GhosttyTerminalWidget {
         let selection_clear_on_copy = terminal_selection_clear_on_copy_for_config(config);
         let clipboard_trim_trailing_spaces =
             terminal_clipboard_trim_trailing_spaces_for_config(config);
+        let clipboard_codepoint_map = Rc::new(terminal_clipboard_codepoint_map_for_config(config));
         let copy_on_select = terminal_copy_on_select_for_config(config);
         let scroll_to_bottom = terminal_scroll_to_bottom_for_config(config);
         let mouse_reporting = terminal_mouse_reporting_for_config(config);
@@ -1071,6 +1073,7 @@ impl GhosttyTerminalWidget {
             selection_clear_on_typing,
             selection_clear_on_copy,
             clipboard_trim_trailing_spaces,
+            clipboard_codepoint_map,
             copy_on_select,
             scroll_to_bottom,
             mouse_reporting,
@@ -1130,6 +1133,7 @@ impl GhosttyTerminalWidget {
             selection_clear_on_typing: self.selection_clear_on_typing,
             selection_clear_on_copy: self.selection_clear_on_copy,
             clipboard_trim_trailing_spaces: self.clipboard_trim_trailing_spaces,
+            clipboard_codepoint_map: Rc::downgrade(&self.clipboard_codepoint_map),
             copy_on_select: self.copy_on_select,
             scroll_to_bottom: self.scroll_to_bottom,
             mouse_reporting: self.mouse_reporting,
@@ -1490,6 +1494,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     selection_clear_on_typing: bool,
     selection_clear_on_copy: bool,
     clipboard_trim_trailing_spaces: bool,
+    clipboard_codepoint_map: std::rc::Weak<Vec<ClipboardCodepointMapping>>,
     copy_on_select: TerminalCopyOnSelect,
     scroll_to_bottom: GhosttyScrollToBottom,
     mouse_reporting: bool,
@@ -1521,6 +1526,7 @@ impl WeakGhosttyTerminalWidget {
             selection_clear_on_typing: self.selection_clear_on_typing,
             selection_clear_on_copy: self.selection_clear_on_copy,
             clipboard_trim_trailing_spaces: self.clipboard_trim_trailing_spaces,
+            clipboard_codepoint_map: self.clipboard_codepoint_map.upgrade()?,
             copy_on_select: self.copy_on_select,
             scroll_to_bottom: self.scroll_to_bottom,
             mouse_reporting: self.mouse_reporting,
@@ -2260,12 +2266,14 @@ fn visible_text_from_full_text(text: &str, top: usize, rows: usize) -> String {
 fn copy_payload<E>(
     selection_text: Option<String>,
     trim_trailing_spaces: bool,
+    codepoint_map: &[ClipboardCodepointMapping],
     render: impl FnOnce() -> Result<String, E>,
 ) -> Result<String, E> {
-    let text = match selection_text {
+    let mut text = match selection_text {
         Some(text) => text,
         None => render()?,
     };
+    text = apply_clipboard_codepoint_map(&text, codepoint_map);
     if trim_trailing_spaces {
         Ok(trim_clipboard_trailing_spaces(&text))
     } else {
@@ -3003,12 +3011,17 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
         // fallback: a stored selection must still copy when the backend
         // cannot render a frame.
         let selection_text = self.selection.borrow().selected_text();
-        let payload = copy_payload(selection_text, self.clipboard_trim_trailing_spaces, || {
-            self.runtime
-                .borrow_mut()
-                .render_frame()
-                .map(|frame| viewport_text_from_frame(&frame))
-        });
+        let payload = copy_payload(
+            selection_text,
+            self.clipboard_trim_trailing_spaces,
+            &self.clipboard_codepoint_map,
+            || {
+                self.runtime
+                    .borrow_mut()
+                    .render_frame()
+                    .map(|frame| viewport_text_from_frame(&frame))
+            },
+        );
         match payload {
             Ok(text) => {
                 display.clipboard().set_text(&text);
@@ -3584,7 +3597,7 @@ mod selection_tests {
         // A stored selection copies without touching the frame, so a failing
         // backend render cannot break it.
         let rendered = Cell::new(false);
-        let payload = copy_payload(Some("selected".to_string()), false, || {
+        let payload = copy_payload(Some("selected".to_string()), false, &[], || {
             rendered.set(true);
             Err("render failed")
         });
@@ -3593,14 +3606,14 @@ mod selection_tests {
 
         // No selection: the rendered viewport is the fallback.
         assert_eq!(
-            copy_payload(None, false, || Ok::<_, &str>("screen".to_string())),
+            copy_payload(None, false, &[], || Ok::<_, &str>("screen".to_string())),
             Ok("screen".to_string())
         );
 
         // No selection and no frame: the error propagates so the caller can
         // toast without clobbering the clipboard.
         assert_eq!(
-            copy_payload(None, false, || Err::<String, _>("render failed")),
+            copy_payload(None, false, &[], || Err::<String, _>("render failed")),
             Err("render failed")
         );
     }
@@ -3611,15 +3624,42 @@ mod selection_tests {
             copy_payload(
                 Some("one   \n   \ntwo\t ".to_string()),
                 true,
+                &[],
                 || -> Result<String, &str> { Ok("unused".to_string()) }
             ),
             Ok("one\n\ntwo".to_string())
         );
         assert_eq!(
-            copy_payload(None, true, || -> Result<String, &str> {
+            copy_payload(None, true, &[], || -> Result<String, &str> {
                 Ok("screen   \n\t\nline\t".to_string())
             }),
             Ok("screen\n\nline".to_string())
+        );
+    }
+
+    #[test]
+    fn copy_payload_applies_clipboard_codepoint_map_before_trimming() {
+        let map = vec![
+            ClipboardCodepointMapping {
+                start: '─',
+                end: '─',
+                replacement: "- ".to_string(),
+            },
+            ClipboardCodepointMapping {
+                start: '─',
+                end: '┬',
+                replacement: "box".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            copy_payload(
+                Some("a─┬   ".to_string()),
+                true,
+                &map,
+                || -> Result<String, &str> { Ok("unused".to_string()) }
+            ),
+            Ok("aboxbox".to_string())
         );
     }
 
