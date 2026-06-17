@@ -79,6 +79,10 @@ All notable changes to ForkTTY are documented here.
 - Experimental embedded Ghostty panes now back ForkTTY's Agent HUD tail reads
   and inline agent replies, so agent surfaces keep showing recent output and
   accepting panel replies when the embedded renderer is enabled.
+- Experimental embedded Ghostty panes now handle ForkTTY's reset/clear command
+  by routing it to Ghostty's native `clear_screen` keybinding action. This
+  clears the embedded surface through Ghostty; a full terminal-state reset
+  still depends on Ghostty exposing a dedicated keybinding action.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies socket
   `capture-tail` and that embedded pane startup did not fall back to the

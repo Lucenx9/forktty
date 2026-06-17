@@ -43,6 +43,7 @@ pub(super) enum EmbeddedSurfaceAction {
     IncreaseFontSize,
     DecreaseFontSize,
     ResetFontSize,
+    ClearScreen,
 }
 
 impl EmbeddedSurfaceAction {
@@ -55,6 +56,7 @@ impl EmbeddedSurfaceAction {
             EmbeddedSurfaceAction::IncreaseFontSize => "increase_font_size:1",
             EmbeddedSurfaceAction::DecreaseFontSize => "decrease_font_size:1",
             EmbeddedSurfaceAction::ResetFontSize => "reset_font_size",
+            EmbeddedSurfaceAction::ClearScreen => "clear_screen",
         }
     }
 }
@@ -593,6 +595,10 @@ mod tests {
         assert_eq!(
             EmbeddedSurfaceAction::ResetFontSize.as_ghostty_action(),
             "reset_font_size"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::ClearScreen.as_ghostty_action(),
+            "clear_screen"
         );
     }
 

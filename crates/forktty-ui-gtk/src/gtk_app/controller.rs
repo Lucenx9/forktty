@@ -830,6 +830,9 @@ impl TerminalController {
     }
 
     pub(super) fn reset_focused_terminal(&self) -> bool {
+        if let Some(widget) = self.focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::ClearScreen);
+        }
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
@@ -974,6 +977,9 @@ impl TerminalController {
     }
 
     pub(super) fn reset_active_terminal(&self) -> bool {
+        if let Some(widget) = self.model_focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::ClearScreen);
+        }
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };

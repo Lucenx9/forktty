@@ -65,7 +65,9 @@ exercised) · `n/a`.
   signals; real exit code via `ghostty_gtk_surface_exit_code`.
 - **Copy/paste/select-all/find** — `ghostty_gtk_surface_perform_action`
   (keybinding action by name); ForkTTY routes the `Ctrl+Shift+C/V/A/F`
-  accelerators and command palette to the focused embedded surface.
+  accelerators, clear-screen command, and command palette to the focused
+  embedded surface. `clear_screen` is Ghostty's native clear action; a full
+  VT-state reset remains blocked on a dedicated Ghostty action.
 - **Child PID** — `ghostty_gtk_surface_child_pid` fed by a `pid_available`
   surface mailbox message; ForkTTY records it for listening-port discovery and
   the socket `surfaces` PID field, and the Probe requires the initial embedded
