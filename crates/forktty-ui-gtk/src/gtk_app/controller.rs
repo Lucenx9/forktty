@@ -67,10 +67,12 @@ pub(super) struct SurfacePid {
 }
 
 /// How often to poll an embedded Ghostty surface for its child PID, and the cap
-/// on attempts. The PID lands within milliseconds of spawn; the cap is a
-/// generous backstop so the timer never lingers if a surface never spawns.
+/// on attempts. The PID usually lands quickly, but the Ghostty mailbox hand-off
+/// can lag behind widget readiness under CI/Xvfb, so keep polling long enough
+/// for the socket `surfaces` PID field to converge without leaving an unbounded
+/// timer behind.
 const EMBEDDED_GHOSTTY_PID_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 50;
+const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
 
 pub(super) fn remove_surface_pid_for_spawn(
     pids: &mut BTreeMap<String, SurfacePid>,

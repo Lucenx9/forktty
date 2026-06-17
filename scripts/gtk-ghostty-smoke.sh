@@ -117,9 +117,11 @@ focused_surface_id() {
 
 wait_surface_pid() {
   local id="$1"
-  for _ in {1..60}; do
-    if "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
-      python3 -c 'import json,sys; id=sys.argv[1]; surfaces=json.load(sys.stdin); item=next((surface for surface in surfaces if surface.get("id") == id), None); assert item is not None; pid=item.get("pid"); assert isinstance(pid, int) and pid > 0' "$id"
+  local surfaces_json
+  for _ in {1..120}; do
+    if surfaces_json="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json)" &&
+      printf '%s' "$surfaces_json" |
+        python3 -c 'import json,sys; id=sys.argv[1]; surfaces=json.load(sys.stdin); item=next((surface for surface in surfaces if surface.get("id") == id), None); pid=None if item is None else item.get("pid"); sys.exit(0 if isinstance(pid, int) and pid > 0 else 1)' "$id"
     then
       return 0
     fi
