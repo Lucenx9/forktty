@@ -198,6 +198,24 @@ fn read_embedded_scrollback_tail(
     }
 }
 
+fn snapshot_embedded_scrollback_tail_to_model(
+    model: &Arc<Mutex<WorkspaceModel>>,
+    embedder: &GhosttyGtkEmbedder,
+    widget: &gtk::Widget,
+    surface_id: &str,
+    lines: u32,
+) {
+    if lines == 0 || !embedder.supports_read_text() {
+        return;
+    }
+    let Some(text) = read_embedded_scrollback_tail(embedder, widget, surface_id, lines) else {
+        return;
+    };
+    if let Ok(mut model) = model.lock() {
+        let _ = model.set_surface_persisted_scrollback(surface_id, Some(text));
+    }
+}
+
 impl TerminalController {
     pub(super) fn new(
         container: gtk::Box,
@@ -292,6 +310,21 @@ impl TerminalController {
                 }
             }
             GtkTerminalCommand::Close { surface_id } => {
+                if let (Some(embedder), Some(widget)) = (
+                    self.embedded_ghostty.as_ref(),
+                    self.embedded_ghostty_panes.get(&surface_id),
+                ) {
+                    let persistent_scrollback_lines = config::load_config()
+                        .map(|config| config.appearance.persistent_scrollback_lines)
+                        .unwrap_or(0);
+                    snapshot_embedded_scrollback_tail_to_model(
+                        &self.model,
+                        embedder,
+                        widget,
+                        &surface_id,
+                        persistent_scrollback_lines,
+                    );
+                }
                 if let Some(chrome) = self.chromes.remove(&surface_id) {
                     detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
                 }
@@ -560,19 +593,13 @@ impl TerminalController {
                 // Capture the final scrollback before teardown so session save
                 // keeps the exited pane's output. Read first, then store under a
                 // brief lock — never hold the model lock across the ABI read.
-                if persistent_scrollback_lines > 0 && embedder.supports_read_text() {
-                    if let Some(text) = read_embedded_scrollback_tail(
-                        &embedder,
-                        widget,
-                        &surface_id,
-                        persistent_scrollback_lines,
-                    ) {
-                        if let Ok(mut model) = model.lock() {
-                            let _ =
-                                model.set_surface_persisted_scrollback(&surface_id, Some(text));
-                        }
-                    }
-                }
+                snapshot_embedded_scrollback_tail_to_model(
+                    &model,
+                    &embedder,
+                    widget,
+                    &surface_id,
+                    persistent_scrollback_lines,
+                );
                 if let Some(state) = &state {
                     match state.terminal.mark_surface_not_ready(&surface_id) {
                         Ok(()) | Err(TerminalError::NotFound(_)) => {}
