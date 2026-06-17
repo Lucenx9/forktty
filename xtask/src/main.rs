@@ -136,8 +136,8 @@ const VTE_CHECK_PATHS: &[&str] = &[
 ];
 
 const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
-const GHOSTTY_VENDOR_URL: &str = "https://github.com/ghostty-org/ghostty.git";
-const GHOSTTY_VENDOR_REV: &str = "e8e7fea103ab8bff5384673a60e04b59939738dd";
+const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
+const GHOSTTY_VENDOR_REV: &str = "44919aae10f9af4c9279bdda2537c7e86e1fdff0";
 
 fn main() -> ExitCode {
     match run() {
@@ -497,7 +497,7 @@ mod tests {
         let raw = r#"
 [submodule "vendor/ghostty"]
 	path = vendor/ghostty
-	url = https://github.com/ghostty-org/ghostty.git
+	url = https://github.com/Lucenx9/ghostty.git
 "#;
 
         assert!(validate_ghostty_gitmodules(raw).is_ok());

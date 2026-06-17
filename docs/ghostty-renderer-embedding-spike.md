@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`e8e7fea103ab8bff5384673a60e04b59939738dd`.
+`44919aae10f9af4c9279bdda2537c7e86e1fdff0`.
 
 ## Result
 
@@ -40,14 +40,19 @@ Stop expanding ForkTTY renderer parity as the primary strategy. Keep the
 current renderer only as the working fallback while we make Ghostty's Linux GTK
 surface embeddable.
 
-Minimum Ghostty-side API to spike:
+The current fork starts the Ghostty-side API spike with:
 
 ```c
-typedef void* ghostty_gtk_surface_t;
+typedef struct _GtkWidget GtkWidget;
+typedef struct ghostty_gtk_context_s ghostty_gtk_context_t;
 
-ghostty_gtk_surface_t ghostty_gtk_surface_new(ghostty_config_t config);
-void* ghostty_gtk_surface_widget(ghostty_gtk_surface_t surface);
-void ghostty_gtk_surface_free(ghostty_gtk_surface_t surface);
+ghostty_gtk_context_t *ghostty_gtk_context_new(void);
+void ghostty_gtk_context_free(ghostty_gtk_context_t *context);
+int ghostty_gtk_context_register(ghostty_gtk_context_t *context);
+int ghostty_gtk_context_tick(ghostty_gtk_context_t *context);
+
+GtkWidget *ghostty_gtk_surface_new(ghostty_gtk_context_t *context);
+void ghostty_gtk_surface_free(GtkWidget *surface);
 ```
 
 The exact ABI can change during the spike. The important constraint is that
@@ -57,10 +62,10 @@ require Ghostty to own the whole application window.
 
 ## Next Cut
 
-1. Add a Ghostty vendor patch or fork branch that builds a Linux shared library
-   with GTK linked.
-2. Export a minimal GTK surface constructor returning a `GtkWidget*`.
-3. Add a ForkTTY feature-gated probe that creates the widget in isolation.
+1. Keep the `emit-gtk-lib` fork branch compiling on Ubuntu CI.
+2. Add a ForkTTY feature-gated probe that creates the widget in isolation.
+3. Resolve the `Application.default()` ownership issue so Ghostty does not have
+   to own the whole host `GApplication`.
 4. Only after the probe renders, replace one ForkTTY terminal pane behind a
    feature flag.
 

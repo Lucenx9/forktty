@@ -24,8 +24,8 @@ For the exact terminal-only build used by release artifacts:
 cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 ```
 
-ForkTTY also pins the full upstream Ghostty source at `vendor/ghostty` for the
-next renderer/widget integration spike. Initialize it after cloning with:
+ForkTTY also pins a Ghostty fork at `vendor/ghostty` for the next
+renderer/widget integration spike. Initialize it after cloning with:
 
 ```bash
 git submodule update --init vendor/ghostty
@@ -33,6 +33,7 @@ git submodule update --init vendor/ghostty
 
 That source pin is not the release renderer yet. The current Linux GTK runtime
 still uses `vendor/libghostty-rs` plus ForkTTY's GTK/Pango/Cairo renderer.
+The fork currently carries the experimental GTK embedding library build probe.
 
 For the experimental source-only browser pane, install WebKitGTK 6 development
 files and opt in:

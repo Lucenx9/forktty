@@ -5,8 +5,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../vendor/ghostty"
 
 zig build \
   -Dapp-runtime=gtk \
-  -Demit-exe=true \
-  -Demit-gtk-lib=false \
+  -Demit-exe=false \
+  -Demit-gtk-lib=true \
   -Demit-docs=false \
   -Demit-terminfo=false \
   -Demit-termcap=false \
