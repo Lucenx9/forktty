@@ -88,8 +88,8 @@ done
 
 workspace_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["workspace_id"])')"
-surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --json |
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["surface_id"])')"
+surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
 
 read_surface_json() {
   local id="$1"
