@@ -438,6 +438,16 @@ fn child_exit_pid_removal_ignores_stale_spawn_tokens() {
     assert!(pids.is_empty());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn proc_stat_parent_pid_parses_process_names_with_spaces_and_parens() {
+    assert_eq!(
+        proc_stat_parent_pid("1234 (shell (worker) one) S 42 1 1 0 -1 4194304"),
+        Some(42)
+    );
+    assert_eq!(proc_stat_parent_pid("not a proc stat line"), None);
+}
+
 #[test]
 fn embedded_child_exit_sets_closed_status_without_notification_for_clean_exit() {
     let mut model = WorkspaceModel::new();

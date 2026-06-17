@@ -67,8 +67,10 @@ All notable changes to ForkTTY are documented here.
   classic panes. The embedding ABI gains `ghostty_gtk_surface_child_pid`, fed by
   a new `pid_available` surface mailbox message that hands the IO-thread-owned
   pid to the GTK main thread race-free; ForkTTY polls the getter briefly after
-  spawn to record the PID. Older libraries without the symbol skip the poll and
-  leave port discovery unavailable for embedded panes.
+  spawn to record the PID, with a Linux direct-child process fallback while the
+  embedded surface finishes startup. Older libraries without the symbol use that
+  fallback when available and otherwise leave port discovery unavailable for
+  embedded panes.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies PID exposure,
   socket `capture-tail`, and that embedded pane startup did not fall back to the
