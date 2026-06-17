@@ -5,14 +5,17 @@ pub mod browser_history;
 pub mod command_safety;
 pub mod config;
 pub mod events;
+pub mod feed;
 pub mod model;
 pub mod notification;
 pub mod ports;
 pub mod pr;
 pub mod profile;
+pub mod project_actions;
 pub mod protocol;
 pub mod session;
 pub mod update;
+pub mod workflow;
 pub mod worktree;
 
 pub use agents::{
@@ -25,6 +28,7 @@ pub use browser_cmd::{
     BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, MAX_BROWSER_RESULT_BYTES,
 };
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
+pub use feed::{FeedApprovalState, FeedEntry, FeedEntryType, FeedError, FeedStore};
 
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, UpdateConfig};
@@ -39,5 +43,15 @@ pub use notification::{
     close_desktop_notification, dispatch_notification, NotificationDispatchError,
 };
 pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};
+pub use project_actions::{
+    action_cwd, discover_project_root, find_action, load_project_actions, ProjectAction,
+    ProjectActionError,
+};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};
+pub use workflow::{
+    load_workflows, load_workflows_from_path, now_ms as workflow_now_ms, save_workflows_to_path,
+    update_workflows, update_workflows_at_path, workflow_store_path, WorkflowError, WorkflowEvent,
+    WorkflowEvidence, WorkflowEvidenceInput, WorkflowPlanStep, WorkflowPlanStepInput,
+    WorkflowQuery, WorkflowReplayQuery, WorkflowState, WorkflowStoreData, WorkflowUpsert,
+};
