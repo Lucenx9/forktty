@@ -82,6 +82,17 @@ search overlay (`start_search`); mouse selection already works natively inside
 the embedded widget. A library built before that symbol degrades to a logged
 no-op.
 
+Persisted scrollback restore is wired through an optional
+`ghostty_gtk_surface_restore_scrollback(GtkWidget*, const char*, size_t)` symbol
+that ForkTTY loads when present. It must inject already-terminal-ready bytes
+(CR/LF normalized by ForkTTY) into the surface's VT stream WITHOUT writing them
+to the child PTY, so restored output is not replayed as shell input. The fork
+does not export this symbol yet, so restore is a safe no-op until it lands; the
+snapshot half (reading the tail through `ghostty_gtk_surface_read_text` into the
+session) already works. The smallest safe Ghostty-side design — an IO-thread
+`inject_output` mailbox message routed to `Termio.processOutput` — is in
+[ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md).
+
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
 `vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so`, `scripts/build-deb.sh` and

@@ -48,7 +48,7 @@ exercised) · `n/a`.
 | - | --------- | ------------- | ------------ | ------ |
 | 1 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
 | 2 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of an echoed marker | pass |
-| 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation; **manual**: scrollback persistence across restart | pending |
+| 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; **manual**: scrollback persistence across restart | pending (snapshot done; restore blocked on Ghostty ABI) |
 | 4 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively) | pending |
 | 5 | Images (Kitty/iTerm) | Inline images render in the embedded surface | manual (visual; Ghostty renders natively) | pending |
 | 6 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | pending |
@@ -75,6 +75,33 @@ exercised) · `n/a`.
 - **Socket and agent text** — `send_text` / `read_text` (visible + full) ABIs
   back the socket `send_text`, `read_text`, and `capture_tail` requests, plus
   Agent HUD tail reads and inline agent replies.
+- **Scrollback snapshot** — when `appearance.persistent_scrollback_lines > 0`,
+  embedded panes snapshot their scrollback tail into
+  `surface.persisted_scrollback` on child exit and via a throttled poll
+  (`read_text_snapshot(Tail)` + `set_surface_persisted_scrollback`), so a later
+  session save keeps recent embedded output. The ABI read never holds the model
+  lock, and an unchanged tail skips the model write.
+- **Scrollback restore (gated)** — on respawn ForkTTY computes terminal-ready
+  bytes from `persisted_scrollback` (same CR/LF normalization as classic panes)
+  and seeds them through the optional `ghostty_gtk_surface_restore_scrollback`
+  ABI, which must feed Ghostty's VT stream and never the child PTY. The shipped
+  embedding library does not export this symbol yet, so restore is a safe no-op
+  today; see the blocker below.
+
+## Pending blocker — scrollback restore ABI
+
+Restore (row 3, second half) cannot be proven until the Ghostty fork ships a
+`ghostty_gtk_surface_restore_scrollback` export that injects bytes into the
+surface's VT stream without writing them to the child PTY. The smallest safe
+Ghostty-side design (an IO-thread `inject_output` mailbox message routed to
+`Termio.processOutput`, plus the C export) is documented in
+[`ghostty-renderer-embedding-spike.md`](ghostty-renderer-embedding-spike.md).
+A raw GTK-main-thread feed into `processOutput` was rejected because it races
+the IO thread's PTY reader; the message route keeps all terminal mutation on the
+IO thread. The ForkTTY side (snapshot, optional symbol loading, restore wiring,
+graceful no-op when absent) is implemented and unit-tested now, so the row flips
+to `pass` once the fork lands the symbol, the pin is bumped, and the Ghostty GTK
+Probe verifies restored scrollback across respawn.
 
 ## Promotion gate
 

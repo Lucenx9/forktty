@@ -441,7 +441,7 @@ fn exit_status_code(status: std::process::ExitStatus) -> i32 {
         .unwrap_or(1)
 }
 
-fn persisted_scrollback_output_bytes(text: &str) -> Vec<u8> {
+pub(super) fn persisted_scrollback_output_bytes(text: &str) -> Vec<u8> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = Vec::with_capacity(normalized.len() + 2);
     for ch in normalized.chars() {

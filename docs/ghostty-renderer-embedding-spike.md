@@ -101,6 +101,122 @@ plain-text read ABIs for socket send/read/capture operations.
 Do not replace ForkTTY's current renderer until the parity matrix is all `pass`
 and the embedding library ships in release artifacts by default.
 
+## Blocked: scrollback restore ABI
+
+Embedded panes can already *snapshot* their scrollback into the session (ForkTTY
+reads the tail through `ghostty_gtk_surface_read_text` and stores it on the
+surface). *Restoring* that scrollback on respawn needs a Ghostty-side export
+that ForkTTY does not yet have: a way to push bytes into a surface's terminal
+state (scrollback/screen) **without** writing them to the child PTY — otherwise
+old output would be replayed as shell input.
+
+ForkTTY's side is implemented and unit-tested: it loads an optional
+`ghostty_gtk_surface_restore_scrollback` symbol, CR/LF-normalizes the persisted
+text into terminal-ready bytes (same as classic panes), and seeds it on surface
+init, degrading to a no-op when the symbol is absent. Only the Ghostty fork
+change is missing.
+
+### Why not a GTK-main-thread feed
+
+The preferred shape was a main-thread call that feeds display state directly
+(e.g. `Surface.dumpPlainText` runs on the GTK thread under
+`renderer_state.mutex`). Writing is different: the only existing entry point,
+`Termio.processOutput`, runs on Ghostty's **IO thread** and mutates the VT
+parser (`terminal_stream`) plus the terminal. Calling it from the GTK main
+thread races the IO thread's PTY reader (allocator and parser state), even under
+the renderer mutex, and there is no exposed pre-spawn window where the IO thread
+is guaranteed idle. So a raw main-thread feed is unsafe; the smallest safe
+design keeps all terminal mutation on the IO thread via the existing mailbox.
+
+### Smallest safe Ghostty-side design (to land on the fork)
+
+Route the bytes through the IO thread the same way `writeBytes` does, but call
+`processOutput` instead of `queueWrite`. Reuse the `WriteReq` data carrier so
+`@sizeOf(Message)` (asserted == 40) does not grow (`WriteReq.Alloc` is smaller
+than the existing `write_small`).
+
+1. `src/termio/message.zig` — add a variant to `Message`:
+
+   ```zig
+   /// Inject bytes directly into the terminal VT stream (scrollback/screen)
+   /// without writing them to the child PTY. Used to restore persisted
+   /// scrollback when re-spawning an embedded surface.
+   inject_output: WriteReq.Alloc,
+   ```
+
+2. `src/termio/Thread.zig` — handle it in `drainMailbox` (alongside the
+   `write_*` cases), calling `processOutput` (it takes `renderer_state.mutex`
+   internally) instead of `queueWrite`:
+
+   ```zig
+   .inject_output => |v| {
+       defer v.alloc.free(v.data);
+       io.processOutput(v.data);
+   },
+   ```
+
+3. `src/Surface.zig` — add a method mirroring `writeBytes` plumbing. `queueIo`'s
+   readonly guard only filters `write_*`, so inject correctly passes through
+   even in readonly mode (it is display state, not a PTY write):
+
+   ```zig
+   /// Inject bytes into the terminal VT stream (scrollback/screen) WITHOUT
+   /// writing them to the child PTY. Used to restore persisted scrollback on
+   /// respawn. Mirrors writeBytes plumbing but routes to processOutput.
+   pub fn injectOutput(self: *Surface, data: []const u8) !void {
+       if (data.len == 0) return;
+       const buf = try self.alloc.dupe(u8, data);
+       errdefer self.alloc.free(buf);
+       self.queueIo(.{ .inject_output = .{
+           .alloc = self.alloc,
+           .data = buf,
+       } }, .unlocked);
+   }
+   ```
+
+4. `src/main_gtk_c.zig` — export the C ABI (mirrors `ghostty_gtk_surface_send_text`):
+
+   ```zig
+   pub export fn ghostty_gtk_surface_restore_scrollback(
+       surface_: ?*gtk.Widget,
+       text_: ?[*]const u8,
+       text_len: usize,
+   ) c_int {
+       if (text_len == 0) return 1;
+       const surface_widget = surface_ orelse return 0;
+       const text_ptr = text_ orelse return 0;
+       const surface = gobject.ext.cast(Surface, surface_widget) orelse return 0;
+       const core_surface = surface.core() orelse return 0;
+       core_surface.injectOutput(text_ptr[0..text_len]) catch |err| {
+           std.log.warn("failed to restore scrollback to Ghostty GTK surface: {}", .{err});
+           return 0;
+       };
+       return 1;
+   }
+   ```
+
+5. `include/ghostty_gtk.h` — declare it:
+
+   ```c
+   // Injects already terminal-ready bytes (CR/LF normalized by the caller) into
+   // the surface's terminal VT stream (scrollback/screen) WITHOUT writing them to
+   // the child PTY. Used to restore persisted scrollback on respawn. Returns 1 on
+   // success, 0 if the surface is invalid or not yet initialized.
+   int ghostty_gtk_surface_restore_scrollback(
+       GtkWidget *surface,
+       const char *text,
+       size_t text_len
+   );
+   ```
+
+This cannot be committed from the ForkTTY repo: `vendor/ghostty` is a pinned
+submodule on `Lucenx9/ghostty`, and `xtask check` enforces the exact
+`GHOSTTY_VENDOR_REV`. Land the change on the fork, then bump the submodule pin
+and `GHOSTTY_VENDOR_REV` (and the pin in `ghostty-full-vendor.md`) in one commit
+per that doc's process. ForkTTY's loader picks up the symbol automatically with
+no further Rust changes. Verify end-to-end through the Ghostty GTK Probe (the
+`.so` cannot be built on the current local toolchain — see below).
+
 ## Build Probe
 
 Run the upstream GTK build probe with:

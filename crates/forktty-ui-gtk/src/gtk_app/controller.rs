@@ -73,6 +73,11 @@ pub(super) struct SurfacePid {
 /// timer behind.
 const EMBEDDED_GHOSTTY_PID_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
+/// How often embedded panes snapshot their scrollback tail into the model so a
+/// later session save captures recent output. Embedded panes have no PTY pump
+/// loop (unlike classic panes), so this throttled poll plays that role; the
+/// classic pump snapshots at most every second when content changes.
+const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(super) fn remove_surface_pid_for_spawn(
     pids: &mut BTreeMap<String, SurfacePid>,
@@ -162,6 +167,34 @@ pub(super) fn apply_embedded_child_exit(
             Some(surface_id.to_string()),
         )),
         _ => None,
+    }
+}
+
+/// Read the last `lines` of an embedded surface's scrollback as plain text,
+/// bounded to `MAX_PERSISTED_SCROLLBACK_BYTES`. Returns `None` if the read
+/// fails. Does not touch the model lock so callers can read first and store
+/// under a brief lock, never holding the lock across the Ghostty ABI call.
+fn read_embedded_scrollback_tail(
+    embedder: &GhosttyGtkEmbedder,
+    widget: &gtk::Widget,
+    surface_id: &str,
+    lines: u32,
+) -> Option<String> {
+    match unsafe {
+        embedder.read_text_snapshot(
+            widget,
+            surface_id,
+            TerminalTextCapture::Tail {
+                lines: lines as usize,
+            },
+            forktty_core::MAX_PERSISTED_SCROLLBACK_BYTES,
+        )
+    } {
+        Ok(snapshot) => Some(snapshot.text),
+        Err(err) => {
+            eprintln!("Failed to read embedded Ghostty scrollback {surface_id}: {err}");
+            None
+        }
     }
 }
 
@@ -420,6 +453,9 @@ impl TerminalController {
 
     fn spawn_embedded_ghostty(&mut self, request: SpawnRequest) -> Result<(), String> {
         let embedder = self.embedded_ghostty()?;
+        let persistent_scrollback_lines = config::load_config()
+            .map(|config| config.appearance.persistent_scrollback_lines)
+            .unwrap_or(0);
         #[cfg(target_os = "linux")]
         let child_pids_before_spawn = current_process_child_pids();
         let widget = unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? };
@@ -459,6 +495,38 @@ impl TerminalController {
             );
         }
 
+        // Scrollback restore parity: once the surface initializes, seed any
+        // persisted scrollback into its terminal/display state through the
+        // embedding ABI. This feeds Ghostty's VT stream, never the child PTY, so
+        // old output is not re-sent as shell input. A library built before the
+        // restore symbol degrades to a no-op (see supports_restore_scrollback).
+        if persistent_scrollback_lines > 0 && embedder.supports_restore_scrollback() {
+            let model = self.model.clone();
+            let embedder = Rc::clone(&embedder);
+            let surface_id = request.surface_id.clone();
+            let weak_widget = widget.downgrade();
+            widget.connect_local("init", false, move |_| {
+                let widget = weak_widget.upgrade()?;
+                let stored = model.lock().ok().and_then(|model| {
+                    model
+                        .surface(&surface_id)
+                        .and_then(|surface| surface.persisted_scrollback.clone())
+                });
+                if let Some(bytes) = embedded_scrollback_restore_bytes(
+                    persistent_scrollback_lines,
+                    embedder.supports_restore_scrollback(),
+                    stored.as_deref(),
+                ) {
+                    if let Err(err) = unsafe { embedder.restore_scrollback(&widget, &bytes) } {
+                        eprintln!(
+                            "Failed to restore embedded Ghostty scrollback {surface_id}: {err}"
+                        );
+                    }
+                }
+                None
+            });
+        }
+
         // Title parity with classic panes: mirror the Ghostty surface title
         // into the model so the pane header / surface list stay accurate.
         {
@@ -488,6 +556,22 @@ impl TerminalController {
             widget.connect_notify_local(Some("child-exited"), move |widget, _| {
                 if !widget.property::<bool>("child-exited") {
                     return;
+                }
+                // Capture the final scrollback before teardown so session save
+                // keeps the exited pane's output. Read first, then store under a
+                // brief lock — never hold the model lock across the ABI read.
+                if persistent_scrollback_lines > 0 && embedder.supports_read_text() {
+                    if let Some(text) = read_embedded_scrollback_tail(
+                        &embedder,
+                        widget,
+                        &surface_id,
+                        persistent_scrollback_lines,
+                    ) {
+                        if let Ok(mut model) = model.lock() {
+                            let _ =
+                                model.set_surface_persisted_scrollback(&surface_id, Some(text));
+                        }
+                    }
                 }
                 if let Some(state) = &state {
                     match state.terminal.mark_surface_not_ready(&surface_id) {
@@ -573,6 +657,63 @@ impl TerminalController {
                 } else {
                     glib::ControlFlow::Continue
                 }
+            });
+        }
+
+        // Scrollback snapshot parity: embedded panes have no PTY pump loop, so a
+        // throttled poll snapshots the scrollback tail into the model. That way a
+        // later session save (or app close) persists recent output even without a
+        // clean child exit. Config is reloaded each tick so toggling
+        // persistent_scrollback_lines at runtime takes effect, matching the
+        // classic pump. The ABI read happens outside the model lock, and an
+        // unchanged tail skips the model write to avoid churn.
+        if embedder.supports_read_text() {
+            let embedder = Rc::clone(&embedder);
+            let model = self.model.clone();
+            let surface_id = request.surface_id.clone();
+            let weak_widget = widget.downgrade();
+            let mut skip_initial_snapshot = model
+                .lock()
+                .ok()
+                .and_then(|model| {
+                    model
+                        .surface(&surface_id)
+                        .and_then(|surface| surface.persisted_scrollback.clone())
+                })
+                .as_deref()
+                .is_some_and(|persisted_scrollback| {
+                    should_skip_initial_embedded_scrollback_snapshot(
+                        embedder.supports_restore_scrollback(),
+                        Some(persisted_scrollback),
+                    )
+                });
+            let mut last_snapshot: Option<String> = None;
+            glib::timeout_add_local(EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL, move || {
+                let Some(widget) = weak_widget.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                let lines = config::load_config()
+                    .map(|config| config.appearance.persistent_scrollback_lines)
+                    .unwrap_or(0);
+                if lines == 0 {
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some(text) =
+                    read_embedded_scrollback_tail(&embedder, &widget, &surface_id, lines)
+                {
+                    if skip_initial_snapshot {
+                        last_snapshot = Some(text);
+                        skip_initial_snapshot = false;
+                        return glib::ControlFlow::Continue;
+                    }
+                    if last_snapshot.as_deref() != Some(text.as_str()) {
+                        if let Ok(mut model) = model.lock() {
+                            model.set_surface_persisted_scrollback(&surface_id, Some(text.clone()));
+                        }
+                        last_snapshot = Some(text);
+                    }
+                }
+                glib::ControlFlow::Continue
             });
         }
 

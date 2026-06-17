@@ -5,6 +5,16 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Experimental embedded Ghostty panes now snapshot their scrollback tail into
+  the session (on child exit and via a throttled poll) when
+  `appearance.persistent_scrollback_lines > 0`, matching classic panes, so a
+  later session save keeps recent embedded output. Restoring that scrollback on
+  respawn/session restore is wired through an optional
+  `ghostty_gtk_surface_restore_scrollback` embedding ABI (feeds Ghostty's VT
+  stream, never the child PTY); the currently shipped embedding library does not
+  export the symbol yet, so restore degrades to a no-op until the Ghostty fork
+  lands it. See `docs/ghostty-renderer-embedding-spike.md` for the Ghostty-side
+  design.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
   cmux-style renderer/widget integration spike; release builds still use the
   existing GTK/libghostty-vt runtime until that bridge is proven.

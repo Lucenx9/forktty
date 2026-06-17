@@ -28,6 +28,8 @@ type SurfaceReadText =
 type SurfaceExitCode = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut u32) -> i32;
 type SurfaceChildPid = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut i64) -> i32;
 type SurfacePerformAction = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char) -> i32;
+type SurfaceRestoreScrollback =
+    unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char, usize) -> i32;
 type TextFree = unsafe extern "C" fn(*mut GhosttyGtkText);
 
 /// A Ghostty keybinding action ForkTTY drives on a focused embedded surface to
@@ -96,6 +98,7 @@ pub(super) struct GhosttyGtkEmbedder {
     surface_exit_code: Option<SurfaceExitCode>,
     surface_child_pid: Option<SurfaceChildPid>,
     surface_perform_action: Option<SurfacePerformAction>,
+    surface_restore_scrollback: Option<SurfaceRestoreScrollback>,
     text_free: Option<TextFree>,
 }
 
@@ -123,6 +126,9 @@ impl GhosttyGtkEmbedder {
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL) };
         let surface_perform_action =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL) };
+        let surface_restore_scrollback = unsafe {
+            load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_RESTORE_SCROLLBACK_SYMBOL)
+        };
         let text_free = unsafe { load_optional_symbol(&library, GHOSTTY_GTK_TEXT_FREE_SYMBOL) };
 
         let context = NonNull::new(unsafe { context_new() })
@@ -147,6 +153,7 @@ impl GhosttyGtkEmbedder {
             surface_exit_code,
             surface_child_pid,
             surface_perform_action,
+            surface_restore_scrollback,
             text_free,
         })
     }
@@ -192,6 +199,14 @@ impl GhosttyGtkEmbedder {
 
     pub(super) fn supports_child_pid(&self) -> bool {
         self.surface_child_pid.is_some()
+    }
+
+    /// Whether the loaded embedding library can seed restored scrollback into a
+    /// surface's terminal/display state without writing to the child PTY. A
+    /// library built before this symbol degrades to a no-op (see
+    /// `embedded_scrollback_restore_bytes`).
+    pub(super) fn supports_restore_scrollback(&self) -> bool {
+        self.surface_restore_scrollback.is_some()
     }
 
     pub(super) unsafe fn send_text(&self, widget: &gtk::Widget, text: &str) -> Result<(), String> {
@@ -277,6 +292,35 @@ impl GhosttyGtkEmbedder {
         let performed =
             unsafe { surface_perform_action(widget.to_glib_none().0, action_cstr.as_ptr()) };
         Ok(performed != 0)
+    }
+
+    /// Seeds restored scrollback into the surface's terminal/display state.
+    /// `bytes` must already be terminal-ready output (CR/LF normalized via
+    /// `persisted_scrollback_output_bytes`); Ghostty feeds them through its VT
+    /// stream, NOT to the child PTY, so old output is never sent as shell input.
+    /// Errors only when the loaded library lacks the symbol; callers should gate
+    /// on `supports_restore_scrollback` first.
+    pub(super) unsafe fn restore_scrollback(
+        &self,
+        widget: &gtk::Widget,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let Some(surface_restore_scrollback) = self.surface_restore_scrollback else {
+            return Err(
+                "Ghostty GTK library does not export restore-scrollback support".to_string(),
+            );
+        };
+        let ok = unsafe {
+            surface_restore_scrollback(widget.to_glib_none().0, bytes.as_ptr().cast(), bytes.len())
+        };
+        if ok == 0 {
+            Err("Ghostty GTK surface rejected restore-scrollback".to_string())
+        } else {
+            Ok(())
+        }
     }
 
     pub(super) unsafe fn read_text_snapshot(
@@ -401,6 +445,8 @@ pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_sur
 pub(super) const GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL: &[u8] = b"ghostty_gtk_surface_child_pid";
 pub(super) const GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_perform_action";
+pub(super) const GHOSTTY_GTK_SURFACE_RESTORE_SCROLLBACK_SYMBOL: &[u8] =
+    b"ghostty_gtk_surface_restore_scrollback";
 pub(super) const GHOSTTY_GTK_TEXT_FREE_SYMBOL: &[u8] = b"ghostty_gtk_text_free";
 
 fn embedded_ghostty_text_from_raw(raw: &GhosttyGtkText) -> Result<EmbeddedGhosttyText, String> {
@@ -454,6 +500,36 @@ pub(super) fn embedded_ghostty_snapshot_from_text(
 
 fn text_line_count(text: &str) -> usize {
     text.lines().count()
+}
+
+/// Decide the terminal-ready bytes to seed into a freshly spawned embedded
+/// surface, or `None` when restore should be skipped: persistence is disabled,
+/// the loaded library lacks the restore symbol, the surface has no stored
+/// scrollback, or the encoded bytes are empty. Mirrors the classic-pane
+/// restore gate (`persistent_scrollback_lines > 0` plus a stored snapshot) and
+/// reuses the same CR/LF normalization so injected output renders correctly.
+pub(super) fn embedded_scrollback_restore_bytes(
+    persistent_scrollback_lines: u32,
+    supports_restore: bool,
+    persisted_scrollback: Option<&str>,
+) -> Option<Vec<u8>> {
+    if persistent_scrollback_lines == 0 || !supports_restore {
+        return None;
+    }
+    let bytes = super::terminal_runtime::persisted_scrollback_output_bytes(persisted_scrollback?);
+    (!bytes.is_empty()).then_some(bytes)
+}
+
+/// An older embedding library can snapshot text but cannot restore previously
+/// persisted scrollback. In that case the first poll of a freshly spawned pane
+/// would usually see only the new shell prompt and clobber the saved tail before
+/// a future library with restore support can use it. Skip that initial write
+/// only when there is something stored and the loaded library cannot restore it.
+pub(super) fn should_skip_initial_embedded_scrollback_snapshot(
+    supports_restore: bool,
+    persisted_scrollback: Option<&str>,
+) -> bool {
+    !supports_restore && persisted_scrollback.is_some_and(|text| !text.is_empty())
 }
 
 /// Status shown on an embedded Ghostty pane after its child process exits.
@@ -562,6 +638,69 @@ mod tests {
             symbol_name(GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL),
             "ghostty_gtk_surface_perform_action"
         );
+    }
+
+    #[test]
+    fn restore_scrollback_symbol_is_declared() {
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_RESTORE_SCROLLBACK_SYMBOL),
+            "ghostty_gtk_surface_restore_scrollback"
+        );
+    }
+
+    #[test]
+    fn restore_bytes_skipped_when_persistence_disabled() {
+        assert_eq!(
+            embedded_scrollback_restore_bytes(0, true, Some("old output\n")),
+            None
+        );
+    }
+
+    #[test]
+    fn restore_bytes_skipped_when_library_lacks_symbol() {
+        // Forward-compatible degrade: a library predating the restore symbol
+        // must no-op instead of attempting a restore.
+        assert_eq!(
+            embedded_scrollback_restore_bytes(1000, false, Some("old output\n")),
+            None
+        );
+    }
+
+    #[test]
+    fn restore_bytes_skipped_without_stored_scrollback() {
+        assert_eq!(embedded_scrollback_restore_bytes(1000, true, None), None);
+        assert_eq!(
+            embedded_scrollback_restore_bytes(1000, true, Some("")),
+            None
+        );
+    }
+
+    #[test]
+    fn restore_bytes_normalizes_newlines_to_terminal_output() {
+        // Bytes fed through Ghostty's VT stream need CR before LF or each line
+        // would staircase; reuse the classic-pane normalization.
+        let bytes =
+            embedded_scrollback_restore_bytes(1000, true, Some("first\nsecond")).expect("bytes");
+        assert_eq!(bytes, b"first\r\nsecond\r\n");
+    }
+
+    #[test]
+    fn initial_snapshot_is_skipped_only_for_unrestorable_persisted_scrollback() {
+        assert!(should_skip_initial_embedded_scrollback_snapshot(
+            false,
+            Some("old output\n")
+        ));
+        assert!(!should_skip_initial_embedded_scrollback_snapshot(
+            true,
+            Some("old output\n")
+        ));
+        assert!(!should_skip_initial_embedded_scrollback_snapshot(
+            false, None
+        ));
+        assert!(!should_skip_initial_embedded_scrollback_snapshot(
+            false,
+            Some("")
+        ));
     }
 
     #[test]
