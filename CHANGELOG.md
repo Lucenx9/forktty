@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Repo-local `forktty.json` project actions can now be listed and launched
+  through `project.action.list` / `project.action.run` and the `forktty actions`
+  / `forktty action-run` CLI. Actions are argv-only and limited to git repos
+  already open in ForkTTY.
 - `feed.list` and `forktty feed` now expose a minimal read-only feed snapshot
   that normalizes current notifications, approval prompts, status, and progress
   without adding durable feed history yet.

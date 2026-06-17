@@ -112,6 +112,8 @@ pub const METHODS: &[&str] = &[
     "notification.list",
     "pane.new_tab",
     "pane.select_tab",
+    "project.action.list",
+    "project.action.run",
     "surface.close",
     "surface.focus",
     "surface.capture_tail",
@@ -159,6 +161,8 @@ pub const METHODS: &[&str] = &[
     "notification.list",
     "pane.new_tab",
     "pane.select_tab",
+    "project.action.list",
+    "project.action.run",
     "surface.close",
     "surface.focus",
     "surface.capture_tail",
@@ -1207,6 +1211,54 @@ pub async fn dispatch(
                 run_worktree_blocking(move || worktree::merge(&cwd, &name)).await?
             };
             Ok(json!(result))
+        }
+        "project.action.list" => {
+            let (_, actions) = project_actions_for_params(state, &params).await?;
+            Ok(json!(actions))
+        }
+        "project.action.run" => {
+            let id = required_trimmed_string(&params, "id")?;
+            ensure_max_text_size("id", id)?;
+            let (project_root, actions) = project_actions_for_params(state, &params).await?;
+            let action = forktty_core::find_action(&actions, id).map_err(project_action_error)?;
+            let action_cwd = {
+                let project_root = project_root.clone();
+                let action = action.clone();
+                run_project_action_blocking(move || forktty_core::action_cwd(project_root, &action))
+                    .await?
+            };
+            let source_surface_id = project_action_source_surface_id(state, &project_root)?;
+            let surface = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let surface = model
+                    .add_tab(&source_surface_id)
+                    .ok_or(DispatchError::NotFound("surface".to_string()))?;
+                model.set_surface_title(&surface.id, action.label.clone());
+                model.set_surface_cwd(&surface.id, action_cwd.clone());
+                model.surface(&surface.id).cloned().unwrap_or(surface)
+            };
+            let mut argv = action.argv.clone();
+            let program = argv.remove(0);
+            let request =
+                SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
+                    .with_args(argv.clone());
+            if let Err(err) = state.terminal.spawn(request) {
+                if let Ok(mut model) = state.model.lock() {
+                    model.close_surface(&surface.id);
+                }
+                return Err(err.into());
+            }
+            Ok(json!({
+                "id": action.id,
+                "label": action.label,
+                "surface_id": surface.id,
+                "workspace_id": surface.workspace_id,
+                "cwd": action_cwd,
+                "argv": std::iter::once(program).chain(argv.into_iter()).collect::<Vec<_>>(),
+            }))
         }
         "surface.list" => {
             let model = state
@@ -2682,6 +2734,66 @@ where
     match tokio::task::spawn_blocking(task).await {
         Ok(result) => result.map_err(DispatchError::from),
         Err(err) => Err(format!("Worktree task failed: {err}").into()),
+    }
+}
+
+async fn run_project_action_blocking<T, F>(task: F) -> Result<T, DispatchError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, forktty_core::ProjectActionError> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(task).await {
+        Ok(result) => result.map_err(project_action_error),
+        Err(err) => Err(format!("Project action task failed: {err}").into()),
+    }
+}
+
+async fn project_actions_for_params(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<(PathBuf, Vec<forktty_core::ProjectAction>), DispatchError> {
+    let cwd = resolve_open_repo_cwd_param(state, params, &["cwd"], "cwd").await?;
+    let project_root =
+        run_project_action_blocking(move || forktty_core::discover_project_root(cwd)).await?;
+    let actions = {
+        let project_root = project_root.clone();
+        run_project_action_blocking(move || forktty_core::load_project_actions(project_root))
+            .await?
+    };
+    Ok((project_root, actions))
+}
+
+fn project_action_source_surface_id(
+    state: &SocketAppState,
+    project_root: &Path,
+) -> Result<String, DispatchError> {
+    let project_root = fs::canonicalize(project_root).map_err(|err| {
+        DispatchError::PreconditionFailed(format!("Cannot resolve project root: {err}"))
+    })?;
+    let workspaces = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.list_workspaces()
+    };
+    workspaces
+        .into_iter()
+        .find_map(|workspace| {
+            fs::canonicalize(&workspace.working_dir)
+                .ok()
+                .filter(|cwd| cwd.starts_with(&project_root))
+                .map(|_| workspace.focused_surface_id)
+        })
+        .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))
+}
+
+fn project_action_error(err: forktty_core::ProjectActionError) -> DispatchError {
+    match err {
+        forktty_core::ProjectActionError::NotFound(_) => {
+            DispatchError::NotFound("project action".to_string())
+        }
+        other => DispatchError::PreconditionFailed(other.to_string()),
     }
 }
 
@@ -9263,6 +9375,82 @@ mod tests {
             backend.sent_text(&surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn project_actions_list_and_run_from_open_repo_only() {
+        let repo_dir = make_temp_repo();
+        fs::write(
+            repo_dir.path().join("forktty.json"),
+            r#"{
+                "actions": [
+                    {
+                        "id": "test",
+                        "label": "Run tests",
+                        "argv": ["cargo", "test"],
+                        "cwd": "."
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();
+
+        let listed = dispatch(
+            &state,
+            "project.action.list",
+            json!({"cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed[0]["id"], "test");
+        assert_eq!(listed[0]["label"], "Run tests");
+
+        let run = dispatch(
+            &state,
+            "project.action.run",
+            json!({"cwd": repo_dir.path(), "id": "test"}),
+        )
+        .await
+        .unwrap();
+        let surface_id = run["surface_id"].as_str().unwrap();
+        assert_eq!(run["argv"], json!(["cargo", "test"]));
+        assert_eq!(backend.spawn_shell(surface_id).unwrap(), "cargo");
+        assert_eq!(backend.spawn_args(surface_id).unwrap(), vec!["test"]);
+        assert_eq!(
+            backend
+                .surfaces()
+                .unwrap()
+                .into_iter()
+                .find(|surface| surface.surface_id == surface_id)
+                .unwrap()
+                .cwd,
+            repo_dir.path()
+        );
+
+        let unopened_repo = make_temp_repo();
+        fs::write(
+            unopened_repo.path().join("forktty.json"),
+            r#"{"actions":[{"id":"x","label":"X","argv":["cargo","test"]}]}"#,
+        )
+        .unwrap();
+        let err = dispatch(
+            &state,
+            "project.action.list",
+            json!({"cwd": unopened_repo.path()}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "precondition_failed");
     }
 
     #[tokio::test]
