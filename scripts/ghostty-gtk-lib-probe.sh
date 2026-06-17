@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../vendor/ghostty"
 
 zig build \
+  -Doptimize=ReleaseFast \
   -Dapp-runtime=gtk \
   -Demit-exe=false \
   -Demit-gtk-lib=true \

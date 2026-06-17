@@ -394,6 +394,10 @@ export FORKTTY_APPIMAGE_DIR="$HERE"
 # hooks written by `forktty hooks setup` must reference a path that survives
 # remounts — the random /tmp/.mount_* binary path does not.
 export FORKTTY_APPIMAGE="${APPIMAGE:-}"
+# Embedded Ghostty panes are part of ForkTTY's UI, not a standalone Ghostty
+# process. Keep their stderr logging quiet by default while preserving an
+# explicit user/debug override such as GHOSTTY_LOG=stderr.
+export GHOSTTY_LOG="${GHOSTTY_LOG:-false}"
 # Match Ghostty's GTK startup defaults before ForkTTY initializes GTK. Embedded
 # Ghostty panes need a desktop OpenGL context; allowing GTK to choose GLES or
 # Vulkan first can make Gtk.GLArea fail with "Unable to create a GL context".

@@ -211,7 +211,8 @@ All notable changes to ForkTTY are documented here.
 - Embedded Ghostty panes now apply Ghostty's GTK OpenGL context defaults before
   GTK initializes, disabling GLES/Vulkan context selection so packaged/AppImage
   panes do not show "Unable to acquire an OpenGL context for rendering" on
-  affected GTK/driver combinations.
+  affected GTK/driver combinations. The embedded Ghostty library also stays
+  quiet on stderr by default unless `GHOSTTY_LOG` is explicitly set.
 - GTK terminal panes now keep Ghostty steady cursor styles visible instead of
   hiding every focused cursor during the blink timer's off phase.
 - Ghostty config and theme appearance loading now enforces the oversized-file guard before reading or applying colors.

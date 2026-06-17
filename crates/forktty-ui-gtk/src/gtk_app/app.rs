@@ -4,6 +4,12 @@ pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
         std::env::set_var("GSK_RENDERER", "cairo");
     }
+    if std::env::var_os("GHOSTTY_LOG").is_none() {
+        // Embedded Ghostty logs to stderr by default because it is built as a
+        // GTK runtime. ForkTTY owns the host process stderr, so keep embedded
+        // panes quiet unless the user explicitly opts into Ghostty logging.
+        std::env::set_var("GHOSTTY_LOG", "false");
+    }
     let gdk_disable = std::env::var("GDK_DISABLE").unwrap_or_default();
     std::env::set_var(
         "GDK_DISABLE",
