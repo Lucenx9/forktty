@@ -163,6 +163,13 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) mouse_hide_while_typing: bool,
     pub(super) adjust_cell_width: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_cell_height: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_font_baseline: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_underline_position: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_underline_thickness: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_strikethrough_position: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_strikethrough_thickness: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_cursor_thickness: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_cursor_height: Option<GhosttyMetricAdjustment>,
     pub(super) unfocused_split_opacity: f64,
     pub(super) unfocused_split_fill: String,
     pub(super) colors: TerminalColors,
@@ -726,6 +733,13 @@ impl Default for GhosttyTerminalAppearance {
             mouse_hide_while_typing: false,
             adjust_cell_width: None,
             adjust_cell_height: None,
+            adjust_font_baseline: None,
+            adjust_underline_position: None,
+            adjust_underline_thickness: None,
+            adjust_strikethrough_position: None,
+            adjust_strikethrough_thickness: None,
+            adjust_cursor_thickness: None,
+            adjust_cursor_height: None,
             unfocused_split_opacity: DEFAULT_UNFOCUSED_SPLIT_OPACITY,
             unfocused_split_fill: "#000000".to_string(),
             colors,
@@ -821,6 +835,27 @@ impl GhosttyTerminalAppearance {
             "adjust-cell-width" => self.adjust_cell_width = parse_ghostty_metric_adjustment(&value),
             "adjust-cell-height" => {
                 self.adjust_cell_height = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-font-baseline" => {
+                self.adjust_font_baseline = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-underline-position" => {
+                self.adjust_underline_position = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-underline-thickness" => {
+                self.adjust_underline_thickness = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-strikethrough-position" => {
+                self.adjust_strikethrough_position = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-strikethrough-thickness" => {
+                self.adjust_strikethrough_thickness = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-cursor-thickness" => {
+                self.adjust_cursor_thickness = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-cursor-height" => {
+                self.adjust_cursor_height = parse_ghostty_metric_adjustment(&value);
             }
             "mouse-reporting" => self.mouse_reporting = parse_ghostty_optional_bool(&value),
             "mouse-shift-capture" => self.apply_mouse_shift_capture(&value),
@@ -1569,6 +1604,50 @@ mod tests {
         assert_eq!(
             appearance.adjust_cell_height,
             Some(GhosttyMetricAdjustment::Percent(10.0))
+        );
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_text_metric_adjustments() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            r#"
+            adjust-font-baseline = 1
+            adjust-underline-position = -2
+            adjust-underline-thickness = 25%
+            adjust-strikethrough-position = 10%
+            adjust-strikethrough-thickness = 1
+            adjust-cursor-thickness = 50%
+            adjust-cursor-height = -3
+            "#,
+        );
+
+        assert_eq!(
+            appearance.adjust_font_baseline,
+            Some(GhosttyMetricAdjustment::Pixels(1))
+        );
+        assert_eq!(
+            appearance.adjust_underline_position,
+            Some(GhosttyMetricAdjustment::Pixels(-2))
+        );
+        assert_eq!(
+            appearance.adjust_underline_thickness,
+            Some(GhosttyMetricAdjustment::Percent(25.0))
+        );
+        assert_eq!(
+            appearance.adjust_strikethrough_position,
+            Some(GhosttyMetricAdjustment::Percent(10.0))
+        );
+        assert_eq!(
+            appearance.adjust_strikethrough_thickness,
+            Some(GhosttyMetricAdjustment::Pixels(1))
+        );
+        assert_eq!(
+            appearance.adjust_cursor_thickness,
+            Some(GhosttyMetricAdjustment::Percent(50.0))
+        );
+        assert_eq!(
+            appearance.adjust_cursor_height,
+            Some(GhosttyMetricAdjustment::Pixels(-3))
         );
     }
 

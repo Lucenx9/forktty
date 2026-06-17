@@ -141,7 +141,19 @@ pub(super) struct TerminalRenderer {
     faint_opacity: f64,
     cell_width_adjustment: Option<GhosttyMetricAdjustment>,
     cell_height_adjustment: Option<GhosttyMetricAdjustment>,
+    text_metric_adjustments: RendererTextMetricAdjustments,
     unfocused_split_dim: UnfocusedSplitDim,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct RendererTextMetricAdjustments {
+    font_baseline: Option<GhosttyMetricAdjustment>,
+    underline_position: Option<GhosttyMetricAdjustment>,
+    underline_thickness: Option<GhosttyMetricAdjustment>,
+    strikethrough_position: Option<GhosttyMetricAdjustment>,
+    strikethrough_thickness: Option<GhosttyMetricAdjustment>,
+    cursor_thickness: Option<GhosttyMetricAdjustment>,
+    cursor_height: Option<GhosttyMetricAdjustment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -266,6 +278,15 @@ impl TerminalRenderer {
             faint_opacity: appearance.faint_opacity,
             cell_width_adjustment: appearance.adjust_cell_width,
             cell_height_adjustment: appearance.adjust_cell_height,
+            text_metric_adjustments: RendererTextMetricAdjustments {
+                font_baseline: appearance.adjust_font_baseline,
+                underline_position: appearance.adjust_underline_position,
+                underline_thickness: appearance.adjust_underline_thickness,
+                strikethrough_position: appearance.adjust_strikethrough_position,
+                strikethrough_thickness: appearance.adjust_strikethrough_thickness,
+                cursor_thickness: appearance.adjust_cursor_thickness,
+                cursor_height: appearance.adjust_cursor_height,
+            },
             unfocused_split_dim: unfocused_split_dim_from_appearance(
                 appearance.unfocused_split_opacity,
                 &appearance.unfocused_split_fill,
@@ -720,11 +741,12 @@ impl TerminalRenderer {
             let font = self.font_for_cell_style(run.bold, run.italic);
             layout.set_font_description(Some(&font));
             layout.set_text(&run.text);
+            let text_y = adjusted_text_y(y, metrics.height, &self.text_metric_adjustments);
             draw_layout_fitted_to_cells(
                 cr,
                 &layout,
                 origin_x + run.start_col as f64 * metrics.width,
-                y,
+                text_y,
                 run.cell_span as f64 * metrics.width,
             );
             self.draw_text_decorations(cr, &run, metrics, origin_x, y);
@@ -742,14 +764,24 @@ impl TerminalRenderer {
         let x = origin_x + run.start_col as f64 * metrics.width;
         let width = run.cell_span as f64 * metrics.width;
         if run.underline {
-            cr.move_to(x, y + metrics.height - 2.0);
-            cr.line_to(x + width, y + metrics.height - 2.0);
-            let _ = cr.stroke();
+            draw_horizontal_metric_line(
+                cr,
+                (x, y, width),
+                metrics.height - 2.0,
+                2.0,
+                self.text_metric_adjustments.underline_position,
+                self.text_metric_adjustments.underline_thickness,
+            );
         }
         if run.strikethrough {
-            cr.move_to(x, y + metrics.height * 0.58);
-            cr.line_to(x + width, y + metrics.height * 0.58);
-            let _ = cr.stroke();
+            draw_horizontal_metric_line(
+                cr,
+                (x, y, width),
+                metrics.height * 0.58,
+                2.0,
+                self.text_metric_adjustments.strikethrough_position,
+                self.text_metric_adjustments.strikethrough_thickness,
+            );
         }
     }
 
@@ -764,9 +796,17 @@ impl TerminalRenderer {
         let y = f64::from(grid.origin_y) + cursor.row as f64 * metrics.height;
         cursor.background.set_cairo_source_rgba(cr, cursor.opacity);
         let width = cursor.cell_span as f64 * metrics.width;
+        let (cursor_y, cursor_height) =
+            adjusted_cursor_height(y, metrics.height, &self.text_metric_adjustments);
         match cursor.style {
             RendererCursorStyle::Bar => {
-                cr.rectangle(x, y, 2.0_f64.min(width), metrics.height);
+                let thickness = adjusted_metric(
+                    2.0_f64.min(width),
+                    self.text_metric_adjustments.cursor_thickness,
+                    1.0,
+                )
+                .min(width);
+                cr.rectangle(x, cursor_y, thickness, cursor_height);
                 let _ = cr.fill();
                 return;
             }
@@ -782,12 +822,23 @@ impl TerminalRenderer {
                 return;
             }
             RendererCursorStyle::BlockHollow => {
-                cr.rectangle(x + 0.5, y + 0.5, width - 1.0, metrics.height - 1.0);
+                let line_width =
+                    adjusted_metric(1.0, self.text_metric_adjustments.cursor_thickness, 1.0);
+                let inset = line_width / 2.0;
+                let _ = cr.save();
+                cr.set_line_width(line_width);
+                cr.rectangle(
+                    x + inset,
+                    cursor_y + inset,
+                    (width - line_width).max(1.0),
+                    (cursor_height - line_width).max(1.0),
+                );
                 let _ = cr.stroke();
+                let _ = cr.restore();
                 return;
             }
             RendererCursorStyle::Block => {
-                cr.rectangle(x, y, width, metrics.height);
+                cr.rectangle(x, cursor_y, width, cursor_height);
                 let _ = cr.fill();
             }
         }
@@ -801,7 +852,8 @@ impl TerminalRenderer {
         let font = self.font_for_cell_style(cursor.bold, cursor.italic);
         layout.set_font_description(Some(&font));
         layout.set_text(&cursor.text);
-        draw_layout_fitted_to_cells(cr, &layout, x, y, width);
+        let text_y = adjusted_text_y(y, metrics.height, &self.text_metric_adjustments);
+        draw_layout_fitted_to_cells(cr, &layout, x, text_y, width);
     }
 
     fn font_for_cell_style(&self, bold: bool, italic: bool) -> gtk::pango::FontDescription {
@@ -976,6 +1028,48 @@ fn adjust_cell_pixel_dimension(size: i32, adjustment: Option<GhosttyMetricAdjust
         }
         None => size,
     }
+}
+
+fn adjusted_metric(base: f64, adjustment: Option<GhosttyMetricAdjustment>, min_value: f64) -> f64 {
+    let adjusted = match adjustment {
+        Some(GhosttyMetricAdjustment::Pixels(delta)) => base + f64::from(delta),
+        Some(GhosttyMetricAdjustment::Percent(percent)) => base * (1.0 + percent / 100.0),
+        None => base,
+    };
+    adjusted.max(min_value)
+}
+
+fn adjusted_text_y(y: f64, cell_height: f64, adjustments: &RendererTextMetricAdjustments) -> f64 {
+    let adjusted_baseline = adjusted_metric(cell_height, adjustments.font_baseline, 1.0);
+    y - (adjusted_baseline - cell_height)
+}
+
+fn adjusted_cursor_height(
+    y: f64,
+    cell_height: f64,
+    adjustments: &RendererTextMetricAdjustments,
+) -> (f64, f64) {
+    let height = adjusted_metric(cell_height, adjustments.cursor_height, 1.0);
+    (y + (cell_height - height) / 2.0, height)
+}
+
+fn draw_horizontal_metric_line(
+    cr: &gtk::cairo::Context,
+    line: (f64, f64, f64),
+    position: f64,
+    thickness: f64,
+    position_adjustment: Option<GhosttyMetricAdjustment>,
+    thickness_adjustment: Option<GhosttyMetricAdjustment>,
+) {
+    let (x, y, width) = line;
+    let position = adjusted_metric(position, position_adjustment, 0.0);
+    let thickness = adjusted_metric(thickness, thickness_adjustment, 1.0);
+    let _ = cr.save();
+    cr.set_line_width(thickness);
+    cr.move_to(x, y + position);
+    cr.line_to(x + width, y + position);
+    let _ = cr.stroke();
+    let _ = cr.restore();
 }
 
 fn renderer_cell_metrics_from_size(cell_size: (i32, i32)) -> RendererCellMetrics {
@@ -1159,6 +1253,7 @@ mod tests {
             faint_opacity: 0.5,
             cell_width_adjustment: None,
             cell_height_adjustment: None,
+            text_metric_adjustments: RendererTextMetricAdjustments::default(),
             unfocused_split_dim: unfocused_split_dim_from_appearance(0.92, "#181818"),
         };
 
@@ -1238,6 +1333,39 @@ mod tests {
             ),
             (1, 1)
         );
+    }
+
+    #[test]
+    fn text_metric_adjustments_apply_pixels_and_percentages() {
+        let adjustments = RendererTextMetricAdjustments {
+            font_baseline: Some(GhosttyMetricAdjustment::Pixels(2)),
+            underline_position: Some(GhosttyMetricAdjustment::Pixels(-1)),
+            underline_thickness: Some(GhosttyMetricAdjustment::Percent(50.0)),
+            strikethrough_position: Some(GhosttyMetricAdjustment::Percent(10.0)),
+            strikethrough_thickness: Some(GhosttyMetricAdjustment::Pixels(1)),
+            cursor_thickness: Some(GhosttyMetricAdjustment::Percent(50.0)),
+            cursor_height: Some(GhosttyMetricAdjustment::Pixels(-4)),
+        };
+
+        assert_eq!(adjusted_text_y(20.0, 24.0, &adjustments), 18.0);
+        assert_eq!(
+            adjusted_metric(12.0, adjustments.underline_position, 1.0),
+            11.0
+        );
+        assert_eq!(
+            adjusted_metric(2.0, adjustments.underline_thickness, 1.0),
+            3.0
+        );
+        assert_eq!(
+            adjusted_metric(10.0, adjustments.strikethrough_position, 1.0),
+            11.0
+        );
+        assert_eq!(
+            adjusted_metric(2.0, adjustments.strikethrough_thickness, 1.0),
+            3.0
+        );
+        assert_eq!(adjusted_metric(2.0, adjustments.cursor_thickness, 1.0), 3.0);
+        assert_eq!(adjusted_metric(20.0, adjustments.cursor_height, 1.0), 16.0);
     }
 
     #[test]
@@ -1408,6 +1536,7 @@ mod tests {
             faint_opacity: 0.5,
             cell_width_adjustment: None,
             cell_height_adjustment: None,
+            text_metric_adjustments: RendererTextMetricAdjustments::default(),
             unfocused_split_dim: unfocused_split_dim_from_appearance(0.92, "#181818"),
         };
         let mut red_cell = test_cell("x", Some(parse_rgb(&colors.ansi[1])), None);
