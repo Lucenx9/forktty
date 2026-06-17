@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Workflow control-plane methods (`workflow.list`, `workflow.get`,
+  `workflow.upsert`, `workflow.plan.set`, `workflow.evidence.add`,
+  `workflow.replay`) plus `forktty workflows`/`workflow-*` CLI commands and MCP
+  tools now persist bounded goal, mode/session memory, plan, evidence, and
+  replay events without adding parity UI panels.
 - `feed.list` and `forktty feed` now expose a minimal read-only feed snapshot
   that normalizes current notifications, approval prompts, status, and progress
   without adding durable feed history yet.

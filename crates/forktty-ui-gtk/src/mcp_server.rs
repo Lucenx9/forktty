@@ -513,6 +513,145 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params: workspace_target_params(args, true)?,
             }
         }
+        "workflow_list" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "surface_id",
+                    "session_id",
+                    "query",
+                    "limit",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            if let Some(surface_id) = optional_non_blank(args, "surface_id")? {
+                params.insert("surface_id".to_string(), Value::String(surface_id));
+            }
+            if let Some(session_id) = optional_non_blank(args, "session_id")? {
+                params.insert("session_id".to_string(), Value::String(session_id));
+            }
+            if let Some(query) = optional_non_blank(args, "query")? {
+                params.insert("query".to_string(), Value::String(query));
+            }
+            if let Some(limit) = optional_u64(args, "limit")? {
+                params.insert("limit".to_string(), Value::Number(limit.into()));
+            }
+            SocketCall {
+                method: "workflow.list",
+                params,
+            }
+        }
+        "workflow_get" => {
+            reject_unexpected(args, &["workflow_id"], name)?;
+            SocketCall {
+                method: "workflow.get",
+                params: map_from_pairs([("workflow_id", required_non_blank(args, "workflow_id")?)]),
+            }
+        }
+        "workflow_upsert" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workflow_id",
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "surface_id",
+                    "agent",
+                    "session_id",
+                    "mode",
+                    "status",
+                    "goal",
+                    "memory",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, false)?;
+            for key in [
+                "workflow_id",
+                "surface_id",
+                "agent",
+                "session_id",
+                "mode",
+                "status",
+                "goal",
+                "memory",
+            ] {
+                if let Some(value) = optional_non_blank(args, key)? {
+                    params.insert(key.to_string(), Value::String(value));
+                }
+            }
+            SocketCall {
+                method: "workflow.upsert",
+                params,
+            }
+        }
+        "workflow_plan_set" => {
+            reject_unexpected(args, &["workflow_id", "steps"], name)?;
+            let mut params =
+                map_from_pairs([("workflow_id", required_non_blank(args, "workflow_id")?)]);
+            let steps = args
+                .get("steps")
+                .cloned()
+                .ok_or_else(|| ToolCallError::validation("workflow_plan_set requires steps"))?;
+            if !steps.is_array() {
+                return Err(ToolCallError::validation("steps must be an array"));
+            }
+            params.insert("steps".to_string(), steps);
+            SocketCall {
+                method: "workflow.plan.set",
+                params,
+            }
+        }
+        "workflow_evidence_add" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workflow_id",
+                    "evidence_id",
+                    "kind",
+                    "title",
+                    "text",
+                    "path",
+                ],
+                name,
+            )?;
+            let mut params =
+                map_from_pairs([("workflow_id", required_non_blank(args, "workflow_id")?)]);
+            for key in ["evidence_id", "kind", "title", "text", "path"] {
+                if let Some(value) = optional_non_blank(args, key)? {
+                    params.insert(key.to_string(), Value::String(value));
+                }
+            }
+            SocketCall {
+                method: "workflow.evidence.add",
+                params,
+            }
+        }
+        "workflow_replay" => {
+            reject_unexpected(args, &["workflow_id", "query", "since_seq", "limit"], name)?;
+            let mut params = Map::new();
+            if let Some(workflow_id) = optional_non_blank(args, "workflow_id")? {
+                params.insert("workflow_id".to_string(), Value::String(workflow_id));
+            }
+            if let Some(query) = optional_non_blank(args, "query")? {
+                params.insert("query".to_string(), Value::String(query));
+            }
+            if let Some(since_seq) = optional_u64(args, "since_seq")? {
+                params.insert("since_seq".to_string(), Value::Number(since_seq.into()));
+            }
+            if let Some(limit) = optional_u64(args, "limit")? {
+                params.insert("limit".to_string(), Value::Number(limit.into()));
+            }
+            SocketCall {
+                method: "workflow.replay",
+                params,
+            }
+        }
         "surface_split" => {
             reject_unexpected(args, &["surface_id", "axis"], name)?;
             let mut params = Map::new();
@@ -944,6 +1083,12 @@ fn success_text(name: &str, result: &Value) -> String {
         "agent_reclaim_plan" => "Planned ForkTTY agent session reclaim candidates.".to_string(),
         "agent_resume" => "Resumed ForkTTY agent session in a new tab.".to_string(),
         "status_summary" => "Built ForkTTY status summary.".to_string(),
+        "workflow_list" => "Listed ForkTTY workflows.".to_string(),
+        "workflow_get" => "Read ForkTTY workflow state.".to_string(),
+        "workflow_upsert" => "Updated ForkTTY workflow state.".to_string(),
+        "workflow_plan_set" => "Updated ForkTTY workflow plan.".to_string(),
+        "workflow_evidence_add" => "Added ForkTTY workflow evidence.".to_string(),
+        "workflow_replay" => "Replayed ForkTTY workflow events.".to_string(),
         "surface_split" => format!(
             "Created ForkTTY surface {}.",
             result
@@ -1125,6 +1270,101 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "workspace_id": string_prop("Workspace id to summarize."),
                     "workspace_name": string_prop("Workspace name to summarize."),
                     "worktree_name": string_prop("Worktree name to summarize."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_list",
+            annotations: read_only_annotations(),
+            description: "List durable ForkTTY workflow states for goals, mode/session memory, plan steps, and evidence. Defaults to FORKTTY_WORKSPACE_ID when available.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to filter."),
+                    "workspace_name": string_prop("Workspace name to filter."),
+                    "worktree_name": string_prop("Worktree name to filter."),
+                    "surface_id": string_prop("Surface id to filter."),
+                    "session_id": string_prop("Provider session id to filter."),
+                    "query": string_prop("Case-insensitive search across workflow goal, memory, plan, and evidence."),
+                    "limit": integer_prop("Maximum workflow rows to return; socket enforces its upper bound."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_get",
+            annotations: read_only_annotations(),
+            description: "Read one durable ForkTTY workflow state by workflow id.",
+            input_schema: object_schema(
+                &["workflow_id"],
+                json!({
+                    "workflow_id": string_prop("Workflow id from workflow_list or workflow_upsert."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_upsert",
+            annotations: mutating_annotations(false, false),
+            description: "Create or update durable ForkTTY workflow state for a workspace, surface, provider session, mode, goal, and compaction-resistant memory.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workflow_id": string_prop("Optional explicit workflow id. If omitted, ForkTTY derives one from session_id, surface_id, or workspace_id."),
+                    "workspace_id": string_prop("Workspace id to bind."),
+                    "workspace_name": string_prop("Workspace name to bind."),
+                    "worktree_name": string_prop("Worktree name to bind."),
+                    "surface_id": string_prop("Surface id to bind."),
+                    "agent": string_prop("Provider name such as codex or claude."),
+                    "session_id": string_prop("Provider session id."),
+                    "mode": string_prop("Workflow mode, for example review, plan, implementation, or default."),
+                    "status": string_prop("Workflow status, for example running, blocked, done, or active."),
+                    "goal": string_prop("Current workflow goal."),
+                    "memory": string_prop("Durable project/session memory for compaction recovery."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_plan_set",
+            annotations: mutating_annotations(false, true),
+            description: "Replace a workflow's durable plan steps. Each step object must include id, title, and status; detail is optional.",
+            input_schema: object_schema(
+                &["workflow_id", "steps"],
+                json!({
+                    "workflow_id": string_prop("Workflow id to update."),
+                    "steps": {
+                        "type": "array",
+                        "description": "Array of {id,title,status,detail?} plan step objects.",
+                        "items": { "type": "object" },
+                    },
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_evidence_add",
+            annotations: mutating_annotations(false, false),
+            description: "Append a bounded evidence artifact to a workflow. Provide text or a path reference; ForkTTY stores metadata and optional text, not arbitrary unbounded files.",
+            input_schema: object_schema(
+                &["workflow_id", "kind", "title"],
+                json!({
+                    "workflow_id": string_prop("Workflow id to update."),
+                    "evidence_id": string_prop("Optional evidence id; ForkTTY derives one when omitted."),
+                    "kind": string_prop("Evidence kind such as test, diff, note, log, or decision."),
+                    "title": string_prop("Evidence title."),
+                    "text": string_prop("Bounded evidence text."),
+                    "path": string_prop("Optional path reference for an artifact already on disk."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_replay",
+            annotations: read_only_annotations(),
+            description: "Replay durable ForkTTY workflow events for session search and recovery.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workflow_id": string_prop("Workflow id to filter."),
+                    "query": string_prop("Case-insensitive event search."),
+                    "since_seq": integer_prop("Only return events after this sequence number."),
+                    "limit": integer_prop("Maximum event rows to return; socket enforces its upper bound."),
                 }),
             ),
         },
@@ -1495,7 +1735,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(resource_text.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, terminal read/capture, or sending text to another surface."
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, worktrees, status, terminal read/capture, or sending text to another surface."
         ));
         assert!(resource_text.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
@@ -1612,6 +1852,85 @@ mod tests {
 
         assert_eq!(method, "status.summary");
         assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn workflow_tools_map_to_socket_workflow_methods() {
+        let (method, params) = build_socket_call_for_test(
+            "workflow_list",
+            json!({
+                "workspace_id": "w1",
+                "surface_id": "s1",
+                "session_id": "sess1",
+                "query": "goal",
+                "limit": 5
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "workflow.list");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["surface_id"], "s1");
+        assert_eq!(params["session_id"], "sess1");
+        assert_eq!(params["query"], "goal");
+        assert_eq!(params["limit"], 5);
+
+        let (method, params) =
+            build_socket_call_for_test("workflow_get", json!({"workflow_id": "workflow-1"}))
+                .unwrap();
+        assert_eq!(method, "workflow.get");
+        assert_eq!(params["workflow_id"], "workflow-1");
+
+        let (method, params) = build_socket_call_for_test(
+            "workflow_upsert",
+            json!({
+                "workflow_id": "workflow-1",
+                "workspace_id": "w1",
+                "agent": "codex",
+                "session_id": "sess1",
+                "mode": "review",
+                "status": "running",
+                "goal": "Review",
+                "memory": "Keep context"
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "workflow.upsert");
+        assert_eq!(params["workflow_id"], "workflow-1");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["memory"], "Keep context");
+
+        let steps = json!([{"id": "inspect", "title": "Inspect", "status": "done"}]);
+        let (method, params) = build_socket_call_for_test(
+            "workflow_plan_set",
+            json!({"workflow_id": "workflow-1", "steps": steps}),
+        )
+        .unwrap();
+        assert_eq!(method, "workflow.plan.set");
+        assert_eq!(params["steps"][0]["id"], "inspect");
+
+        let (method, params) = build_socket_call_for_test(
+            "workflow_evidence_add",
+            json!({
+                "workflow_id": "workflow-1",
+                "evidence_id": "tests",
+                "kind": "test",
+                "title": "cargo test",
+                "text": "passed"
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "workflow.evidence.add");
+        assert_eq!(params["evidence_id"], "tests");
+        assert_eq!(params["text"], "passed");
+
+        let (method, params) = build_socket_call_for_test(
+            "workflow_replay",
+            json!({"workflow_id": "workflow-1", "since_seq": 2, "limit": 10}),
+        )
+        .unwrap();
+        assert_eq!(method, "workflow.replay");
+        assert_eq!(params["since_seq"], 2);
+        assert_eq!(params["limit"], 10);
     }
 
     #[test]

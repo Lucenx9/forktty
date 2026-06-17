@@ -71,6 +71,12 @@ Usage:
   forktty clear-progress [--key <key>]
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
+  forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
+  forktty workflow-get <workflow-id> [--json]
+  forktty workflow-upsert [--workflow-id <id>] [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--agent <agent>] [--session-id <id>] [--mode <mode>] [--status <status>] [--goal <text>] [--memory <text>] [--json]
+  forktty workflow-plan-set <workflow-id> --steps-json <json-array> [--json]
+  forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -] [--evidence-id <id>] [--path <path>] [--json]
+  forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>] [--limit <n>] [--json]
   forktty log [message] [--message <message>] [--level info|warn|error]
   forktty logs [--workspace-id <id>]
   forktty clear-logs [--workspace-id <id>]
@@ -772,6 +778,22 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "clear-progress" => handle_clear_progress(&context, args),
         "statusline" | "status-line" | "status:summary" => handle_statusline(&context, args),
         "feed" | "feed-list" | "feed:list" => handle_feed(&context, args),
+        "workflows" | "workflow-list" | "workflow:list" | "workflow.list" => {
+            handle_workflows(&context, args)
+        }
+        "workflow-get" | "workflow:get" | "workflow.get" => handle_workflow_get(&context, args),
+        "workflow-upsert" | "workflow:upsert" | "workflow.upsert" => {
+            handle_workflow_upsert(&context, args)
+        }
+        "workflow-plan-set" | "workflow:plan-set" | "workflow.plan.set" => {
+            handle_workflow_plan_set(&context, args)
+        }
+        "workflow-evidence-add" | "workflow:evidence-add" | "workflow.evidence.add" => {
+            handle_workflow_evidence_add(&context, args)
+        }
+        "workflow-replay" | "workflow:replay" | "workflow.replay" => {
+            handle_workflow_replay(&context, args)
+        }
         "log" => handle_log(&context, args),
         "logs" | "list-logs" => handle_logs(&context, args),
         "clear-logs" => handle_clear_logs(&context, args),
@@ -1381,7 +1403,6 @@ fn read_stdin_text() -> CliResult<String> {
     read_text_from_reader(&mut stdin, MAX_STDIN_TEXT_BYTES, "stdin")
 }
 
-#[cfg(any(feature = "browser", test))]
 fn read_text_file_or_stdin(path: &str, label: &str) -> CliResult<String> {
     if path == "-" {
         return read_stdin_text();
@@ -2390,6 +2411,328 @@ fn format_feed_line(item: &Value) -> String {
         .map(|body| format!(" — {body}"))
         .unwrap_or_default();
     format!("[{item_type}] {workspace} · {title}{body}")
+}
+
+fn handle_workflows(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "workflows")?;
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+            "surface-id",
+            "session-id",
+            "query",
+            "limit",
+        ],
+        "workflows",
+    )?;
+    let mut params = build_target_params(&parsed.options, "workflows")?;
+    if let Some(surface_id) =
+        non_blank_string_option(&parsed.options, "surface-id", "--surface-id")?
+    {
+        params.insert(
+            "surface_id".to_string(),
+            Value::String(surface_id.trim().to_string()),
+        );
+    }
+    if let Some(session_id) =
+        non_blank_string_option(&parsed.options, "session-id", "--session-id")?
+    {
+        params.insert(
+            "session_id".to_string(),
+            Value::String(session_id.trim().to_string()),
+        );
+    }
+    if let Some(query) = non_blank_string_option(&parsed.options, "query", "--query")? {
+        params.insert("query".to_string(), Value::String(query.trim().to_string()));
+    }
+    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
+        params.insert("limit".to_string(), Value::Number(limit.into()));
+    }
+    let result = send_socket_request(&context.socket_path, "workflow.list", Value::Object(params))?;
+    if context.json {
+        return print_json(&result);
+    }
+    let Some(items) = result.as_array() else {
+        return Ok(());
+    };
+    if items.is_empty() {
+        return write_stdout_line("No workflows");
+    }
+    for item in items {
+        write_stdout_line(&format_workflow_line(item))?;
+    }
+    Ok(())
+}
+
+fn handle_workflow_get(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "workflow-get")?;
+    let workflow_id =
+        single_required_positional(&parsed.positionals, "workflow-get", "<workflow-id>")?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.get",
+        json!({ "workflow_id": workflow_id }),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format_workflow_line(&result))
+    }
+}
+
+fn handle_workflow_upsert(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "workflow-upsert")?;
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "workflow-id",
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+            "surface-id",
+            "agent",
+            "session-id",
+            "mode",
+            "status",
+            "goal",
+            "memory",
+        ],
+        "workflow-upsert",
+    )?;
+    let mut params = build_target_params(&parsed.options, "workflow-upsert")?;
+    for (option, param) in [
+        ("workflow-id", "workflow_id"),
+        ("surface-id", "surface_id"),
+        ("agent", "agent"),
+        ("session-id", "session_id"),
+        ("mode", "mode"),
+        ("status", "status"),
+        ("goal", "goal"),
+        ("memory", "memory"),
+    ] {
+        if let Some(value) =
+            non_blank_string_option(&parsed.options, option, &format!("--{option}"))?
+        {
+            params.insert(param.to_string(), Value::String(value.trim().to_string()));
+        }
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.upsert",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format!(
+            "Updated workflow {}",
+            workflow_id_for_line(&result)
+        ))
+    }
+}
+
+fn handle_workflow_plan_set(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["steps-json"], "workflow-plan-set")?;
+    let workflow_id =
+        single_required_positional(&parsed.positionals, "workflow-plan-set", "<workflow-id>")?;
+    let steps_raw = non_blank_string_option(&parsed.options, "steps-json", "--steps-json")?
+        .ok_or_else(|| CliError::new("workflow-plan-set requires --steps-json"))?;
+    let steps: Value = serde_json::from_str(steps_raw.trim())
+        .map_err(|err| CliError::new(format!("--steps-json must be valid JSON: {err}")))?;
+    if !steps.is_array() {
+        return Err(CliError::new("--steps-json must be a JSON array"));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.plan.set",
+        json!({ "workflow_id": workflow_id, "steps": steps }),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        let count = result
+            .get("plan")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        write_stdout_line(&format!(
+            "Updated workflow {} plan ({count} step{})",
+            workflow_id_for_line(&result),
+            if count == 1 { "" } else { "s" }
+        ))
+    }
+}
+
+fn handle_workflow_evidence_add(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["evidence-id", "kind", "title", "text", "text-file", "path"],
+        "workflow-evidence-add",
+    )?;
+    let workflow_id = single_required_positional(
+        &parsed.positionals,
+        "workflow-evidence-add",
+        "<workflow-id>",
+    )?;
+    let mut params = Map::new();
+    params.insert("workflow_id".to_string(), Value::String(workflow_id));
+    for (option, param) in [
+        ("evidence-id", "evidence_id"),
+        ("kind", "kind"),
+        ("title", "title"),
+        ("path", "path"),
+    ] {
+        if let Some(value) =
+            non_blank_string_option(&parsed.options, option, &format!("--{option}"))?
+        {
+            params.insert(param.to_string(), Value::String(value.trim().to_string()));
+        }
+    }
+    let inline_text = string_option(&parsed.options, "text", "--text")?.map(str::to_string);
+    let text_file = non_blank_string_option(&parsed.options, "text-file", "--text-file")?;
+    if inline_text.is_some() && text_file.is_some() {
+        return Err(CliError::new(
+            "workflow-evidence-add: pass either --text or --text-file, not both",
+        ));
+    }
+    if let Some(text) = inline_text {
+        if text.trim().is_empty() {
+            return Err(CliError::new("--text requires a value"));
+        }
+        params.insert("text".to_string(), Value::String(text));
+    } else if let Some(path) = text_file {
+        params.insert(
+            "text".to_string(),
+            Value::String(read_text_file_or_stdin(
+                path.trim(),
+                "workflow evidence text",
+            )?),
+        );
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.evidence.add",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format!(
+            "Added workflow evidence to {}",
+            workflow_id_for_line(&result)
+        ))
+    }
+}
+
+fn handle_workflow_replay(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "workflow-replay")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workflow-id", "query", "since-seq", "limit"],
+        "workflow-replay",
+    )?;
+    let mut params = Map::new();
+    if let Some(workflow_id) =
+        non_blank_string_option(&parsed.options, "workflow-id", "--workflow-id")?
+    {
+        params.insert(
+            "workflow_id".to_string(),
+            Value::String(workflow_id.trim().to_string()),
+        );
+    }
+    if let Some(query) = non_blank_string_option(&parsed.options, "query", "--query")? {
+        params.insert("query".to_string(), Value::String(query.trim().to_string()));
+    }
+    if let Some(since_seq) = parse_u64_option(&parsed.options, "since-seq", "--since-seq")? {
+        params.insert("since_seq".to_string(), Value::Number(since_seq.into()));
+    }
+    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
+        params.insert("limit".to_string(), Value::Number(limit.into()));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.replay",
+        Value::Object(params),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    let Some(events) = result.as_array() else {
+        return Ok(());
+    };
+    if events.is_empty() {
+        return write_stdout_line("No workflow events");
+    }
+    for event in events {
+        write_stdout_line(&format_workflow_event_line(event))?;
+    }
+    Ok(())
+}
+
+fn single_required_positional(
+    positionals: &[String],
+    command: &str,
+    label: &str,
+) -> CliResult<String> {
+    let value = positionals
+        .first()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CliError::new(format!("{command} requires {label}")))?;
+    if positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "{command}: unexpected argument {}",
+            positionals[1]
+        )));
+    }
+    Ok(value.to_string())
+}
+
+fn format_workflow_line(workflow: &Value) -> String {
+    let id = workflow_id_for_line(workflow);
+    let mode = safe_string_field(workflow, "mode").unwrap_or_else(|| "default".to_string());
+    let status = safe_string_field(workflow, "status").unwrap_or_else(|| "unknown".to_string());
+    let workspace = safe_string_field(workflow, "workspace_id")
+        .map(|value| format!(" workspace {value}"))
+        .unwrap_or_default();
+    let surface = safe_string_field(workflow, "surface_id")
+        .map(|value| format!(" surface {value}"))
+        .unwrap_or_default();
+    let session = safe_string_field(workflow, "session_id")
+        .map(|value| format!(" session {value}"))
+        .unwrap_or_default();
+    let goal = safe_string_field(workflow, "goal")
+        .map(|value| format!(" goal {value}"))
+        .unwrap_or_default();
+    format!("{id} [{mode}] {status}{workspace}{surface}{session}{goal}")
+}
+
+fn format_workflow_event_line(event: &Value) -> String {
+    let seq = event
+        .get("seq")
+        .and_then(Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let workflow_id =
+        safe_string_field(event, "workflow_id").unwrap_or_else(|| "(workflow)".to_string());
+    let kind = safe_string_field(event, "kind").unwrap_or_else(|| "event".to_string());
+    let summary = safe_string_field(event, "summary")
+        .map(|value| format!(" {value}"))
+        .unwrap_or_default();
+    format!("#{seq} {workflow_id} {kind}{summary}")
+}
+
+fn workflow_id_for_line(value: &Value) -> String {
+    safe_string_field(value, "id").unwrap_or_else(|| "(workflow)".to_string())
 }
 
 fn handle_split_surface(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -9047,7 +9390,7 @@ mod tests {
         assert!(context.contains("surface_read_text"));
         assert!(context.contains("worktree_create creates an isolated git worktree"));
         assert!(context.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, worktrees, status, terminal read/capture, or sending text to another surface."
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, worktrees, status, terminal read/capture, or sending text to another surface."
         ));
         assert!(context.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
@@ -11363,6 +11706,216 @@ mod tests {
         assert_eq!(request["method"], "feed.list");
         assert_eq!(request["params"]["workspace_id"], "w1");
         assert_eq!(request["params"]["limit"], 20);
+    }
+
+    #[test]
+    fn workflows_request_workflow_list_with_filters() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_workflows(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "--workspace-id",
+                        "w1",
+                        "--surface-id",
+                        "s1",
+                        "--session-id",
+                        "sess1",
+                        "--query",
+                        "goal",
+                        "--limit",
+                        "5",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workflow.list");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["surface_id"], "s1");
+        assert_eq!(request["params"]["session_id"], "sess1");
+        assert_eq!(request["params"]["query"], "goal");
+        assert_eq!(request["params"]["limit"], 5);
+    }
+
+    #[test]
+    fn workflow_upsert_requests_workflow_upsert() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "workflow-1",
+                        "mode": "review",
+                        "status": "running"
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_workflow_upsert(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "--workflow-id",
+                        "workflow-1",
+                        "--workspace-id",
+                        "w1",
+                        "--surface-id",
+                        "s1",
+                        "--agent",
+                        "codex",
+                        "--session-id",
+                        "sess1",
+                        "--mode",
+                        "review",
+                        "--status",
+                        "running",
+                        "--goal",
+                        "Review",
+                        "--memory",
+                        "Keep context",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workflow.upsert");
+        assert_eq!(request["params"]["workflow_id"], "workflow-1");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["surface_id"], "s1");
+        assert_eq!(request["params"]["agent"], "codex");
+        assert_eq!(request["params"]["session_id"], "sess1");
+        assert_eq!(request["params"]["mode"], "review");
+        assert_eq!(request["params"]["status"], "running");
+        assert_eq!(request["params"]["goal"], "Review");
+        assert_eq!(request["params"]["memory"], "Keep context");
+    }
+
+    #[test]
+    fn workflow_plan_set_requests_workflow_plan_set() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "workflow-1",
+                        "mode": "review",
+                        "status": "running",
+                        "plan": [{"id": "inspect"}]
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_workflow_plan_set(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "workflow-1",
+                        "--steps-json",
+                        r#"[{"id":"inspect","title":"Inspect","status":"done"}]"#,
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workflow.plan.set");
+        assert_eq!(request["params"]["workflow_id"], "workflow-1");
+        assert_eq!(request["params"]["steps"][0]["id"], "inspect");
+    }
+
+    #[test]
+    fn workflow_evidence_add_requests_workflow_evidence_add() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "workflow-1",
+                        "mode": "review",
+                        "status": "running",
+                        "evidence": [{"id": "tests"}]
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_workflow_evidence_add(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "workflow-1",
+                        "--evidence-id",
+                        "tests",
+                        "--kind",
+                        "test",
+                        "--title",
+                        "cargo test",
+                        "--text",
+                        "passed",
+                        "--path",
+                        "target/test.log",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workflow.evidence.add");
+        assert_eq!(request["params"]["workflow_id"], "workflow-1");
+        assert_eq!(request["params"]["evidence_id"], "tests");
+        assert_eq!(request["params"]["kind"], "test");
+        assert_eq!(request["params"]["title"], "cargo test");
+        assert_eq!(request["params"]["text"], "passed");
+        assert_eq!(request["params"]["path"], "target/test.log");
+    }
+
+    #[test]
+    fn workflow_replay_requests_workflow_replay() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [{
+                        "seq": 3,
+                        "workflow_id": "workflow-1",
+                        "kind": "workflow.evidence.added",
+                        "summary": "tests"
+                    }],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_workflow_replay(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "--workflow-id",
+                        "workflow-1",
+                        "--query",
+                        "evidence",
+                        "--since-seq",
+                        "2",
+                        "--limit",
+                        "10",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workflow.replay");
+        assert_eq!(request["params"]["workflow_id"], "workflow-1");
+        assert_eq!(request["params"]["query"], "evidence");
+        assert_eq!(request["params"]["since_seq"], 2);
+        assert_eq!(request["params"]["limit"], 10);
     }
 
     #[test]
