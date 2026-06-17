@@ -89,7 +89,7 @@ Native session file:
 ~/.local/share/forktty/session-v2.json
 ```
 
-The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata. It excludes running PTY process handles and scrollback.
+The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, and opt-in bounded plain-text scrollback tails when `appearance.persistent_scrollback_lines` is greater than zero. It excludes running PTY process handles.
 
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
@@ -115,6 +115,7 @@ notification_command = ""
 
 [appearance]
 scrollback_lines = 20000
+persistent_scrollback_lines = 0
 terminal_audible_bell = true
 sidebar_position = "left"
 sidebar_visible = true
@@ -124,6 +125,8 @@ window_mode = "normal"
 [notifications]
 desktop = true
 sound = true
+blocked_terminal_apps = []
+blocked_terminal_types = []
 
 [updates]
 auto_check = true
@@ -132,7 +135,7 @@ auto_check = true
 anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, scrollback bounds, sidebar position, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, and notification command. Legacy `font_family`, `font_size`, and `terminal_theme` keys are accepted on load for compatibility, omitted from new saves, and ignored by the GTK renderer; terminal font and color preferences come from Ghostty's config when present. The GTK runtime loads `~/.config/ghostty/config` and `config.ghostty`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family entries, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection references, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, and `scrollback-limit`. `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, scrollback bounds, persistent scrollback bounds, sidebar position, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, and notification command. Legacy `font_family`, `font_size`, and `terminal_theme` keys are accepted on load for compatibility, omitted from new saves, and ignored by the GTK renderer; terminal font and color preferences come from Ghostty's config when present. The GTK runtime loads `~/.config/ghostty/config` and `config.ghostty`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family entries, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection references, `cursor-opacity`, SGR faint text plus `faint-opacity`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `scrollback-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 ## Updates
 
@@ -349,11 +352,18 @@ Notification sources:
 - ForkTTY hook `precmd`, `preexec`, and `postexec` termprops;
 - ForkTTY progress termprops;
 - Ghostty OSC 9 and basic OSC 99 terminal notifications, rate-limited per surface;
+- OSC 99 same-id update/close controls, desktop notification replacement/closing, in-app activation/close reports, and basic same-id button reports;
+- OSC 99 icon names for in-app/desktop notification icons, application-name fallback when no icon name is provided, plus bounded same-process `p=icon` data caching by `g` and binary image rendering for decodable in-app data / desktop notification servers that support image paths;
+- OSC 99 application name (`f`) and notification type (`t`) metadata retained on notifications, filtered by `notifications.blocked_terminal_apps` / `blocked_terminal_types`, and exposed to `notification_command` as `FORKTTY_NOTIFICATION_TERMINAL_APP` and `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`;
+- OSC 99 occasion filtering (`o=always`, `o=unfocused`, `o=invisible`) using ForkTTY's active workspace, focused surface, and active pane-tab model;
+- OSC 99 urgency (`u`) and base64 sound (`s`) metadata as desktop notification hints where the notification server supports them;
+- OSC 99 auto-expiry (`w`) as a desktop notification timeout hint where the notification server supports it and as an in-app auto-dismiss timer for positive values;
+- OSC 99 `p=?` support replies and `p=alive` live-id replies for tracked same-surface notifications;
 - Ghostty bell;
 - Ghostty child exit;
 - bounded visible-tail prompt fallback for common agent prompts.
 
-Notifications update in-app unread state and may dispatch through `notify-rust` and `notification_command`. Custom commands are argv-executed, not `sh -c`; title/body are passed through environment variables.
+Notifications update in-app unread state and may dispatch through `notify-rust` and `notification_command`. Custom commands are argv-executed, not `sh -c`; title/body are passed through environment variables, and terminal-originated OSC 99 `f`/`t` metadata is passed as `FORKTTY_NOTIFICATION_TERMINAL_APP` plus JSON array `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` are exact string match filters for terminal-originated OSC 99 `f`/`t` metadata before the notification is stored or dispatched. OSC 99 notification identifiers are tracked and echoed only when they use the protocol identifier character set (`A-Z`, `a-z`, `0-9`, `_`, `-`, `+`, `.`); unsafe identifiers are treated as untracked notification payloads or ignored for reply-only actions. Unknown OSC 99 payload types are ignored so future protocol extensions do not surface as terminal status noise. OSC 99 binary icons are rendered in-app when GTK can decode them, after `n=` icon names and `f=` application-name icon fallback; desktop binary icons are materialized as bounded files under `$XDG_RUNTIME_DIR/forktty-notification-icons` and removed when the tracked desktop notification is replaced, closed, or evicted.
 
 ## Security Constraints
 
@@ -391,7 +401,7 @@ Residual risks:
   directories still fail inside that CLI.
 - `agent.reclaim.plan` is advisory only; actual suspend/kill/reopen behavior is
   not implemented yet.
-- Advanced OSC 99 compatibility remains partial; title/body base64 payloads and same-id title/body chunks are decoded, but notification update/close controls, activation reports, buttons, icon payloads, and broader chunk lifecycle behavior are not yet implemented.
+- Advanced OSC 99 compatibility remains partial; title/body base64 payloads and same-id title/body chunks are decoded with multipart title/body kept separate, same-id update/close controls update the ForkTTY notification model and desktop notification id, in-app activation/close/button reports plus `p=?`/`p=alive` replies are sent back to the source terminal, and icon names, application/type filtering metadata, occasion filtering, urgency/expiry/sound handling, plus bounded `p=icon` caches with decodable in-app/desktop binary image rendering are tracked.
 
 ## Test Strategy
 
@@ -406,4 +416,4 @@ Backlog validation:
 
 - runtime smoke tests for GTK/Ghostty interactions;
 - manual package QA across supported Linux environments;
-- persistent scrollback tests once scrollback persistence exists.
+- persistent scrollback tests for the opt-in plain-text tail.

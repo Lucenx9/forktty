@@ -1,6 +1,9 @@
 use crate::backup::BackupReservationKind;
 use crate::command_safety::is_valid_ssh_host;
-use crate::model::{PaneNode, SplitAxis, Surface, SurfaceKind, Workspace, MAX_SESSION_SPLIT_DEPTH};
+use crate::model::{
+    PaneNode, SplitAxis, Surface, SurfaceKind, Workspace, MAX_PERSISTED_SCROLLBACK_BYTES,
+    MAX_SESSION_SPLIT_DEPTH,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -755,6 +758,23 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
             if !is_valid_ssh_host(host) {
                 return Err(SessionError::InvalidData(format!(
                     "persisted ssh surface has invalid host: {}",
+                    surface.id
+                )));
+            }
+        }
+        if let Some(scrollback) = surface.persisted_scrollback.as_deref() {
+            if scrollback.len() > MAX_PERSISTED_SCROLLBACK_BYTES {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface scrollback is too large: {}",
+                    surface.id
+                )));
+            }
+            if scrollback
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+            {
+                return Err(SessionError::InvalidData(format!(
+                    "persisted surface scrollback contains control characters: {}",
                     surface.id
                 )));
             }

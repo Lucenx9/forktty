@@ -1,9 +1,9 @@
 use adw::prelude::*;
 use forktty_core::{
-    command_safety::is_executable_file, config, dispatch_notification, session,
-    validate_worktree_name, worktree, LogLevel, NotificationItem, NotificationKind, PaneNode,
-    ProgressEntry, SplitAxis, StatusEntry, Surface, WorkspaceModel, WorkspaceSelector,
-    WorktreeNameError,
+    close_desktop_notification, command_safety::is_executable_file, config, dispatch_notification,
+    session, validate_worktree_name, worktree, LogLevel, NotificationItem, NotificationKind,
+    PaneNode, ProgressEntry, SplitAxis, StatusEntry, Surface, TerminalNotificationMetadata,
+    WorkspaceModel, WorkspaceSelector, WorktreeNameError,
 };
 #[cfg(test)]
 use forktty_socket::default_socket_path;

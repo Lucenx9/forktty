@@ -184,6 +184,7 @@ impl GhosttyTerminalWidget {
         let renderer = Rc::new(RefCell::new(TerminalRenderer::from_config_with_font(
             config, font,
         )));
+        let mouse_scroll_multipliers = terminal_mouse_scroll_multipliers_for_config(config);
         let im_context = gtk::IMMulticontext::new();
         im_context.set_client_widget(Some(&drawing_area));
         {
@@ -833,8 +834,13 @@ impl GhosttyTerminalWidget {
                         .and_then(|event| event.position())
                         .unwrap_or((0.0, 0.0));
                     let (_, cell_height) = renderer.cell_pixel_size_for_widget(&drawing_area);
-                    let line_delta =
-                        scroll_line_delta(smooth_scroll, wayland_display, dy, cell_height);
+                    let line_delta = scroll_line_delta(
+                        smooth_scroll,
+                        wayland_display,
+                        dy,
+                        cell_height,
+                        mouse_scroll_multipliers,
+                    );
                     let Some(button) = terminal_scroll_button(line_delta) else {
                         // A true zero-delta event carries nothing to route;
                         // smooth streams stay claimed (their fractions are
@@ -1310,6 +1316,11 @@ impl GhosttyTerminalWidget {
             self.drawing_area.queue_draw();
         }
         Ok(events)
+    }
+
+    pub(super) fn restore_persisted_scrollback(&self, text: &str) {
+        self.runtime.borrow_mut().restore_persisted_scrollback(text);
+        self.drawing_area.queue_draw();
     }
 }
 
@@ -1990,6 +2001,7 @@ enum ScrollRouting {
 /// Viewport lines per wheel unit: discrete wheel deltas (GDK fills ±1.0 per
 /// classic tick, fractions for hi-res value120 wheels) and X11 smooth deltas
 /// are in wheel-detent units, and one detent conventionally scrolls 3 lines.
+#[cfg(test)]
 const LINES_PER_WHEEL_UNIT: f64 = 3.0;
 
 /// Lines consumed per wheel press forwarded to a mouse-tracking application:
@@ -2080,11 +2092,17 @@ fn reset_scroll_accumulator() -> f64 {
 /// units — logical pixels — so one cell height of finger travel maps to one
 /// line; treating those as wheel units overscrolled ~30x. X11 smooth deltas
 /// and discrete UP/DOWN deltas are wheel units (one detent = 3 lines).
-fn scroll_line_delta(smooth: bool, wayland: bool, delta_y: f64, cell_height_px: i32) -> f64 {
+fn scroll_line_delta(
+    smooth: bool,
+    wayland: bool,
+    delta_y: f64,
+    cell_height_px: i32,
+    multipliers: MouseScrollMultipliers,
+) -> f64 {
     if smooth && wayland {
-        delta_y / f64::from(cell_height_px.max(1))
+        delta_y / f64::from(cell_height_px.max(1)) * multipliers.precision
     } else {
-        delta_y * LINES_PER_WHEEL_UNIT
+        delta_y * multipliers.discrete
     }
 }
 
@@ -3473,25 +3491,55 @@ mod mouse_tests {
     #[test]
     fn scroll_line_delta_converts_wayland_smooth_pixels_through_cell_height() {
         // One cell height of finger travel scrolls exactly one line.
-        assert_f64_eq(scroll_line_delta(true, true, 20.0, 20), 1.0);
-        assert_f64_eq(scroll_line_delta(true, true, -10.0, 20), -0.5);
+        assert_f64_eq(
+            scroll_line_delta(true, true, 20.0, 20, MouseScrollMultipliers::default()),
+            1.0,
+        );
+        assert_f64_eq(
+            scroll_line_delta(true, true, -10.0, 20, MouseScrollMultipliers::default()),
+            -0.5,
+        );
     }
 
     #[test]
     fn scroll_line_delta_treats_x11_smooth_deltas_as_wheel_units() {
-        assert_f64_eq(scroll_line_delta(true, false, 1.0, 20), 3.0);
+        assert_f64_eq(
+            scroll_line_delta(true, false, 1.0, 20, MouseScrollMultipliers::default()),
+            3.0,
+        );
     }
 
     #[test]
     fn scroll_line_delta_maps_a_classic_wheel_tick_to_three_lines() {
-        assert_f64_eq(scroll_line_delta(false, true, 1.0, 20), 3.0);
-        assert_f64_eq(scroll_line_delta(false, false, -1.0, 20), -3.0);
+        assert_f64_eq(
+            scroll_line_delta(false, true, 1.0, 20, MouseScrollMultipliers::default()),
+            3.0,
+        );
+        assert_f64_eq(
+            scroll_line_delta(false, false, -1.0, 20, MouseScrollMultipliers::default()),
+            -3.0,
+        );
     }
 
     #[test]
     fn scroll_line_delta_scales_value120_fractional_ticks() {
         // Hi-res wheels (Logitech free-spin) report fractional wheel units.
-        assert_f64_eq(scroll_line_delta(false, true, 0.25, 20), 0.75);
+        assert_f64_eq(
+            scroll_line_delta(false, true, 0.25, 20, MouseScrollMultipliers::default()),
+            0.75,
+        );
+    }
+
+    #[test]
+    fn scroll_line_delta_applies_ghostty_mouse_scroll_multipliers() {
+        let multipliers = MouseScrollMultipliers {
+            precision: 0.5,
+            discrete: 2.0,
+        };
+
+        assert_f64_eq(scroll_line_delta(true, true, 20.0, 20, multipliers), 0.5);
+        assert_f64_eq(scroll_line_delta(false, true, 1.0, 20, multipliers), 2.0);
+        assert_f64_eq(scroll_line_delta(true, false, 1.0, 20, multipliers), 2.0);
     }
 
     #[test]

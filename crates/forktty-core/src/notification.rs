@@ -1,10 +1,13 @@
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use crate::{AppConfig, NotificationItem, NotificationKind};
 use std::collections::VecDeque;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationDispatchError {
@@ -18,6 +21,7 @@ pub struct NotificationDispatchError {
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
 const CUSTOM_COMMAND_REAPER_QUEUE_CAPACITY: usize = 8;
+const DESKTOP_NOTIFICATION_HANDLE_CAPACITY: usize = 128;
 const DESKTOP_ENTRY_ID: &str = "dev.forktty.forktty";
 
 type DedupeKey = (
@@ -66,11 +70,7 @@ pub fn dispatch_notification(
     }
     let mut errors = Vec::new();
     if config.notifications.desktop {
-        if let Err(message) = send_desktop_notification(
-            &notification.title,
-            &notification.body,
-            config.notifications.sound,
-        ) {
+        if let Err(message) = send_desktop_notification(notification, config.notifications.sound) {
             errors.push(NotificationDispatchError {
                 channel: "desktop",
                 message,
@@ -86,12 +86,18 @@ pub fn dispatch_notification(
     errors
 }
 
-fn send_desktop_notification(title: &str, body: &str, play_sound: bool) -> Result<(), String> {
+pub fn close_desktop_notification(notification_id: &str) {
+    if let Some(handle) = take_desktop_notification_handle(notification_id) {
+        handle.close();
+    }
+}
+
+fn send_desktop_notification(item: &NotificationItem, play_sound: bool) -> Result<(), String> {
     let mut notification = notify_rust::Notification::new();
     notification
-        .summary(title)
-        .body(body)
-        .icon("forktty")
+        .summary(&item.title)
+        .body(&item.body)
+        .icon(desktop_notification_icon_name(item))
         .appname("ForkTTY");
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -102,13 +108,210 @@ fn send_desktop_notification(title: &str, body: &str, play_sound: bool) -> Resul
             .hint(Hint::DesktopEntry(DESKTOP_ENTRY_ID.to_string()))
             .hint(Hint::Category("im.received".to_string()));
 
-        if !play_sound {
-            notification.hint(Hint::SuppressSound(true));
-        }
+        apply_terminal_notification_metadata_hints(&mut notification, item, play_sound);
     }
 
-    notification.show().map_err(|err| err.to_string())?;
+    let image_path = desktop_notification_runtime_dir()
+        .and_then(|runtime_dir| write_desktop_notification_icon_file(item, &runtime_dir));
+    if let Some(path) = image_path.as_ref() {
+        notification.image_path(path.to_string_lossy().as_ref());
+    }
+
+    if let Some(id) = desktop_notification_server_id(&item.id) {
+        notification.id(id);
+    }
+    let handle = match notification.show() {
+        Ok(handle) => handle,
+        Err(err) => {
+            remove_desktop_notification_icon_file(image_path);
+            return Err(err.to_string());
+        }
+    };
+    remember_desktop_notification_handle(item.id.clone(), handle, image_path);
     Ok(())
+}
+
+fn write_desktop_notification_icon_file(
+    notification: &NotificationItem,
+    runtime_dir: &Path,
+) -> Option<PathBuf> {
+    let data = notification
+        .terminal_metadata
+        .as_ref()?
+        .icon_data
+        .as_deref()
+        .filter(|data| !data.is_empty())?;
+    let dir = runtime_dir.join("forktty-notification-icons");
+    std::fs::create_dir_all(&dir).ok()?;
+    #[cfg(unix)]
+    {
+        let _ = std::fs::set_permissions(&dir, Permissions::from_mode(0o700));
+    }
+
+    for _ in 0..4 {
+        let path = dir.join(format!(
+            "icon-{}.{}",
+            uuid::Uuid::new_v4(),
+            desktop_notification_icon_extension(data)
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let Ok(mut file) = options.open(&path) else {
+            continue;
+        };
+        if file.write_all(data).is_ok() {
+            return Some(path);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    None
+}
+
+fn desktop_notification_icon_extension(data: &[u8]) -> &'static str {
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "png"
+    } else if data.starts_with(b"\xff\xd8\xff") {
+        "jpg"
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        "gif"
+    } else if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
+        "webp"
+    } else {
+        "img"
+    }
+}
+
+fn desktop_notification_runtime_dir() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
+    path.is_absolute().then_some(path)
+}
+
+fn remove_desktop_notification_icon_file(path: Option<PathBuf>) {
+    if let Some(path) = path {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+struct DesktopNotificationEntry {
+    id: String,
+    handle: notify_rust::NotificationHandle,
+    image_path: Option<PathBuf>,
+}
+
+fn desktop_notification_handles() -> &'static Mutex<VecDeque<DesktopNotificationEntry>> {
+    static HANDLES: OnceLock<Mutex<VecDeque<DesktopNotificationEntry>>> = OnceLock::new();
+    HANDLES.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn desktop_notification_server_id(notification_id: &str) -> Option<u32> {
+    let handles = desktop_notification_handles()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    handles
+        .iter()
+        .find(|entry| entry.id == notification_id)
+        .map(|entry| entry.handle.id())
+}
+
+fn remember_desktop_notification_handle(
+    notification_id: String,
+    handle: notify_rust::NotificationHandle,
+    image_path: Option<PathBuf>,
+) {
+    let mut handles = desktop_notification_handles()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if let Some(index) = handles.iter().position(|entry| entry.id == notification_id) {
+        if let Some(entry) = handles.remove(index) {
+            remove_desktop_notification_icon_file(entry.image_path);
+        }
+    }
+    handles.push_back(DesktopNotificationEntry {
+        id: notification_id,
+        handle,
+        image_path,
+    });
+    while handles.len() > DESKTOP_NOTIFICATION_HANDLE_CAPACITY {
+        if let Some(entry) = handles.pop_front() {
+            remove_desktop_notification_icon_file(entry.image_path);
+        }
+    }
+}
+
+fn take_desktop_notification_handle(
+    notification_id: &str,
+) -> Option<notify_rust::NotificationHandle> {
+    let mut handles = desktop_notification_handles()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let index = handles
+        .iter()
+        .position(|entry| entry.id == notification_id)?;
+    handles.remove(index).map(|entry| {
+        remove_desktop_notification_icon_file(entry.image_path);
+        entry.handle
+    })
+}
+
+fn desktop_notification_icon_name(notification: &NotificationItem) -> &str {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return "forktty";
+    };
+    if let Some(name) = metadata.icon_names.first() {
+        match name.as_str() {
+            "error" => "dialog-error",
+            "warn" | "warning" => "dialog-warning",
+            "info" => "dialog-information",
+            "question" => "dialog-question",
+            "help" => "help-browser",
+            "file-manager" => "system-file-manager",
+            "system-monitor" => "utilities-system-monitor",
+            "text-editor" => "accessories-text-editor",
+            other => other,
+        }
+    } else {
+        metadata.app_name.as_deref().unwrap_or("forktty")
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn apply_terminal_notification_metadata_hints(
+    notification: &mut notify_rust::Notification,
+    item: &NotificationItem,
+    play_sound: bool,
+) {
+    use notify_rust::{Hint, Urgency};
+
+    let metadata = item.terminal_metadata.as_ref();
+    if let Some(urgency) = metadata.and_then(|metadata| match metadata.urgency {
+        Some(0) => Some(Urgency::Low),
+        Some(1) => Some(Urgency::Normal),
+        Some(2) => Some(Urgency::Critical),
+        _ => None,
+    }) {
+        notification.urgency(urgency);
+    }
+    if let Some(timeout) = metadata.and_then(|metadata| metadata.expires_after_ms) {
+        notification.timeout(timeout);
+    }
+
+    match metadata.and_then(|metadata| metadata.sound_name.as_deref()) {
+        Some("silent") => {
+            notification.hint(Hint::SuppressSound(true));
+        }
+        Some(name) if play_sound => {
+            notification.sound_name(name);
+        }
+        _ if !play_sound => {
+            notification.hint(Hint::SuppressSound(true));
+        }
+        _ => {}
+    }
 }
 
 fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<(), String> {
@@ -131,27 +334,49 @@ fn run_custom_command(command: &str, notification: &NotificationItem) -> Result<
         ));
     }
 
-    let child = std::process::Command::new(program)
-        .args(args)
-        .env("FORKTTY_NOTIFICATION_ID", &notification.id)
-        .env("FORKTTY_NOTIFICATION_TITLE", &notification.title)
-        .env("FORKTTY_NOTIFICATION_BODY", &notification.body)
-        .env(
-            "FORKTTY_NOTIFICATION_KIND",
-            notification_kind_name(notification),
-        )
-        .env(
-            "FORKTTY_NOTIFICATION_WORKSPACE_ID",
-            notification.workspace_id.as_deref().unwrap_or(""),
-        )
-        .env(
-            "FORKTTY_NOTIFICATION_SURFACE_ID",
-            notification.surface_id.as_deref().unwrap_or(""),
-        )
-        .spawn()
-        .map_err(|err| err.to_string())?;
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    for (key, value) in custom_command_env(notification) {
+        command.env(key, value);
+    }
+    let child = command.spawn().map_err(|err| err.to_string())?;
 
     enqueue_custom_command_child(custom_command_reaper(), child)
+}
+
+fn custom_command_env(notification: &NotificationItem) -> Vec<(&'static str, String)> {
+    let metadata = notification.terminal_metadata.as_ref();
+    vec![
+        ("FORKTTY_NOTIFICATION_ID", notification.id.clone()),
+        ("FORKTTY_NOTIFICATION_TITLE", notification.title.clone()),
+        ("FORKTTY_NOTIFICATION_BODY", notification.body.clone()),
+        (
+            "FORKTTY_NOTIFICATION_KIND",
+            notification_kind_name(notification).to_string(),
+        ),
+        (
+            "FORKTTY_NOTIFICATION_WORKSPACE_ID",
+            notification.workspace_id.clone().unwrap_or_default(),
+        ),
+        (
+            "FORKTTY_NOTIFICATION_SURFACE_ID",
+            notification.surface_id.clone().unwrap_or_default(),
+        ),
+        (
+            "FORKTTY_NOTIFICATION_TERMINAL_APP",
+            metadata
+                .and_then(|metadata| metadata.app_name.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON",
+            metadata
+                .map(|metadata| {
+                    serde_json::to_string(&metadata.notification_types).unwrap_or_default()
+                })
+                .unwrap_or_else(|| "[]".to_string()),
+        ),
+    ]
 }
 
 fn custom_command_reaper() -> &'static mpsc::SyncSender<Child> {
@@ -325,6 +550,175 @@ mod tests {
             ..notification
         };
         assert!(should_dispatch(&other, now));
+    }
+
+    #[test]
+    fn terminal_notification_icon_names_override_default_desktop_icon() {
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model
+            .set_notification_terminal_metadata(
+                &notification.id,
+                Some(crate::TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: false,
+                    buttons: Vec::new(),
+                    icon_names: vec!["warning".to_string()],
+                    icon_data: None,
+                    icon_cache_id: None,
+                    urgency: None,
+                    sound_name: None,
+                    expires_after_ms: None,
+                    app_name: None,
+                    notification_types: Vec::new(),
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            desktop_notification_icon_name(&notification),
+            "dialog-warning"
+        );
+    }
+
+    #[test]
+    fn terminal_notification_app_name_falls_back_to_desktop_icon() {
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model
+            .set_notification_terminal_metadata(
+                &notification.id,
+                Some(crate::TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: false,
+                    buttons: Vec::new(),
+                    icon_names: Vec::new(),
+                    icon_data: None,
+                    icon_cache_id: None,
+                    urgency: None,
+                    sound_name: None,
+                    expires_after_ms: None,
+                    app_name: Some("make".to_string()),
+                    notification_types: Vec::new(),
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(desktop_notification_icon_name(&notification), "make");
+    }
+
+    #[test]
+    fn terminal_notification_icon_data_writes_desktop_image_under_runtime_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model
+            .set_notification_terminal_metadata(
+                &notification.id,
+                Some(crate::TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: false,
+                    buttons: Vec::new(),
+                    icon_names: Vec::new(),
+                    icon_data: Some(b"PNG".to_vec()),
+                    icon_cache_id: Some("icon-1".to_string()),
+                    urgency: None,
+                    sound_name: None,
+                    expires_after_ms: None,
+                    app_name: None,
+                    notification_types: Vec::new(),
+                }),
+            )
+            .unwrap();
+
+        let path = write_desktop_notification_icon_file(&notification, dir.path()).unwrap();
+
+        assert!(path.starts_with(dir.path().join("forktty-notification-icons")));
+        assert_eq!(std::fs::read(&path).unwrap(), b"PNG");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn terminal_notification_metadata_sets_desktop_urgency_sound_and_timeout() {
+        use notify_rust::{Hint, Timeout, Urgency};
+
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model
+            .set_notification_terminal_metadata(
+                &notification.id,
+                Some(crate::TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: false,
+                    buttons: Vec::new(),
+                    icon_names: Vec::new(),
+                    icon_data: None,
+                    icon_cache_id: None,
+                    urgency: Some(2),
+                    sound_name: Some("message-new-instant".to_string()),
+                    expires_after_ms: Some(5000),
+                    app_name: None,
+                    notification_types: Vec::new(),
+                }),
+            )
+            .unwrap();
+        let mut desktop = notify_rust::Notification::new();
+
+        apply_terminal_notification_metadata_hints(&mut desktop, &notification, true);
+
+        assert!(desktop.hints.contains(&Hint::Urgency(Urgency::Critical)));
+        assert!(desktop
+            .hints
+            .contains(&Hint::SoundName("message-new-instant".to_string())));
+        assert_eq!(desktop.timeout, Timeout::Milliseconds(5000));
+    }
+
+    #[test]
+    fn terminal_notification_filter_metadata_is_exposed_to_custom_command_env() {
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model
+            .set_notification_terminal_metadata(
+                &notification.id,
+                Some(crate::TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: false,
+                    buttons: Vec::new(),
+                    icon_names: Vec::new(),
+                    icon_data: None,
+                    icon_cache_id: None,
+                    urgency: None,
+                    sound_name: None,
+                    expires_after_ms: None,
+                    app_name: Some("make".to_string()),
+                    notification_types: vec!["build.error".to_string(), "ci".to_string()],
+                }),
+            )
+            .unwrap();
+        let env = custom_command_env(&notification)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert_eq!(
+            env.get("FORKTTY_NOTIFICATION_TERMINAL_APP")
+                .map(String::as_str),
+            Some("make")
+        );
+        assert_eq!(
+            env.get("FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON")
+                .map(String::as_str),
+            Some("[\"build.error\",\"ci\"]")
+        );
     }
 
     #[test]

@@ -229,10 +229,23 @@ impl TerminalController {
                 if self.terminal_zoom_level.get() != 0 {
                     widget.set_zoom_level(self.terminal_zoom_level.get());
                 }
+                let persistent_scrollback_lines = config::load_config()
+                    .map(|config| config.appearance.persistent_scrollback_lines)
+                    .unwrap_or_default();
                 if let Ok(model) = self.model.lock() {
                     if let Some(surface) = model.surface(&request.surface_id) {
                         widget
                             .set_local_selection_on_mouse_drag(surface_has_agent_session(surface));
+                        if persistent_scrollback_lines > 0 {
+                            if let Some(scrollback) = surface.persisted_scrollback.as_deref() {
+                                widget.restore_persisted_scrollback(scrollback);
+                            }
+                        }
+                    }
+                }
+                if persistent_scrollback_lines == 0 {
+                    if let Ok(mut model) = self.model.lock() {
+                        let _ = model.set_surface_persisted_scrollback(&request.surface_id, None);
                     }
                 }
                 attach_terminal_signal_handlers(
@@ -1172,6 +1185,7 @@ impl TerminalController {
                         needs_attention: false,
                         kind: forktty_core::SurfaceKind::Terminal,
                         agent_session: None,
+                        persisted_scrollback: None,
                     },
                     false,
                 )
