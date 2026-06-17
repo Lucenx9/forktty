@@ -118,7 +118,7 @@ focused_surface_id() {
 wait_surface_pid() {
   local id="$1"
   local surfaces_json
-  for _ in {1..20}; do
+  for _ in {1..120}; do
     if surfaces_json="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json)" &&
       printf '%s' "$surfaces_json" |
         python3 -c 'import json,sys; id=sys.argv[1]; surfaces=json.load(sys.stdin); item=next((surface for surface in surfaces if surface.get("id") == id), None); pid=None if item is None else item.get("pid"); sys.exit(0 if isinstance(pid, int) and pid > 0 else 1)' "$id"
@@ -169,7 +169,9 @@ wait_surface_contains "$surface_id" "forktty-smoke-ok" "initial terminal readbac
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$surface_id" --lines 5 |
   grep -q "forktty-smoke-ok"
 if ! wait_surface_pid "$surface_id"; then
-  echo "gtk-ghostty smoke: warning: surface $surface_id did not expose a child pid" >&2
+  echo "gtk-ghostty smoke: surface $surface_id did not expose a child pid" >&2
+  cat "$TMP_DIR/forktty.stderr" >&2 || true
+  exit 1
 fi
 
 base_cols="$(snapshot_field cols)"
