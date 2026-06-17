@@ -490,6 +490,45 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "agent_hibernate" => {
+            reject_unexpected(args, &["surface_id", "min_idle_ms"], name)?;
+            let mut params = Map::new();
+            params.insert(
+                "surface_id".to_string(),
+                Value::String(required_non_empty_string(args, "surface_id")?),
+            );
+            if let Some(min_idle_ms) = optional_u64(args, "min_idle_ms")? {
+                params.insert("min_idle_ms".to_string(), Value::Number(min_idle_ms.into()));
+            }
+            SocketCall {
+                method: "agent.hibernate",
+                params,
+            }
+        }
+        "agent_reclaim" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "min_idle_ms",
+                    "limit",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            if let Some(min_idle_ms) = optional_u64(args, "min_idle_ms")? {
+                params.insert("min_idle_ms".to_string(), Value::Number(min_idle_ms.into()));
+            }
+            if let Some(limit) = optional_u64(args, "limit")? {
+                params.insert("limit".to_string(), Value::Number(limit.into()));
+            }
+            SocketCall {
+                method: "agent.reclaim",
+                params,
+            }
+        }
         "agent_resume" => {
             reject_unexpected(args, &["surface_id"], name)?;
             let mut params = Map::new();
@@ -1087,6 +1126,8 @@ fn success_text(name: &str, result: &Value) -> String {
         "agent_list" => "Listed ForkTTY agent sessions.".to_string(),
         "agent_health" => "Checked ForkTTY agent session readiness.".to_string(),
         "agent_reclaim_plan" => "Planned ForkTTY agent session reclaim candidates.".to_string(),
+        "agent_hibernate" => "Hibernated ForkTTY agent session.".to_string(),
+        "agent_reclaim" => "Reclaimed ForkTTY idle agent sessions.".to_string(),
         "agent_resume" => "Resumed ForkTTY agent session in a new tab.".to_string(),
         "status_summary" => "Built ForkTTY status summary.".to_string(),
         "workflow_list" => "Listed ForkTTY workflows.".to_string(),
@@ -1252,6 +1293,33 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "workspace_name": string_prop("Workspace name to inspect."),
                     "worktree_name": string_prop("Worktree name to inspect."),
                     "min_idle_ms": integer_prop("Minimum idle age in milliseconds before a session can be a reclaim candidate."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "agent_hibernate",
+            annotations: mutating_annotations(false, false),
+            description: "Hibernate one idle, resumable ForkTTY agent session by closing its terminal process and marking it suspended. Prefer agent_reclaim_plan first.",
+            input_schema: object_schema(
+                &["surface_id"],
+                json!({
+                    "surface_id": string_prop("Surface id with an idle persisted agent session."),
+                    "min_idle_ms": integer_prop("Optional minimum idle age in milliseconds before hibernating."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "agent_reclaim",
+            annotations: mutating_annotations(false, false),
+            description: "Apply the reclaim policy to idle, resumable ForkTTY agent sessions and hibernate matching candidates.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                    "min_idle_ms": integer_prop("Minimum idle age in milliseconds before a session can be reclaimed."),
+                    "limit": integer_prop("Maximum number of candidate sessions to hibernate, capped by the socket."),
                 }),
             ),
         },
@@ -1840,6 +1908,33 @@ mod tests {
         assert_eq!(method, "agent.reclaim.plan");
         assert_eq!(params["workspace_id"], "w1");
         assert_eq!(params["min_idle_ms"], 5000);
+    }
+
+    #[test]
+    fn agent_hibernate_tool_maps_to_socket_agent_hibernate() {
+        let (method, params) = build_socket_call_for_test(
+            "agent_hibernate",
+            json!({"surface_id": "surface-1", "min_idle_ms": 5000}),
+        )
+        .unwrap();
+
+        assert_eq!(method, "agent.hibernate");
+        assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["min_idle_ms"], 5000);
+    }
+
+    #[test]
+    fn agent_reclaim_tool_maps_to_socket_agent_reclaim() {
+        let (method, params) = build_socket_call_for_test(
+            "agent_reclaim",
+            json!({"workspace_id": "w1", "min_idle_ms": 5000, "limit": 3}),
+        )
+        .unwrap();
+
+        assert_eq!(method, "agent.reclaim");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["min_idle_ms"], 5000);
+        assert_eq!(params["limit"], 3);
     }
 
     #[test]

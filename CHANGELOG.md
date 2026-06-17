@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- `agent.hibernate`, `agent.reclaim`, `forktty hibernate-agent`,
+  `forktty reclaim-agents`, and MCP `agent_hibernate`/`agent_reclaim` can now
+  close idle, locally resumable agent terminal processes, mark their persisted
+  sessions `suspended`, and leave them resumable through the existing
+  `agent.resume` path without adding parity UI panels.
 - Workflow control-plane methods (`workflow.list`, `workflow.get`,
   `workflow.upsert`, `workflow.plan.set`, `workflow.evidence.add`,
   `workflow.replay`) plus `forktty workflows`/`workflow-*` CLI commands and MCP

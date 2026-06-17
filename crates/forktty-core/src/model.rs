@@ -121,6 +121,7 @@ pub enum AgentSessionLifecycle {
     Running,
     Idle,
     NeedsInput,
+    Suspended,
     Ended,
     #[default]
     Unknown,
