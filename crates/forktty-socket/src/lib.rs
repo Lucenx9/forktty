@@ -2145,8 +2145,8 @@ fn hibernate_agent_surface(
 ) -> Result<Value, DispatchError> {
     let now_ms = current_unix_epoch_ms();
     let path = std::env::var_os("PATH");
-    let (workspace_id, agent, session_id, resume_cwd, permission_mode, argv, idle_ms) = {
-        let model = state
+    let (surface, status, agent, session_id, resume_cwd, permission_mode, argv, idle_ms) = {
+        let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
@@ -2200,27 +2200,11 @@ fn hibernate_agent_surface(
                 "Agent session cannot be resumed safely: {reason}"
             )));
         }
-        (
-            surface.workspace_id.clone(),
-            agent_session.agent,
-            agent_session.session_id.clone(),
-            resume_cwd,
-            agent_session.permission_mode.clone(),
-            argv,
-            idle_ms,
-        )
-    };
-
-    close_terminal_surface_if_present(state, surface_id).map_err(DispatchError::Other)?;
-
-    let (surface, status) = {
-        let mut model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        if model.surface(surface_id).is_none() {
-            return Err(DispatchError::NotFound("surface".to_string()));
-        }
+        let previous_last_activity_ms = agent_session.last_activity_ms;
+        let workspace_id = surface.workspace_id.clone();
+        let agent = agent_session.agent;
+        let session_id = agent_session.session_id.clone();
+        let permission_mode = agent_session.permission_mode.clone();
         model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Suspended);
         model.set_surface_agent_session_last_activity_ms(surface_id, now_ms);
         let _ = model.mark_surface_unread(surface_id, false);
@@ -2231,6 +2215,11 @@ fn hibernate_agent_surface(
             "Suspended",
             Some("yellow".to_string()),
         );
+        if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
+            model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Idle);
+            model.set_surface_agent_session_last_activity_ms(surface_id, previous_last_activity_ms);
+            return Err(DispatchError::Other(err));
+        }
         let surface = model
             .surface(surface_id)
             .cloned()
@@ -2238,6 +2227,12 @@ fn hibernate_agent_surface(
         (
             surface,
             status.ok_or(DispatchError::NotFound("workspace".to_string()))?,
+            agent,
+            session_id,
+            resume_cwd,
+            permission_mode,
+            argv,
+            idle_ms,
         )
     };
 
