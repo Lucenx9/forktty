@@ -38,6 +38,13 @@ All notable changes to ForkTTY are documented here.
 - The experimental Ghostty GTK pane mode can now service ForkTTY socket
   `read_text` and `capture_tail` requests by reading visible/full text through
   the vendored Ghostty GTK embedding ABI.
+- Experimental embedded Ghostty panes now wire surface lifecycle into the
+  ForkTTY model: title changes mirror into the model, child-process exit drops
+  the surface from the ready set and shows a closed status, and a Ghostty
+  close-request tears the pane down cleanly so no stale pane is left behind.
+  The exact exit code and child PID are not yet exposed by the embedding ABI, so
+  the exit status is the neutral "Closed" and port discovery stays unavailable
+  for embedded panes until the ABI is extended.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

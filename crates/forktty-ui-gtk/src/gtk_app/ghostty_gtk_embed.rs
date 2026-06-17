@@ -359,6 +359,33 @@ fn text_line_count(text: &str) -> usize {
     text.lines().count()
 }
 
+/// Status shown on an embedded Ghostty pane after its child process exits.
+///
+/// Mirrors the classic-pane `ChildExit` status (see `terminal_signals.rs`).
+/// `exit_code` is `None` until the embedded ABI exposes the real code (the
+/// staged plan in `docs/ghostty-full-vendor.md` adds it); without it we report
+/// a neutral "Closed" because we cannot tell a clean exit from a crash.
+pub(super) struct EmbeddedChildExitStatus {
+    pub(super) label: &'static str,
+    pub(super) value: String,
+    pub(super) color: Option<String>,
+}
+
+pub(super) fn embedded_child_exit_status(exit_code: Option<i32>) -> EmbeddedChildExitStatus {
+    match exit_code {
+        Some(code) if code != 0 => EmbeddedChildExitStatus {
+            label: "Terminal",
+            value: format!("Exited ({code})"),
+            color: Some("yellow".to_string()),
+        },
+        _ => EmbeddedChildExitStatus {
+            label: "Terminal",
+            value: "Closed".to_string(),
+            color: None,
+        },
+    }
+}
+
 pub(super) fn ghostty_gtk_panes_enabled_from_env() -> bool {
     let Some(value) = std::env::var_os(GHOSTTY_GTK_PANES_ENV) else {
         return false;
@@ -443,6 +470,26 @@ mod tests {
         assert_eq!(snapshot.lines, 2);
         assert_eq!(snapshot.total_lines, 12);
         assert!(!snapshot.truncated);
+    }
+
+    #[test]
+    fn embedded_child_exit_status_reports_closed_for_clean_and_unknown_exit() {
+        let clean = embedded_child_exit_status(Some(0));
+        assert_eq!(clean.label, "Terminal");
+        assert_eq!(clean.value, "Closed");
+        assert_eq!(clean.color, None);
+
+        let unknown = embedded_child_exit_status(None);
+        assert_eq!(unknown.value, "Closed");
+        assert_eq!(unknown.color, None);
+    }
+
+    #[test]
+    fn embedded_child_exit_status_flags_abnormal_exit() {
+        let status = embedded_child_exit_status(Some(3));
+        assert_eq!(status.label, "Terminal");
+        assert_eq!(status.value, "Exited (3)");
+        assert_eq!(status.color, Some("yellow".to_string()));
     }
 
     #[test]

@@ -370,6 +370,73 @@ impl TerminalController {
             );
         }
 
+        // Title parity with classic panes: mirror the Ghostty surface title
+        // into the model so the pane header / surface list stay accurate.
+        {
+            let model = self.model.clone();
+            let surface_id = request.surface_id.clone();
+            widget.connect_notify_local(Some("title"), move |widget, _| {
+                let title = widget
+                    .property::<Option<String>>("title")
+                    .unwrap_or_default();
+                if let Ok(mut model) = model.lock() {
+                    let _ = model.set_surface_title(&surface_id, title);
+                }
+            });
+        }
+
+        // Exit/readiness parity: when the child process exits, drop the surface
+        // out of the ready set and reflect the closed state in its status. The
+        // exact exit code is not yet exposed by the embedded ABI, so the status
+        // is the neutral "Closed" (see embedded_child_exit_status).
+        {
+            let model = self.model.clone();
+            let state = self.state.clone();
+            let surface_id = request.surface_id.clone();
+            let workspace_id = request.workspace_id.clone();
+            widget.connect_notify_local(Some("child-exited"), move |widget, _| {
+                if !widget.property::<bool>("child-exited") {
+                    return;
+                }
+                if let Some(state) = &state {
+                    match state.terminal.mark_surface_not_ready(&surface_id) {
+                        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+                        Err(err) => eprintln!(
+                            "Failed to mark embedded Ghostty GTK surface not ready {surface_id}: {err}"
+                        ),
+                    }
+                }
+                let status = embedded_child_exit_status(None);
+                if let Ok(mut model) = model.lock() {
+                    if model.surface(&surface_id).is_some() {
+                        let _ = model.set_status(
+                            &workspace_id,
+                            surface_status_key(&surface_id),
+                            status.label,
+                            status.value,
+                            status.color,
+                        );
+                    }
+                }
+            });
+        }
+
+        // Clean close parity: when Ghostty requests closure (e.g. the user
+        // closes the surface), drive the same teardown as a classic pane so no
+        // stale pane is left behind. Defer to idle so we never destroy the
+        // Ghostty widget from inside its own close-request emission.
+        if let Some(state) = self.state.clone() {
+            let surface_id = request.surface_id.clone();
+            widget.connect_local("close-request", false, move |_| {
+                let state = state.clone();
+                let surface_id = surface_id.clone();
+                glib::idle_add_local_once(move || {
+                    close_surface_by_id(&state, &surface_id);
+                });
+                None
+            });
+        }
+
         if let Ok(mut model) = self.model.lock() {
             let _ = model.clear_status(
                 &request.workspace_id,

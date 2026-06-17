@@ -54,9 +54,18 @@ FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
 This mode is intentionally incomplete: it proves that ForkTTY can pack Ghostty's
 GTK widget in a pane, pass the cwd, forward socket `send_text`, and answer
 socket `read_text`/`capture_tail` after Ghostty initializes the core surface.
-Search, copy/selection parity, title/status plumbing, and PID/exit lifecycle are
-not complete in embedded pane mode yet. Use the default renderer path for those
-workflows until the remaining embedding hooks are wired.
+Surface lifecycle is partially wired: ForkTTY connects to the Ghostty surface's
+`notify::title`, `notify::child-exited`, and `close-request` GObject signals so
+title changes, child-exit readiness/status, and clean pane teardown match the
+classic panes without a new ABI symbol. Two lifecycle pieces still need the
+embedding ABI extended on the fork before they reach parity:
+
+- the exact child exit code (today's embedded exit status is the neutral
+  "Closed" because the code is not exposed as a property), and
+- the child PID (needed for ForkTTY's listening-port discovery).
+
+Search and copy/selection parity also remain to be wired. Use the default
+renderer path for those workflows until the remaining embedding hooks land.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.
