@@ -1828,6 +1828,7 @@ pub async fn dispatch(
             }))
         }
         "surface.list" => {
+            let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
             let model = state
                 .model
                 .lock()
@@ -1841,7 +1842,11 @@ pub async fn dispatch(
                 Err(DispatchError::MissingParam(_)) => None,
                 Err(err) => return Err(err),
             };
-            Ok(json!(model.list_surfaces(workspace_id.as_deref())))
+            Ok(surface_list_rows(
+                &model,
+                workspace_id.as_deref(),
+                terminal_surfaces,
+            ))
         }
         "surface.read_text" => {
             let surface_id = required_surface_id(&params)?;
@@ -3575,6 +3580,53 @@ fn topology_tree(model: &WorkspaceModel, workspace_id: Option<&str>) -> Value {
         })
         .collect::<Vec<_>>();
     json!({ "workspaces": workspaces })
+}
+
+fn surface_list_rows(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    terminal_surfaces: Vec<TerminalSurfaceState>,
+) -> Value {
+    let terminal_by_id = terminal_surfaces
+        .into_iter()
+        .map(|surface| (surface.surface_id.clone(), surface))
+        .collect::<HashMap<_, _>>();
+    let rows = model
+        .list_surfaces(workspace_id)
+        .into_iter()
+        .map(|surface| {
+            let runtime = terminal_by_id.get(&surface.id);
+            let mut row = serde_json::to_value(&surface).unwrap_or_else(|_| json!({}));
+            if let Some(row) = row.as_object_mut() {
+                row.insert(
+                    "shell".to_string(),
+                    runtime
+                        .map(|surface| json!(surface.shell.clone()))
+                        .unwrap_or(Value::Null),
+                );
+                row.insert(
+                    "cols".to_string(),
+                    runtime
+                        .map(|surface| json!(surface.cols))
+                        .unwrap_or(Value::Null),
+                );
+                row.insert(
+                    "rows".to_string(),
+                    runtime
+                        .map(|surface| json!(surface.rows))
+                        .unwrap_or(Value::Null),
+                );
+                row.insert(
+                    "pid".to_string(),
+                    runtime
+                        .and_then(|surface| surface.pid)
+                        .map_or(Value::Null, Value::from),
+                );
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    Value::Array(rows)
 }
 
 fn system_top(
@@ -10390,6 +10442,40 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), "not_found");
+    }
+
+    #[tokio::test]
+    async fn surface_list_includes_runtime_pid_when_known() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let workspace = {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("project", Path::new("/tmp"))
+        };
+        let surface_id = workspace.focused_surface_id.clone();
+        let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
+            surface_id: surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            cwd: PathBuf::from("/tmp"),
+            shell: "/bin/sh".to_string(),
+            cols: 120,
+            rows: 40,
+            pid: Some(4242),
+        }));
+        let state = SocketAppState::new(
+            model,
+            backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        let surfaces = dispatch(&state, "surface.list", json!({})).await.unwrap();
+
+        assert_eq!(surfaces[0]["id"], surface_id);
+        assert_eq!(surfaces[0]["pid"], 4242);
+        assert_eq!(surfaces[0]["shell"], "/bin/sh");
+        assert_eq!(surfaces[0]["cols"], 120);
+        assert_eq!(surfaces[0]["rows"], 40);
     }
 
     #[tokio::test]

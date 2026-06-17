@@ -74,6 +74,9 @@ All notable changes to ForkTTY are documented here.
   finishes startup, and the ABI falls back to Ghostty's PTY foreground PID while
   the mailbox value is not yet visible. Probe-visible PID parity remains tracked
   in the embedded parity matrix.
+- The socket `surface.list` result, and therefore `forktty surfaces --json`,
+  now includes live runtime fields (`shell`, `cols`, `rows`, and `pid` when
+  known) in the same rows as the model metadata.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies socket
   `capture-tail` and that embedded pane startup did not fall back to the
