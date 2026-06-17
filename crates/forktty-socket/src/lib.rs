@@ -93,6 +93,7 @@ pub const METHODS: &[&str] = &[
     "browser.reload",
     "browser.snapshot",
     "events.subscribe",
+    "feed.list",
     "agent.health",
     "agent.list",
     "agent.reclaim.plan",
@@ -139,6 +140,7 @@ pub const METHODS: &[&str] = &[
 #[cfg(not(feature = "browser"))]
 pub const METHODS: &[&str] = &[
     "events.subscribe",
+    "feed.list",
     "agent.health",
     "agent.list",
     "agent.reclaim.plan",
@@ -691,6 +693,23 @@ pub async fn dispatch(
             "version": env!("CARGO_PKG_VERSION"),
             "methods": METHODS,
         })),
+        "feed.list" => {
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let workspace_id = match workspace_selector_from_params(&params) {
+                Ok(selector) => Some(
+                    model
+                        .workspace_id_for(selector)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                ),
+                Err(DispatchError::MissingParam(_)) => None,
+                Err(err) => return Err(err),
+            };
+            let limit = optional_u64_param(&params, "limit")?.unwrap_or(50).min(200) as usize;
+            Ok(json!(feed_list(&model, workspace_id.as_deref(), limit)))
+        }
         "agent.health" => {
             let model = state
                 .model
@@ -2271,6 +2290,105 @@ fn status_summary(model: &WorkspaceModel, workspace_id: &str) -> Option<Value> {
         "status": model.list_status(workspace_id),
         "progress": model.list_progress(workspace_id),
     }))
+}
+
+struct FeedItem {
+    // ponytail: status/progress have no model timestamp; priority keeps current state visible.
+    priority: u8,
+    created_at_ms: u128,
+    value: Value,
+}
+
+fn feed_list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -> Vec<Value> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut items = Vec::new();
+    for notification in model.list_notifications() {
+        if workspace_id.is_some_and(|id| notification.workspace_id.as_deref() != Some(id)) {
+            continue;
+        }
+        let item_type = if notification.kind == NotificationKind::Prompt {
+            "approval"
+        } else {
+            "notification"
+        };
+        items.push(FeedItem {
+            priority: u8::from(notification.kind == NotificationKind::Prompt) + 1,
+            created_at_ms: notification.created_at_ms,
+            value: json!({
+                "id": notification.id,
+                "type": item_type,
+                "kind": notification.kind,
+                "title": notification.title,
+                "body": notification.body,
+                "workspace_id": notification.workspace_id,
+                "surface_id": notification.surface_id,
+                "created_at_ms": notification.created_at_ms,
+                "read": notification.read,
+            }),
+        });
+    }
+
+    for workspace in model
+        .list_workspaces()
+        .into_iter()
+        .filter(|workspace| workspace_id.is_none_or(|id| workspace.id == id))
+    {
+        for status in model.list_status(&workspace.id) {
+            items.push(FeedItem {
+                priority: 2,
+                created_at_ms: 0,
+                value: json!({
+                    "id": format!("status:{}:{}", workspace.id, status.key),
+                    "type": "status",
+                    "kind": "status",
+                    "key": status.key,
+                    "title": status.label,
+                    "body": status.value,
+                    "workspace_id": workspace.id,
+                    "surface_id": null,
+                    "created_at_ms": 0,
+                }),
+            });
+        }
+        for progress in model.list_progress(&workspace.id) {
+            let body = match progress.total {
+                Some(total) => format!("{}/{}", feed_number(progress.value), feed_number(total)),
+                None => feed_number(progress.value),
+            };
+            items.push(FeedItem {
+                priority: 2,
+                created_at_ms: 0,
+                value: json!({
+                    "id": format!("progress:{}:{}", workspace.id, progress.key),
+                    "type": "progress",
+                    "kind": "progress",
+                    "key": progress.key,
+                    "title": progress.label,
+                    "body": body,
+                    "value": progress.value,
+                    "total": progress.total,
+                    "workspace_id": workspace.id,
+                    "surface_id": null,
+                    "created_at_ms": 0,
+                }),
+            });
+        }
+    }
+
+    items.sort_by_key(|item| std::cmp::Reverse((item.priority, item.created_at_ms)));
+    items.truncate(limit);
+    items.into_iter().map(|item| item.value).collect()
+}
+
+fn feed_number(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        value.to_string()
+    }
 }
 
 fn topology_tree(model: &WorkspaceModel, workspace_id: Option<&str>) -> Value {
@@ -6013,6 +6131,61 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatches_minimal_feed_list() {
+        let (state, _) = test_state();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            model
+                .set_status(&workspace.id, "agent:codex", "Codex", "Running", None)
+                .unwrap();
+            model
+                .set_progress(&workspace.id, "build", "Build", 2.0, Some(4.0))
+                .unwrap();
+            let note = model.create_notification(
+                "Permission",
+                "Run command?",
+                NotificationKind::Prompt,
+                Some(workspace.id.clone()),
+                Some(surface_id.clone()),
+            );
+            assert!(note.created_at_ms > 0);
+            for title in ["One", "Two", "Three"] {
+                model.create_notification(
+                    title,
+                    "Plain notification",
+                    NotificationKind::Info,
+                    Some(workspace.id.clone()),
+                    None,
+                );
+            }
+            (workspace.id, surface_id)
+        };
+
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 3}),
+        )
+        .await
+        .unwrap();
+        let items = feed.as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["type"], "approval");
+        assert_eq!(items[0]["title"], "Permission");
+        assert_eq!(items[0]["body"], "Run command?");
+        assert_eq!(items[0]["surface_id"], surface_id);
+        assert!(!items.iter().any(|item| item["type"] == "notification"));
+        assert!(items
+            .iter()
+            .any(|item| item["type"] == "status" && item["title"] == "Codex"));
+        assert!(items
+            .iter()
+            .any(|item| item["type"] == "progress" && item["title"] == "Build"));
     }
 
     #[tokio::test]

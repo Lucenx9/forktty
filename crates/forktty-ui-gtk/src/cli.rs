@@ -157,6 +157,9 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "set-progress"
             | "list-progress"
             | "clear-progress"
+            | "feed"
+            | "feed-list"
+            | "feed:list"
             | "log"
             | "logs"
             | "list-logs"
@@ -1307,6 +1310,9 @@ mod tests {
             "statusline",
             "status-line",
             "status:summary",
+            "feed",
+            "feed-list",
+            "feed:list",
             "top",
         ] {
             assert!(is_socket_cli_command(command), "{command}");
@@ -1317,6 +1323,14 @@ mod tests {
                 OsString::from("agent-reclaim-plan"),
                 OsString::from("--min-idle-ms"),
                 OsString::from("5000")
+            ])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "feed", "--limit", "5"]),
+            CliAction::SocketCli(vec![
+                OsString::from("feed"),
+                OsString::from("--limit"),
+                OsString::from("5")
             ])
         );
     }
