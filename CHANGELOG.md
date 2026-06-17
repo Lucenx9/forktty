@@ -11,10 +11,17 @@ All notable changes to ForkTTY are documented here.
   later session save keeps recent embedded output. Restoring that scrollback on
   respawn/session restore is wired through an optional
   `ghostty_gtk_surface_restore_scrollback` embedding ABI (feeds Ghostty's VT
-  stream, never the child PTY); the currently shipped embedding library does not
-  export the symbol yet, so restore degrades to a no-op until the Ghostty fork
-  lands it. See `docs/ghostty-renderer-embedding-spike.md` for the Ghostty-side
+  stream, never the child PTY). The pinned Ghostty fork now exports the symbol
+  (an IO-thread `inject_output` mailbox message routed to
+  `Termio.processOutput`), so an embedding library built from the current pin
+  restores embedded scrollback; libraries built before it degrade to a safe
+  no-op. The end-to-end restore is still pending verification on the Ghostty GTK
+  Probe runner because the embedding `.so` cannot be linked on the local
+  toolchain. See `docs/ghostty-renderer-embedding-spike.md` for the Ghostty-side
   design.
+- Bumped the vendored Ghostty pin to
+  `2d6400f56af4af03cc59ac5b87754de717cf6bdc`, which adds the
+  `ghostty_gtk_surface_restore_scrollback` GTK embedding ABI.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
   cmux-style renderer/widget integration spike; release builds still use the
   existing GTK/libghostty-vt runtime until that bridge is proven.

@@ -40,7 +40,8 @@ fi
 for symbol in \
   ghostty_gtk_surface_exit_code \
   ghostty_gtk_surface_child_pid \
-  ghostty_gtk_surface_perform_action
+  ghostty_gtk_surface_perform_action \
+  ghostty_gtk_surface_restore_scrollback
 do
   if ! nm -D "$lib_path" | grep -Eq "(^|[[:space:]])${symbol}$"; then
     echo "Ghostty GTK embedding library is missing ${symbol}" >&2

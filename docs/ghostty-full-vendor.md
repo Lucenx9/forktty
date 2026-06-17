@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `383cd1d9f9be5480e9b0987f7eb36ecef8fcf142`
+- Pin: `2d6400f56af4af03cc59ac5b87754de717cf6bdc`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -86,12 +86,19 @@ Persisted scrollback restore is wired through an optional
 `ghostty_gtk_surface_restore_scrollback(GtkWidget*, const char*, size_t)` symbol
 that ForkTTY loads when present. It must inject already-terminal-ready bytes
 (CR/LF normalized by ForkTTY) into the surface's VT stream WITHOUT writing them
-to the child PTY, so restored output is not replayed as shell input. The fork
-does not export this symbol yet, so restore is a safe no-op until it lands; the
-snapshot half (reading the tail through `ghostty_gtk_surface_read_text` into the
-session) already works. The smallest safe Ghostty-side design — an IO-thread
-`inject_output` mailbox message routed to `Termio.processOutput` — is in
-[ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md).
+to the child PTY, so restored output is not replayed as shell input. The current
+pinned fork exports it: an IO-thread `inject_output` mailbox message routed to
+`Termio.processOutput` keeps all terminal mutation on the IO thread (a raw
+GTK-main-thread feed was rejected — it races the IO thread's PTY reader). The
+design is detailed in
+[ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md). The
+embedded restore round-trip is not yet probe-verified end-to-end: the
+embedding `.so` cannot be built on the current local toolchain (Zig 0.15.2
+linker bug, see the spike doc), so the symbol's runtime effect must be confirmed
+on the Ubuntu runner via the **Ghostty GTK Probe** workflow before parity row 3
+flips to `pass`. A library built before this symbol degrades to a safe no-op.
+The snapshot half (reading the tail through `ghostty_gtk_surface_read_text` into
+the session) already works.
 
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. When `scripts/ghostty-gtk-lib-probe.sh` has produced

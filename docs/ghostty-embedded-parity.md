@@ -48,7 +48,7 @@ exercised) · `n/a`.
 | - | --------- | ------------- | ------------ | ------ |
 | 1 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
 | 2 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of an echoed marker | pass |
-| 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; **manual**: scrollback persistence across restart | pending (snapshot done; restore blocked on Ghostty ABI) |
+| 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; **manual**: scrollback persistence across restart | pending (snapshot done; restore ABI shipped in pin, probe-pending) |
 | 4 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively) | pending |
 | 5 | Images (Kitty/iTerm) | Inline images render in the embedded surface | manual (visual; Ghostty renders natively) | pending |
 | 6 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | pending |
@@ -84,24 +84,32 @@ exercised) · `n/a`.
 - **Scrollback restore (gated)** — on respawn ForkTTY computes terminal-ready
   bytes from `persisted_scrollback` (same CR/LF normalization as classic panes)
   and seeds them through the optional `ghostty_gtk_surface_restore_scrollback`
-  ABI, which must feed Ghostty's VT stream and never the child PTY. The shipped
-  embedding library does not export this symbol yet, so restore is a safe no-op
-  today; see the blocker below.
+  ABI, which feeds Ghostty's VT stream and never the child PTY. The pinned fork
+  now exports the symbol (IO-thread `inject_output` → `Termio.processOutput`); a
+  library built before it still degrades to a safe no-op. The round-trip is not
+  yet probe-verified — see the note below.
 
-## Pending blocker — scrollback restore ABI
+## Probe-pending — scrollback restore ABI
 
-Restore (row 3, second half) cannot be proven until the Ghostty fork ships a
-`ghostty_gtk_surface_restore_scrollback` export that injects bytes into the
-surface's VT stream without writing them to the child PTY. The smallest safe
-Ghostty-side design (an IO-thread `inject_output` mailbox message routed to
-`Termio.processOutput`, plus the C export) is documented in
+The Ghostty fork now ships the `ghostty_gtk_surface_restore_scrollback` export
+(pin `2d6400f56af4af03cc59ac5b87754de717cf6bdc`): an IO-thread `inject_output`
+mailbox message routed to `Termio.processOutput` injects bytes into the surface's
+VT stream without writing them to the child PTY. A raw GTK-main-thread feed into
+`processOutput` was rejected because it races the IO thread's PTY reader; the
+message route keeps all terminal mutation on the IO thread. The design is
+documented in
 [`ghostty-renderer-embedding-spike.md`](ghostty-renderer-embedding-spike.md).
-A raw GTK-main-thread feed into `processOutput` was rejected because it races
-the IO thread's PTY reader; the message route keeps all terminal mutation on the
-IO thread. The ForkTTY side (snapshot, optional symbol loading, restore wiring,
-graceful no-op when absent) is implemented and unit-tested now, so the row flips
-to `pass` once the fork lands the symbol, the pin is bumped, and the Ghostty GTK
-Probe verifies restored scrollback across respawn.
+
+The fork commit was verified as far as the local toolchain allows
+(`zig fmt --check`, `zig ast-check`, and the `zig build test -Dapp-runtime=none`
+core suite — which runs the `@sizeOf(Message) == 40` assertion and compiles
+`Surface.injectOutput`). What is **not** yet proven is the runtime restore
+round-trip in a packed embedded pane: the embedding `.so` cannot be linked on the
+local toolchain (Zig 0.15.2 / GCC 16.1.1 `.sframe` `R_X86_64_PC64` linker bug),
+so row 3 flips to `pass` only after the Ghostty GTK Probe workflow builds the
+`.so` on the Ubuntu runner and confirms restored scrollback survives a respawn.
+The ForkTTY side (snapshot, optional symbol loading, restore wiring, graceful
+no-op when absent) is implemented and unit-tested now.
 
 ## Promotion gate
 

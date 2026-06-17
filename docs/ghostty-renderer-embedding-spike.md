@@ -101,20 +101,32 @@ plain-text read ABIs for socket send/read/capture operations.
 Do not replace ForkTTY's current renderer until the parity matrix is all `pass`
 and the embedding library ships in release artifacts by default.
 
-## Blocked: scrollback restore ABI
+## Landed (pending probe): scrollback restore ABI
 
 Embedded panes can already *snapshot* their scrollback into the session (ForkTTY
 reads the tail through `ghostty_gtk_surface_read_text` and stores it on the
 surface). *Restoring* that scrollback on respawn needs a Ghostty-side export
-that ForkTTY does not yet have: a way to push bytes into a surface's terminal
-state (scrollback/screen) **without** writing them to the child PTY — otherwise
-old output would be replayed as shell input.
+that pushes bytes into a surface's terminal state (scrollback/screen)
+**without** writing them to the child PTY — otherwise old output would be
+replayed as shell input.
 
 ForkTTY's side is implemented and unit-tested: it loads an optional
 `ghostty_gtk_surface_restore_scrollback` symbol, CR/LF-normalizes the persisted
 text into terminal-ready bytes (same as classic panes), and seeds it on surface
-init, degrading to a no-op when the symbol is absent. Only the Ghostty fork
-change is missing.
+init, degrading to a no-op when the symbol is absent.
+
+The Ghostty fork now exports the symbol: the design below landed on
+`Lucenx9/ghostty` at `2d6400f56af4af03cc59ac5b87754de717cf6bdc`, and ForkTTY's
+submodule pin (and `GHOSTTY_VENDOR_REV`) is bumped to it. The fork commit was
+verified locally as far as the toolchain allows — `zig fmt --check`,
+`zig ast-check`, and the full `zig build test -Dapp-runtime=none` core suite
+(which executes the `@sizeOf(Message) == 40` assertion and compiles
+`Surface.injectOutput`) all pass. The **end-to-end restore round-trip is not yet
+probe-verified**: the embedding `.so` still cannot be linked on the local
+toolchain (the `gtk_blueprint_compiler` build helper hits the Zig 0.15.2 /
+GCC 16.1.1 `.sframe` `R_X86_64_PC64` linker bug below, before the library is
+linked), so the symbol's runtime effect must be confirmed on the Ubuntu runner
+via the **Ghostty GTK Probe** workflow before parity row 3 flips to `pass`.
 
 ### Why not a GTK-main-thread feed
 
@@ -128,7 +140,7 @@ the renderer mutex, and there is no exposed pre-spawn window where the IO thread
 is guaranteed idle. So a raw main-thread feed is unsafe; the smallest safe
 design keeps all terminal mutation on the IO thread via the existing mailbox.
 
-### Smallest safe Ghostty-side design (to land on the fork)
+### Smallest safe Ghostty-side design (landed on the fork)
 
 Route the bytes through the IO thread the same way `writeBytes` does, but call
 `processOutput` instead of `queueWrite`. Reuse the `WriteReq` data carrier so
@@ -209,13 +221,13 @@ than the existing `write_small`).
    );
    ```
 
-This cannot be committed from the ForkTTY repo: `vendor/ghostty` is a pinned
-submodule on `Lucenx9/ghostty`, and `xtask check` enforces the exact
-`GHOSTTY_VENDOR_REV`. Land the change on the fork, then bump the submodule pin
-and `GHOSTTY_VENDOR_REV` (and the pin in `ghostty-full-vendor.md`) in one commit
-per that doc's process. ForkTTY's loader picks up the symbol automatically with
-no further Rust changes. Verify end-to-end through the Ghostty GTK Probe (the
-`.so` cannot be built on the current local toolchain — see below).
+This change landed on `Lucenx9/ghostty` (branch `forktty-gtk-embed`,
+`2d6400f56af4af03cc59ac5b87754de717cf6bdc`), and the submodule pin +
+`GHOSTTY_VENDOR_REV` + the pin in `ghostty-full-vendor.md` are bumped to it.
+ForkTTY's loader picks up the symbol automatically with no further Rust changes.
+The end-to-end restore must still be verified through the Ghostty GTK Probe (the
+`.so` cannot be built on the current local toolchain — see below) before parity
+row 3 flips to `pass`.
 
 ## Build Probe
 
