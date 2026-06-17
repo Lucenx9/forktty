@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`afb923daba793f31b765f420cb193bc3a51733a5`.
+`4c1f1c61985f0b059da05fb0e88e8d28f83030a9`.
 
 ## Result
 
@@ -66,6 +66,8 @@ when the embedding library is loaded after the host process has already
 initialized GTK. In embedding mode it also skips Ghostty GTK startup pieces
 that belong to the standalone app, including theme-manager sync, signal
 handlers, application actions, global shortcuts, and config-error dialogs.
+The GTK surface constructor returns a sunk full `GtkWidget*` reference so
+gtk-rs and other embedders can use normal transfer-full ownership.
 
 ## Next Cut
 

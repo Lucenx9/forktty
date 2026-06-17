@@ -21,6 +21,8 @@ All notable changes to ForkTTY are documented here.
   the vendored Ghostty GTK embedding library.
 - The vendored Ghostty GTK embedding library now avoids standalone-app theme
   startup when registered inside ForkTTY's host GTK application.
+- The vendored Ghostty GTK embedding ABI now returns a sunk full widget
+  reference so the Rust probe can parent the surface without premature dispose.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
