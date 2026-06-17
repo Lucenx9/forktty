@@ -76,6 +76,8 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `mouse-shift-capture` now controls whether Shift+click stays local
   for selection or can be forwarded to mouse-tracking applications, including
   XTSHIFTESCAPE runtime overrides for `true`/`false`.
+- Ghostty `mouse-hide-while-typing` now hides the GTK terminal pointer after
+  user typing or paste until mouse movement restores it.
 - Ghostty `mouse-scroll-multiplier` now controls GTK terminal precision and discrete scroll distance.
 - Ghostty `adjust-cell-width` and `adjust-cell-height` now adjust GTK terminal cell metrics using pixel or percentage values.
 - Ghostty `unfocused-split-opacity` and `unfocused-split-fill` now control ForkTTY's inactive split dim overlay.

@@ -145,6 +145,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
     pub(super) mouse_reporting: Option<bool>,
     pub(super) mouse_shift_capture: GhosttyMouseShiftCapture,
+    pub(super) mouse_hide_while_typing: bool,
     pub(super) adjust_cell_width: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_cell_height: Option<GhosttyMetricAdjustment>,
     pub(super) unfocused_split_opacity: f64,
@@ -211,6 +212,10 @@ pub(super) fn terminal_mouse_shift_capture_for_appearance(
     appearance: &GhosttyTerminalAppearance,
 ) -> GhosttyMouseShiftCapture {
     appearance.mouse_shift_capture
+}
+
+pub(super) fn terminal_mouse_hide_while_typing_for_config(config: &config::AppConfig) -> bool {
+    ghostty_terminal_appearance_for_config(config).mouse_hide_while_typing
 }
 
 pub(super) fn terminal_kitty_image_storage_limit_for_config(
@@ -663,6 +668,7 @@ impl Default for GhosttyTerminalAppearance {
             mouse_scroll_multipliers: MouseScrollMultipliers::default(),
             mouse_reporting: None,
             mouse_shift_capture: GhosttyMouseShiftCapture::False,
+            mouse_hide_while_typing: false,
             adjust_cell_width: None,
             adjust_cell_height: None,
             unfocused_split_opacity: DEFAULT_UNFOCUSED_SPLIT_OPACITY,
@@ -759,6 +765,7 @@ impl GhosttyTerminalAppearance {
             }
             "mouse-reporting" => self.mouse_reporting = parse_ghostty_optional_bool(&value),
             "mouse-shift-capture" => self.apply_mouse_shift_capture(&value),
+            "mouse-hide-while-typing" => self.mouse_hide_while_typing = parse_ghostty_bool(&value),
             "mouse-scroll-multiplier" => self.apply_mouse_scroll_multiplier(&value),
             "cursor-invert-fg-bg" => {
                 if parse_ghostty_bool(&value) {
@@ -1425,6 +1432,20 @@ mod tests {
         assert!(GhosttyMouseShiftCapture::False.capture(Some(true)));
         assert!(GhosttyMouseShiftCapture::Always.capture(Some(false)));
         assert!(!GhosttyMouseShiftCapture::Never.capture(Some(true)));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_mouse_hide_while_typing() {
+        let config = config::AppConfig::default();
+        let default = ghostty_terminal_appearance_from_text("");
+        assert!(!terminal_mouse_hide_while_typing_for_config(&config));
+        assert!(!default.mouse_hide_while_typing);
+
+        let enabled = ghostty_terminal_appearance_from_text("mouse-hide-while-typing = true");
+        assert!(enabled.mouse_hide_while_typing);
+
+        let disabled = ghostty_terminal_appearance_from_text("mouse-hide-while-typing = false");
+        assert!(!disabled.mouse_hide_while_typing);
     }
 
     #[test]

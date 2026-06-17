@@ -102,6 +102,7 @@ pub(super) struct GhosttyTerminalWidget {
     search_invalidated: Rc<SearchInvalidatedSlot>,
     // The link currently being highlighted by a Ctrl+hover, if any.
     hover_link: Rc<RefCell<Option<HoverLink>>>,
+    mouse_cursor_hidden: Rc<Cell<bool>>,
     // Agent TUIs often grab mouse tracking. For them, a short click should
     // still reach the app, while a real drag should select text locally.
     local_selection_on_mouse_drag: Rc<Cell<bool>>,
@@ -111,6 +112,7 @@ pub(super) struct GhosttyTerminalWidget {
     scroll_to_bottom: GhosttyScrollToBottom,
     mouse_reporting: bool,
     mouse_shift_capture: GhosttyMouseShiftCapture,
+    mouse_hide_while_typing: bool,
     selection_word_chars: Rc<Vec<char>>,
 }
 
@@ -180,6 +182,7 @@ impl GhosttyTerminalWidget {
         let runtime = Rc::new(RefCell::new(runtime));
         let selection = Rc::new(RefCell::new(TerminalSelection::default()));
         let hover_link = Rc::new(RefCell::new(Option::<HoverLink>::None));
+        let mouse_cursor_hidden = Rc::new(Cell::new(false));
         let local_selection_on_mouse_drag = Rc::new(Cell::new(false));
         let cursor_blink_visible = Rc::new(Cell::new(true));
         let visual_bell_active = Rc::new(Cell::new(false));
@@ -198,6 +201,7 @@ impl GhosttyTerminalWidget {
         let scroll_to_bottom = terminal_scroll_to_bottom_for_config(config);
         let mouse_reporting = terminal_mouse_reporting_for_config(config);
         let mouse_shift_capture = terminal_mouse_shift_capture_for_config(config);
+        let mouse_hide_while_typing = terminal_mouse_hide_while_typing_for_config(config);
         let selection_word_chars =
             Rc::new(terminal_selection_word_chars_for_config(config).unwrap_or_default());
         let im_context = gtk::IMMulticontext::new();
@@ -258,6 +262,7 @@ impl GhosttyTerminalWidget {
                 let selection = selection.clone();
                 let drawing_area = drawing_area.downgrade();
                 let cursor_blink_visible = cursor_blink_visible.clone();
+                let mouse_cursor_hidden = mouse_cursor_hidden.clone();
                 move |_context, text| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
@@ -275,11 +280,14 @@ impl GhosttyTerminalWidget {
                         input,
                         selection_clear_on_typing,
                         scroll_to_bottom.keystroke,
+                        mouse_hide_while_typing,
+                        &mouse_cursor_hidden,
                     );
                 }
             });
             let cursor_blink_visible_for_key = cursor_blink_visible.clone();
             let selection_for_key = selection.clone();
+            let mouse_cursor_hidden_for_key = mouse_cursor_hidden.clone();
             key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
                 // With an IM context installed, EventControllerKey runs
                 // IMContext::filter_keypress before ::key-pressed; consumed
@@ -318,11 +326,14 @@ impl GhosttyTerminalWidget {
                     input,
                     selection_clear_on_typing,
                     scroll_to_bottom.keystroke,
+                    mouse_hide_while_typing,
+                    &mouse_cursor_hidden_for_key,
                 );
                 glib::Propagation::Stop
             });
             key_controller.connect_key_released({
                 let hover_link = hover_link.clone();
+                let mouse_cursor_hidden = mouse_cursor_hidden.clone();
                 let drawing_area = drawing_area.downgrade();
                 move |_, key, _keycode, _modifiers| {
                     if !matches!(key, gtk::gdk::Key::Control_L | gtk::gdk::Key::Control_R) {
@@ -333,7 +344,7 @@ impl GhosttyTerminalWidget {
                     };
                     // Hover is Ctrl-gated; releasing Ctrl without moving the pointer
                     // must not leave the pointer cursor and underline stuck.
-                    clear_hover_link(&hover_link, &drawing_area);
+                    clear_hover_link(&hover_link, &drawing_area, &mouse_cursor_hidden);
                 }
             });
             drawing_area.add_controller(key_controller);
@@ -392,6 +403,7 @@ impl GhosttyTerminalWidget {
                 let selection = selection.clone();
                 let toast_handle = toast_handle.clone();
                 let hover_link_for_click = hover_link.clone();
+                let mouse_cursor_hidden = mouse_cursor_hidden.clone();
                 let local_selection_on_mouse_drag = local_selection_on_mouse_drag.clone();
                 let selection_word_chars = selection_word_chars.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
@@ -401,6 +413,11 @@ impl GhosttyTerminalWidget {
                     let Some(button) = terminal_mouse_button(gesture.current_button()) else {
                         return;
                     };
+                    show_pointer_after_mouse(
+                        &drawing_area,
+                        &mouse_cursor_hidden,
+                        hover_link_for_click.borrow().is_some(),
+                    );
                     any_button_pressed.set(true);
                     pending_left_press.borrow_mut().take();
                     let modifiers = gesture.current_event_state();
@@ -416,7 +433,7 @@ impl GhosttyTerminalWidget {
                                 // The press consumed the gesture; drop the hover artifacts now —
                                 // Ctrl-release can't (clear_hover_link no-ops once this is None).
                                 *hover_link_for_click.borrow_mut() = None;
-                                drawing_area.set_cursor_from_name(None);
+                                show_pointer_after_mouse(&drawing_area, &mouse_cursor_hidden, false);
                                 drawing_area.queue_draw();
                                 open_terminal_link(&drawing_area, &link.uri);
                                 return;
@@ -450,6 +467,8 @@ impl GhosttyTerminalWidget {
                                     &drawing_area,
                                     toast_handle.clone(),
                                     scroll_to_bottom.keystroke,
+                                    mouse_hide_while_typing,
+                                    mouse_cursor_hidden.clone(),
                                 );
                             }
                             Err(err) => eprintln!("Failed to route middle click: {err}"),
@@ -512,7 +531,11 @@ impl GhosttyTerminalWidget {
                             autoscroll.drag_moved.set(false);
                             autoscroll.scroll_compensated_head.set(false);
                             if n_press == 1 {
-                                clear_hover_link(&hover_link_for_click, &drawing_area);
+                                clear_hover_link(
+                                    &hover_link_for_click,
+                                    &drawing_area,
+                                    &mouse_cursor_hidden,
+                                );
                                 selection.begin_drag(selection_cell_for_position(
                                     &drawing_area,
                                     &renderer,
@@ -736,10 +759,18 @@ impl GhosttyTerminalWidget {
                 let autoscroll = autoscroll.clone();
                 let selection = selection.clone();
                 let hover_link = hover_link.clone();
+                let mouse_cursor_hidden = mouse_cursor_hidden.clone();
                 motion.connect_motion(move |controller, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
                     };
+                    let was_hidden = mouse_cursor_hidden.replace(false);
+                    if was_hidden {
+                        apply_terminal_pointer_cursor(
+                            &drawing_area,
+                            terminal_pointer_cursor(false, false),
+                        );
+                    }
                     let renderer = renderer.borrow();
                     if selection.borrow().is_selecting() {
                         // A broken pointer grab can swallow the button release
@@ -810,7 +841,7 @@ impl GhosttyTerminalWidget {
                         if deferred_local_drag_exceeded_threshold(pending.x, pending.y, x, y) {
                             pending_left_press.borrow_mut().take();
                             autoscroll.lines.set(0);
-                            clear_hover_link(&hover_link, &drawing_area);
+                            clear_hover_link(&hover_link, &drawing_area, &mouse_cursor_hidden);
                             let start = selection_cell_for_position(
                                 &drawing_area,
                                 &renderer,
@@ -846,14 +877,15 @@ impl GhosttyTerminalWidget {
                         None
                     };
                     let changed = *hover_link.borrow() != resolved;
-                    if changed {
-                        drawing_area.set_cursor_from_name(if resolved.is_some() {
-                            Some("pointer")
-                        } else {
-                            None
-                        });
+                    if changed || was_hidden {
+                        apply_terminal_pointer_cursor(
+                            &drawing_area,
+                            terminal_pointer_cursor(resolved.is_some(), false),
+                        );
                         *hover_link.borrow_mut() = resolved;
-                        drawing_area.queue_draw();
+                        if changed {
+                            drawing_area.queue_draw();
+                        }
                     }
                     let input = terminal_mouse_input_for_area(
                         &drawing_area,
@@ -872,14 +904,20 @@ impl GhosttyTerminalWidget {
             }
             motion.connect_leave({
                 let hover_link = hover_link.clone();
+                let mouse_cursor_hidden = mouse_cursor_hidden.clone();
                 let drawing_area = drawing_area.downgrade();
                 move |_| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
                     };
+                    mouse_cursor_hidden.set(false);
                     // Pointer can exit the widget without a final motion event
                     // inside it; clear the hover underline and cursor.
-                    clear_hover_link(&hover_link, &drawing_area);
+                    clear_hover_link(&hover_link, &drawing_area, &mouse_cursor_hidden);
+                    apply_terminal_pointer_cursor(
+                        &drawing_area,
+                        terminal_pointer_cursor(false, false),
+                    );
                 }
             });
             drawing_area.add_controller(motion);
@@ -1015,6 +1053,7 @@ impl GhosttyTerminalWidget {
             renderer,
             selection,
             hover_link,
+            mouse_cursor_hidden,
             toast_handle,
             local_selection_on_mouse_drag,
             cursor_blink_visible,
@@ -1032,6 +1071,7 @@ impl GhosttyTerminalWidget {
             scroll_to_bottom,
             mouse_reporting,
             mouse_shift_capture,
+            mouse_hide_while_typing,
             selection_word_chars,
         };
         widget.attach_cursor_blink_timer();
@@ -1081,6 +1121,7 @@ impl GhosttyTerminalWidget {
             search_cache: Rc::downgrade(&self.search_cache),
             search_invalidated: Rc::downgrade(&self.search_invalidated),
             hover_link: Rc::downgrade(&self.hover_link),
+            mouse_cursor_hidden: Rc::downgrade(&self.mouse_cursor_hidden),
             local_selection_on_mouse_drag: Rc::downgrade(&self.local_selection_on_mouse_drag),
             selection_clear_on_typing: self.selection_clear_on_typing,
             selection_clear_on_copy: self.selection_clear_on_copy,
@@ -1088,6 +1129,7 @@ impl GhosttyTerminalWidget {
             scroll_to_bottom: self.scroll_to_bottom,
             mouse_reporting: self.mouse_reporting,
             mouse_shift_capture: self.mouse_shift_capture,
+            mouse_hide_while_typing: self.mouse_hide_while_typing,
             selection_word_chars: Rc::downgrade(&self.selection_word_chars),
         }
     }
@@ -1391,7 +1433,10 @@ impl GhosttyTerminalWidget {
             // clear the hover-link underline to avoid stale highlights.
             if visible_content_changed && self.hover_link.borrow().is_some() {
                 *self.hover_link.borrow_mut() = None;
-                self.drawing_area.set_cursor_from_name(None);
+                apply_terminal_pointer_cursor(
+                    &self.drawing_area,
+                    terminal_pointer_cursor(false, self.mouse_cursor_hidden.get()),
+                );
             }
             // The dropped selection may have been the search-match highlight;
             // reset the match state and tell the search bar so its count
@@ -1435,6 +1480,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     search_cache: std::rc::Weak<RefCell<Option<SearchCache>>>,
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
     hover_link: std::rc::Weak<RefCell<Option<HoverLink>>>,
+    mouse_cursor_hidden: std::rc::Weak<Cell<bool>>,
     local_selection_on_mouse_drag: std::rc::Weak<Cell<bool>>,
     selection_clear_on_typing: bool,
     selection_clear_on_copy: bool,
@@ -1442,6 +1488,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     scroll_to_bottom: GhosttyScrollToBottom,
     mouse_reporting: bool,
     mouse_shift_capture: GhosttyMouseShiftCapture,
+    mouse_hide_while_typing: bool,
     selection_word_chars: std::rc::Weak<Vec<char>>,
 }
 
@@ -1463,6 +1510,7 @@ impl WeakGhosttyTerminalWidget {
             search_cache: self.search_cache.upgrade()?,
             search_invalidated: self.search_invalidated.upgrade()?,
             hover_link: self.hover_link.upgrade()?,
+            mouse_cursor_hidden: self.mouse_cursor_hidden.upgrade()?,
             local_selection_on_mouse_drag: self.local_selection_on_mouse_drag.upgrade()?,
             selection_clear_on_typing: self.selection_clear_on_typing,
             selection_clear_on_copy: self.selection_clear_on_copy,
@@ -1470,6 +1518,7 @@ impl WeakGhosttyTerminalWidget {
             scroll_to_bottom: self.scroll_to_bottom,
             mouse_reporting: self.mouse_reporting,
             mouse_shift_capture: self.mouse_shift_capture,
+            mouse_hide_while_typing: self.mouse_hide_while_typing,
             selection_word_chars: self.selection_word_chars.upgrade()?,
         })
     }
@@ -2439,13 +2488,71 @@ struct HoverLink {
     uri: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalPointerCursor {
+    Default,
+    Pointer,
+    Hidden,
+}
+
+impl TerminalPointerCursor {
+    fn name(self) -> Option<&'static str> {
+        match self {
+            Self::Default => None,
+            Self::Pointer => Some("pointer"),
+            Self::Hidden => Some("none"),
+        }
+    }
+}
+
+fn terminal_pointer_cursor(hover_link: bool, hidden: bool) -> TerminalPointerCursor {
+    if hover_link {
+        TerminalPointerCursor::Pointer
+    } else if hidden {
+        TerminalPointerCursor::Hidden
+    } else {
+        TerminalPointerCursor::Default
+    }
+}
+
+fn apply_terminal_pointer_cursor(drawing_area: &gtk::DrawingArea, cursor: TerminalPointerCursor) {
+    drawing_area.set_cursor_from_name(cursor.name());
+}
+
+fn hide_pointer_after_typing(
+    drawing_area: &gtk::DrawingArea,
+    mouse_cursor_hidden: &Cell<bool>,
+    enabled: bool,
+) {
+    if enabled {
+        mouse_cursor_hidden.set(true);
+        apply_terminal_pointer_cursor(drawing_area, terminal_pointer_cursor(false, true));
+    }
+}
+
+fn show_pointer_after_mouse(
+    drawing_area: &gtk::DrawingArea,
+    mouse_cursor_hidden: &Cell<bool>,
+    hover_link: bool,
+) {
+    mouse_cursor_hidden.set(false);
+    apply_terminal_pointer_cursor(drawing_area, terminal_pointer_cursor(hover_link, false));
+}
+
 /// Clears the hover-link state and removes the pointer cursor if a link was
 /// highlighted. Called when Ctrl is released or the pointer leaves the widget,
 /// so the underline and hand cursor never get stuck.
-fn clear_hover_link(hover_link: &Rc<RefCell<Option<HoverLink>>>, drawing_area: &gtk::DrawingArea) {
+fn clear_hover_link(
+    hover_link: &Rc<RefCell<Option<HoverLink>>>,
+    drawing_area: &gtk::DrawingArea,
+    mouse_cursor_hidden: &Cell<bool>,
+) {
     if hover_link.borrow().is_some() {
         *hover_link.borrow_mut() = None;
-        drawing_area.set_cursor_from_name(None);
+        apply_terminal_pointer_cursor(
+            drawing_area,
+            terminal_pointer_cursor(false, mouse_cursor_hidden.get()),
+        );
         drawing_area.queue_draw();
     }
 }
@@ -2663,6 +2770,8 @@ fn paste_primary_selection(
     drawing_area: &gtk::DrawingArea,
     toast_handle: Option<ToastHandle>,
     scroll_on_keystroke: bool,
+    mouse_hide_while_typing: bool,
+    mouse_cursor_hidden: Rc<Cell<bool>>,
 ) {
     let Some(display) = gtk::gdk::Display::default() else {
         eprintln!("Failed to paste PRIMARY selection: no display available");
@@ -2677,6 +2786,8 @@ fn paste_primary_selection(
         &display.primary_clipboard(),
         "Failed to read PRIMARY selection",
         scroll_on_keystroke,
+        mouse_hide_while_typing,
+        mouse_cursor_hidden,
     );
 }
 
@@ -2685,6 +2796,7 @@ fn paste_primary_selection(
 /// failure: GDK reports it as `Ok(None)` or as a `NotFound`/`NotSupported`
 /// error ("Cannot read from empty clipboard." / "No compatible formats..."),
 /// none of which deserve a "Paste failed" toast.
+#[allow(clippy::too_many_arguments)]
 fn paste_clipboard_text(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
@@ -2693,6 +2805,8 @@ fn paste_clipboard_text(
     clipboard: &gtk::gdk::Clipboard,
     read_error_prefix: &'static str,
     scroll_on_keystroke: bool,
+    mouse_hide_while_typing: bool,
+    mouse_cursor_hidden: Rc<Cell<bool>>,
 ) {
     let runtime = runtime.clone();
     let selection = selection.clone();
@@ -2723,6 +2837,8 @@ fn paste_clipboard_text(
         if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
             eprintln!("Failed to paste into terminal: {err}");
             show_user_action_toast(&toast_handle, "Paste failed");
+        } else {
+            hide_pointer_after_typing(&drawing_area, &mouse_cursor_hidden, mouse_hide_while_typing);
         }
         drawing_area.queue_draw();
     });
@@ -2764,6 +2880,7 @@ fn handle_scrollback_navigation(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_terminal_input(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
@@ -2771,6 +2888,8 @@ fn write_terminal_input(
     input: TerminalInput,
     clear_selection: bool,
     scroll_on_keystroke: bool,
+    mouse_hide_while_typing: bool,
+    mouse_cursor_hidden: &Cell<bool>,
 ) {
     if scroll_on_keystroke {
         if let Err(err) = kick_viewport_to_bottom(runtime, selection, clear_selection) {
@@ -2783,6 +2902,8 @@ fn write_terminal_input(
     };
     if let Err(err) = result {
         eprintln!("Failed to write terminal key input: {err}");
+    } else {
+        hide_pointer_after_typing(drawing_area, mouse_cursor_hidden, mouse_hide_while_typing);
     }
     drawing_area.queue_draw();
 }
@@ -2841,6 +2962,8 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             input,
             self.selection_clear_on_typing,
             self.scroll_to_bottom.keystroke,
+            self.mouse_hide_while_typing,
+            &self.mouse_cursor_hidden,
         );
     }
 
@@ -2897,6 +3020,8 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             &display.clipboard(),
             "Failed to read clipboard text",
             self.scroll_to_bottom.keystroke,
+            self.mouse_hide_while_typing,
+            self.mouse_cursor_hidden.clone(),
         );
     }
 
@@ -3975,6 +4100,22 @@ mod mouse_tests {
         assert!(!suppressed.take(TerminalMouseButton::Left));
         assert!(suppressed.take(TerminalMouseButton::Middle));
         assert!(!suppressed.take(TerminalMouseButton::Middle));
+    }
+
+    #[test]
+    fn terminal_pointer_cursor_prioritizes_hover_then_hidden() {
+        assert_eq!(
+            terminal_pointer_cursor(false, false),
+            TerminalPointerCursor::Default
+        );
+        assert_eq!(
+            terminal_pointer_cursor(false, true),
+            TerminalPointerCursor::Hidden
+        );
+        assert_eq!(
+            terminal_pointer_cursor(true, true),
+            TerminalPointerCursor::Pointer
+        );
     }
 
     #[test]
