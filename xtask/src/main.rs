@@ -137,7 +137,7 @@ const VTE_CHECK_PATHS: &[&str] = &[
 
 const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
 const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
-const GHOSTTY_VENDOR_REV: &str = "dea78d72f871f0429a7bd32a9c34809571bbe656";
+const GHOSTTY_VENDOR_REV: &str = "b1b3a2b0dad3ab8d76f301fe64f6f4cf2575b946";
 
 fn main() -> ExitCode {
     match run() {
