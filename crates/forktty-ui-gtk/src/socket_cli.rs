@@ -46,6 +46,8 @@ Usage:
   forktty agents [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty agent-health [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty agent-reclaim-plan [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--min-idle-ms <ms>] [--json]
+  forktty hibernate-agent [--surface-id <id>] [--min-idle-ms <ms>] [--json]
+  forktty reclaim-agents [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--min-idle-ms <ms>] [--limit <n>] [--json]
   forktty resume-agent [--surface-id <id>] [--json]
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
   forktty focus-surface <surface-id>
@@ -738,6 +740,12 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "agent-health" | "agent:health" => handle_agent_health(&context, args),
         "agent-reclaim-plan" | "agent:reclaim-plan" | "agent.reclaim.plan" => {
             handle_agent_reclaim_plan(&context, args)
+        }
+        "hibernate-agent" | "agent-hibernate" | "agent:hibernate" | "agent.hibernate" => {
+            handle_hibernate_agent(&context, args)
+        }
+        "reclaim-agents" | "agent-reclaim" | "agent:reclaim" | "agent.reclaim" => {
+            handle_reclaim_agents(&context, args)
         }
         "resume-agent" | "agent-resume" | "agent:resume" => handle_resume_agent(&context, args),
         "split-surface" | "surface-split" | "surface:split" => handle_split_surface(&context, args),
@@ -2200,6 +2208,100 @@ fn format_agent_reclaim_session_ref(row: &Value) -> String {
     } else {
         format!("{agent}:{session_id}@{surface_id}")
     }
+}
+
+fn handle_hibernate_agent(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["surface-id", "min-idle-ms"],
+        "hibernate-agent",
+    )?;
+    if parsed.positionals.len() > 1 {
+        return Err(CliError::new(format!(
+            "hibernate-agent: unexpected argument {}",
+            parsed.positionals[1]
+        )));
+    }
+    let mut params = Map::new();
+    if let Some(surface_id) = surface_id_from_args(&parsed, "hibernate-agent")? {
+        params.insert("surface_id".to_string(), Value::String(surface_id));
+    } else if let Some(surface_id) = resolve_focused_surface_id(context)? {
+        params.insert("surface_id".to_string(), Value::String(surface_id));
+    } else {
+        return Err(CliError::new(
+            "hibernate-agent requires --surface-id, a surface id, FORKTTY_SURFACE_ID, or an active workspace surface",
+        ));
+    }
+    if let Some(min_idle_ms) = parse_u64_option(&parsed.options, "min-idle-ms", "--min-idle-ms")? {
+        params.insert("min_idle_ms".to_string(), Value::Number(min_idle_ms.into()));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "agent.hibernate",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format_agent_hibernate_line(&result))
+    }
+}
+
+fn format_agent_hibernate_line(result: &Value) -> String {
+    let surface = result.get("surface").unwrap_or(&Value::Null);
+    let surface_id = safe_string_field(surface, "id").unwrap_or_else(|| "(unknown)".to_string());
+    let agent = safe_string_field(result, "agent").unwrap_or_else(|| "(agent)".to_string());
+    let session_id =
+        safe_string_field(result, "session_id").unwrap_or_else(|| "(session)".to_string());
+    format!("Hibernated {agent} session {session_id} from {surface_id}")
+}
+
+fn handle_reclaim_agents(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "reclaim-agents")?;
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+            "min-idle-ms",
+            "limit",
+        ],
+        "reclaim-agents",
+    )?;
+    let mut params = build_target_params(&parsed.options, "reclaim-agents")?;
+    if let Some(min_idle_ms) = parse_u64_option(&parsed.options, "min-idle-ms", "--min-idle-ms")? {
+        params.insert("min_idle_ms".to_string(), Value::Number(min_idle_ms.into()));
+    }
+    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
+        params.insert("limit".to_string(), Value::Number(limit.into()));
+    }
+    let result = send_socket_request(&context.socket_path, "agent.reclaim", Value::Object(params))?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_agent_reclaim_line(&result))
+}
+
+fn format_agent_reclaim_line(result: &Value) -> String {
+    let hibernated = result
+        .get("hibernated")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let protected = result
+        .get("protected")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let failed = result
+        .get("failed")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    format!("hibernated {hibernated} | protected {protected} | failed {failed}")
 }
 
 fn handle_resume_agent(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -11232,6 +11334,97 @@ mod tests {
         assert!(line.contains("min_idle_ms 5000"));
         assert!(!line.contains('\u{1b}'));
         assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn hibernate_agent_requests_agent_hibernate_with_surface_id_and_policy() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "surface": {"id": "surface-1"},
+                        "agent": "codex",
+                        "session_id": "codex-session-1",
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_hibernate_agent(
+                    &ctx_for(socket_path),
+                    strings(&["--surface-id", "surface-1", "--min-idle-ms", "5000"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "agent.hibernate");
+        assert_eq!(request["params"]["surface_id"], "surface-1");
+        assert_eq!(request["params"]["min_idle_ms"], 5000);
+    }
+
+    #[test]
+    fn agent_hibernate_formatter_escapes_control_sequences() {
+        let line = format_agent_hibernate_line(&json!({
+            "surface": {"id": "surface\n1"},
+            "agent": "codex\u{1b}",
+            "session_id": "session\t1",
+        }));
+
+        assert!(line.contains("surface\\n1"));
+        assert!(line.contains("codex\\x1b"));
+        assert!(line.contains("session\\t1"));
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn reclaim_agents_requests_agent_reclaim_with_workspace_selector_and_limit() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "policy": {"min_idle_ms": 5000},
+                        "hibernated": [],
+                        "protected": [],
+                        "failed": [],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_reclaim_agents(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "--workspace-id",
+                        "w1",
+                        "--min-idle-ms",
+                        "5000",
+                        "--limit",
+                        "3",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "agent.reclaim");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["min_idle_ms"], 5000);
+        assert_eq!(request["params"]["limit"], 3);
+    }
+
+    #[test]
+    fn agent_reclaim_formatter_reports_counts() {
+        let line = format_agent_reclaim_line(&json!({
+            "hibernated": [{}, {}],
+            "protected": [{}],
+            "failed": [{}, {}, {}],
+        }));
+
+        assert_eq!(line, "hibernated 2 | protected 1 | failed 3");
     }
 
     #[test]

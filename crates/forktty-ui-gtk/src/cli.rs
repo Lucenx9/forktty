@@ -181,6 +181,14 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "agent-reclaim-plan"
             | "agent:reclaim-plan"
             | "agent.reclaim.plan"
+            | "hibernate-agent"
+            | "agent-hibernate"
+            | "agent:hibernate"
+            | "agent.hibernate"
+            | "reclaim-agents"
+            | "agent-reclaim"
+            | "agent:reclaim"
+            | "agent.reclaim"
             | "resume-agent"
             | "agent-resume"
             | "agent:resume"
@@ -1304,6 +1312,14 @@ mod tests {
             "agent-reclaim-plan",
             "agent:reclaim-plan",
             "agent.reclaim.plan",
+            "hibernate-agent",
+            "agent-hibernate",
+            "agent:hibernate",
+            "agent.hibernate",
+            "reclaim-agents",
+            "agent-reclaim",
+            "agent:reclaim",
+            "agent.reclaim",
             "resume-agent",
             "agent-resume",
             "agent:resume",

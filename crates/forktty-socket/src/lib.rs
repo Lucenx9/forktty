@@ -95,8 +95,10 @@ pub const METHODS: &[&str] = &[
     "events.subscribe",
     "feed.list",
     "agent.health",
+    "agent.hibernate",
     "agent.list",
     "agent.reclaim.plan",
+    "agent.reclaim",
     "agent.resume",
     "metadata.clear_logs",
     "metadata.clear_progress",
@@ -142,8 +144,10 @@ pub const METHODS: &[&str] = &[
     "events.subscribe",
     "feed.list",
     "agent.health",
+    "agent.hibernate",
     "agent.list",
     "agent.reclaim.plan",
+    "agent.reclaim",
     "agent.resume",
     "metadata.clear_logs",
     "metadata.clear_progress",
@@ -726,6 +730,7 @@ pub async fn dispatch(
             };
             Ok(json!(agent_health_rows(&model, workspace_id.as_deref())))
         }
+        "agent.hibernate" => hibernate_agent_session(state, &params),
         "agent.list" => {
             let model = state
                 .model
@@ -764,6 +769,7 @@ pub async fn dispatch(
                 min_idle_ms,
             ))
         }
+        "agent.reclaim" => reclaim_agent_sessions(state, &params),
         "agent.resume" => resume_agent_session(state, &params),
         "status.summary" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
@@ -2054,6 +2060,7 @@ fn agent_reclaim_protect_reason(
         "idle" => {}
         "needs_input" => return Some("needs_input".to_string()),
         "running" => return Some("running".to_string()),
+        "suspended" => return Some("suspended".to_string()),
         "ended" => return Some("ended".to_string()),
         _ => return Some("unknown_lifecycle".to_string()),
     }
@@ -2071,6 +2078,184 @@ fn agent_reclaim_protect_reason(
         return Some("recent_activity".to_string());
     }
     None
+}
+
+fn hibernate_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let surface_id = required_surface_id(params)?;
+    let min_idle_ms = optional_u64_param(params, "min_idle_ms")?.unwrap_or(0);
+    hibernate_agent_surface(state, surface_id, min_idle_ms)
+}
+
+fn reclaim_agent_sessions(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let min_idle_ms =
+        optional_u64_param(params, "min_idle_ms")?.unwrap_or(DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS);
+    let limit = optional_u64_param(params, "limit")?.unwrap_or(200).min(200) as usize;
+    let plan = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let workspace_id = match workspace_selector_from_params(params) {
+            Ok(selector) => Some(
+                model
+                    .workspace_id_for(selector)
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+            ),
+            Err(DispatchError::MissingParam(_)) => None,
+            Err(err) => return Err(err),
+        };
+        agent_reclaim_plan(&model, workspace_id.as_deref(), min_idle_ms)
+    };
+
+    let candidate_ids = plan
+        .get("candidates")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row.get("surface_id").and_then(Value::as_str))
+        .take(limit)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    let mut hibernated = Vec::new();
+    let mut failed = Vec::new();
+    for surface_id in candidate_ids {
+        match hibernate_agent_surface(state, &surface_id, min_idle_ms) {
+            Ok(row) => hibernated.push(row),
+            Err(err) => failed.push(json!({
+                "surface_id": surface_id,
+                "code": err.code(),
+                "error": err.to_string(),
+            })),
+        }
+    }
+
+    Ok(json!({
+        "policy": plan.get("policy").cloned().unwrap_or(Value::Null),
+        "hibernated": hibernated,
+        "protected": plan.get("protected").cloned().unwrap_or_else(|| json!([])),
+        "failed": failed,
+    }))
+}
+
+fn hibernate_agent_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+    min_idle_ms: u64,
+) -> Result<Value, DispatchError> {
+    let now_ms = current_unix_epoch_ms();
+    let path = std::env::var_os("PATH");
+    let (workspace_id, agent, session_id, resume_cwd, permission_mode, argv, idle_ms) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let surface = model
+            .surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        if !matches!(surface.kind, SurfaceKind::Terminal) {
+            return Err(DispatchError::PreconditionFailed(
+                "Only terminal agent surfaces can be hibernated".to_string(),
+            ));
+        }
+        let agent_session = surface.agent_session.as_ref().ok_or_else(|| {
+            DispatchError::PreconditionFailed(
+                "Surface has no persisted agent session to hibernate".to_string(),
+            )
+        })?;
+        match agent_session.lifecycle {
+            AgentSessionLifecycle::Idle => {}
+            AgentSessionLifecycle::Suspended => {
+                return Err(DispatchError::PreconditionFailed(
+                    "Agent session is already suspended".to_string(),
+                ));
+            }
+            lifecycle => {
+                return Err(DispatchError::PreconditionFailed(format!(
+                    "Only idle agent sessions can be hibernated (current lifecycle: {lifecycle:?})"
+                )));
+            }
+        }
+        if agent_session.last_activity_ms == 0 {
+            return Err(DispatchError::PreconditionFailed(
+                "Agent session activity is unknown".to_string(),
+            ));
+        }
+        let idle_ms = now_ms.saturating_sub(agent_session.last_activity_ms);
+        if idle_ms < min_idle_ms {
+            return Err(DispatchError::PreconditionFailed(format!(
+                "Agent session idle age {idle_ms}ms is below the reclaim policy {min_idle_ms}ms"
+            )));
+        }
+        let resume_cwd = effective_agent_resume_cwd(agent_session);
+        let (ready, reason, _program, _executable, argv) = agent_resume_readiness(
+            agent_session.agent,
+            &agent_session.session_id,
+            resume_cwd.as_deref(),
+            agent_session.permission_mode.as_deref(),
+            path.as_deref(),
+        );
+        if !ready {
+            return Err(DispatchError::PreconditionFailed(format!(
+                "Agent session cannot be resumed safely: {reason}"
+            )));
+        }
+        (
+            surface.workspace_id.clone(),
+            agent_session.agent,
+            agent_session.session_id.clone(),
+            resume_cwd,
+            agent_session.permission_mode.clone(),
+            argv,
+            idle_ms,
+        )
+    };
+
+    close_terminal_surface_if_present(state, surface_id).map_err(DispatchError::Other)?;
+
+    let (surface, status) = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if model.surface(surface_id).is_none() {
+            return Err(DispatchError::NotFound("surface".to_string()));
+        }
+        model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Suspended);
+        model.set_surface_agent_session_last_activity_ms(surface_id, now_ms);
+        let _ = model.mark_surface_unread(surface_id, false);
+        let status = model.set_status(
+            &workspace_id,
+            surface_status_key(surface_id),
+            "Agent",
+            "Suspended",
+            Some("yellow".to_string()),
+        );
+        let surface = model
+            .surface(surface_id)
+            .cloned()
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        (
+            surface,
+            status.ok_or(DispatchError::NotFound("workspace".to_string()))?,
+        )
+    };
+
+    Ok(json!({
+        "surface": surface,
+        "agent": agent,
+        "session_id": session_id,
+        "resume_cwd": resume_cwd,
+        "permission_mode": permission_mode,
+        "lifecycle": "suspended",
+        "idle_ms": idle_ms,
+        "argv": argv,
+        "status": status,
+    }))
+}
+
+fn surface_status_key(surface_id: &str) -> String {
+    format!("surface:{surface_id}:status")
 }
 
 fn agent_session_lifecycle_from_hook(
@@ -2769,6 +2954,9 @@ pub fn spawn_request_for_surface(
     let Some(agent_session) = &surface.agent_session else {
         return Some(request);
     };
+    if agent_session.lifecycle == AgentSessionLifecycle::Suspended {
+        return None;
+    }
     let resume_cwd = effective_agent_resume_cwd(agent_session);
     let Ok(command) = agent_resume_command_with_cwd_and_permission_mode(
         agent_session.agent,
@@ -5120,6 +5308,19 @@ mod tests {
         }
     }
 
+    fn write_fake_codex(dir: &Path) -> PathBuf {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let codex = dir.join("codex");
+        {
+            let mut file = fs::File::create(&codex).unwrap();
+            writeln!(file, "#!/bin/sh").unwrap();
+        }
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+        codex
+    }
+
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let backend = Arc::new(HeadlessTerminalBackend::new());
@@ -5253,6 +5454,34 @@ mod tests {
                 "codex-session-1".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn spawn_request_skips_suspended_agent_terminal_surface() {
+        let surface = forktty_core::Surface {
+            id: "surface-agent".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "agent".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Terminal,
+            agent_session: Some(forktty_core::AgentSession {
+                agent: AgentKind::Codex,
+                session_id: "codex-session-1".to_string(),
+                resume_cwd: Some(PathBuf::from("/tmp/forktty-project")),
+                permission_mode: None,
+                lifecycle: AgentSessionLifecycle::Suspended,
+                last_activity_ms: 12_345,
+            }),
+            persisted_scrollback: None,
+        };
+
+        assert!(spawn_request_for_surface(
+            SpawnRequest::for_surface(&surface, "/bin/sh", "/tmp/forktty.sock"),
+            &surface,
+        )
+        .is_none());
     }
 
     #[test]
@@ -8458,16 +8687,8 @@ mod tests {
 
     #[test]
     fn agent_reclaim_plan_marks_only_old_idle_ready_sessions_as_candidates() {
-        use std::io::Write as _;
-        use std::os::unix::fs::PermissionsExt as _;
-
         let dir = tempfile::tempdir().unwrap();
-        let codex = dir.path().join("codex");
-        {
-            let mut file = fs::File::create(&codex).unwrap();
-            writeln!(file, "#!/bin/sh").unwrap();
-        }
-        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+        write_fake_codex(dir.path());
 
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -8507,6 +8728,199 @@ mod tests {
         assert_eq!(plan["protected"].as_array().unwrap().len(), 1);
         assert_eq!(plan["protected"][0]["surface_id"], protected_surface_id);
         assert_eq!(plan["protected"][0]["protect_reason"], "needs_input");
+    }
+
+    #[test]
+    fn agent_reclaim_plan_protects_suspended_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1"));
+        assert!(model
+            .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Suspended,));
+        assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1_000));
+
+        let plan =
+            agent_reclaim_plan_with_path(&model, None, Some(dir.path().as_os_str()), 10_000, 5_000);
+
+        assert!(plan["candidates"].as_array().unwrap().is_empty());
+        assert_eq!(plan["protected"][0]["surface_id"], surface_id);
+        assert_eq!(plan["protected"][0]["protect_reason"], "suspended");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_hibernate_marks_idle_ready_session_suspended_and_closes_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let (state, backend) = test_state();
+        let surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model
+                .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+            surface_id
+        };
+
+        let hibernated = dispatch(
+            &state,
+            "agent.hibernate",
+            json!({"surface_id": surface_id, "min_idle_ms": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hibernated["surface"]["id"], surface_id);
+        assert_eq!(hibernated["agent"], "codex");
+        assert_eq!(hibernated["session_id"], "codex-session-1");
+        assert_eq!(hibernated["lifecycle"], "suspended");
+        assert_eq!(
+            hibernated["argv"],
+            json!(["codex", "resume", "codex-session-1"])
+        );
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .all(|surface| surface.surface_id != surface_id));
+
+        let model = state.model.lock().unwrap();
+        let surface = model.surface(&surface_id).unwrap();
+        assert_eq!(
+            surface.agent_session.as_ref().unwrap().lifecycle,
+            AgentSessionLifecycle::Suspended
+        );
+        assert_eq!(
+            model.list_status(&surface.workspace_id)[0].key,
+            surface_status_key(&surface_id)
+        );
+        assert_eq!(
+            model.list_status(&surface.workspace_id)[0].value,
+            "Suspended"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_hibernate_rejects_running_session_without_closing_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let (state, backend) = test_state();
+        let surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+            surface_id
+        };
+
+        let err = dispatch(&state, "agent.hibernate", json!({"surface_id": surface_id}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed");
+        assert!(err.to_string().contains("Only idle"));
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_reclaim_hibernates_only_plan_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+        let (candidate_surface_id, protected_surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let candidate_surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &candidate_surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_lifecycle(
+                &candidate_surface_id,
+                AgentSessionLifecycle::Idle,
+            ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&candidate_surface_id, 1));
+
+            let protected_surface_id = model.add_tab(&candidate_surface_id).unwrap().id;
+            assert!(model.set_surface_agent_session(
+                &protected_surface_id,
+                AgentKind::Codex,
+                "codex-session-2",
+            ));
+            assert!(model.set_surface_agent_session_lifecycle(
+                &protected_surface_id,
+                AgentSessionLifecycle::Running,
+            ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&protected_surface_id, 1));
+            (candidate_surface_id, protected_surface_id)
+        };
+
+        let reclaimed = dispatch(
+            &state,
+            "agent.reclaim",
+            json!({"min_idle_ms": 0, "limit": 5}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(reclaimed["hibernated"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            reclaimed["hibernated"][0]["surface"]["id"],
+            candidate_surface_id
+        );
+        assert_eq!(reclaimed["failed"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            reclaimed["protected"][0]["surface_id"],
+            protected_surface_id
+        );
+        assert_eq!(reclaimed["protected"][0]["protect_reason"], "running");
+
+        let model = state.model.lock().unwrap();
+        assert_eq!(
+            model
+                .surface(&candidate_surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .lifecycle,
+            AgentSessionLifecycle::Suspended
+        );
+        assert_eq!(
+            model
+                .surface(&protected_surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .lifecycle,
+            AgentSessionLifecycle::Running
+        );
     }
 
     #[tokio::test]

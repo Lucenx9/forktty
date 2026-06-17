@@ -97,7 +97,11 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 ## Backlog
 
-- [ ] Agent hibernation/session lifecycle: suspend/restore UI, provider-side stale-session validation beyond local command readiness, process reclaim, configurable reclaim policy, and explicit suspended-state handling.
+- [x] Agent hibernation/reclaim control plane: `agent.hibernate` and
+  `agent.reclaim` close idle, locally resumable terminal processes, persist an
+  explicit `suspended` lifecycle, and resume through the existing provider
+  argv path. Remaining parity scope: richer GTK suspend/restore UI and
+  provider-side stale-session validation beyond local command/PATH readiness.
 - [ ] Workflow control plane: per-session/per-mode state files, durable goal/plan/evidence artifacts, session search/replay, and compaction-resistant project memory.
 - [ ] Team orchestration runtime: leader/worker state, task DAGs, mailbox/dispatch, worker heartbeats, status/summary, and optional worktree-backed workers.
 - [ ] Feed/approval bridge: minimal read-only `feed.list` / `forktty feed`

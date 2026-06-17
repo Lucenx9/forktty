@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- `agent.hibernate`, `agent.reclaim`, `forktty hibernate-agent`,
+  `forktty reclaim-agents`, and MCP `agent_hibernate`/`agent_reclaim` can now
+  close idle, locally resumable agent terminal processes, mark their persisted
+  sessions `suspended`, and leave them resumable through the existing
+  `agent.resume` path without adding parity UI panels.
 - `feed.list` and `forktty feed` now expose a minimal read-only feed snapshot
   that normalizes current notifications, approval prompts, status, and progress
   without adding durable feed history yet.

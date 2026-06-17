@@ -741,8 +741,9 @@ fn lifecycle_presentation(
         forktty_core::AgentSessionLifecycle::NeedsInput => ("Needs input", "needs-input", 0),
         forktty_core::AgentSessionLifecycle::Running => ("Running", "running", 1),
         forktty_core::AgentSessionLifecycle::Idle => ("Idle", "idle", 2),
-        forktty_core::AgentSessionLifecycle::Unknown => ("Unknown", "unknown", 3),
-        forktty_core::AgentSessionLifecycle::Ended => ("Ended", "ended", 4),
+        forktty_core::AgentSessionLifecycle::Suspended => ("Suspended", "suspended", 3),
+        forktty_core::AgentSessionLifecycle::Unknown => ("Unknown", "unknown", 4),
+        forktty_core::AgentSessionLifecycle::Ended => ("Ended", "ended", 5),
     }
 }
 

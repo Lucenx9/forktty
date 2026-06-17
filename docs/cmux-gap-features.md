@@ -62,12 +62,15 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   agent terminal surfaces during session restore using the saved resume cwd as a
   provider flag where available or as the child process cwd otherwise (Codex can
   also infer cwd from local `session_meta` JSONL for older ForkTTY session
-  files), and exposes read-only reclaim
-  candidates through `agent.reclaim.plan`, `forktty agent-reclaim-plan`, and MCP
-  `agent_reclaim_plan`.
-- Remaining scope: actual stop/hibernate, configurable automatic reclaim,
-  provider-side stale-session checks beyond local command/PATH readiness,
-  richer UI controls, and explicit suspended-state semantics.
+  files), exposes read-only reclaim candidates through `agent.reclaim.plan`,
+  `forktty agent-reclaim-plan`, and MCP `agent_reclaim_plan`, and can now
+  hibernate/reclaim idle locally resumable sessions through `agent.hibernate`,
+  `agent.reclaim`, `forktty hibernate-agent`, `forktty reclaim-agents`, and MCP
+  `agent_hibernate`/`agent_reclaim`. Hibernated sessions persist an explicit
+  `suspended` lifecycle and do not auto-respawn; explicit resume still uses the
+  argv-only provider path.
+- Remaining scope: provider-side stale-session checks beyond local command/PATH
+  readiness and richer UI controls.
 
 ### 2. Workflow State, Goals, And Memory
 
