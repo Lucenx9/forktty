@@ -61,6 +61,7 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `unfocused-split-opacity` and `unfocused-split-fill` now control ForkTTY's inactive split dim overlay.
 - Terminal panes now support runtime zoom with `Ctrl++`/`Ctrl+=`, `Ctrl+-`, and `Ctrl+0` without adding persistent font settings.
 - Finished terminal selections now format their clipboard payload through `libghostty-vt`'s selection formatter, with the existing GTK frame extraction kept as a fallback.
+- Double-click word selection now asks `libghostty-vt` for the word range first, falling back to the GTK frame logic when Ghostty has no selectable word.
 - The GTK/Ghostty smoke script now verifies GTK action split/focus behavior, socket split readback, and the socket notification create/list/clear flow.
 
 ### Fixed
@@ -89,6 +90,7 @@ All notable changes to ForkTTY are documented here.
 - Terminal styled text runs now fit the terminal cell grid, preventing colored inline-code spans from leaving visual gaps between words.
 - Terminal text selection and mouse hit-testing now use GTK content-box coordinates directly, fixing selections that were offset from the pointer.
 - Terminal shortcuts, Meta-key input, unread output tracking, OSC99 status updates, browser-pane cleanup, and uppercase HTTP(S) links now behave consistently from focused panes and delayed events.
+- Terminal selection finalization now releases the render borrow before formatting through Ghostty, avoiding a RefCell panic when a pointer gesture is released or cancelled.
 - Terminal drag selection now snaps at cell midpoints and preserves real one-cell drags, keeping highlights aligned with the pointer.
 - Terminal selections now preserve selected whitespace, invalidate select-all payloads on new output, clear stale search highlights, keep adjacent OSC 8 links separated by URI, handle wide-character spacer tails, and avoid drawing scrollback indicators outside tiny panes.
 - Terminal mouse release suppression is now tracked per button, avoiding spurious release forwarding during left/middle button chords.

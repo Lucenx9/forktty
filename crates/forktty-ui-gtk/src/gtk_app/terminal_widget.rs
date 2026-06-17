@@ -6,7 +6,7 @@ use super::terminal_links::{is_safe_terminal_uri, url_at_point};
 use super::*;
 use forktty_terminal::ghostty::core::{
     TerminalCell, TerminalCellWidth, TerminalMouseAction, TerminalMouseButton, TerminalMouseInput,
-    TerminalMousePosition, TerminalMouseSize,
+    TerminalMousePosition, TerminalMouseSize, TerminalViewportSelection,
 };
 use forktty_terminal::ghostty::events::GhosttyEvent;
 
@@ -499,11 +499,23 @@ impl GhosttyTerminalWidget {
                                     x,
                                     y,
                                 );
-                                let frame = runtime.borrow_mut().render_frame();
+                                let frame = {
+                                    let mut runtime = runtime.borrow_mut();
+                                    runtime.render_frame()
+                                };
                                 match frame {
                                     Ok(frame) => {
                                         let range = if n_press == 2 {
-                                            word_selection_in_frame(&frame, point)
+                                            match word_selection_from_runtime(&runtime, point) {
+                                                Ok(Some(range)) => Some(range),
+                                                Ok(None) => word_selection_in_frame(&frame, point),
+                                                Err(err) => {
+                                                    eprintln!(
+                                                        "Failed to derive Ghostty word selection: {err}"
+                                                    );
+                                                    word_selection_in_frame(&frame, point)
+                                                }
+                                            }
                                         } else {
                                             line_selection_in_frame(&frame, point.row)
                                         };
@@ -1664,14 +1676,8 @@ fn finalize_selection_drag(
     selection.end_drag();
     match selection.normalized_range() {
         Some((start, end)) if should_commit_selection_range(start, end, commit_single_cell) => {
-            match runtime.borrow_mut().render_frame() {
-                Ok(frame) => commit_selection_range_with_runtime_fallback(
-                    &mut selection,
-                    runtime,
-                    &frame,
-                    start,
-                    end,
-                ),
+            match commit_selection_range_after_render(&mut selection, runtime, start, end) {
+                Ok(()) => {}
                 Err(err) => {
                     eprintln!("Failed to extract terminal selection: {err}");
                     selection.clear();
@@ -1718,6 +1724,32 @@ fn word_selection_in_frame(
     ))
 }
 
+fn word_selection_from_runtime(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    point: SelectionPoint,
+) -> Result<Option<(SelectionPoint, SelectionPoint)>, TerminalError> {
+    let (col, row) = selection_point_for_ghostty(point)?;
+    Ok(runtime
+        .borrow()
+        .viewport_word_selection(col, row)?
+        .and_then(selection_points_from_ghostty_viewport_selection))
+}
+
+fn selection_points_from_ghostty_viewport_selection(
+    selection: TerminalViewportSelection,
+) -> Option<(SelectionPoint, SelectionPoint)> {
+    Some((
+        SelectionPoint {
+            row: usize::try_from(selection.start_row).ok()?,
+            col: usize::from(selection.start_col),
+        },
+        SelectionPoint {
+            row: usize::try_from(selection.end_row).ok()?,
+            col: usize::from(selection.end_col),
+        },
+    ))
+}
+
 /// The viewport range a triple click on `row` selects: the whole visual row.
 /// Logical (soft-wrapped) lines are out of scope.
 fn line_selection_in_frame(
@@ -1745,6 +1777,20 @@ fn commit_selection_range(
 ) {
     let text = selection_text_from_frame(frame, start, end);
     commit_selection_text(selection, start, end, text);
+}
+
+fn commit_selection_range_after_render(
+    selection: &mut TerminalSelection,
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) -> Result<(), TerminalError> {
+    let frame = {
+        let mut runtime = runtime.borrow_mut();
+        runtime.render_frame()
+    }?;
+    commit_selection_range_with_runtime_fallback(selection, runtime, &frame, start, end);
+    Ok(())
 }
 
 fn commit_selection_range_with_runtime_fallback(
@@ -2796,6 +2842,24 @@ mod selection_tests {
     }
 
     #[test]
+    fn ghostty_viewport_selection_maps_to_widget_selection_points() {
+        let selection = forktty_terminal::ghostty::core::TerminalViewportSelection {
+            start_col: 3,
+            start_row: 1,
+            end_col: 8,
+            end_row: 2,
+        };
+
+        assert_eq!(
+            selection_points_from_ghostty_viewport_selection(selection),
+            Some((
+                SelectionPoint { row: 1, col: 3 },
+                SelectionPoint { row: 2, col: 8 }
+            ))
+        );
+    }
+
+    #[test]
     fn selection_text_expands_spacer_tail_to_wide_head() {
         let frame = frame_for_lines("a 漢 b".as_bytes());
 
@@ -3042,6 +3106,33 @@ mod selection_tests {
         );
         assert_eq!(selection.selected_text(), None);
         assert_eq!(selection.normalized_range(), None);
+    }
+
+    #[test]
+    fn commit_selection_after_render_releases_runtime_borrow_before_ghostty_formatting() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime.feed_pty_bytes(b"alpha beta").unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let mut selection = TerminalSelection::default();
+
+        commit_selection_range_after_render(
+            &mut selection,
+            &runtime,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 4 },
+        )
+        .unwrap();
+
+        assert_eq!(selection.selected_text().as_deref(), Some("alpha"));
     }
 
     #[test]

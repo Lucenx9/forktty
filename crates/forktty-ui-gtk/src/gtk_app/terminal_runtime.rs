@@ -2,7 +2,7 @@ use super::*;
 use forktty_terminal::ghostty::{
     core::{
         GhosttyCore, GhosttyCoreOptions, GhosttyThemeColors, TerminalFrame, TerminalKeyInput,
-        TerminalMouseInput, TerminalRgb, TerminalViewportPosition,
+        TerminalMouseInput, TerminalRgb, TerminalViewportPosition, TerminalViewportSelection,
     },
     events::GhosttyEvent,
     pty::{PtySession, PtySize},
@@ -330,6 +330,16 @@ impl TerminalRuntime {
     ) -> Result<String, TerminalError> {
         self.core
             .viewport_selection_text(start_col, start_row, end_col, end_row)
+            .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
+    pub(super) fn viewport_word_selection(
+        &self,
+        col: u16,
+        row: u32,
+    ) -> Result<Option<TerminalViewportSelection>, TerminalError> {
+        self.core
+            .viewport_word_selection(col, row)
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 

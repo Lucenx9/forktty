@@ -14,9 +14,9 @@ use libghostty_vt::{
     paste,
     render::{CellIterator, CursorViewport, CursorVisualStyle, RowIterator},
     screen::{CellWide, Screen},
-    selection::Selection,
+    selection::{SelectWordOptions, Selection},
     style::{RgbColor, StyleColor},
-    terminal::{Point, PointCoordinate, ScrollViewport},
+    terminal::{Point, PointCoordinate, PointSpace, ScrollViewport},
     RenderState, Terminal, TerminalOptions,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -238,6 +238,14 @@ pub struct TerminalViewportPosition {
     pub rows: usize,
     /// Total rows in the scrollable area (scrollback + active screen).
     pub total: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalViewportSelection {
+    pub start_col: u16,
+    pub start_row: u32,
+    pub end_col: u16,
+    pub end_row: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -555,6 +563,49 @@ impl GhosttyCore {
         )?;
         let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
         Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
+    }
+
+    pub fn viewport_word_selection(
+        &self,
+        col: u16,
+        row: u32,
+    ) -> Result<Option<TerminalViewportSelection>> {
+        let grid_ref = self
+            .terminal
+            .grid_ref(Point::Viewport(PointCoordinate { x: col, y: row }))?;
+        let Some(selection) = self
+            .terminal
+            .select_word(SelectWordOptions::new(grid_ref))?
+        else {
+            return Ok(None);
+        };
+        self.viewport_selection_from_ghostty_selection(&selection)
+    }
+
+    fn viewport_selection_from_ghostty_selection(
+        &self,
+        selection: &Selection<'_>,
+    ) -> Result<Option<TerminalViewportSelection>> {
+        let start = selection.start();
+        let end = selection.end();
+        let Some(start) = self
+            .terminal
+            .point_from_grid_ref(&start, PointSpace::Viewport)?
+        else {
+            return Ok(None);
+        };
+        let Some(end) = self
+            .terminal
+            .point_from_grid_ref(&end, PointSpace::Viewport)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(TerminalViewportSelection {
+            start_col: start.x,
+            start_row: start.y,
+            end_col: end.x,
+            end_row: end.y,
+        }))
     }
 
     /// Plain-text dump of at most the last `lines` scrollable rows.
@@ -2143,6 +2194,29 @@ mod tests {
 
         core.feed(b"alpha").unwrap();
         assert_eq!(core.viewport_selection_text(0, 1, 4, 1).unwrap(), "");
+    }
+
+    #[test]
+    fn viewport_word_selection_uses_ghostty_word_boundaries() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"open /tmp/a.txt").unwrap();
+
+        assert_eq!(
+            core.viewport_word_selection(8, 0).unwrap(),
+            Some(TerminalViewportSelection {
+                start_col: 5,
+                start_row: 0,
+                end_col: 14,
+                end_row: 0,
+            })
+        );
+        assert_eq!(core.viewport_word_selection(0, 1).unwrap(), None);
     }
 
     #[test]
