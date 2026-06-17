@@ -100,10 +100,11 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   status string.
 - OMC adds permission handlers, subagent tracking, persistent-mode Stop
   enforcement, and action-oriented hook context.
-- ForkTTY has notifications, metadata logs, and a notification panel, but no
-  normalized approval/activity feed with actionable permission history.
-- Scope: durable in-process feed entries, permission-request actions, filtering
-  by workspace/surface/provider, and socket/event exposure.
+- ForkTTY has notifications, metadata logs, a notification panel, bounded
+  durable feed history, workspace filtering, and approval decision state through
+  `feed.approval.respond`.
+- Remaining scope: provider-specific permission replies, richer provider
+  filtering, and UI surfaces over the feed.
 
 ### 5. Remote Daemon And SSH Depth
 

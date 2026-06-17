@@ -73,6 +73,7 @@ Usage:
   forktty clear-progress [--key <key>]
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
+  forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty log [message] [--message <message>] [--level info|warn|error]
   forktty logs [--workspace-id <id>]
   forktty clear-logs [--workspace-id <id>]
@@ -2363,6 +2364,13 @@ fn format_status_summary_progress(progress: &Value) -> String {
 
 fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
+    if parsed
+        .positionals
+        .first()
+        .is_some_and(|arg| arg == "respond")
+    {
+        return handle_feed_respond(context, parsed);
+    }
     require_no_args(&parsed.positionals, "feed")?;
     reject_unknown_options(
         &parsed.options,
@@ -2387,6 +2395,38 @@ fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         write_stdout_line(&format_feed_line(item))?;
     }
     Ok(())
+}
+
+fn handle_feed_respond(context: &CliContext, parsed: ParsedFlags) -> CliResult<()> {
+    if parsed.positionals.len() != 2 {
+        return Err(CliError::new(
+            "feed respond: expected feed respond <approval-id> --decision approve|deny",
+        ));
+    }
+    reject_unknown_options(&parsed.options, &["decision"], "feed respond")?;
+    let decision = non_blank_string_option(&parsed.options, "decision", "--decision")?
+        .ok_or_else(|| CliError::new("feed respond: missing --decision approve|deny"))?;
+    if !matches!(decision.trim(), "approve" | "approved" | "deny" | "denied") {
+        return Err(CliError::new(
+            "feed respond: --decision must be approve or deny",
+        ));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "feed.approval.respond",
+        json!({
+            "id": parsed.positionals[1],
+            "decision": decision,
+        }),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format!(
+        "Recorded {} for {}",
+        safe_string_field(&result, "approval_state").unwrap_or_else(|| "decision".to_string()),
+        safe_string_field(&result, "id").unwrap_or_else(|| "approval".to_string())
+    ))
 }
 
 fn format_feed_line(item: &Value) -> String {
@@ -11493,6 +11533,46 @@ mod tests {
         assert_eq!(request["method"], "project.action.run");
         assert_eq!(request["params"]["id"], "test");
         assert_eq!(request["params"]["cwd"], "/repo");
+    }
+
+    #[test]
+    fn feed_respond_records_approval_decision() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "notification-1",
+                        "type": "approval",
+                        "approval_state": "approved"
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_feed(
+                    &ctx_for(socket_path),
+                    strings(&["respond", "notification-1", "--decision", "approve"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "feed.approval.respond");
+        assert_eq!(request["params"]["id"], "notification-1");
+        assert_eq!(request["params"]["decision"], "approve");
+    }
+
+    #[test]
+    fn feed_respond_rejects_invalid_decision_before_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_feed(
+                &ctx,
+                strings(&["respond", "notification-1", "--decision", "later"]),
+            ),
+            "approve or deny",
+        );
     }
 
     #[test]

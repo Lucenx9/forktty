@@ -5,9 +5,9 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 ## Near-Term Direction
 
 - [ ] Close the practical cmux gap through ForkTTY's control plane first, not by
-  copying every panel: after `top`/health inspection, continue with a durable
-  feed/approval bridge, repo-local `forktty.json` actions, and real agent
-  hibernate/reclaim.
+  copying every panel: after `top`/health/feed inspection, continue with
+  repo-local `forktty.json` actions, real agent hibernate/reclaim, workflow
+  memory, and team orchestration.
 - [ ] Keep richer sidebars, remote daemon depth, multi-window routing, and plugin
   surfaces behind those primitives; they need real state/events before extra UI
   pays for itself.
@@ -100,9 +100,9 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Agent hibernation/session lifecycle: suspend/restore UI, provider-side stale-session validation beyond local command readiness, process reclaim, configurable reclaim policy, and explicit suspended-state handling.
 - [ ] Workflow control plane: per-session/per-mode state files, durable goal/plan/evidence artifacts, session search/replay, and compaction-resistant project memory.
 - [ ] Team orchestration runtime: leader/worker state, task DAGs, mailbox/dispatch, worker heartbeats, status/summary, and optional worktree-backed workers.
-- [ ] Feed/approval bridge: minimal read-only `feed.list` / `forktty feed`
-  snapshot is available; durable history and actionable permission events are
-  still pending.
+- [x] Feed/approval bridge: `feed.list` / `forktty feed` now reads a bounded
+  durable feed history, and `feed.approval.respond` / `forktty feed respond`
+  records approval decisions for workflow consumers.
 - [ ] Expanded HUD/statusline export: active-mode, worker, token, health, and notification fields for provider statusline integrations; workspace/status/progress/session summary is available through `status.summary`/`forktty statusline`/MCP and GTK now includes the persisted-agent HUD.
 - [ ] Remote daemon/SSH depth: persistent remote ForkTTY helper, reconnect/disconnect semantics, CLI relay, and remote PTY/session ownership beyond plain `ssh <host>`.
 - [x] Project actions: repo-local validated `forktty.json` actions are exposed
