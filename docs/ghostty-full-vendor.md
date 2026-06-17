@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `b1b3a2b0dad3ab8d76f301fe64f6f4cf2575b946`
+- Pin: `383cd1d9f9be5480e9b0987f7eb36ecef8fcf142`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -68,9 +68,11 @@ is set on Ghostty's io thread, so the fork plumbs it across via a new
 `pid_available` surface mailbox message: the io thread pushes the pid after a
 successful spawn, the surface mailbox is drained on the apprt main thread and
 caches it on the core surface, and the getter reads that main-thread-owned field
-race-free. ForkTTY polls the getter briefly after spawn to record the pid; a
-library built before the symbol skips the poll and leaves port discovery
-unavailable for embedded panes.
+race-free. If that startup mailbox has not been observed yet, the getter falls
+back to Ghostty's existing PTY foreground PID query, which exposes the startup
+shell pid early enough for ForkTTY's listening-port discovery. ForkTTY polls the
+getter briefly after spawn to record the pid; a library built before the symbol
+skips the poll and leaves port discovery unavailable for embedded panes.
 
 Copy/paste/select-all/find now reach parity through
 `ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action
