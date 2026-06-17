@@ -38,6 +38,11 @@ All notable changes to ForkTTY are documented here.
 - The experimental Ghostty GTK pane mode can now service ForkTTY socket
   `read_text` and `capture_tail` requests by reading visible/full text through
   the vendored Ghostty GTK embedding ABI.
+- Release CI now builds the experimental `ghostty-gtk-embed.so` before
+  packaging, so the deb and AppImage ship it and `FORKTTY_GHOSTTY_GTK_PANES=1`
+  works on installed builds without a manual library build. The build is
+  best-effort and non-fatal while embedded panes remain opt-in: if it fails, the
+  release still ships with the classic renderer only.
 - Experimental embedded Ghostty panes now wire surface lifecycle into the
   ForkTTY model: title changes mirror into the model, child-process exit drops
   the surface from the ready set, sets a closed/`Exited (n)` status, and raises

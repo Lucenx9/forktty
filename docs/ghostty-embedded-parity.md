@@ -7,9 +7,10 @@ per-release platform grid, which walks the *classic* renderer) and
 [`ghostty-full-vendor.md`](ghostty-full-vendor.md) (the fork/ABI reference).
 
 Each row is a behavior that must reach parity with classic panes before the
-embedded renderer can become the default. The renderer switch (roadmap item 4)
-stays blocked until every row is `pass` and the embedding library ships in
-release artifacts by default (roadmap item 3, "Slice C").
+embedded renderer can become the default. The embedding library now ships in
+release artifacts (roadmap item 3, "Slice C": release CI builds it best-effort
+before packaging). The renderer switch (roadmap item 4) stays blocked until
+every row is `pass` and that best-effort build is promoted to required.
 
 ## Verification constraint
 
@@ -75,7 +76,8 @@ exercised) · `n/a`.
 Move roadmap item 4 (default switch) only when:
 
 1. Every matrix row is `pass` (or `pass with notes` with a tracked follow-up).
-2. The embedding `.so` ships in the deb/AppImage by default (item 3 "Slice C":
-   release CI runs `scripts/ghostty-gtk-lib-probe.sh` before packaging).
+2. The embedding `.so` ships in the deb/AppImage and its release-CI build is
+   promoted from best-effort to required (item 3 "Slice C": release CI already
+   runs `scripts/ghostty-gtk-lib-probe.sh` before packaging, non-fatal for now).
 3. A clear runtime fallback to the classic renderer remains (e.g. when the
    library is absent or fails to load).

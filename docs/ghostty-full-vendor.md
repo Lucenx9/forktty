@@ -87,9 +87,12 @@ development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
 through its RUNPATH (`$ORIGIN/../lib`). The install step is best-effort:
 packaging still succeeds when the library is absent, and `forktty doctor` warns
 about the missing library only when `FORKTTY_GHOSTTY_GTK_PANES` opts the user
-into embedded panes. Release CI does not run the probe before packaging yet, so
-stable release artifacts still ship without the library until the renderer
-becomes the default.
+into embedded panes. Release CI now builds the library before packaging
+(`scripts/ghostty-gtk-lib-probe.sh`), so stable release artifacts ship it; that
+build is best-effort and non-fatal while embedded panes are still opt-in, so a
+build failure leaves the artifacts on the classic renderer rather than blocking
+the release. When the embedded renderer becomes the default, that step should
+become required.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.
