@@ -108,6 +108,7 @@ pub(super) struct GhosttyTerminalWidget {
     local_selection_on_mouse_drag: Rc<Cell<bool>>,
     selection_clear_on_typing: bool,
     selection_clear_on_copy: bool,
+    clipboard_trim_trailing_spaces: bool,
     copy_on_select: TerminalCopyOnSelect,
     scroll_to_bottom: GhosttyScrollToBottom,
     mouse_reporting: bool,
@@ -197,6 +198,8 @@ impl GhosttyTerminalWidget {
         let mouse_scroll_multipliers = terminal_mouse_scroll_multipliers_for_config(config);
         let selection_clear_on_typing = terminal_selection_clear_on_typing_for_config(config);
         let selection_clear_on_copy = terminal_selection_clear_on_copy_for_config(config);
+        let clipboard_trim_trailing_spaces =
+            terminal_clipboard_trim_trailing_spaces_for_config(config);
         let copy_on_select = terminal_copy_on_select_for_config(config);
         let scroll_to_bottom = terminal_scroll_to_bottom_for_config(config);
         let mouse_reporting = terminal_mouse_reporting_for_config(config);
@@ -1067,6 +1070,7 @@ impl GhosttyTerminalWidget {
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
             selection_clear_on_typing,
             selection_clear_on_copy,
+            clipboard_trim_trailing_spaces,
             copy_on_select,
             scroll_to_bottom,
             mouse_reporting,
@@ -1125,6 +1129,7 @@ impl GhosttyTerminalWidget {
             local_selection_on_mouse_drag: Rc::downgrade(&self.local_selection_on_mouse_drag),
             selection_clear_on_typing: self.selection_clear_on_typing,
             selection_clear_on_copy: self.selection_clear_on_copy,
+            clipboard_trim_trailing_spaces: self.clipboard_trim_trailing_spaces,
             copy_on_select: self.copy_on_select,
             scroll_to_bottom: self.scroll_to_bottom,
             mouse_reporting: self.mouse_reporting,
@@ -1484,6 +1489,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     local_selection_on_mouse_drag: std::rc::Weak<Cell<bool>>,
     selection_clear_on_typing: bool,
     selection_clear_on_copy: bool,
+    clipboard_trim_trailing_spaces: bool,
     copy_on_select: TerminalCopyOnSelect,
     scroll_to_bottom: GhosttyScrollToBottom,
     mouse_reporting: bool,
@@ -1514,6 +1520,7 @@ impl WeakGhosttyTerminalWidget {
             local_selection_on_mouse_drag: self.local_selection_on_mouse_drag.upgrade()?,
             selection_clear_on_typing: self.selection_clear_on_typing,
             selection_clear_on_copy: self.selection_clear_on_copy,
+            clipboard_trim_trailing_spaces: self.clipboard_trim_trailing_spaces,
             copy_on_select: self.copy_on_select,
             scroll_to_bottom: self.scroll_to_bottom,
             mouse_reporting: self.mouse_reporting,
@@ -2252,12 +2259,25 @@ fn visible_text_from_full_text(text: &str, top: usize, rows: usize) -> String {
 /// anything to the clipboard.
 fn copy_payload<E>(
     selection_text: Option<String>,
+    trim_trailing_spaces: bool,
     render: impl FnOnce() -> Result<String, E>,
 ) -> Result<String, E> {
-    match selection_text {
-        Some(text) => Ok(text),
-        None => render(),
+    let text = match selection_text {
+        Some(text) => text,
+        None => render()?,
+    };
+    if trim_trailing_spaces {
+        Ok(trim_clipboard_trailing_spaces(&text))
+    } else {
+        Ok(text)
     }
+}
+
+fn trim_clipboard_trailing_spaces(text: &str) -> String {
+    text.split('\n')
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn clear_selection_after_copy(selection: &mut TerminalSelection, enabled: bool) {
@@ -2983,7 +3003,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
         // fallback: a stored selection must still copy when the backend
         // cannot render a frame.
         let selection_text = self.selection.borrow().selected_text();
-        let payload = copy_payload(selection_text, || {
+        let payload = copy_payload(selection_text, self.clipboard_trim_trailing_spaces, || {
             self.runtime
                 .borrow_mut()
                 .render_frame()
@@ -3564,7 +3584,7 @@ mod selection_tests {
         // A stored selection copies without touching the frame, so a failing
         // backend render cannot break it.
         let rendered = Cell::new(false);
-        let payload = copy_payload(Some("selected".to_string()), || {
+        let payload = copy_payload(Some("selected".to_string()), false, || {
             rendered.set(true);
             Err("render failed")
         });
@@ -3573,15 +3593,33 @@ mod selection_tests {
 
         // No selection: the rendered viewport is the fallback.
         assert_eq!(
-            copy_payload(None, || Ok::<_, &str>("screen".to_string())),
+            copy_payload(None, false, || Ok::<_, &str>("screen".to_string())),
             Ok("screen".to_string())
         );
 
         // No selection and no frame: the error propagates so the caller can
         // toast without clobbering the clipboard.
         assert_eq!(
-            copy_payload(None, || Err::<String, _>("render failed")),
+            copy_payload(None, false, || Err::<String, _>("render failed")),
             Err("render failed")
+        );
+    }
+
+    #[test]
+    fn copy_payload_can_trim_trailing_spaces_like_ghostty() {
+        assert_eq!(
+            copy_payload(
+                Some("one   \n   \ntwo\t ".to_string()),
+                true,
+                || -> Result<String, &str> { Ok("unused".to_string()) }
+            ),
+            Ok("one\n\ntwo".to_string())
+        );
+        assert_eq!(
+            copy_payload(None, true, || -> Result<String, &str> {
+                Ok("screen   \n\t\nline\t".to_string())
+            }),
+            Ok("screen\n\nline".to_string())
         );
     }
 

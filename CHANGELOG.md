@@ -64,6 +64,8 @@ All notable changes to ForkTTY are documented here.
   finished terminal selection.
 - Ghostty `selection-word-chars` now controls double-click word boundaries in
   libghostty word selection and GTK fallback selection.
+- Ghostty `clipboard-trim-trailing-spaces` now trims trailing whitespace from
+  copied terminal lines.
 - Ghostty `copy-on-select` now controls selection publication: default/`true`
   keeps PRIMARY selection behavior, `false` disables it, and `clipboard`
   publishes to both PRIMARY and the regular clipboard.

@@ -137,6 +137,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) selection_clear_on_typing: Option<bool>,
     pub(super) selection_clear_on_copy: Option<bool>,
     pub(super) selection_word_chars: Option<Vec<char>>,
+    pub(super) clipboard_trim_trailing_spaces: bool,
     pub(super) copy_on_select: TerminalCopyOnSelect,
     pub(super) right_click_action: Option<TerminalRightClickAction>,
     pub(super) scroll_to_bottom: GhosttyScrollToBottom,
@@ -253,6 +254,12 @@ pub(super) fn terminal_selection_clear_on_copy_for_appearance(
     appearance: &GhosttyTerminalAppearance,
 ) -> bool {
     appearance.selection_clear_on_copy.unwrap_or(false)
+}
+
+pub(super) fn terminal_clipboard_trim_trailing_spaces_for_config(
+    config: &config::AppConfig,
+) -> bool {
+    ghostty_terminal_appearance_for_config(config).clipboard_trim_trailing_spaces
 }
 
 pub(super) fn terminal_copy_on_select_for_config(
@@ -660,6 +667,7 @@ impl Default for GhosttyTerminalAppearance {
             selection_clear_on_typing: None,
             selection_clear_on_copy: None,
             selection_word_chars: None,
+            clipboard_trim_trailing_spaces: false,
             copy_on_select: TerminalCopyOnSelect::Selection,
             right_click_action: None,
             scroll_to_bottom: GhosttyScrollToBottom::default(),
@@ -710,6 +718,9 @@ impl GhosttyTerminalAppearance {
                 self.selection_clear_on_copy = parse_ghostty_optional_bool(&value)
             }
             "selection-word-chars" => self.apply_selection_word_chars(value),
+            "clipboard-trim-trailing-spaces" => {
+                self.clipboard_trim_trailing_spaces = parse_ghostty_bool(&value);
+            }
             "copy-on-select" => self.apply_copy_on_select(&value),
             "right-click-action" => self.apply_right_click_action(&value),
             "scroll-to-bottom" => self.apply_scroll_to_bottom(&value),
@@ -1539,6 +1550,22 @@ mod tests {
         assert!(!terminal_selection_clear_on_copy_for_appearance(
             &config, &reset
         ));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_clipboard_trim_trailing_spaces() {
+        let config = config::AppConfig::default();
+        let default = ghostty_terminal_appearance_from_text("");
+        assert!(!terminal_clipboard_trim_trailing_spaces_for_config(&config));
+        assert!(!default.clipboard_trim_trailing_spaces);
+
+        let enabled =
+            ghostty_terminal_appearance_from_text("clipboard-trim-trailing-spaces = true");
+        assert!(enabled.clipboard_trim_trailing_spaces);
+
+        let disabled =
+            ghostty_terminal_appearance_from_text("clipboard-trim-trailing-spaces = false");
+        assert!(!disabled.clipboard_trim_trailing_spaces);
     }
 
     #[test]
