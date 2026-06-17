@@ -642,7 +642,9 @@ mod tests {
 
         let env = crate::spawn::child_environment(&request);
 
-        assert!(env.iter().any(|entry| entry == "TERM=xterm-256color"));
+        assert!(env
+            .iter()
+            .any(|entry| entry == "TERM=xterm-256color" || entry == "TERM=xterm-ghostty"));
         assert!(env.iter().any(|entry| entry == "COLORTERM=truecolor"));
         assert!(env.iter().any(|entry| entry == "TERM_PROGRAM=ForkTTY"));
     }

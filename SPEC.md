@@ -67,15 +67,16 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 
 1. A workspace or split creates a surface in `WorkspaceModel`.
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
-3. The Ghostty adapter creates a Ghostty-backed terminal, applies font and color appearance from Ghostty's config plus ForkTTY scrollback settings, and spawns the configured shell. Runtime zoom shortcuts scale the open GTK panes without persisting font settings.
+3. The Ghostty adapter creates a Ghostty-backed terminal, applies font and color appearance from Ghostty's config plus ForkTTY scrollback settings, and spawns the configured shell. Runtime zoom shortcuts scale the open GTK panes without persisting font settings. When Ghostty shell-integration resources are available, ForkTTY injects the upstream zsh/bash/fish/elvish/nushell startup integration and packages those resources in Linux release artifacts.
 4. Child processes inherit:
-   - `TERM=xterm-256color`
+   - `TERM=xterm-ghostty` with matching terminfo when available, otherwise `TERM=xterm-256color`
    - `COLORTERM=truecolor`
    - `TERM_PROGRAM=ForkTTY`
    - `TERM_PROGRAM_VERSION`
    - `FORKTTY_WORKSPACE_ID`
    - `FORKTTY_SURFACE_ID`
    - `FORKTTY_SOCKET_PATH`
+   - `GHOSTTY_RESOURCES_DIR` and shell-specific `GHOSTTY_*` startup variables when Ghostty shell integration is active
 5. Socket methods and GTK actions can send text, split, focus, close, or resize surfaces.
 6. Closing a pane/workspace closes the corresponding Ghostty surface.
 
@@ -143,7 +144,7 @@ Ghostty compatibility scope:
 | --- | --- |
 | Config discovery | Supported for `~/.config/ghostty/config`, `~/.config/ghostty/config.ghostty`, recursive `config-file`, and Ghostty theme directories, with ForkTTY's regular-file and size guards. |
 | Terminal appearance | Supported for terminal font family/style fallbacks, font size, foreground/background, cursor, selection, bold, faint, ANSI palette, named colors, short/full hex colors, `theme`, cell metric adjustment, scrollback limit, mouse scroll multiplier, and inactive split dimming. |
-| Runtime terminal state | Delegated to `libghostty-vt` for VT parsing, key/paste encoding, OSC 8 links, OSC 9/99 notifications, bracketed paste/focus mode mirrors, selection formatting, and word selection. |
+| Runtime terminal state | Delegated to `libghostty-vt` for VT parsing, key/paste encoding, OSC 8 links, OSC 9/99 notifications, bracketed paste/focus mode mirrors, selection formatting, and word selection. Shell startup integration uses Ghostty's upstream shell scripts when resources are available. |
 | ForkTTY-owned UI | Intentionally not read from Ghostty config. Window layout, tabs, splits, sidebar, socket automation, worktrees, agent controls, notifications UI, and session restore use ForkTTY config/session state. |
 | Ghostty GUI/window/platform options | Ignored unless ForkTTY has the same runtime concept. Examples include Ghostty keybinds, quick terminal, window decorations, titlebar/font, shell integration UI, macOS-only options, shaders, background blur/opacity, and Linux cgroup settings. |
 | Renderer parity | Partial by design: ForkTTY currently paints Ghostty cells with a GTK/Pango/Cairo renderer. Replacing it waits on a stable upstream Ghostty embeddable renderer/widget API that fits ForkTTY panes, splits, socket automation, and session restore. |

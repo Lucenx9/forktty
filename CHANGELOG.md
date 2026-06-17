@@ -60,6 +60,7 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `adjust-cell-width` and `adjust-cell-height` now adjust GTK terminal cell metrics using pixel or percentage values.
 - Ghostty `unfocused-split-opacity` and `unfocused-split-fill` now control ForkTTY's inactive split dim overlay.
 - Terminal panes now support runtime zoom with `Ctrl++`/`Ctrl+=`, `Ctrl+-`, and `Ctrl+0` without adding persistent font settings.
+- Terminal child shells now use Ghostty shell-integration resources when available, including upstream zsh/bash/fish/elvish/nushell startup injection and bundled Linux package resources.
 - Finished terminal selections now format their clipboard payload through `libghostty-vt`'s selection formatter, with the existing GTK frame extraction kept as a fallback.
 - Double-click word selection now asks `libghostty-vt` for the word range first, falling back to the GTK frame logic when Ghostty has no selectable word.
 - The GTK/Ghostty smoke script now verifies GTK action split/focus behavior, socket split readback, and the socket notification create/list/clear flow.

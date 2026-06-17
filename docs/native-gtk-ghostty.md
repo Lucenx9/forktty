@@ -83,7 +83,8 @@ ForkTTY currently requires libadwaita 1.4+ and Ghostty 0.76 or newer, matching U
 ## Runtime Notes
 
 - ForkTTY owns the child PTY; ForkTTY drives terminals through Ghostty widgets rather than a separate portable-pty stream.
-- Spawned shells receive `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=ForkTTY`, `TERM_PROGRAM_VERSION`, `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`.
+- Spawned shells receive `TERM=xterm-ghostty` with matching terminfo when available, otherwise `TERM=xterm-256color`, plus `COLORTERM=truecolor`, `TERM_PROGRAM=ForkTTY`, `TERM_PROGRAM_VERSION`, `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`.
+- When Ghostty shell-integration resources are available, ForkTTY injects the upstream zsh/bash/fish/elvish/nushell startup integration; Linux release artifacts bundle those shell-integration resources.
 - Prompt/metadata detection uses ForkTTY hooks and terminal events and a bounded visible-tail prompt fallback.
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.

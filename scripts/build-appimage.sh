@@ -139,6 +139,18 @@ copy_vendored_ghostty_runtime_lib() {
   ln -s libghostty-vt.so.0 "$lib_dir/libghostty-vt.so"
 }
 
+copy_vendored_ghostty_shell_integration() {
+  local source_dir
+  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/shell-integration' -print -quit)"
+  if [[ -z "$source_dir" ]]; then
+    echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
+    exit 1
+  fi
+
+  mkdir -p "$APPDIR/usr/share/ghostty"
+  cp -a "$source_dir" "$APPDIR/usr/share/ghostty/shell-integration"
+}
+
 copy_forktty_icon_assets() {
   local source_dir="$ROOT_DIR/packaging/linux/icons/hicolor"
   local target_dir="$APPDIR/usr/share/icons/hicolor"
@@ -310,6 +322,7 @@ write_appimage_hicolor_index_theme
 # would see it missing. (The binary reaches it at runtime via its RUNPATH
 # $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
+copy_vendored_ghostty_shell_integration
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"

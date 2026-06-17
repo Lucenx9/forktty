@@ -7,6 +7,14 @@ use std::{
 };
 
 pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
+    let ghostty_resources = ghostty_resources_dir();
+    child_environment_with_ghostty_resources(request, ghostty_resources.as_deref())
+}
+
+fn child_environment_with_ghostty_resources(
+    request: &SpawnRequest,
+    ghostty_resources: Option<&Path>,
+) -> Vec<String> {
     let appimage_dirs = appimage_runtime_dirs();
     // `vars_os` rather than `vars`: a single non-UTF-8 environment variable
     // (legal on Linux) makes `vars` panic, which would crash the app while
@@ -15,20 +23,33 @@ pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
     let mut env = std::env::vars_os()
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .filter(|(key, _)| !is_appimage_runtime_env(key))
+        .filter(|(key, _)| !is_inherited_ghostty_env(key))
         .collect::<BTreeMap<_, _>>();
     sanitize_appimage_child_environment(&mut env, &appimage_dirs);
     for (key, value) in request.forktty_env() {
         env.insert(key, value);
     }
+    apply_ghostty_shell_integration_env(&mut env, request, ghostty_resources);
     env.into_iter()
         .map(|(key, value)| format!("{key}={value}"))
         .collect()
 }
 
 pub fn child_argv(request: &SpawnRequest, unset_env_keys: Vec<String>) -> Vec<String> {
-    let command = std::iter::once(request.shell.clone())
-        .chain(request.args.iter().cloned())
-        .collect::<Vec<_>>();
+    let ghostty_resources = ghostty_resources_dir();
+    child_argv_with_ghostty_resources(request, unset_env_keys, ghostty_resources.as_deref())
+}
+
+fn child_argv_with_ghostty_resources(
+    request: &SpawnRequest,
+    unset_env_keys: Vec<String>,
+    ghostty_resources: Option<&Path>,
+) -> Vec<String> {
+    let command = ghostty_shell_integration_argv(request, ghostty_resources).unwrap_or_else(|| {
+        std::iter::once(request.shell.clone())
+            .chain(request.args.iter().cloned())
+            .collect::<Vec<_>>()
+    });
     let Some(env_command) = env_command_path().filter(|_| !unset_env_keys.is_empty()) else {
         return command;
     };
@@ -45,6 +66,226 @@ pub fn child_argv(request: &SpawnRequest, unset_env_keys: Vec<String>) -> Vec<St
 
 pub fn child_cwd(request: &SpawnRequest) -> &Path {
     request.cwd.as_path()
+}
+
+fn apply_ghostty_shell_integration_env(
+    env: &mut BTreeMap<String, String>,
+    request: &SpawnRequest,
+    ghostty_resources: Option<&Path>,
+) {
+    let Some(resources) = ghostty_resources.filter(|path| valid_ghostty_resources_dir(path)) else {
+        return;
+    };
+    let Some(resources) = path_string(resources) else {
+        return;
+    };
+
+    env.insert("GHOSTTY_RESOURCES_DIR".to_string(), resources.clone());
+    env.insert(
+        "GHOSTTY_SHELL_FEATURES".to_string(),
+        "cursor:blink,title".to_string(),
+    );
+
+    if let Some(terminfo) =
+        ghostty_terminfo_dir(Path::new(&resources)).and_then(|p| path_string(&p))
+    {
+        env.insert("TERM".to_string(), "xterm-ghostty".to_string());
+        env.insert("TERMINFO".to_string(), terminfo);
+    }
+
+    match detect_ghostty_shell(request) {
+        Some(GhosttyShell::Bash) => {
+            let Some(script) = bash_integration_script(Path::new(&resources)) else {
+                return;
+            };
+            if bash_integration_argv_and_inject(request).is_none() {
+                return;
+            }
+            if let Some(old_env) = env.get("ENV").cloned() {
+                env.insert("GHOSTTY_BASH_ENV".to_string(), old_env);
+            }
+            env.insert("ENV".to_string(), script);
+            if let Some(rcfile) = bash_rcfile(request) {
+                env.insert("GHOSTTY_BASH_RCFILE".to_string(), rcfile);
+            }
+            env.insert(
+                "GHOSTTY_BASH_INJECT".to_string(),
+                bash_inject_flags(request).unwrap_or_else(|| "1".to_string()),
+            );
+        }
+        Some(GhosttyShell::Zsh) => {
+            let dir = Path::new(&resources).join("shell-integration/zsh");
+            if !dir.is_dir() {
+                return;
+            }
+            if let Some(old_zdotdir) = env.get("ZDOTDIR").cloned() {
+                env.insert("GHOSTTY_ZSH_ZDOTDIR".to_string(), old_zdotdir);
+            }
+            if let Some(dir) = path_string(&dir) {
+                env.insert("ZDOTDIR".to_string(), dir);
+            }
+        }
+        Some(GhosttyShell::Fish | GhosttyShell::Elvish | GhosttyShell::Nushell) => {
+            prepend_ghostty_xdg_shell_integration(env, Path::new(&resources));
+        }
+        None => {}
+    }
+}
+
+fn ghostty_shell_integration_argv(
+    request: &SpawnRequest,
+    ghostty_resources: Option<&Path>,
+) -> Option<Vec<String>> {
+    let resources = ghostty_resources.filter(|path| valid_ghostty_resources_dir(path))?;
+    match detect_ghostty_shell(request)? {
+        GhosttyShell::Bash => {
+            let (argv, _) = bash_integration_argv_and_inject(request)?;
+            bash_integration_script(resources)?;
+            Some(argv)
+        }
+        GhosttyShell::Nushell => {
+            let mut argv = vec![
+                request.shell.clone(),
+                "--execute".to_string(),
+                "use ghostty *".to_string(),
+            ];
+            argv.extend(request.args.iter().cloned());
+            Some(argv)
+        }
+        GhosttyShell::Zsh | GhosttyShell::Fish | GhosttyShell::Elvish => None,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum GhosttyShell {
+    Bash,
+    Elvish,
+    Fish,
+    Nushell,
+    Zsh,
+}
+
+fn detect_ghostty_shell(request: &SpawnRequest) -> Option<GhosttyShell> {
+    match Path::new(&request.shell).file_name()?.to_str()? {
+        "bash" => Some(GhosttyShell::Bash),
+        "elvish" => Some(GhosttyShell::Elvish),
+        "fish" => Some(GhosttyShell::Fish),
+        "nu" => Some(GhosttyShell::Nushell),
+        "zsh" => Some(GhosttyShell::Zsh),
+        _ => None,
+    }
+}
+
+fn bash_integration_argv_and_inject(request: &SpawnRequest) -> Option<(Vec<String>, String)> {
+    let mut argv = vec![request.shell.clone(), "--posix".to_string()];
+    let mut inject = "1".to_string();
+    let mut iter = request.args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--posix" => return None,
+            "--norc" | "--noprofile" => {
+                inject.push(' ');
+                inject.push_str(arg);
+            }
+            "--rcfile" | "--init-file" => {
+                iter.next()?;
+            }
+            "-" | "--" => {
+                argv.push(arg.clone());
+                argv.extend(iter.cloned());
+                break;
+            }
+            _ if short_bash_option_contains_command(arg) => return None,
+            _ => argv.push(arg.clone()),
+        }
+    }
+    Some((argv, inject))
+}
+
+fn bash_inject_flags(request: &SpawnRequest) -> Option<String> {
+    bash_integration_argv_and_inject(request).map(|(_, inject)| inject)
+}
+
+fn bash_rcfile(request: &SpawnRequest) -> Option<String> {
+    let mut iter = request.args.iter();
+    while let Some(arg) = iter.next() {
+        if matches!(arg.as_str(), "--rcfile" | "--init-file") {
+            return iter.next().cloned();
+        }
+    }
+    None
+}
+
+fn short_bash_option_contains_command(arg: &str) -> bool {
+    let bytes = arg.as_bytes();
+    bytes.len() > 1 && bytes[0] == b'-' && bytes[1] != b'-' && bytes[1..].contains(&b'c')
+}
+
+fn bash_integration_script(resources: &Path) -> Option<String> {
+    let script = resources.join("shell-integration/bash/ghostty.bash");
+    script.is_file().then(|| path_string(&script)).flatten()
+}
+
+fn prepend_ghostty_xdg_shell_integration(env: &mut BTreeMap<String, String>, resources: &Path) {
+    let dir = resources.join("shell-integration");
+    let Some(dir) = dir.is_dir().then(|| path_string(&dir)).flatten() else {
+        return;
+    };
+    env.insert("GHOSTTY_SHELL_INTEGRATION_XDG_DIR".to_string(), dir.clone());
+    let current = env
+        .get("XDG_DATA_DIRS")
+        .map(String::as_str)
+        .unwrap_or("/usr/local/share:/usr/share");
+    env.insert("XDG_DATA_DIRS".to_string(), prepend_path(current, &dir));
+}
+
+fn prepend_path(current: &str, entry: &str) -> String {
+    if current.split(':').any(|part| part == entry) {
+        current.to_string()
+    } else if current.is_empty() {
+        entry.to_string()
+    } else {
+        format!("{entry}:{current}")
+    }
+}
+
+fn ghostty_resources_dir() -> Option<PathBuf> {
+    ghostty_resource_candidates()
+        .into_iter()
+        .find(|path| valid_ghostty_resources_dir(path))
+}
+
+fn ghostty_resource_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("GHOSTTY_RESOURCES_DIR") {
+        candidates.push(PathBuf::from(path));
+    }
+    for key in ["APPDIR", "FORKTTY_APPIMAGE_DIR"] {
+        if let Some(path) = std::env::var_os(key) {
+            candidates.push(PathBuf::from(path).join("usr/share/ghostty"));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(prefix) = exe.parent().and_then(Path::parent) {
+            candidates.push(prefix.join("share/ghostty"));
+        }
+    }
+    candidates.push(PathBuf::from("/usr/local/share/ghostty"));
+    candidates.push(PathBuf::from("/usr/share/ghostty"));
+    candidates
+}
+
+fn valid_ghostty_resources_dir(path: &Path) -> bool {
+    path.join("shell-integration").is_dir()
+}
+
+fn ghostty_terminfo_dir(resources: &Path) -> Option<PathBuf> {
+    let dir = resources.parent()?.join("terminfo");
+    (dir.join("x/xterm-ghostty").is_file() || dir.join("g/ghostty").is_file()).then_some(dir)
+}
+
+fn path_string(path: &Path) -> Option<String> {
+    path.to_str().map(ToOwned::to_owned)
 }
 
 pub fn appimage_runtime_env_keys() -> Vec<String> {
@@ -66,6 +307,10 @@ pub fn is_appimage_runtime_env(key: &str) -> bool {
         key,
         "APPIMAGE" | "APPDIR" | "ARGV0" | "DESKTOPINTEGRATION" | "OWD"
     ) || key.starts_with("APPIMAGE_")
+}
+
+fn is_inherited_ghostty_env(key: &str) -> bool {
+    key.starts_with("GHOSTTY_")
 }
 
 fn appimage_runtime_dirs() -> Vec<String> {
@@ -271,6 +516,44 @@ mod tests {
         }
     }
 
+    fn ghostty_resources() -> TestDir {
+        let dir = TestDir::new("ghostty-resources");
+        fs::create_dir_all(dir.path().join("share/ghostty/shell-integration/bash")).unwrap();
+        fs::create_dir_all(dir.path().join("share/ghostty/shell-integration/zsh")).unwrap();
+        fs::create_dir_all(dir.path().join("share/ghostty/shell-integration/fish")).unwrap();
+        fs::create_dir_all(dir.path().join("share/ghostty/shell-integration/elvish")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join("share/ghostty/shell-integration/nushell/vendor/autoload"),
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join("share/terminfo/x")).unwrap();
+        fs::write(
+            dir.path()
+                .join("share/ghostty/shell-integration/bash/ghostty.bash"),
+            "",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join("share/ghostty/shell-integration/zsh/.zshenv"),
+            "",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join("share/ghostty/shell-integration/nushell/vendor/autoload/ghostty.nu"),
+            "",
+        )
+        .unwrap();
+        fs::write(dir.path().join("share/terminfo/x/xterm-ghostty"), "").unwrap();
+        dir
+    }
+
+    fn ghostty_resource_path(dir: &TestDir) -> PathBuf {
+        dir.path().join("share/ghostty")
+    }
+
     #[test]
     fn appimage_runtime_dirs_returns_sorted_runtime_dirs() {
         let dirs = with_env(
@@ -385,14 +668,18 @@ mod tests {
 
     #[test]
     fn child_argv_uses_shell_and_args_without_unset_keys() {
-        let argv = child_argv(&spawn_request(), Vec::new());
+        let argv = child_argv_with_ghostty_resources(&spawn_request(), Vec::new(), None);
 
         assert_eq!(argv, strings(&["bash", "-l", "-i"]));
     }
 
     #[test]
     fn child_argv_prefixes_env_unset_flags_when_env_is_available() {
-        let argv = child_argv(&spawn_request(), strings(&["APPIMAGE", "APPDIR"]));
+        let argv = child_argv_with_ghostty_resources(
+            &spawn_request(),
+            strings(&["APPIMAGE", "APPDIR"]),
+            None,
+        );
 
         let Some(env_command) = env_command_path() else {
             assert_eq!(argv, strings(&["bash", "-l", "-i"]));
@@ -411,6 +698,153 @@ mod tests {
                 "-i",
             ])
         );
+    }
+
+    #[test]
+    fn ghostty_resources_enable_zsh_shell_integration_env() {
+        let resources = ghostty_resources();
+        let mut request = spawn_request();
+        request.shell = "/bin/zsh".to_string();
+        request.args.clear();
+        request.extra_env = vec![("ZDOTDIR".to_string(), "/home/me/.config/zsh".to_string())];
+
+        let env = env_map(child_environment_with_ghostty_resources(
+            &request,
+            Some(&ghostty_resource_path(&resources)),
+        ));
+
+        assert_eq!(
+            env.get("GHOSTTY_RESOURCES_DIR").map(String::as_str),
+            Some(ghostty_resource_path(&resources).to_str().unwrap())
+        );
+        assert_eq!(
+            env.get("ZDOTDIR").map(String::as_str),
+            Some(
+                ghostty_resource_path(&resources)
+                    .join("shell-integration/zsh")
+                    .to_str()
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            env.get("GHOSTTY_ZSH_ZDOTDIR").map(String::as_str),
+            Some("/home/me/.config/zsh")
+        );
+        assert_eq!(
+            env.get("GHOSTTY_SHELL_FEATURES").map(String::as_str),
+            Some("cursor:blink,title")
+        );
+        assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-ghostty"));
+        assert_eq!(
+            env.get("TERMINFO").map(String::as_str),
+            Some(resources.path().join("share/terminfo").to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn ghostty_resources_inject_bash_with_posix_env_startup() {
+        let resources = ghostty_resources();
+        let mut request = spawn_request();
+        request.shell = "bash".to_string();
+        request.args = strings(&["--noprofile"]);
+        request.extra_env = vec![("ENV".to_string(), "/home/me/.env".to_string())];
+
+        let argv = child_argv_with_ghostty_resources(
+            &request,
+            Vec::new(),
+            Some(&ghostty_resource_path(&resources)),
+        );
+        let env = env_map(child_environment_with_ghostty_resources(
+            &request,
+            Some(&ghostty_resource_path(&resources)),
+        ));
+
+        assert_eq!(argv, strings(&["bash", "--posix"]));
+        assert_eq!(
+            env.get("ENV").map(String::as_str),
+            Some(
+                ghostty_resource_path(&resources)
+                    .join("shell-integration/bash/ghostty.bash")
+                    .to_str()
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            env.get("GHOSTTY_BASH_ENV").map(String::as_str),
+            Some("/home/me/.env")
+        );
+        assert_eq!(
+            env.get("GHOSTTY_BASH_INJECT").map(String::as_str),
+            Some("1 --noprofile")
+        );
+    }
+
+    #[test]
+    fn ghostty_bash_integration_skips_non_interactive_command() {
+        let resources = ghostty_resources();
+        let mut request = spawn_request();
+        request.shell = "bash".to_string();
+        request.args = strings(&["-c", "echo no"]);
+
+        let argv = child_argv_with_ghostty_resources(
+            &request,
+            Vec::new(),
+            Some(&ghostty_resource_path(&resources)),
+        );
+        let env = env_map(child_environment_with_ghostty_resources(
+            &request,
+            Some(&ghostty_resource_path(&resources)),
+        ));
+
+        assert_eq!(argv, strings(&["bash", "-c", "echo no"]));
+        assert!(!env.contains_key("ENV"));
+        assert!(!env.contains_key("GHOSTTY_BASH_INJECT"));
+    }
+
+    #[test]
+    fn ghostty_resources_enable_xdg_shells_and_nushell_use() {
+        let resources = ghostty_resources();
+        let xdg_path = ghostty_resource_path(&resources).join("shell-integration");
+        let mut request = spawn_request();
+        request.shell = "fish".to_string();
+        request.args.clear();
+        request.extra_env = vec![("XDG_DATA_DIRS".to_string(), "/opt/share".to_string())];
+
+        let env = env_map(child_environment_with_ghostty_resources(
+            &request,
+            Some(&ghostty_resource_path(&resources)),
+        ));
+
+        assert_eq!(
+            env.get("GHOSTTY_SHELL_INTEGRATION_XDG_DIR")
+                .map(String::as_str),
+            Some(xdg_path.to_str().unwrap())
+        );
+        assert_eq!(
+            env.get("XDG_DATA_DIRS").map(String::as_str),
+            Some(format!("{}:/opt/share", xdg_path.to_str().unwrap()).as_str())
+        );
+
+        request.shell = "nu".to_string();
+        let argv = child_argv_with_ghostty_resources(
+            &request,
+            Vec::new(),
+            Some(&ghostty_resource_path(&resources)),
+        );
+        assert_eq!(argv, strings(&["nu", "--execute", "use ghostty *"]));
+    }
+
+    #[test]
+    fn missing_ghostty_resources_keep_legacy_terminal_env() {
+        let env = env_map(child_environment_with_ghostty_resources(
+            &spawn_request(),
+            None,
+        ));
+        let argv = child_argv_with_ghostty_resources(&spawn_request(), Vec::new(), None);
+
+        assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
+        assert!(!env.contains_key("GHOSTTY_RESOURCES_DIR"));
+        assert_eq!(argv, strings(&["bash", "-l", "-i"]));
     }
 
     #[test]

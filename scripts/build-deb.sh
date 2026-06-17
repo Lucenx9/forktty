@@ -42,6 +42,18 @@ verify_forktty_icon_assets() {
   fi
 }
 
+copy_vendored_ghostty_shell_integration() {
+  local source_dir
+  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/shell-integration' -print -quit)"
+  if [[ -z "$source_dir" ]]; then
+    echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
+    exit 1
+  fi
+
+  mkdir -p "$PKG_ROOT/usr/share/ghostty"
+  cp -a "$source_dir" "$PKG_ROOT/usr/share/ghostty/shell-integration"
+}
+
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
   exit 1
@@ -90,6 +102,7 @@ fi
 install -Dm755 "$GHOSTTY_LIB" "$PKG_ROOT/usr/lib/libghostty-vt.so.0.1.0"
 ln -s libghostty-vt.so.0.1.0 "$PKG_ROOT/usr/lib/libghostty-vt.so.0"
 ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
+copy_vendored_ghostty_shell_integration
 install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"
