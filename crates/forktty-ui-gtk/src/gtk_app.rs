@@ -75,6 +75,7 @@ mod backend;
 mod browser_bridge;
 mod command_palette;
 mod controller;
+mod ghostty_gtk_probe;
 mod layout;
 mod notifications_panel;
 mod pane_chrome;
@@ -138,6 +139,10 @@ pub fn run() {
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run();
+}
+
+pub fn run_ghostty_gtk_probe() -> i32 {
+    ghostty_gtk_probe::run()
 }
 
 #[cfg(test)]

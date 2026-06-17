@@ -19,6 +19,8 @@ USAGE:
     forktty                 Launch the GTK app (default).
     forktty doctor          Print a local diagnostics report and exit.
                            Options: --json, --strict, --hooks, --socket, --packaging.
+    forktty ghostty-gtk-probe
+                           Launch the experimental upstream Ghostty GTK widget probe.
     forktty hooks setup     Install Codex, Claude Code, Gemini, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty mcp             Run the ForkTTY MCP stdio server.
@@ -39,6 +41,7 @@ pub enum CliAction {
     LaunchApp,
     PrintVersion,
     PrintHelp,
+    GhosttyGtkProbe,
     Doctor(DoctorOptions),
     RemoteHelper(RemoteHelperCommand),
     SocketCli(Vec<OsString>),
@@ -82,6 +85,7 @@ where
     let action = match arg.to_str() {
         Some("--version") | Some("-V") => CliAction::PrintVersion,
         Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
+        Some("ghostty-gtk-probe") => CliAction::GhosttyGtkProbe,
         Some("doctor") => match parse_doctor_options(&rest[1..]) {
             Ok(options) => CliAction::Doctor(options),
             Err(message) => CliAction::Unknown(message),
@@ -1427,6 +1431,18 @@ mod tests {
                 json: false,
                 strict: false
             })
+        );
+    }
+
+    #[test]
+    fn parse_ghostty_gtk_probe_subcommand() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "ghostty-gtk-probe"]),
+            CliAction::GhosttyGtkProbe
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "ghostty-gtk-probe", "extra"]),
+            CliAction::Unknown("unknown argument: extra".to_string())
         );
     }
 

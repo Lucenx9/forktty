@@ -63,7 +63,8 @@ require Ghostty to own the whole application window.
 ## Next Cut
 
 1. Keep the `emit-gtk-lib` fork branch compiling on Ubuntu CI.
-2. Add a ForkTTY feature-gated probe that creates the widget in isolation.
+2. Run `forktty ghostty-gtk-probe` with `FORKTTY_GHOSTTY_GTK_LIB` pointing at a
+   built `ghostty-gtk-embed.so` to exercise widget creation in isolation.
 3. Resolve the `Application.default()` ownership issue so Ghostty does not have
    to own the whole host `GApplication`.
 4. Only after the probe renders, replace one ForkTTY terminal pane behind a
@@ -81,6 +82,14 @@ scripts/ghostty-gtk-build-probe.sh
 
 Or run the same command on GitHub's Ubuntu runner through the manual
 `Ghostty GTK Probe` workflow.
+
+The GTK widget probe is intentionally separate from the normal app launch:
+
+```bash
+scripts/ghostty-gtk-lib-probe.sh
+FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
+  cargo run -p forktty-ui-gtk -- ghostty-gtk-probe
+```
 
 On the current Arch-style local toolchain this does not reach the Ghostty API
 work yet. Zig 0.15.2 attempts to link helper executables against GCC 16.1.1
