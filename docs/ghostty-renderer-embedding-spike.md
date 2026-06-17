@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`4c1f1c61985f0b059da05fb0e88e8d28f83030a9`.
+`53949b9b3bb6d5f42215ca530ed190874f5f64b9`.
 
 ## Result
 
@@ -68,6 +68,9 @@ that belong to the standalone app, including theme-manager sync, signal
 handlers, application actions, global shortcuts, and config-error dialogs.
 The GTK surface constructor returns a sunk full `GtkWidget*` reference so
 gtk-rs and other embedders can use normal transfer-full ownership.
+The embedded `GtkApp` is initialized directly inside the heap-owned embedding
+context instead of a temporary stack value, keeping Ghostty's internal runtime
+app pointer stable after context creation.
 
 ## Next Cut
 

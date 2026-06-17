@@ -23,6 +23,8 @@ All notable changes to ForkTTY are documented here.
   startup when registered inside ForkTTY's host GTK application.
 - The vendored Ghostty GTK embedding ABI now returns a sunk full widget
   reference so the Rust probe can parent the surface without premature dispose.
+- The vendored Ghostty GTK embedding context now initializes Ghostty's GTK app
+  state in-place so internal runtime pointers stay valid after context setup.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

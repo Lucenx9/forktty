@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `4c1f1c61985f0b059da05fb0e88e8d28f83030a9`
+- Pin: `53949b9b3bb6d5f42215ca530ed190874f5f64b9`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -21,7 +21,9 @@ application pointer separate from the host `GApplication` default so loading
 the probe does not claim ForkTTY's process-global GTK application. The embedded
 artifact skips Ghostty's pre-init GTK environment setup when GTK is already
 initialized by the host process, and avoids standalone-app theme/shell startup
-pieces that are not needed for a packed widget.
+pieces that are not needed for a packed widget. The embedded GTK app state is
+initialized in the heap-owned embedding context so Ghostty's runtime app
+pointer remains stable after context creation.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.
