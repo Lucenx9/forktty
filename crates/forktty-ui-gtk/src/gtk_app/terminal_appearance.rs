@@ -33,6 +33,12 @@ pub(super) enum GhosttyMetricAdjustment {
     Percent(f64),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum GhosttyFontStyleChoice {
+    Named(String),
+    Disabled,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TerminalRightClickAction {
     ContextMenu,
@@ -142,6 +148,13 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_family_bold: Option<String>,
     pub(super) font_family_italic: Option<String>,
     pub(super) font_family_bold_italic: Option<String>,
+    pub(super) font_style: Option<GhosttyFontStyleChoice>,
+    pub(super) font_style_bold: Option<GhosttyFontStyleChoice>,
+    pub(super) font_style_italic: Option<GhosttyFontStyleChoice>,
+    pub(super) font_style_bold_italic: Option<GhosttyFontStyleChoice>,
+    pub(super) synthetic_bold: bool,
+    pub(super) synthetic_italic: bool,
+    pub(super) synthetic_bold_italic: bool,
     pub(super) font_features: Vec<String>,
     pub(super) font_variation: Option<String>,
     pub(super) font_variation_bold: Option<String>,
@@ -188,6 +201,9 @@ pub(super) struct TerminalFontVariants {
     pub(super) bold: Option<gtk::pango::FontDescription>,
     pub(super) italic: Option<gtk::pango::FontDescription>,
     pub(super) bold_italic: Option<gtk::pango::FontDescription>,
+    pub(super) synthetic_bold: bool,
+    pub(super) synthetic_italic: bool,
+    pub(super) synthetic_bold_italic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -402,6 +418,7 @@ pub(super) fn default_terminal_font_description(
     let mut font = gtk::pango::FontDescription::from_string("monospace");
     if let Some(family) = appearance.font_family {
         font.set_family(&family);
+        apply_font_style_choice(&mut font, &appearance.font_style);
     }
     apply_font_variation(&mut font, appearance.font_variation.as_deref());
     if let Some(size) = appearance.font_size_pt {
@@ -424,6 +441,7 @@ pub(super) fn terminal_font_description_for_zoom_level(
     let mut font = gtk::pango::FontDescription::from_string("monospace");
     if let Some(family) = appearance.font_family {
         font.set_family(&family);
+        apply_font_style_choice(&mut font, &appearance.font_style);
     }
     apply_font_variation(&mut font, appearance.font_variation.as_deref());
     let zoom_level = next_terminal_zoom_level(zoom_level, 0);
@@ -452,6 +470,7 @@ pub(super) fn terminal_font_variants_for_appearance(
             true,
             false,
             appearance.font_variation_bold.as_deref(),
+            &appearance.font_style_bold,
         ),
         italic: styled_terminal_font_description(
             base,
@@ -459,6 +478,7 @@ pub(super) fn terminal_font_variants_for_appearance(
             false,
             true,
             appearance.font_variation_italic.as_deref(),
+            &appearance.font_style_italic,
         ),
         bold_italic: styled_terminal_font_description(
             base,
@@ -466,7 +486,23 @@ pub(super) fn terminal_font_variants_for_appearance(
             true,
             true,
             appearance.font_variation_bold_italic.as_deref(),
+            &appearance.font_style_bold_italic,
         ),
+        synthetic_bold: appearance.synthetic_bold
+            && !matches!(
+                appearance.font_style_bold,
+                Some(GhosttyFontStyleChoice::Disabled)
+            ),
+        synthetic_italic: appearance.synthetic_italic
+            && !matches!(
+                appearance.font_style_italic,
+                Some(GhosttyFontStyleChoice::Disabled)
+            ),
+        synthetic_bold_italic: appearance.synthetic_bold_italic
+            && !matches!(
+                appearance.font_style_bold_italic,
+                Some(GhosttyFontStyleChoice::Disabled)
+            ),
     }
 }
 
@@ -476,18 +512,24 @@ fn styled_terminal_font_description(
     bold: bool,
     italic: bool,
     variation: Option<&str>,
+    style: &Option<GhosttyFontStyleChoice>,
 ) -> Option<gtk::pango::FontDescription> {
+    if matches!(style, Some(GhosttyFontStyleChoice::Disabled)) {
+        return None;
+    }
     if family.is_none() && variation.is_none() {
         return None;
     }
     let mut font = base.clone();
     if let Some(family) = family {
         font.set_family(family);
+        apply_font_style_choice(&mut font, style);
     }
-    if bold {
+    let style_applied = family.is_some() && matches!(style, Some(GhosttyFontStyleChoice::Named(_)));
+    if !style_applied && bold {
         font.set_weight(gtk::pango::Weight::Bold);
     }
-    if italic {
+    if !style_applied && italic {
         font.set_style(gtk::pango::Style::Italic);
     }
     apply_font_variation(&mut font, variation);
@@ -740,6 +782,13 @@ impl Default for GhosttyTerminalAppearance {
             font_family_bold: None,
             font_family_italic: None,
             font_family_bold_italic: None,
+            font_style: None,
+            font_style_bold: None,
+            font_style_italic: None,
+            font_style_bold_italic: None,
+            synthetic_bold: true,
+            synthetic_italic: true,
+            synthetic_bold_italic: true,
             font_features: Vec::new(),
             font_variation: None,
             font_variation_bold: None,
@@ -793,6 +842,13 @@ impl GhosttyTerminalAppearance {
             "font-family-bold-italic" => {
                 apply_font_family_value(&mut self.font_family_bold_italic, value);
             }
+            "font-style" => self.font_style = parse_font_style_choice(&value),
+            "font-style-bold" => self.font_style_bold = parse_font_style_choice(&value),
+            "font-style-italic" => self.font_style_italic = parse_font_style_choice(&value),
+            "font-style-bold-italic" => {
+                self.font_style_bold_italic = parse_font_style_choice(&value);
+            }
+            "font-synthetic-style" => self.apply_font_synthetic_style(&value),
             "font-feature" => self.apply_font_feature(&value),
             "font-variation" => apply_font_variation_value(&mut self.font_variation, &value),
             "font-variation-bold" => {
@@ -1081,6 +1137,33 @@ impl GhosttyTerminalAppearance {
             .extend(value.split(',').filter_map(parse_font_feature));
     }
 
+    fn apply_font_synthetic_style(&mut self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() || value.eq_ignore_ascii_case("true") {
+            self.synthetic_bold = true;
+            self.synthetic_italic = true;
+            self.synthetic_bold_italic = true;
+            return;
+        }
+        if value.eq_ignore_ascii_case("false") {
+            self.synthetic_bold = false;
+            self.synthetic_italic = false;
+            self.synthetic_bold_italic = false;
+            return;
+        }
+        for item in value.split(',').map(str::trim) {
+            match item {
+                "bold" => self.synthetic_bold = true,
+                "italic" => self.synthetic_italic = true,
+                "bold-italic" => self.synthetic_bold_italic = true,
+                "no-bold" => self.synthetic_bold = false,
+                "no-italic" => self.synthetic_italic = false,
+                "no-bold-italic" => self.synthetic_bold_italic = false,
+                _ => {}
+            }
+        }
+    }
+
     fn apply_unfocused_split_fill(&mut self, value: &str) {
         set_color(&mut self.unfocused_split_fill, value);
     }
@@ -1148,10 +1231,47 @@ fn apply_font_family_value(target: &mut Option<String>, value: String) {
     }
 }
 
+fn apply_font_style_choice(
+    font: &mut gtk::pango::FontDescription,
+    style: &Option<GhosttyFontStyleChoice>,
+) {
+    let Some(GhosttyFontStyleChoice::Named(style)) = style else {
+        return;
+    };
+    let Some(family) = font.family().map(|family| family.to_string()) else {
+        return;
+    };
+    let size = font.size();
+    let variations = font.variations().map(|value| value.to_string());
+    // ponytail: Pango parses common named styles; exact Ghostty face lookup belongs with a future Ghostty renderer bridge.
+    let mut styled = gtk::pango::FontDescription::from_string(&format!("{family} {style}"));
+    if size > 0 {
+        styled.set_size(size);
+    }
+    if let Some(variations) = variations {
+        styled.set_variations(Some(&variations));
+    }
+    *font = styled;
+}
+
 fn apply_font_variation(font: &mut gtk::pango::FontDescription, variation: Option<&str>) {
     if let Some(variation) = variation.filter(|value| !value.trim().is_empty()) {
         font.set_variations(Some(variation));
     }
+}
+
+fn parse_font_style_choice(value: &str) -> Option<GhosttyFontStyleChoice> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.eq_ignore_ascii_case("false") {
+        return Some(GhosttyFontStyleChoice::Disabled);
+    }
+    if value.eq_ignore_ascii_case("true") {
+        return None;
+    }
+    Some(GhosttyFontStyleChoice::Named(value.to_string()))
 }
 
 fn apply_font_variation_value(target: &mut Option<String>, value: &str) {
@@ -1672,6 +1792,48 @@ mod tests {
         );
         assert!(reset.font_features.is_empty());
         assert_eq!(reset.font_variation, None);
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_font_styles_and_synthetic_style() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            r#"
+            font-style = Regular
+            font-style-bold = false
+            font-style-italic = Oblique
+            font-style-bold-italic = Bold Oblique
+            font-synthetic-style = no-bold,no-bold-italic
+            "#,
+        );
+
+        assert_eq!(
+            appearance.font_style,
+            Some(GhosttyFontStyleChoice::Named("Regular".to_string()))
+        );
+        assert_eq!(
+            appearance.font_style_bold,
+            Some(GhosttyFontStyleChoice::Disabled)
+        );
+        assert_eq!(
+            appearance.font_style_italic,
+            Some(GhosttyFontStyleChoice::Named("Oblique".to_string()))
+        );
+        assert_eq!(
+            appearance.font_style_bold_italic,
+            Some(GhosttyFontStyleChoice::Named("Bold Oblique".to_string()))
+        );
+        assert!(!appearance.synthetic_bold);
+        assert!(appearance.synthetic_italic);
+        assert!(!appearance.synthetic_bold_italic);
+
+        let variants = terminal_font_variants_for_appearance(
+            &appearance,
+            &gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        assert!(variants.bold.is_none());
+        assert!(!variants.synthetic_bold);
+        assert!(variants.synthetic_italic);
+        assert!(!variants.synthetic_bold_italic);
     }
 
     #[test]

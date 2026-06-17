@@ -84,6 +84,7 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `mouse-hide-while-typing` now hides the GTK terminal pointer after
   user typing or paste until mouse movement restores it.
 - Ghostty `mouse-scroll-multiplier` now controls GTK terminal precision and discrete scroll distance.
+- Ghostty `font-style*` and `font-synthetic-style` now control GTK terminal style selection and fallback synthesis.
 - Ghostty `adjust-cell-width` and `adjust-cell-height` now adjust GTK terminal cell metrics using pixel or percentage values.
 - Ghostty text metric adjustments now affect GTK terminal text baseline,
   underline/strikethrough/overline position and thickness, and cursor thickness/height.

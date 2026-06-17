@@ -138,6 +138,9 @@ pub(super) struct TerminalRenderer {
     bold_font: Option<gtk::pango::FontDescription>,
     italic_font: Option<gtk::pango::FontDescription>,
     bold_italic_font: Option<gtk::pango::FontDescription>,
+    synthetic_bold: bool,
+    synthetic_italic: bool,
+    synthetic_bold_italic: bool,
     cursor_opacity: f64,
     faint_opacity: f64,
     cell_width_adjustment: Option<GhosttyMetricAdjustment>,
@@ -280,6 +283,9 @@ impl TerminalRenderer {
             bold_font: variants.bold,
             italic_font: variants.italic,
             bold_italic_font: variants.bold_italic,
+            synthetic_bold: variants.synthetic_bold,
+            synthetic_italic: variants.synthetic_italic,
+            synthetic_bold_italic: variants.synthetic_bold_italic,
             cursor_opacity: appearance.cursor_opacity,
             faint_opacity: appearance.faint_opacity,
             cell_width_adjustment: appearance.adjust_cell_width,
@@ -884,15 +890,24 @@ impl TerminalRenderer {
             if let Some(font) = &self.bold_italic_font {
                 return font.clone();
             }
+            if !self.synthetic_bold_italic {
+                return self.font.clone();
+            }
         }
         if bold {
             if let Some(font) = &self.bold_font {
                 return font.clone();
             }
+            if !italic && !self.synthetic_bold {
+                return self.font.clone();
+            }
         }
         if italic {
             if let Some(font) = &self.italic_font {
                 return font.clone();
+            }
+            if !bold && !self.synthetic_italic {
+                return self.font.clone();
             }
         }
 
@@ -1304,6 +1319,9 @@ mod tests {
             bold_italic_font: Some(gtk::pango::FontDescription::from_string(
                 "ForkTTYBoldItalic 12",
             )),
+            synthetic_bold: true,
+            synthetic_italic: true,
+            synthetic_bold_italic: true,
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             cell_width_adjustment: None,
@@ -1323,6 +1341,41 @@ mod tests {
         assert_eq!(
             renderer.font_for_style(true, true).family().as_deref(),
             Some("ForkTTYBoldItalic")
+        );
+    }
+
+    #[test]
+    fn terminal_renderer_can_disable_synthetic_styles() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer {
+            palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(&config)),
+            font: gtk::pango::FontDescription::from_string("Base Mono 12"),
+            font_features: None,
+            bold_font: None,
+            italic_font: None,
+            bold_italic_font: None,
+            synthetic_bold: false,
+            synthetic_italic: false,
+            synthetic_bold_italic: false,
+            cursor_opacity: 1.0,
+            faint_opacity: 0.5,
+            cell_width_adjustment: None,
+            cell_height_adjustment: None,
+            text_metric_adjustments: RendererTextMetricAdjustments::default(),
+            unfocused_split_dim: unfocused_split_dim_from_appearance(0.92, "#181818"),
+        };
+
+        assert_eq!(
+            renderer.font_for_style(true, false),
+            gtk::pango::FontDescription::from_string("Base Mono 12")
+        );
+        assert_eq!(
+            renderer.font_for_style(false, true),
+            gtk::pango::FontDescription::from_string("Base Mono 12")
+        );
+        assert_eq!(
+            renderer.font_for_style(true, true),
+            gtk::pango::FontDescription::from_string("Base Mono 12")
         );
     }
 
@@ -1598,6 +1651,9 @@ mod tests {
             bold_font: None,
             italic_font: None,
             bold_italic_font: None,
+            synthetic_bold: true,
+            synthetic_italic: true,
+            synthetic_bold_italic: true,
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             cell_width_adjustment: None,
