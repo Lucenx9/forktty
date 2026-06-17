@@ -4,6 +4,56 @@ pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
         std::env::set_var("GSK_RENDERER", "cairo");
     }
+    let gdk_disable = std::env::var("GDK_DISABLE").unwrap_or_default();
+    std::env::set_var(
+        "GDK_DISABLE",
+        gdk_disable_with_ghostty_opengl_defaults(&gdk_disable),
+    );
+}
+
+fn gdk_disable_with_ghostty_opengl_defaults(value: &str) -> String {
+    let mut entries = value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    // Ghostty's GTK app disables GLES/Vulkan before GTK initializes so its
+    // GLArea gets a desktop OpenGL context. The embedded library cannot do
+    // that after ForkTTY has already initialized GTK, so we apply it here.
+    for required in ["gles-api", "vulkan"] {
+        if !entries.iter().any(|entry| entry == required) {
+            entries.push(required.to_string());
+        }
+    }
+
+    entries.join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gdk_disable_with_ghostty_opengl_defaults;
+
+    #[test]
+    fn gdk_disable_defaults_force_desktop_opengl_for_embedded_ghostty() {
+        assert_eq!(
+            gdk_disable_with_ghostty_opengl_defaults(""),
+            "gles-api,vulkan"
+        );
+    }
+
+    #[test]
+    fn gdk_disable_defaults_preserve_existing_entries_without_duplicates() {
+        assert_eq!(
+            gdk_disable_with_ghostty_opengl_defaults("debug, vulkan"),
+            "debug,vulkan,gles-api"
+        );
+        assert_eq!(
+            gdk_disable_with_ghostty_opengl_defaults("gles-api,vulkan"),
+            "gles-api,vulkan"
+        );
+    }
 }
 
 pub(super) fn build_ui(app: &adw::Application) {

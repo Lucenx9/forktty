@@ -394,6 +394,18 @@ export FORKTTY_APPIMAGE_DIR="$HERE"
 # hooks written by `forktty hooks setup` must reference a path that survives
 # remounts — the random /tmp/.mount_* binary path does not.
 export FORKTTY_APPIMAGE="${APPIMAGE:-}"
+# Match Ghostty's GTK startup defaults before ForkTTY initializes GTK. Embedded
+# Ghostty panes need a desktop OpenGL context; allowing GTK to choose GLES or
+# Vulkan first can make Gtk.GLArea fail with "Unable to create a GL context".
+case ",${GDK_DISABLE:-}," in
+  *,gles-api,*) ;;
+  *) GDK_DISABLE="${GDK_DISABLE:+$GDK_DISABLE,}gles-api" ;;
+esac
+case ",${GDK_DISABLE:-}," in
+  *,vulkan,*) ;;
+  *) GDK_DISABLE="${GDK_DISABLE:+$GDK_DISABLE,}vulkan" ;;
+esac
+export GDK_DISABLE
 # usr/lib holds only libghostty (always needed); the GUI stack in
 # usr/lib/bundled is a fallback used solely when the host has no GTK4 —
 # a host GTK gives native cursor themes, fontconfig, and portals.
