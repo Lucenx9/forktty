@@ -42,11 +42,53 @@ pub(super) enum TerminalRightClickAction {
     Ignore,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TerminalCopyOnSelect {
+    Disabled,
+    Selection,
+    Clipboard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct GhosttyScrollToBottom {
+    pub(super) keystroke: bool,
+    pub(super) output: bool,
+}
+
 impl Default for MouseScrollMultipliers {
     fn default() -> Self {
         Self {
             precision: 1.0,
             discrete: 3.0,
+        }
+    }
+}
+
+impl Default for GhosttyScrollToBottom {
+    fn default() -> Self {
+        Self {
+            keystroke: true,
+            output: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum GhosttyMouseShiftCapture {
+    #[default]
+    False,
+    True,
+    Never,
+    Always,
+}
+
+impl GhosttyMouseShiftCapture {
+    pub(super) fn capture(self, runtime_override: Option<bool>) -> bool {
+        match self {
+            Self::False => runtime_override.unwrap_or(false),
+            Self::True => runtime_override.unwrap_or(true),
+            Self::Never => false,
+            Self::Always => true,
         }
     }
 }
@@ -93,10 +135,16 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) cursor_style: Option<TerminalCursorStyle>,
     pub(super) cursor_style_blink: Option<bool>,
     pub(super) selection_clear_on_typing: Option<bool>,
+    pub(super) selection_clear_on_copy: Option<bool>,
+    pub(super) selection_word_chars: Option<Vec<char>>,
+    pub(super) copy_on_select: TerminalCopyOnSelect,
     pub(super) right_click_action: Option<TerminalRightClickAction>,
+    pub(super) scroll_to_bottom: GhosttyScrollToBottom,
     pub(super) cursor_opacity: f64,
     pub(super) faint_opacity: f64,
     pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
+    pub(super) mouse_reporting: Option<bool>,
+    pub(super) mouse_shift_capture: GhosttyMouseShiftCapture,
     pub(super) adjust_cell_width: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_cell_height: Option<GhosttyMetricAdjustment>,
     pub(super) unfocused_split_opacity: f64,
@@ -139,6 +187,32 @@ pub(super) fn terminal_mouse_scroll_multipliers_for_config(
     ghostty_terminal_appearance_for_config(config).mouse_scroll_multipliers
 }
 
+pub(super) fn terminal_mouse_reporting_for_config(config: &config::AppConfig) -> bool {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_mouse_reporting_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_mouse_reporting_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> bool {
+    appearance.mouse_reporting.unwrap_or(true)
+}
+
+pub(super) fn terminal_mouse_shift_capture_for_config(
+    config: &config::AppConfig,
+) -> GhosttyMouseShiftCapture {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_mouse_shift_capture_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_mouse_shift_capture_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> GhosttyMouseShiftCapture {
+    appearance.mouse_shift_capture
+}
+
 pub(super) fn terminal_kitty_image_storage_limit_for_config(
     config: &config::AppConfig,
 ) -> Option<u64> {
@@ -164,6 +238,46 @@ pub(super) fn terminal_selection_clear_on_typing_for_appearance(
     appearance.selection_clear_on_typing.unwrap_or(true)
 }
 
+pub(super) fn terminal_selection_clear_on_copy_for_config(config: &config::AppConfig) -> bool {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_selection_clear_on_copy_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_selection_clear_on_copy_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> bool {
+    appearance.selection_clear_on_copy.unwrap_or(false)
+}
+
+pub(super) fn terminal_copy_on_select_for_config(
+    config: &config::AppConfig,
+) -> TerminalCopyOnSelect {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_copy_on_select_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_copy_on_select_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> TerminalCopyOnSelect {
+    appearance.copy_on_select
+}
+
+pub(super) fn terminal_selection_word_chars_for_config(
+    config: &config::AppConfig,
+) -> Option<Vec<char>> {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_selection_word_chars_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_selection_word_chars_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> Option<Vec<char>> {
+    appearance.selection_word_chars.clone()
+}
+
 pub(super) fn terminal_right_click_action_for_config(
     config: &config::AppConfig,
 ) -> TerminalRightClickAction {
@@ -178,6 +292,12 @@ pub(super) fn terminal_right_click_action_for_appearance(
     appearance
         .right_click_action
         .unwrap_or(TerminalRightClickAction::ContextMenu)
+}
+
+pub(super) fn terminal_scroll_to_bottom_for_config(
+    config: &config::AppConfig,
+) -> GhosttyScrollToBottom {
+    ghostty_terminal_appearance_for_config(config).scroll_to_bottom
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -533,10 +653,16 @@ impl Default for GhosttyTerminalAppearance {
             cursor_style: None,
             cursor_style_blink: None,
             selection_clear_on_typing: None,
+            selection_clear_on_copy: None,
+            selection_word_chars: None,
+            copy_on_select: TerminalCopyOnSelect::Selection,
             right_click_action: None,
+            scroll_to_bottom: GhosttyScrollToBottom::default(),
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             mouse_scroll_multipliers: MouseScrollMultipliers::default(),
+            mouse_reporting: None,
+            mouse_shift_capture: GhosttyMouseShiftCapture::False,
             adjust_cell_width: None,
             adjust_cell_height: None,
             unfocused_split_opacity: DEFAULT_UNFOCUSED_SPLIT_OPACITY,
@@ -574,7 +700,13 @@ impl GhosttyTerminalAppearance {
             "selection-clear-on-typing" => {
                 self.selection_clear_on_typing = parse_ghostty_optional_bool(&value)
             }
+            "selection-clear-on-copy" => {
+                self.selection_clear_on_copy = parse_ghostty_optional_bool(&value)
+            }
+            "selection-word-chars" => self.apply_selection_word_chars(value),
+            "copy-on-select" => self.apply_copy_on_select(&value),
             "right-click-action" => self.apply_right_click_action(&value),
+            "scroll-to-bottom" => self.apply_scroll_to_bottom(&value),
             "background" => {
                 set_color(&mut self.colors.background, &value);
             }
@@ -625,6 +757,8 @@ impl GhosttyTerminalAppearance {
             "adjust-cell-height" => {
                 self.adjust_cell_height = parse_ghostty_metric_adjustment(&value);
             }
+            "mouse-reporting" => self.mouse_reporting = parse_ghostty_optional_bool(&value),
+            "mouse-shift-capture" => self.apply_mouse_shift_capture(&value),
             "mouse-scroll-multiplier" => self.apply_mouse_scroll_multiplier(&value),
             "cursor-invert-fg-bg" => {
                 if parse_ghostty_bool(&value) {
@@ -710,6 +844,65 @@ impl GhosttyTerminalAppearance {
             "ignore" => Some(TerminalRightClickAction::Ignore),
             _ => self.right_click_action,
         };
+    }
+
+    fn apply_copy_on_select(&mut self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() {
+            self.copy_on_select = TerminalCopyOnSelect::Selection;
+            return;
+        }
+        self.copy_on_select = match value {
+            "clipboard" => TerminalCopyOnSelect::Clipboard,
+            _ => match parse_ghostty_optional_bool(value) {
+                Some(true) => TerminalCopyOnSelect::Selection,
+                Some(false) => TerminalCopyOnSelect::Disabled,
+                None => self.copy_on_select,
+            },
+        };
+    }
+
+    fn apply_selection_word_chars(&mut self, value: String) {
+        self.selection_word_chars = if value.is_empty() {
+            None
+        } else {
+            Some(value.chars().collect())
+        };
+    }
+
+    fn apply_mouse_shift_capture(&mut self, value: &str) {
+        self.mouse_shift_capture = match value.trim() {
+            "always" => GhosttyMouseShiftCapture::Always,
+            "never" => GhosttyMouseShiftCapture::Never,
+            "" => GhosttyMouseShiftCapture::False,
+            value => match parse_ghostty_optional_bool(value) {
+                Some(true) => GhosttyMouseShiftCapture::True,
+                Some(false) => GhosttyMouseShiftCapture::False,
+                None => self.mouse_shift_capture,
+            },
+        };
+    }
+
+    fn apply_scroll_to_bottom(&mut self, value: &str) {
+        if value.trim().is_empty() {
+            self.scroll_to_bottom = GhosttyScrollToBottom::default();
+            return;
+        }
+        let mut scroll_to_bottom = GhosttyScrollToBottom::default();
+        for part in value
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            match part {
+                "keystroke" => scroll_to_bottom.keystroke = true,
+                "no-keystroke" => scroll_to_bottom.keystroke = false,
+                "output" => scroll_to_bottom.output = true,
+                "no-output" => scroll_to_bottom.output = false,
+                _ => {}
+            }
+        }
+        self.scroll_to_bottom = scroll_to_bottom;
     }
 
     fn apply_font_family(&mut self, value: String) {
@@ -1188,6 +1381,53 @@ mod tests {
     }
 
     #[test]
+    fn ghostty_appearance_reads_mouse_reporting() {
+        let config = config::AppConfig::default();
+        let appearance = ghostty_terminal_appearance_from_text("mouse-reporting = false");
+
+        assert!(!terminal_mouse_reporting_for_appearance(
+            &config,
+            &appearance
+        ));
+
+        let reset = ghostty_terminal_appearance_from_text("mouse-reporting =");
+        assert!(terminal_mouse_reporting_for_appearance(&config, &reset));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_mouse_shift_capture() {
+        let config = config::AppConfig::default();
+        let appearance = ghostty_terminal_appearance_from_text("mouse-shift-capture = always");
+
+        assert_eq!(
+            terminal_mouse_shift_capture_for_appearance(&config, &appearance),
+            GhosttyMouseShiftCapture::Always
+        );
+
+        let never = ghostty_terminal_appearance_from_text("mouse-shift-capture = never");
+        assert_eq!(
+            terminal_mouse_shift_capture_for_appearance(&config, &never),
+            GhosttyMouseShiftCapture::Never
+        );
+
+        let yes = ghostty_terminal_appearance_from_text("mouse-shift-capture = true");
+        assert_eq!(
+            terminal_mouse_shift_capture_for_appearance(&config, &yes),
+            GhosttyMouseShiftCapture::True
+        );
+
+        let reset = ghostty_terminal_appearance_from_text("mouse-shift-capture =");
+        assert_eq!(
+            terminal_mouse_shift_capture_for_appearance(&config, &reset),
+            GhosttyMouseShiftCapture::False
+        );
+        assert!(!GhosttyMouseShiftCapture::True.capture(Some(false)));
+        assert!(GhosttyMouseShiftCapture::False.capture(Some(true)));
+        assert!(GhosttyMouseShiftCapture::Always.capture(Some(false)));
+        assert!(!GhosttyMouseShiftCapture::Never.capture(Some(true)));
+    }
+
+    #[test]
     fn ghostty_appearance_reads_cell_size_adjustments() {
         let appearance = ghostty_terminal_appearance_from_text(
             r#"
@@ -1265,6 +1505,72 @@ mod tests {
     }
 
     #[test]
+    fn ghostty_appearance_reads_selection_clear_on_copy() {
+        let config = config::AppConfig::default();
+        let appearance = ghostty_terminal_appearance_from_text("selection-clear-on-copy = true");
+
+        assert!(terminal_selection_clear_on_copy_for_appearance(
+            &config,
+            &appearance
+        ));
+
+        let reset = ghostty_terminal_appearance_from_text("selection-clear-on-copy =");
+        assert!(!terminal_selection_clear_on_copy_for_appearance(
+            &config, &reset
+        ));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_selection_word_chars() {
+        let config = config::AppConfig::default();
+        let appearance = ghostty_terminal_appearance_from_text("selection-word-chars = .:");
+
+        assert_eq!(
+            terminal_selection_word_chars_for_appearance(&config, &appearance),
+            Some(vec!['.', ':'])
+        );
+
+        let reset = ghostty_terminal_appearance_from_text("selection-word-chars =");
+        assert_eq!(
+            terminal_selection_word_chars_for_appearance(&config, &reset),
+            None
+        );
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_copy_on_select() {
+        let config = config::AppConfig::default();
+        let default = ghostty_terminal_appearance_from_text("");
+        assert_eq!(
+            terminal_copy_on_select_for_appearance(&config, &default),
+            TerminalCopyOnSelect::Selection
+        );
+
+        let clipboard = ghostty_terminal_appearance_from_text("copy-on-select = clipboard");
+        assert_eq!(
+            terminal_copy_on_select_for_appearance(&config, &clipboard),
+            TerminalCopyOnSelect::Clipboard
+        );
+
+        let disabled = ghostty_terminal_appearance_from_text("copy-on-select = false");
+        assert_eq!(
+            terminal_copy_on_select_for_appearance(&config, &disabled),
+            TerminalCopyOnSelect::Disabled
+        );
+
+        let reset = ghostty_terminal_appearance_from_text(
+            r#"
+            copy-on-select = false
+            copy-on-select =
+            "#,
+        );
+        assert_eq!(
+            terminal_copy_on_select_for_appearance(&config, &reset),
+            TerminalCopyOnSelect::Selection
+        );
+    }
+
+    #[test]
     fn ghostty_appearance_reads_right_click_action() {
         let config = config::AppConfig::default();
         let appearance =
@@ -1280,5 +1586,18 @@ mod tests {
             terminal_right_click_action_for_appearance(&config, &reset),
             TerminalRightClickAction::ContextMenu
         );
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_scroll_to_bottom() {
+        let appearance =
+            ghostty_terminal_appearance_from_text("scroll-to-bottom = no-keystroke, output");
+
+        assert!(!appearance.scroll_to_bottom.keystroke);
+        assert!(appearance.scroll_to_bottom.output);
+
+        let reset = ghostty_terminal_appearance_from_text("scroll-to-bottom =");
+        assert!(reset.scroll_to_bottom.keystroke);
+        assert!(!reset.scroll_to_bottom.output);
     }
 }

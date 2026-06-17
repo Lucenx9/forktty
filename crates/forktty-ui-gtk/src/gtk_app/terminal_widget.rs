@@ -106,6 +106,12 @@ pub(super) struct GhosttyTerminalWidget {
     // still reach the app, while a real drag should select text locally.
     local_selection_on_mouse_drag: Rc<Cell<bool>>,
     selection_clear_on_typing: bool,
+    selection_clear_on_copy: bool,
+    copy_on_select: TerminalCopyOnSelect,
+    scroll_to_bottom: GhosttyScrollToBottom,
+    mouse_reporting: bool,
+    mouse_shift_capture: GhosttyMouseShiftCapture,
+    selection_word_chars: Rc<Vec<char>>,
 }
 
 #[derive(Default)]
@@ -187,6 +193,13 @@ impl GhosttyTerminalWidget {
         )));
         let mouse_scroll_multipliers = terminal_mouse_scroll_multipliers_for_config(config);
         let selection_clear_on_typing = terminal_selection_clear_on_typing_for_config(config);
+        let selection_clear_on_copy = terminal_selection_clear_on_copy_for_config(config);
+        let copy_on_select = terminal_copy_on_select_for_config(config);
+        let scroll_to_bottom = terminal_scroll_to_bottom_for_config(config);
+        let mouse_reporting = terminal_mouse_reporting_for_config(config);
+        let mouse_shift_capture = terminal_mouse_shift_capture_for_config(config);
+        let selection_word_chars =
+            Rc::new(terminal_selection_word_chars_for_config(config).unwrap_or_default());
         let im_context = gtk::IMMulticontext::new();
         im_context.set_client_widget(Some(&drawing_area));
         {
@@ -261,6 +274,7 @@ impl GhosttyTerminalWidget {
                         &drawing_area,
                         input,
                         selection_clear_on_typing,
+                        scroll_to_bottom.keystroke,
                     );
                 }
             });
@@ -303,6 +317,7 @@ impl GhosttyTerminalWidget {
                     &drawing_area,
                     input,
                     selection_clear_on_typing,
+                    scroll_to_bottom.keystroke,
                 );
                 glib::Propagation::Stop
             });
@@ -378,6 +393,7 @@ impl GhosttyTerminalWidget {
                 let toast_handle = toast_handle.clone();
                 let hover_link_for_click = hover_link.clone();
                 let local_selection_on_mouse_drag = local_selection_on_mouse_drag.clone();
+                let selection_word_chars = selection_word_chars.clone();
                 click.connect_pressed(move |gesture, n_press, x, y| {
                     let Some(drawing_area) = drawing_area.upgrade() else {
                         return;
@@ -423,7 +439,7 @@ impl GhosttyTerminalWidget {
                                 any_button_pressed: true,
                             },
                         );
-                        match route_middle_click(&runtime, input, shift) {
+                        match route_middle_click(&runtime, input, shift, mouse_reporting) {
                             Ok(MiddleClickRouting::Forwarded) => drawing_area.queue_draw(),
                             Ok(MiddleClickRouting::PastePrimary) => {
                                 // The press was not forwarded; its release must not be either.
@@ -433,6 +449,7 @@ impl GhosttyTerminalWidget {
                                     &selection,
                                     &drawing_area,
                                     toast_handle.clone(),
+                                    scroll_to_bottom.keystroke,
                                 );
                             }
                             Err(err) => eprintln!("Failed to route middle click: {err}"),
@@ -440,10 +457,13 @@ impl GhosttyTerminalWidget {
                         return;
                     }
                     let left_decision = if is_left {
+                        let mouse_shift_capture =
+                            mouse_shift_capture.capture(runtime.borrow().shift_mouse_capture_override());
                         left_mouse_press_decision(
                             local_selection_on_mouse_drag.get(),
                             modifiers,
                             n_press,
+                            mouse_shift_capture,
                         )
                     } else {
                         LeftMousePressDecision::ForwardOrSelectIfUntracked
@@ -477,7 +497,7 @@ impl GhosttyTerminalWidget {
                                 any_button_pressed: true,
                             },
                         );
-                        write_terminal_mouse(&runtime, &drawing_area, input)
+                        write_terminal_mouse(&runtime, &drawing_area, input, mouse_reporting)
                     };
                     if is_left {
                         let mut selection = selection.borrow_mut();
@@ -520,14 +540,26 @@ impl GhosttyTerminalWidget {
                                 match frame {
                                     Ok(frame) => {
                                         let range = if n_press == 2 {
-                                            match word_selection_from_runtime(&runtime, point) {
+                                            match word_selection_from_runtime(
+                                                &runtime,
+                                                point,
+                                                &selection_word_chars,
+                                            ) {
                                                 Ok(Some(range)) => Some(range),
-                                                Ok(None) => word_selection_in_frame(&frame, point),
+                                                Ok(None) => word_selection_in_frame(
+                                                    &frame,
+                                                    point,
+                                                    &selection_word_chars,
+                                                ),
                                                 Err(err) => {
                                                     eprintln!(
                                                         "Failed to derive Ghostty word selection: {err}"
                                                     );
-                                                    word_selection_in_frame(&frame, point)
+                                                    word_selection_in_frame(
+                                                        &frame,
+                                                        point,
+                                                        &selection_word_chars,
+                                                    )
                                                 }
                                             }
                                         } else {
@@ -540,6 +572,7 @@ impl GhosttyTerminalWidget {
                                                 &frame,
                                                 start,
                                                 end,
+                                                copy_on_select,
                                             ),
                                             None => selection.clear(),
                                         }
@@ -589,6 +622,7 @@ impl GhosttyTerminalWidget {
                                 y,
                                 should_extend_selection_on_release(&autoscroll, x, y),
                                 autoscroll.drag_moved.get(),
+                                copy_on_select,
                             );
                             autoscroll.scroll_compensated_head.set(false);
                             return;
@@ -606,7 +640,12 @@ impl GhosttyTerminalWidget {
                                     any_button_pressed: true,
                                 },
                             );
-                            write_terminal_mouse(&runtime, &drawing_area, press_input);
+                            write_terminal_mouse(
+                                &runtime,
+                                &drawing_area,
+                                press_input,
+                                mouse_reporting,
+                            );
                             let release_input = terminal_mouse_input_for_area(
                                 &drawing_area,
                                 &renderer,
@@ -619,7 +658,12 @@ impl GhosttyTerminalWidget {
                                     any_button_pressed: false,
                                 },
                             );
-                            write_terminal_mouse(&runtime, &drawing_area, release_input);
+                            write_terminal_mouse(
+                                &runtime,
+                                &drawing_area,
+                                release_input,
+                                mouse_reporting,
+                            );
                             return;
                         }
                         // Same rule for a word/line click selection, which
@@ -645,7 +689,7 @@ impl GhosttyTerminalWidget {
                             any_button_pressed: false,
                         },
                     );
-                    write_terminal_mouse(&runtime, &drawing_area, input);
+                    write_terminal_mouse(&runtime, &drawing_area, input, mouse_reporting);
                 });
             }
             {
@@ -674,6 +718,7 @@ impl GhosttyTerminalWidget {
                             &selection,
                             &drawing_area,
                             autoscroll.drag_moved.get(),
+                            copy_on_select,
                         );
                     }
                 });
@@ -712,6 +757,7 @@ impl GhosttyTerminalWidget {
                                 &selection,
                                 &drawing_area,
                                 autoscroll.drag_moved.get(),
+                                copy_on_select,
                             );
                             return;
                         }
@@ -821,7 +867,7 @@ impl GhosttyTerminalWidget {
                             any_button_pressed: any_button_pressed.get(),
                         },
                     );
-                    write_terminal_mouse(&runtime, &drawing_area, input);
+                    write_terminal_mouse(&runtime, &drawing_area, input, mouse_reporting);
                 });
             }
             motion.connect_leave({
@@ -895,6 +941,7 @@ impl GhosttyTerminalWidget {
                         input,
                         &scroll_remainder_for_scroll,
                         line_delta,
+                        mouse_reporting,
                     ) {
                         Ok(ScrollRouting::Forwarded) => {
                             drawing_area.queue_draw();
@@ -980,6 +1027,12 @@ impl GhosttyTerminalWidget {
             search_cache: Rc::new(RefCell::new(None)),
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
             selection_clear_on_typing,
+            selection_clear_on_copy,
+            copy_on_select,
+            scroll_to_bottom,
+            mouse_reporting,
+            mouse_shift_capture,
+            selection_word_chars,
         };
         widget.attach_cursor_blink_timer();
         widget
@@ -1030,6 +1083,12 @@ impl GhosttyTerminalWidget {
             hover_link: Rc::downgrade(&self.hover_link),
             local_selection_on_mouse_drag: Rc::downgrade(&self.local_selection_on_mouse_drag),
             selection_clear_on_typing: self.selection_clear_on_typing,
+            selection_clear_on_copy: self.selection_clear_on_copy,
+            copy_on_select: self.copy_on_select,
+            scroll_to_bottom: self.scroll_to_bottom,
+            mouse_reporting: self.mouse_reporting,
+            mouse_shift_capture: self.mouse_shift_capture,
+            selection_word_chars: Rc::downgrade(&self.selection_word_chars),
         }
     }
 
@@ -1342,6 +1401,9 @@ impl GhosttyTerminalWidget {
                 self.search_index.set(None);
                 self.search_invalidated.invoke();
             }
+            if visible_content_changed {
+                scroll_viewport_to_bottom_for_output(&self.runtime, self.scroll_to_bottom.output)?;
+            }
             self.drawing_area.queue_draw();
         }
         Ok(events)
@@ -1375,6 +1437,12 @@ pub(super) struct WeakGhosttyTerminalWidget {
     hover_link: std::rc::Weak<RefCell<Option<HoverLink>>>,
     local_selection_on_mouse_drag: std::rc::Weak<Cell<bool>>,
     selection_clear_on_typing: bool,
+    selection_clear_on_copy: bool,
+    copy_on_select: TerminalCopyOnSelect,
+    scroll_to_bottom: GhosttyScrollToBottom,
+    mouse_reporting: bool,
+    mouse_shift_capture: GhosttyMouseShiftCapture,
+    selection_word_chars: std::rc::Weak<Vec<char>>,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -1397,6 +1465,12 @@ impl WeakGhosttyTerminalWidget {
             hover_link: self.hover_link.upgrade()?,
             local_selection_on_mouse_drag: self.local_selection_on_mouse_drag.upgrade()?,
             selection_clear_on_typing: self.selection_clear_on_typing,
+            selection_clear_on_copy: self.selection_clear_on_copy,
+            copy_on_select: self.copy_on_select,
+            scroll_to_bottom: self.scroll_to_bottom,
+            mouse_reporting: self.mouse_reporting,
+            mouse_shift_capture: self.mouse_shift_capture,
+            selection_word_chars: self.selection_word_chars.upgrade()?,
         })
     }
 }
@@ -1509,8 +1583,9 @@ fn left_mouse_press_decision(
     local_selection_on_mouse_drag: bool,
     modifiers: gtk::gdk::ModifierType,
     n_press: i32,
+    mouse_shift_capture: bool,
 ) -> LeftMousePressDecision {
-    if modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+    if modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK) && !mouse_shift_capture {
         return LeftMousePressDecision::SelectLocallyNow;
     }
     if local_selection_on_mouse_drag {
@@ -1543,7 +1618,11 @@ fn write_terminal_mouse(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     drawing_area: &gtk::DrawingArea,
     input: TerminalMouseInput,
+    mouse_reporting: bool,
 ) -> bool {
+    if !mouse_reporting {
+        return false;
+    }
     match runtime.borrow_mut().write_mouse(input) {
         Ok(wrote) => {
             if wrote {
@@ -1666,6 +1745,7 @@ fn finish_selection_drag(
     y: f64,
     extend_on_release: bool,
     commit_single_cell: bool,
+    copy_on_select: TerminalCopyOnSelect,
 ) {
     if extend_on_release {
         let anchor = selection.borrow().anchor();
@@ -1674,7 +1754,13 @@ fn finish_selection_drag(
             .unwrap_or_else(|| selection_cell_for_position(drawing_area, renderer, x, y));
         selection.borrow_mut().extend_drag(cell);
     }
-    finalize_selection_drag(runtime, selection, drawing_area, commit_single_cell);
+    finalize_selection_drag(
+        runtime,
+        selection,
+        drawing_area,
+        commit_single_cell,
+        copy_on_select,
+    );
 }
 
 /// Ends the in-progress drag and stores its text (or clears it for a no-op
@@ -1689,12 +1775,19 @@ fn finalize_selection_drag(
     selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
     commit_single_cell: bool,
+    copy_on_select: TerminalCopyOnSelect,
 ) {
     let mut selection = selection.borrow_mut();
     selection.end_drag();
     match selection.normalized_range() {
         Some((start, end)) if should_commit_selection_range(start, end, commit_single_cell) => {
-            match commit_selection_range_after_render(&mut selection, runtime, start, end) {
+            match commit_selection_range_after_render_with_copy_on_select(
+                &mut selection,
+                runtime,
+                start,
+                end,
+                copy_on_select,
+            ) {
                 Ok(()) => {}
                 Err(err) => {
                     eprintln!("Failed to extract terminal selection: {err}");
@@ -1721,13 +1814,21 @@ fn should_commit_selection_range(
 fn word_selection_in_frame(
     frame: &forktty_terminal::ghostty::core::TerminalFrame,
     point: SelectionPoint,
+    boundary_chars: &[char],
 ) -> Option<(SelectionPoint, SelectionPoint)> {
     use forktty_terminal::ghostty::core::TerminalCellWidth;
     let row = frame.rows.get(point.row)?;
+    let boundary_chars = word_boundary_chars(boundary_chars);
     let kinds: Vec<WordCellKind> = row
         .cells
         .iter()
-        .map(|cell| word_cell_kind(&cell.text, cell.width == TerminalCellWidth::SpacerTail))
+        .map(|cell| {
+            word_cell_kind_with_boundaries(
+                &cell.text,
+                cell.width == TerminalCellWidth::SpacerTail,
+                boundary_chars,
+            )
+        })
         .collect();
     let (from, to) = word_cols_in_row(&kinds, point.col)?;
     Some((
@@ -1745,11 +1846,12 @@ fn word_selection_in_frame(
 fn word_selection_from_runtime(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     point: SelectionPoint,
+    boundary_codepoints: &[char],
 ) -> Result<Option<(SelectionPoint, SelectionPoint)>, TerminalError> {
     let (col, row) = selection_point_for_ghostty(point)?;
     Ok(runtime
         .borrow()
-        .viewport_word_selection(col, row)?
+        .viewport_word_selection(col, row, boundary_codepoints)?
         .and_then(selection_points_from_ghostty_viewport_selection))
 }
 
@@ -1787,27 +1889,68 @@ fn line_selection_in_frame(
 /// Installs `start..=end` as the finished selection and stores its text,
 /// publishing it to the PRIMARY clipboard like a finished drag. Empty text
 /// clears the selection instead.
+#[cfg(test)]
 fn commit_selection_range(
     selection: &mut TerminalSelection,
     frame: &forktty_terminal::ghostty::core::TerminalFrame,
     start: SelectionPoint,
     end: SelectionPoint,
 ) {
-    let text = selection_text_from_frame(frame, start, end);
-    commit_selection_text(selection, start, end, text);
+    commit_selection_range_with_copy_on_select(
+        selection,
+        frame,
+        start,
+        end,
+        TerminalCopyOnSelect::Selection,
+    );
 }
 
+fn commit_selection_range_with_copy_on_select(
+    selection: &mut TerminalSelection,
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    start: SelectionPoint,
+    end: SelectionPoint,
+    copy_on_select: TerminalCopyOnSelect,
+) {
+    let text = selection_text_from_frame(frame, start, end);
+    commit_selection_text(selection, start, end, text, copy_on_select);
+}
+
+#[cfg(test)]
 fn commit_selection_range_after_render(
     selection: &mut TerminalSelection,
     runtime: &Rc<RefCell<TerminalRuntime>>,
     start: SelectionPoint,
     end: SelectionPoint,
 ) -> Result<(), TerminalError> {
+    commit_selection_range_after_render_with_copy_on_select(
+        selection,
+        runtime,
+        start,
+        end,
+        TerminalCopyOnSelect::Selection,
+    )
+}
+
+fn commit_selection_range_after_render_with_copy_on_select(
+    selection: &mut TerminalSelection,
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    start: SelectionPoint,
+    end: SelectionPoint,
+    copy_on_select: TerminalCopyOnSelect,
+) -> Result<(), TerminalError> {
     let frame = {
         let mut runtime = runtime.borrow_mut();
         runtime.render_frame()
     }?;
-    commit_selection_range_with_runtime_fallback(selection, runtime, &frame, start, end);
+    commit_selection_range_with_runtime_fallback(
+        selection,
+        runtime,
+        &frame,
+        start,
+        end,
+        copy_on_select,
+    );
     Ok(())
 }
 
@@ -1817,14 +1960,17 @@ fn commit_selection_range_with_runtime_fallback(
     frame: &forktty_terminal::ghostty::core::TerminalFrame,
     start: SelectionPoint,
     end: SelectionPoint,
+    copy_on_select: TerminalCopyOnSelect,
 ) {
     if selection_range_contains_invisible_cells(frame, start, end) {
-        commit_selection_range(selection, frame, start, end);
+        commit_selection_range_with_copy_on_select(selection, frame, start, end, copy_on_select);
         return;
     }
-    if let Err(err) = commit_selection_range_from_runtime(selection, runtime, start, end) {
+    if let Err(err) =
+        commit_selection_range_from_runtime(selection, runtime, start, end, copy_on_select)
+    {
         eprintln!("Failed to extract terminal selection through Ghostty: {err}");
-        commit_selection_range(selection, frame, start, end);
+        commit_selection_range_with_copy_on_select(selection, frame, start, end, copy_on_select);
     }
 }
 
@@ -1833,9 +1979,10 @@ fn commit_selection_range_from_runtime(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     start: SelectionPoint,
     end: SelectionPoint,
+    copy_on_select: TerminalCopyOnSelect,
 ) -> Result<(), TerminalError> {
     let text = selection_text_from_runtime(runtime, start, end)?;
-    commit_selection_text(selection, start, end, text);
+    commit_selection_text(selection, start, end, text, copy_on_select);
     Ok(())
 }
 
@@ -1866,6 +2013,7 @@ fn commit_selection_text(
     start: SelectionPoint,
     end: SelectionPoint,
     text: String,
+    copy_on_select: TerminalCopyOnSelect,
 ) {
     selection.begin_drag(start);
     selection.extend_drag(end);
@@ -1875,8 +2023,20 @@ fn commit_selection_text(
         return;
     }
     selection.select_text(text.clone());
-    if let Some(display) = gtk::gdk::Display::default() {
-        display.primary_clipboard().set_text(&text);
+    publish_selection_text(&text, copy_on_select);
+}
+
+fn publish_selection_text(text: &str, copy_on_select: TerminalCopyOnSelect) {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    match copy_on_select {
+        TerminalCopyOnSelect::Disabled => {}
+        TerminalCopyOnSelect::Selection => display.primary_clipboard().set_text(text),
+        TerminalCopyOnSelect::Clipboard => {
+            display.primary_clipboard().set_text(text);
+            display.clipboard().set_text(text);
+        }
     }
 }
 
@@ -2048,6 +2208,12 @@ fn copy_payload<E>(
     match selection_text {
         Some(text) => Ok(text),
         None => render(),
+    }
+}
+
+fn clear_selection_after_copy(selection: &mut TerminalSelection, enabled: bool) {
+    if enabled {
+        selection.clear();
     }
 }
 
@@ -2376,8 +2542,9 @@ fn route_terminal_scroll(
     input: TerminalMouseInput,
     remainder: &Cell<f64>,
     line_delta: f64,
+    mouse_reporting: bool,
 ) -> Result<ScrollRouting, TerminalError> {
-    let tracking = runtime.borrow().is_mouse_tracking()?;
+    let tracking = mouse_reporting && runtime.borrow().is_mouse_tracking()?;
     let emission = accumulate_scroll_emission(remainder.get(), line_delta, tracking);
     remainder.set(emission.remainder);
     if emission.presses != 0 {
@@ -2451,8 +2618,9 @@ fn route_middle_click(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     input: TerminalMouseInput,
     shift: bool,
+    mouse_reporting: bool,
 ) -> Result<MiddleClickRouting, TerminalError> {
-    if !shift {
+    if mouse_reporting && !shift {
         let wrote = runtime.borrow_mut().write_mouse(input);
         if wrote? {
             return Ok(MiddleClickRouting::Forwarded);
@@ -2476,6 +2644,17 @@ fn kick_viewport_to_bottom(
     Ok(scrolled)
 }
 
+fn scroll_viewport_to_bottom_for_output(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    enabled: bool,
+) -> Result<bool, TerminalError> {
+    if enabled {
+        runtime.borrow_mut().scroll_viewport_to_bottom()
+    } else {
+        Ok(false)
+    }
+}
+
 /// Pastes the PRIMARY selection (Linux middle-click paste), through the same
 /// sanitizing/bracketed paste encoder as the regular clipboard paste.
 fn paste_primary_selection(
@@ -2483,6 +2662,7 @@ fn paste_primary_selection(
     selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
     toast_handle: Option<ToastHandle>,
+    scroll_on_keystroke: bool,
 ) {
     let Some(display) = gtk::gdk::Display::default() else {
         eprintln!("Failed to paste PRIMARY selection: no display available");
@@ -2496,6 +2676,7 @@ fn paste_primary_selection(
         toast_handle,
         &display.primary_clipboard(),
         "Failed to read PRIMARY selection",
+        scroll_on_keystroke,
     );
 }
 
@@ -2511,6 +2692,7 @@ fn paste_clipboard_text(
     toast_handle: Option<ToastHandle>,
     clipboard: &gtk::gdk::Clipboard,
     read_error_prefix: &'static str,
+    scroll_on_keystroke: bool,
 ) {
     let runtime = runtime.clone();
     let selection = selection.clone();
@@ -2533,8 +2715,10 @@ fn paste_clipboard_text(
                 return;
             }
         };
-        if let Err(err) = kick_viewport_to_bottom(&runtime, &selection, true) {
-            eprintln!("Failed to scroll terminal to bottom: {err}");
+        if scroll_on_keystroke {
+            if let Err(err) = kick_viewport_to_bottom(&runtime, &selection, true) {
+                eprintln!("Failed to scroll terminal to bottom: {err}");
+            }
         }
         if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
             eprintln!("Failed to paste into terminal: {err}");
@@ -2586,9 +2770,12 @@ fn write_terminal_input(
     drawing_area: &gtk::DrawingArea,
     input: TerminalInput,
     clear_selection: bool,
+    scroll_on_keystroke: bool,
 ) {
-    if let Err(err) = kick_viewport_to_bottom(runtime, selection, clear_selection) {
-        eprintln!("Failed to scroll terminal to bottom: {err}");
+    if scroll_on_keystroke {
+        if let Err(err) = kick_viewport_to_bottom(runtime, selection, clear_selection) {
+            eprintln!("Failed to scroll terminal to bottom: {err}");
+        }
     }
     let result = match input {
         TerminalInput::Bytes(bytes) => runtime.borrow_mut().write_bytes(&bytes),
@@ -2653,6 +2840,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             &self.drawing_area,
             input,
             self.selection_clear_on_typing,
+            self.scroll_to_bottom.keystroke,
         );
     }
 
@@ -2679,7 +2867,13 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
                 .map(|frame| viewport_text_from_frame(&frame))
         });
         match payload {
-            Ok(text) => display.clipboard().set_text(&text),
+            Ok(text) => {
+                display.clipboard().set_text(&text);
+                clear_selection_after_copy(
+                    &mut self.selection.borrow_mut(),
+                    self.selection_clear_on_copy,
+                );
+            }
             // No selection and no frame: keep the toast and leave the
             // clipboard untouched rather than clobber it with nothing.
             Err(err) => {
@@ -2702,6 +2896,7 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
             self.toast_handle.clone(),
             &display.clipboard(),
             "Failed to read clipboard text",
+            self.scroll_to_bottom.keystroke,
         );
     }
 
@@ -2996,7 +3191,8 @@ mod selection_tests {
 
         let remainder = Cell::new(0.0);
         let routing =
-            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
+            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT, true)
+                .unwrap();
 
         // 6 lines on a 4-row terminal leave 2 scrollback rows; a 3-line wheel
         // scroll up clamps at the top, so the viewport moved exactly -2 rows.
@@ -3004,7 +3200,7 @@ mod selection_tests {
         assert_eq!(remainder.get(), 0.0);
 
         // A sub-line touchpad delta is accumulated, not routed anywhere yet.
-        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -0.5).unwrap();
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -0.5, true).unwrap();
 
         assert_eq!(routing, ScrollRouting::NotHandled);
         assert_eq!(remainder.get(), -0.5);
@@ -3045,20 +3241,66 @@ mod selection_tests {
 
         let remainder = Cell::new(0.0);
         let routing =
-            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT).unwrap();
+            route_terminal_scroll(&runtime, wheel, &remainder, -LINES_PER_WHEEL_UNIT, true)
+                .unwrap();
 
         assert_eq!(routing, ScrollRouting::Forwarded);
         assert_eq!(remainder.get(), 0.0);
 
         // Touchpad lines accumulate until a full wheel tick (3 lines) is owed;
         // forwarding per line used to make tracking apps scroll 3x too fast.
-        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0).unwrap();
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0, true).unwrap();
         assert_eq!(routing, ScrollRouting::NotHandled);
         assert_eq!(remainder.get(), -2.0);
 
-        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0).unwrap();
+        let routing = route_terminal_scroll(&runtime, wheel, &remainder, -2.0, true).unwrap();
         assert_eq!(routing, ScrollRouting::Forwarded);
         assert_eq!(remainder.get(), -1.0);
+    }
+
+    #[test]
+    fn wheel_scroll_with_mouse_reporting_disabled_scrolls_locally() {
+        use forktty_terminal::ghostty::core::{
+            TerminalMouseAction, TerminalMouseButton, TerminalMouseInput, TerminalMousePosition,
+            TerminalMouseSize,
+        };
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        runtime.feed_pty_bytes(b"\x1b[?1000h\x1b[?1006h").unwrap();
+        runtime.scroll_viewport_lines(-2).unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let wheel = TerminalMouseInput {
+            action: TerminalMouseAction::Press,
+            button: Some(TerminalMouseButton::WheelDown),
+            modifiers: Default::default(),
+            position: TerminalMousePosition { x: 10.0, y: 20.0 },
+            size: TerminalMouseSize {
+                screen_width: 800,
+                screen_height: 480,
+                cell_width: 10,
+                cell_height: 20,
+            },
+            any_button_pressed: false,
+        };
+
+        let remainder = Cell::new(0.0);
+        let routing =
+            route_terminal_scroll(&runtime, wheel, &remainder, LINES_PER_WHEEL_UNIT, false)
+                .unwrap();
+
+        assert_eq!(routing, ScrollRouting::ViewportScrolled(2));
+        assert_eq!(remainder.get(), 0.0);
     }
 
     #[test]
@@ -3066,7 +3308,7 @@ mod selection_tests {
         let frame = frame_for_lines(b"cd /tmp/x.txt now");
 
         assert_eq!(
-            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 5 }),
+            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 5 }, &[]),
             Some((
                 SelectionPoint { row: 0, col: 3 },
                 SelectionPoint { row: 0, col: 12 }
@@ -3074,13 +3316,26 @@ mod selection_tests {
         );
         // Unwritten cells (row 2 is blank on the 4-row screen) select nothing.
         assert_eq!(
-            word_selection_in_frame(&frame, SelectionPoint { row: 2, col: 0 }),
+            word_selection_in_frame(&frame, SelectionPoint { row: 2, col: 0 }, &[]),
             None
         );
         // A click below the frame selects nothing.
         assert_eq!(
-            word_selection_in_frame(&frame, SelectionPoint { row: 9, col: 0 }),
+            word_selection_in_frame(&frame, SelectionPoint { row: 9, col: 0 }, &[]),
             None
+        );
+    }
+
+    #[test]
+    fn word_selection_in_frame_uses_custom_boundaries() {
+        let frame = frame_for_lines(b"cd /tmp/x.txt now");
+
+        assert_eq!(
+            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 8 }, &[' ', '/', '.']),
+            Some((
+                SelectionPoint { row: 0, col: 8 },
+                SelectionPoint { row: 0, col: 8 }
+            ))
         );
     }
 
@@ -3091,7 +3346,7 @@ mod selection_tests {
 
         // Clicking the spacer tail behaves like clicking the wide head.
         assert_eq!(
-            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 3 }),
+            word_selection_in_frame(&frame, SelectionPoint { row: 0, col: 3 }, &[]),
             Some((
                 SelectionPoint { row: 0, col: 2 },
                 SelectionPoint { row: 0, col: 5 }
@@ -3203,6 +3458,17 @@ mod selection_tests {
             copy_payload(None, || Err::<String, _>("render failed")),
             Err("render failed")
         );
+    }
+
+    #[test]
+    fn clear_selection_after_copy_obeys_ghostty_config() {
+        let mut selection = TerminalSelection::default();
+        selection.select_text("selected");
+        clear_selection_after_copy(&mut selection, false);
+        assert_eq!(selection.selected_text().as_deref(), Some("selected"));
+
+        clear_selection_after_copy(&mut selection, true);
+        assert_eq!(selection.selected_text(), None);
     }
 
     #[test]
@@ -3457,7 +3723,7 @@ mod selection_tests {
 
         // Tracking off → paste.
         assert_eq!(
-            route_middle_click(&runtime, middle_press_input(), false).unwrap(),
+            route_middle_click(&runtime, middle_press_input(), false, true).unwrap(),
             MiddleClickRouting::PastePrimary
         );
         assert!(runtime.borrow().pty_writes().is_empty());
@@ -3468,7 +3734,7 @@ mod selection_tests {
             .feed_pty_bytes(b"\x1b[?1000h\x1b[?1006h")
             .unwrap();
         assert_eq!(
-            route_middle_click(&runtime, middle_press_input(), false).unwrap(),
+            route_middle_click(&runtime, middle_press_input(), false, true).unwrap(),
             MiddleClickRouting::Forwarded
         );
         let writes_after_forward = runtime.borrow().pty_writes().len();
@@ -3476,7 +3742,7 @@ mod selection_tests {
 
         // Shift bypasses tracking, like it does for selection.
         assert_eq!(
-            route_middle_click(&runtime, middle_press_input(), true).unwrap(),
+            route_middle_click(&runtime, middle_press_input(), true, true).unwrap(),
             MiddleClickRouting::PastePrimary
         );
         assert_eq!(runtime.borrow().pty_writes().len(), writes_after_forward);
@@ -3560,6 +3826,33 @@ mod selection_tests {
         let viewport = runtime.borrow().viewport_position().unwrap();
         assert_eq!(viewport.top + viewport.rows, viewport.total);
         assert!(selection.borrow().normalized_range().is_some());
+    }
+
+    #[test]
+    fn output_scroll_to_bottom_obeys_ghostty_config() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        runtime.scroll_viewport_lines(-2).unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let before = runtime.borrow().viewport_position().unwrap().top;
+
+        scroll_viewport_to_bottom_for_output(&runtime, false).unwrap();
+        assert_eq!(runtime.borrow().viewport_position().unwrap().top, before);
+
+        scroll_viewport_to_bottom_for_output(&runtime, true).unwrap();
+        let viewport = runtime.borrow().viewport_position().unwrap();
+        assert_eq!(viewport.top + viewport.rows, viewport.total);
     }
 
     #[test]
@@ -3964,11 +4257,11 @@ mod mouse_tests {
     #[test]
     fn agent_mouse_drag_policy_defers_single_left_press_without_shift() {
         assert_eq!(
-            left_mouse_press_decision(true, gtk::gdk::ModifierType::empty(), 1),
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::empty(), 1, false),
             LeftMousePressDecision::DeferForLocalDrag
         );
         assert_eq!(
-            left_mouse_press_decision(false, gtk::gdk::ModifierType::empty(), 1),
+            left_mouse_press_decision(false, gtk::gdk::ModifierType::empty(), 1, false),
             LeftMousePressDecision::ForwardOrSelectIfUntracked
         );
     }
@@ -3976,12 +4269,24 @@ mod mouse_tests {
     #[test]
     fn agent_mouse_drag_policy_keeps_shift_and_multi_click_local() {
         assert_eq!(
-            left_mouse_press_decision(true, gtk::gdk::ModifierType::SHIFT_MASK, 1),
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::SHIFT_MASK, 1, false),
             LeftMousePressDecision::SelectLocallyNow
         );
         assert_eq!(
-            left_mouse_press_decision(true, gtk::gdk::ModifierType::empty(), 2),
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::empty(), 2, false),
             LeftMousePressDecision::SelectLocallyNow
+        );
+    }
+
+    #[test]
+    fn mouse_shift_capture_forwards_shift_clicks() {
+        assert_eq!(
+            left_mouse_press_decision(true, gtk::gdk::ModifierType::SHIFT_MASK, 1, true),
+            LeftMousePressDecision::DeferForLocalDrag
+        );
+        assert_eq!(
+            left_mouse_press_decision(false, gtk::gdk::ModifierType::SHIFT_MASK, 1, true),
+            LeftMousePressDecision::ForwardOrSelectIfUntracked
         );
     }
 

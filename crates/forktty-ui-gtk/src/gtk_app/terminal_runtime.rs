@@ -215,6 +215,10 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 
+    pub(super) fn shift_mouse_capture_override(&self) -> Option<bool> {
+        self.core.shift_mouse_capture_override()
+    }
+
     pub(super) fn resize_cells_with_cell_pixels(
         &mut self,
         cols: u16,
@@ -355,9 +359,10 @@ impl TerminalRuntime {
         &self,
         col: u16,
         row: u32,
+        boundary_codepoints: &[char],
     ) -> Result<Option<TerminalViewportSelection>, TerminalError> {
         self.core
-            .viewport_word_selection(col, row)
+            .viewport_word_selection_with_boundaries(col, row, boundary_codepoints)
             .map_err(|err| TerminalError::Backend(err.to_string()))
     }
 

@@ -144,13 +144,30 @@ pub(super) enum WordCellKind {
     SpacerTail,
 }
 
+#[cfg(test)]
 pub(super) fn word_cell_kind(text: &str, spacer_tail: bool) -> WordCellKind {
+    word_cell_kind_with_boundaries(text, spacer_tail, WORD_BOUNDARY_CHARS)
+}
+
+pub(super) fn word_boundary_chars(custom: &[char]) -> &[char] {
+    if custom.is_empty() {
+        WORD_BOUNDARY_CHARS
+    } else {
+        custom
+    }
+}
+
+pub(super) fn word_cell_kind_with_boundaries(
+    text: &str,
+    spacer_tail: bool,
+    boundary_chars: &[char],
+) -> WordCellKind {
     if spacer_tail {
         return WordCellKind::SpacerTail;
     }
     match text.chars().next() {
         None => WordCellKind::Empty,
-        Some(first) if WORD_BOUNDARY_CHARS.contains(&first) => WordCellKind::Boundary,
+        Some(first) if boundary_chars.contains(&first) => WordCellKind::Boundary,
         Some(_) => WordCellKind::Word,
     }
 }

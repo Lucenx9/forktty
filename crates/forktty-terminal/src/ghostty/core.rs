@@ -53,6 +53,7 @@ pub struct GhosttyCore {
     events: Rc<RefCell<Vec<GhosttyEvent>>>,
     bracketed_paste: bool,
     focus_reporting: bool,
+    shift_mouse_capture_override: Option<bool>,
     terminal_mode_tail: Vec<u8>,
     theme_colors: Option<GhosttyThemeColors>,
     theme_reset_tail: Vec<u8>,
@@ -435,6 +436,7 @@ impl GhosttyCore {
             events,
             bracketed_paste: false,
             focus_reporting: false,
+            shift_mouse_capture_override: None,
             terminal_mode_tail: Vec::new(),
             theme_colors: None,
             theme_reset_tail: Vec::new(),
@@ -496,6 +498,7 @@ impl GhosttyCore {
         self.theme_reset_tail.clear();
         self.bracketed_paste = false;
         self.focus_reporting = false;
+        self.shift_mouse_capture_override = None;
         let _snapshot = self.render_state.update(&self.terminal)?;
         let mut events = self.events.borrow_mut();
         events.push(GhosttyEvent::VisibleContentChanged);
@@ -551,6 +554,10 @@ impl GhosttyCore {
     /// forwarded to it instead of scrolling the local viewport.
     pub fn is_mouse_tracking(&self) -> Result<bool> {
         self.terminal.is_mouse_tracking()
+    }
+
+    pub fn shift_mouse_capture_override(&self) -> Option<bool> {
+        self.shift_mouse_capture_override
     }
 
     pub fn set_kitty_image_storage_limit(&mut self, limit: u64) -> Result<()> {
@@ -609,13 +616,25 @@ impl GhosttyCore {
         col: u16,
         row: u32,
     ) -> Result<Option<TerminalViewportSelection>> {
+        self.viewport_word_selection_with_boundaries(col, row, &[])
+    }
+
+    pub fn viewport_word_selection_with_boundaries(
+        &self,
+        col: u16,
+        row: u32,
+        boundary_codepoints: &[char],
+    ) -> Result<Option<TerminalViewportSelection>> {
         let grid_ref = self
             .terminal
             .grid_ref(Point::Viewport(PointCoordinate { x: col, y: row }))?;
-        let Some(selection) = self
-            .terminal
-            .select_word(SelectWordOptions::new(grid_ref))?
-        else {
+        let options = SelectWordOptions::new(grid_ref);
+        let options = if boundary_codepoints.is_empty() {
+            options
+        } else {
+            options.with_boundary_codepoints(boundary_codepoints)
+        };
+        let Some(selection) = self.terminal.select_word(options)? else {
             return Ok(None);
         };
         self.viewport_selection_from_ghostty_selection(&selection)
@@ -998,6 +1017,7 @@ impl GhosttyCore {
             &scan,
             &mut self.focus_reporting,
             &mut self.bracketed_paste,
+            &mut self.shift_mouse_capture_override,
         );
         self.terminal_mode_tail = if scan.len() > TERMINAL_MODE_TAIL_LIMIT {
             scan[scan.len() - TERMINAL_MODE_TAIL_LIMIT..].to_vec()
@@ -1227,10 +1247,17 @@ fn scan_terminal_private_mode_sequences(
     bytes: &[u8],
     focus_reporting: &mut bool,
     bracketed_paste: &mut bool,
+    shift_mouse_capture_override: &mut Option<bool>,
 ) {
     let mut index = 0;
     while index + 3 < bytes.len() {
-        if bytes[index] != 0x1b || bytes[index + 1] != b'[' || bytes[index + 2] != b'?' {
+        if bytes[index] != 0x1b || bytes[index + 1] != b'[' {
+            index += 1;
+            continue;
+        }
+
+        let introducer = bytes[index + 2];
+        if !matches!(introducer, b'?' | b'>') {
             index += 1;
             continue;
         }
@@ -1240,7 +1267,7 @@ fn scan_terminal_private_mode_sequences(
         while end < bytes.len() {
             let byte = bytes[end];
             if (0x40..=0x7e).contains(&byte) {
-                if matches!(byte, b'h' | b'l') {
+                if introducer == b'?' && matches!(byte, b'h' | b'l') {
                     let enabled = byte == b'h';
                     let params = &bytes[params_start..end];
                     if csi_private_params_contain(params, b"1004") {
@@ -1248,6 +1275,12 @@ fn scan_terminal_private_mode_sequences(
                     }
                     if csi_private_params_contain(params, b"2004") {
                         *bracketed_paste = enabled;
+                    }
+                } else if introducer == b'>' && byte == b's' {
+                    match &bytes[params_start..end] {
+                        b"" | b"0" => *shift_mouse_capture_override = Some(false),
+                        b"1" => *shift_mouse_capture_override = Some(true),
+                        _ => {}
                     }
                 }
                 break;
@@ -1618,6 +1651,28 @@ mod tests {
         assert!(core.is_mouse_tracking().unwrap());
         core.feed(b"\x1b[?1000l").unwrap();
         assert!(!core.is_mouse_tracking().unwrap());
+    }
+
+    #[test]
+    fn core_tracks_xtshiftescape_mouse_shift_override() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert_eq!(core.shift_mouse_capture_override(), None);
+        core.feed(b"\x1b[>1s").unwrap();
+        assert_eq!(core.shift_mouse_capture_override(), Some(true));
+        core.feed(b"\x1b[>0s").unwrap();
+        assert_eq!(core.shift_mouse_capture_override(), Some(false));
+        core.feed(b"\x1b[>2s").unwrap();
+        assert_eq!(core.shift_mouse_capture_override(), Some(false));
+        core.feed(b"\x1b[>s").unwrap();
+        assert_eq!(core.shift_mouse_capture_override(), Some(false));
+        core.reset().unwrap();
+        assert_eq!(core.shift_mouse_capture_override(), None);
     }
 
     #[test]
@@ -2496,6 +2551,29 @@ mod tests {
     }
 
     #[test]
+    fn viewport_word_selection_accepts_custom_word_boundaries() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 2,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"open /tmp/a.txt").unwrap();
+
+        assert_eq!(
+            core.viewport_word_selection_with_boundaries(10, 0, &[' ', '/', '.'])
+                .unwrap(),
+            Some(TerminalViewportSelection {
+                start_col: 10,
+                start_row: 0,
+                end_col: 10,
+                end_row: 0,
+            })
+        );
+    }
+
+    #[test]
     fn full_text_unwrapped_visible_cells_omits_invisible_cells_in_scrollback() {
         let mut core = GhosttyCore::new(GhosttyCoreOptions {
             cols: 20,
@@ -2736,7 +2814,13 @@ mod tests {
             let bytes = scanner_random_bytes(&mut rng, POOL, 256);
             let mut focus = false;
             let mut bracketed = false;
-            scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+            let mut shift_mouse_capture_override = None;
+            scan_terminal_private_mode_sequences(
+                &bytes,
+                &mut focus,
+                &mut bracketed,
+                &mut shift_mouse_capture_override,
+            );
         }
     }
 
@@ -2750,7 +2834,13 @@ mod tests {
         bytes.extend_from_slice(b"\x1b[?2004h");
         let mut focus = false;
         let mut bracketed = false;
-        scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        let mut shift_mouse_capture_override = None;
+        scan_terminal_private_mode_sequences(
+            &bytes,
+            &mut focus,
+            &mut bracketed,
+            &mut shift_mouse_capture_override,
+        );
         assert!(focus);
         assert!(bracketed);
 
@@ -2758,7 +2848,13 @@ mod tests {
         bytes.extend_from_slice(b"\x1b[?1004l");
         let mut focus = false;
         let mut bracketed = false;
-        scan_terminal_private_mode_sequences(&bytes, &mut focus, &mut bracketed);
+        let mut shift_mouse_capture_override = None;
+        scan_terminal_private_mode_sequences(
+            &bytes,
+            &mut focus,
+            &mut bracketed,
+            &mut shift_mouse_capture_override,
+        );
         assert!(!focus);
         assert!(bracketed);
     }
