@@ -2581,7 +2581,7 @@ fn workflow_evidence_input(params: &Value) -> Result<WorkflowEvidenceInput, Disp
     let evidence_id = optional_non_blank_string_param(params, "evidence_id")?.map(str::to_string);
     let kind = required_trimmed_string(params, "kind")?.to_string();
     let title = required_trimmed_string(params, "title")?.to_string();
-    let text = optional_non_blank_string_param(params, "text")?.map(str::to_string);
+    let text = optional_non_empty_raw_string_param(params, "text")?.map(str::to_string);
     let path = optional_non_blank_string_param(params, "path")?.map(PathBuf::from);
     if text.is_none() && path.is_none() {
         return Err(DispatchError::MissingParam("text"));
@@ -2597,6 +2597,23 @@ fn workflow_evidence_input(params: &Value) -> Result<WorkflowEvidenceInput, Disp
 
 fn required_workflow_id(params: &Value) -> Result<&str, DispatchError> {
     optional_workflow_id(params)?.ok_or(DispatchError::MissingParam("workflow_id"))
+}
+
+fn optional_non_empty_raw_string_param<'a>(
+    params: &'a Value,
+    key: &str,
+) -> Result<Option<&'a str>, DispatchError> {
+    let Some(value) = params.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    match value.as_str() {
+        Some(value) if !value.trim().is_empty() => Ok(Some(value)),
+        Some(_) => Err(format!("Invalid parameter {key}: must not be empty").into()),
+        None => Err(format!("Invalid parameter {key}: expected string").into()),
+    }
 }
 
 fn optional_workflow_id(params: &Value) -> Result<Option<&str>, DispatchError> {
@@ -6493,12 +6510,13 @@ mod tests {
                 "evidence_id": "socket-test",
                 "kind": "test",
                 "title": "workflow socket test",
-                "text": "passed"
+                "text": "  passed\n"
             }),
         )
         .await
         .unwrap();
         assert_eq!(evidenced["evidence"][0]["id"], "socket-test");
+        assert_eq!(evidenced["evidence"][0]["text"], "  passed\n");
 
         let listed = dispatch(
             &state,

@@ -214,15 +214,13 @@ impl WorkflowStoreData {
         input: WorkflowUpsert,
         now_ms: u64,
     ) -> Result<WorkflowState, WorkflowError> {
-        let mode = clean_optional_short("mode", input.mode.as_deref())?
-            .unwrap_or_else(|| "default".to_string());
-        let id = workflow_id_for(&input, &mode)?;
+        let mode = clean_optional_short("mode", input.mode.as_deref())?;
+        let id = workflow_id_for(&input, mode.as_deref().unwrap_or("default"))?;
         let workspace_id = clean_optional_id("workspace_id", input.workspace_id.as_deref())?;
         let surface_id = clean_optional_id("surface_id", input.surface_id.as_deref())?;
         let agent = clean_optional_short("agent", input.agent.as_deref())?;
         let session_id = clean_optional_short("session_id", input.session_id.as_deref())?;
-        let status = clean_optional_short("status", input.status.as_deref())?
-            .unwrap_or_else(|| "active".to_string());
+        let status = clean_optional_short("status", input.status.as_deref())?;
         let goal = clean_optional_long("goal", input.goal.as_deref())?;
         let memory = clean_optional_long("memory", input.memory.as_deref())?;
 
@@ -242,8 +240,8 @@ impl WorkflowStoreData {
                     surface_id: None,
                     agent: None,
                     session_id: None,
-                    mode: mode.clone(),
-                    status: status.clone(),
+                    mode: mode.clone().unwrap_or_else(|| "default".to_string()),
+                    status: status.clone().unwrap_or_else(|| "active".to_string()),
                     goal: None,
                     memory: None,
                     created_at_ms: now_ms,
@@ -259,8 +257,12 @@ impl WorkflowStoreData {
         workflow.surface_id = surface_id.or(workflow.surface_id.take());
         workflow.agent = agent.or(workflow.agent.take());
         workflow.session_id = session_id.or(workflow.session_id.take());
-        workflow.mode = mode;
-        workflow.status = status;
+        if let Some(mode) = mode {
+            workflow.mode = mode;
+        }
+        if let Some(status) = status {
+            workflow.status = status;
+        }
         if goal.is_some() {
             workflow.goal = goal;
         }
@@ -604,9 +606,9 @@ fn workflow_id_for(input: &WorkflowUpsert, mode: &str) -> Result<String, Workflo
             "workflow_id",
             &format!(
                 "session:{}:{}:{}",
-                id_component(agent),
-                id_component(session_id),
-                id_component(mode)
+                id_component("agent", agent)?,
+                id_component("session_id", session_id)?,
+                id_component("mode", mode)?
             ),
         );
     }
@@ -615,8 +617,8 @@ fn workflow_id_for(input: &WorkflowUpsert, mode: &str) -> Result<String, Workflo
             "workflow_id",
             &format!(
                 "surface:{}:{}",
-                id_component(surface_id),
-                id_component(mode)
+                id_component("surface_id", surface_id)?,
+                id_component("mode", mode)?
             ),
         );
     }
@@ -625,8 +627,8 @@ fn workflow_id_for(input: &WorkflowUpsert, mode: &str) -> Result<String, Workflo
             "workflow_id",
             &format!(
                 "workspace:{}:{}",
-                id_component(workspace_id),
-                id_component(mode)
+                id_component("workspace_id", workspace_id)?,
+                id_component("mode", mode)?
             ),
         );
     }
@@ -635,7 +637,7 @@ fn workflow_id_for(input: &WorkflowUpsert, mode: &str) -> Result<String, Workflo
     ))
 }
 
-fn id_component(value: &str) -> String {
+fn id_component(field: &str, value: &str) -> Result<String, WorkflowError> {
     let mut out = value
         .trim()
         .chars()
@@ -651,7 +653,13 @@ fn id_component(value: &str) -> String {
     while out.contains("__") {
         out = out.replace("__", "_");
     }
-    out.trim_matches('_').to_string()
+    let out = out.trim_matches('_').to_string();
+    if out.is_empty() {
+        return Err(WorkflowError::InvalidData(format!(
+            "{field} cannot derive an empty workflow id component"
+        )));
+    }
+    Ok(out)
 }
 
 fn clean_optional_id(field: &str, value: Option<&str>) -> Result<Option<String>, WorkflowError> {
@@ -937,6 +945,47 @@ mod tests {
                 "workflow.evidence.added"
             ]
         );
+    }
+
+    #[test]
+    fn workflow_upsert_preserves_mode_status_and_rejects_empty_derived_id_parts() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    mode: Some("review".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let updated = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some(workflow.id),
+                    memory: Some("keep mode".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                2,
+            )
+            .unwrap();
+        assert_eq!(updated.mode, "review");
+        assert_eq!(updated.status, "running");
+        assert!(store
+            .upsert(
+                WorkflowUpsert {
+                    agent: Some("!!!".to_string()),
+                    session_id: Some("codex-session".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                3,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("empty workflow id component"));
     }
 
     #[test]

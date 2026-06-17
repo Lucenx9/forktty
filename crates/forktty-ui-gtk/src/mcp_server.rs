@@ -622,10 +622,16 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             )?;
             let mut params =
                 map_from_pairs([("workflow_id", required_non_blank(args, "workflow_id")?)]);
-            for key in ["evidence_id", "kind", "title", "text", "path"] {
+            for key in ["evidence_id", "kind", "title", "path"] {
                 if let Some(value) = optional_non_blank(args, key)? {
                     params.insert(key.to_string(), Value::String(value));
                 }
+            }
+            if let Some(text) = optional_string(args, "text")? {
+                if text.trim().is_empty() {
+                    return Err(ToolCallError::validation("text must not be empty"));
+                }
+                params.insert("text".to_string(), Value::String(text));
             }
             SocketCall {
                 method: "workflow.evidence.add",
@@ -1915,13 +1921,13 @@ mod tests {
                 "evidence_id": "tests",
                 "kind": "test",
                 "title": "cargo test",
-                "text": "passed"
+                "text": "  passed\n"
             }),
         )
         .unwrap();
         assert_eq!(method, "workflow.evidence.add");
         assert_eq!(params["evidence_id"], "tests");
-        assert_eq!(params["text"], "passed");
+        assert_eq!(params["text"], "  passed\n");
 
         let (method, params) = build_socket_call_for_test(
             "workflow_replay",
