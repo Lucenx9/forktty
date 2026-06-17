@@ -731,6 +731,11 @@ fn feed_entry_from_notification(item: &NotificationItem) -> FeedEntry {
         } else {
             FeedEntryType::Notification
         },
+        kind: Some(notification_kind_name(item.kind).to_string()),
+        read: item.read,
+        key: None,
+        value: None,
+        total: None,
         title: item.title.clone(),
         body: item.body.clone(),
         workspace_id: item.workspace_id.clone(),
@@ -771,6 +776,11 @@ fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
             Some(FeedEntry {
                 id: format!("feed:{now}:{workspace_id}:status:{key}"),
                 entry_type: FeedEntryType::Status,
+                kind: Some("status".to_string()),
+                read: false,
+                key: Some(key.clone()),
+                value: None,
+                total: None,
                 title: label.clone(),
                 body: value.clone(),
                 workspace_id: Some(workspace_id.clone()),
@@ -794,6 +804,11 @@ fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
             Some(FeedEntry {
                 id: format!("feed:{now}:{workspace_id}:progress:{key}"),
                 entry_type: FeedEntryType::Progress,
+                kind: Some("progress".to_string()),
+                read: false,
+                key: Some(key.clone()),
+                value: Some(*value),
+                total: *total,
                 title: label.clone(),
                 body,
                 workspace_id: Some(workspace_id.clone()),
@@ -803,6 +818,15 @@ fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
             })
         }
         _ => None,
+    }
+}
+
+fn notification_kind_name(kind: NotificationKind) -> &'static str {
+    match kind {
+        NotificationKind::Prompt => "prompt",
+        NotificationKind::Error => "error",
+        NotificationKind::Info => "info",
+        NotificationKind::Custom => "custom",
     }
 }
 
@@ -846,7 +870,7 @@ pub async fn dispatch(
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
             let Some(store) = store.as_mut() else {
-                return Err(DispatchError::Other(
+                return Err(DispatchError::NotReady(
                     "Feed history is not available".to_string(),
                 ));
             };
@@ -6402,6 +6426,8 @@ mod tests {
         .unwrap();
         let approval_id = feed[0]["id"].as_str().unwrap();
         assert_eq!(feed[0]["type"], "approval");
+        assert_eq!(feed[0]["kind"], "prompt");
+        assert_eq!(feed[0]["read"], false);
         assert_eq!(feed[0]["approval_state"], "pending");
 
         let decided = dispatch(

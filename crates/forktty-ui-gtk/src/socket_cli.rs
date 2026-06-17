@@ -2398,6 +2398,11 @@ fn handle_feed_respond(context: &CliContext, parsed: ParsedFlags) -> CliResult<(
     reject_unknown_options(&parsed.options, &["decision"], "feed respond")?;
     let decision = non_blank_string_option(&parsed.options, "decision", "--decision")?
         .ok_or_else(|| CliError::new("feed respond: missing --decision approve|deny"))?;
+    if !matches!(decision.trim(), "approve" | "approved" | "deny" | "denied") {
+        return Err(CliError::new(
+            "feed respond: --decision must be approve or deny",
+        ));
+    }
     let result = send_socket_request(
         &context.socket_path,
         "feed.approval.respond",
@@ -11426,6 +11431,18 @@ mod tests {
         assert_eq!(request["method"], "feed.approval.respond");
         assert_eq!(request["params"]["id"], "notification-1");
         assert_eq!(request["params"]["decision"], "approve");
+    }
+
+    #[test]
+    fn feed_respond_rejects_invalid_decision_before_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_feed(
+                &ctx,
+                strings(&["respond", "notification-1", "--decision", "later"]),
+            ),
+            "approve or deny",
+        );
     }
 
     #[test]

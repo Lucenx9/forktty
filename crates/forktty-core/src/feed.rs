@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 const MAX_FEED_ENTRIES: usize = 500;
 const MAX_FEED_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const FEED_SCHEMA_VERSION: u8 = 1;
 
 #[derive(Debug)]
 pub enum FeedError {
@@ -46,6 +47,16 @@ pub struct FeedEntry {
     pub id: String,
     #[serde(rename = "type")]
     pub entry_type: FeedEntryType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<f64>,
     pub title: String,
     pub body: String,
     pub workspace_id: Option<String>,
@@ -79,9 +90,15 @@ impl FeedStore {
                 if bytes.is_empty() {
                     Vec::new()
                 } else {
-                    serde_json::from_slice::<FeedFile>(&bytes)
-                        .map_err(|err| FeedError::Json(err.to_string()))?
-                        .entries
+                    let file = serde_json::from_slice::<FeedFile>(&bytes)
+                        .map_err(|err| FeedError::Json(err.to_string()))?;
+                    if file.schema != FEED_SCHEMA_VERSION {
+                        return Err(FeedError::Json(format!(
+                            "unsupported feed schema: {}",
+                            file.schema
+                        )));
+                    }
+                    file.entries
                 }
             }
             Ok(_) => return Err(FeedError::Io("feed path is not a regular file".to_string())),
@@ -107,10 +124,26 @@ impl FeedStore {
     }
 
     pub fn append(&mut self, entry: FeedEntry) -> Result<(), FeedError> {
+        let previous = self.entries.clone();
+        let entry = match self.entries.iter().find(|existing| existing.id == entry.id) {
+            Some(existing)
+                if existing.entry_type == FeedEntryType::Approval
+                    && existing.approval_state != Some(FeedApprovalState::Pending) =>
+            {
+                let mut entry = entry;
+                entry.approval_state = existing.approval_state.clone();
+                entry
+            }
+            _ => entry,
+        };
         self.entries.retain(|existing| existing.id != entry.id);
         self.entries.push(entry);
         self.bound_entries();
-        self.save()
+        if let Err(err) = self.save() {
+            self.entries = previous;
+            return Err(err);
+        }
+        Ok(())
     }
 
     pub fn list(&self, workspace_id: Option<&str>, limit: usize) -> Vec<FeedEntry> {
@@ -140,16 +173,45 @@ impl FeedStore {
         else {
             return Err(FeedError::NotFound(id.to_string()));
         };
+        let previous = entry.approval_state.clone();
         entry.approval_state = Some(state);
         let entry = entry.clone();
-        self.save()?;
+        if let Err(err) = self.save() {
+            if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+                entry.approval_state = previous;
+            }
+            return Err(err);
+        }
         Ok(entry)
     }
 
     fn bound_entries(&mut self) {
         self.entries
             .sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
-        self.entries.truncate(MAX_FEED_ENTRIES);
+        let mut pending = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.entry_type == FeedEntryType::Approval
+                    && entry.approval_state == Some(FeedApprovalState::Pending)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        pending.truncate(MAX_FEED_ENTRIES);
+        let remaining = MAX_FEED_ENTRIES.saturating_sub(pending.len());
+        let mut rest = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                !(entry.entry_type == FeedEntryType::Approval
+                    && entry.approval_state == Some(FeedApprovalState::Pending))
+            })
+            .take(remaining)
+            .cloned()
+            .collect::<Vec<_>>();
+        pending.append(&mut rest);
+        pending.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
+        self.entries = pending;
     }
 
     fn save(&self) -> Result<(), FeedError> {
@@ -157,7 +219,7 @@ impl FeedStore {
             ensure_private_feed_dir(parent)?;
         }
         let file = FeedFile {
-            schema: 1,
+            schema: FEED_SCHEMA_VERSION,
             entries: self.entries.clone(),
         };
         let bytes =
@@ -227,6 +289,11 @@ mod tests {
         FeedEntry {
             id: id.to_string(),
             entry_type: FeedEntryType::Notification,
+            kind: Some("info".to_string()),
+            read: false,
+            key: None,
+            value: None,
+            total: None,
             title: id.to_string(),
             body: "body".to_string(),
             workspace_id: Some(workspace_id.to_string()),
@@ -290,5 +357,55 @@ mod tests {
             FeedStore::open_at(&path).unwrap().list(None, 10)[0].approval_state,
             Some(FeedApprovalState::Approved)
         );
+    }
+
+    #[test]
+    fn append_preserves_recorded_approval_decisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&path).unwrap();
+        let mut approval = entry("feed-1", "w1");
+        approval.entry_type = FeedEntryType::Approval;
+        approval.approval_state = Some(FeedApprovalState::Pending);
+        store.append(approval.clone()).unwrap();
+        store
+            .decide_approval("feed-1", FeedApprovalState::Approved)
+            .unwrap();
+        store.append(approval).unwrap();
+
+        assert_eq!(
+            store.list(None, 10)[0].approval_state,
+            Some(FeedApprovalState::Approved)
+        );
+    }
+
+    #[test]
+    fn pending_approvals_survive_feed_churn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&path).unwrap();
+        let mut approval = entry("feed-1", "w1");
+        approval.entry_type = FeedEntryType::Approval;
+        approval.approval_state = Some(FeedApprovalState::Pending);
+        store.append(approval).unwrap();
+        for index in 2..(MAX_FEED_ENTRIES + 20) {
+            store.append(entry(&format!("feed-{index}"), "w1")).unwrap();
+        }
+
+        assert!(store.list(None, MAX_FEED_ENTRIES).iter().any(|entry| {
+            entry.id == "feed-1" && entry.approval_state == Some(FeedApprovalState::Pending)
+        }));
+    }
+
+    #[test]
+    fn feed_store_rejects_unknown_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(&path, r#"{"schema":2,"entries":[]}"#).unwrap();
+
+        assert!(matches!(
+            FeedStore::open_at(&path),
+            Err(FeedError::Json(message)) if message.contains("unsupported feed schema")
+        ));
     }
 }
