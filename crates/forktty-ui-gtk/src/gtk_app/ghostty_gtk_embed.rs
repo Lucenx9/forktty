@@ -26,6 +26,7 @@ type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_c
 type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
 type SurfaceExitCode = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut u32) -> i32;
+type SurfaceChildPid = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut i64) -> i32;
 type SurfacePerformAction = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char) -> i32;
 type TextFree = unsafe extern "C" fn(*mut GhosttyGtkText);
 
@@ -85,6 +86,7 @@ pub(super) struct GhosttyGtkEmbedder {
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
     surface_exit_code: Option<SurfaceExitCode>,
+    surface_child_pid: Option<SurfaceChildPid>,
     surface_perform_action: Option<SurfacePerformAction>,
     text_free: Option<TextFree>,
 }
@@ -109,6 +111,8 @@ impl GhosttyGtkEmbedder {
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL) };
         let surface_exit_code =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL) };
+        let surface_child_pid =
+            unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL) };
         let surface_perform_action =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL) };
         let text_free = unsafe { load_optional_symbol(&library, GHOSTTY_GTK_TEXT_FREE_SYMBOL) };
@@ -133,6 +137,7 @@ impl GhosttyGtkEmbedder {
             surface_send_text,
             surface_read_text,
             surface_exit_code,
+            surface_child_pid,
             surface_perform_action,
             text_free,
         })
@@ -175,6 +180,10 @@ impl GhosttyGtkEmbedder {
 
     pub(super) fn supports_read_text(&self) -> bool {
         self.surface_read_text.is_some() && self.text_free.is_some()
+    }
+
+    pub(super) fn supports_child_pid(&self) -> bool {
+        self.surface_child_pid.is_some()
     }
 
     pub(super) unsafe fn send_text(&self, widget: &gtk::Widget, text: &str) -> Result<(), String> {
@@ -229,6 +238,19 @@ impl GhosttyGtkEmbedder {
             return None;
         }
         Some(i32::try_from(code).unwrap_or(i32::MAX))
+    }
+
+    /// The PID of the surface's child process, or `None` if it has not been
+    /// spawned yet or the embedded ABI does not export the child-pid getter.
+    /// Used for listening-port discovery parity with classic panes.
+    pub(super) unsafe fn surface_child_pid(&self, widget: &gtk::Widget) -> Option<i32> {
+        let surface_child_pid = self.surface_child_pid?;
+        let mut pid: i64 = 0;
+        let available = unsafe { surface_child_pid(widget.to_glib_none().0, &mut pid) };
+        if available == 0 {
+            return None;
+        }
+        i32::try_from(pid).ok()
     }
 
     /// Performs a Ghostty keybinding action on the surface. Returns whether
@@ -368,6 +390,7 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
 pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
 pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_surface_exit_code";
+pub(super) const GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL: &[u8] = b"ghostty_gtk_surface_child_pid";
 pub(super) const GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_perform_action";
 pub(super) const GHOSTTY_GTK_TEXT_FREE_SYMBOL: &[u8] = b"ghostty_gtk_text_free";
@@ -505,6 +528,10 @@ mod tests {
         assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL),
             "ghostty_gtk_surface_exit_code"
+        );
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL),
+            "ghostty_gtk_surface_child_pid"
         );
         assert_eq!(
             symbol_name(GHOSTTY_GTK_TEXT_FREE_SYMBOL),

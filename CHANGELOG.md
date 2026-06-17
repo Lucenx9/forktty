@@ -44,9 +44,7 @@ All notable changes to ForkTTY are documented here.
   an abnormal-exit notification, and a Ghostty close-request tears the pane down
   cleanly so no stale pane is left behind. The embedding ABI gains
   `ghostty_gtk_surface_exit_code` so embedded panes report the real exit status;
-  older libraries without the symbol fall back to the neutral "Closed". The
-  child PID is still not exposed, so listening-port discovery stays unavailable
-  for embedded panes until the ABI is extended further.
+  older libraries without the symbol fall back to the neutral "Closed".
 - Experimental embedded Ghostty panes now reach copy/paste/select-all/find
   parity with classic panes: the `Ctrl+Shift+C/V/A/F` accelerators (and the
   command palette equivalents) route to the focused embedded surface instead of
@@ -55,6 +53,13 @@ All notable changes to ForkTTY are documented here.
   keybinding action by name (e.g. `copy_to_clipboard`, `start_search`); older
   libraries without the symbol degrade to a logged no-op. Mouse selection
   already works natively inside the embedded surface.
+- Experimental embedded Ghostty panes now expose their child PID, so
+  listening-port discovery and the socket `surfaces` PID field reach parity with
+  classic panes. The embedding ABI gains `ghostty_gtk_surface_child_pid`, fed by
+  a new `pid_available` surface mailbox message that hands the IO-thread-owned
+  pid to the GTK main thread race-free; ForkTTY polls the getter briefly after
+  spawn to record the PID. Older libraries without the symbol skip the poll and
+  leave port discovery unavailable for embedded panes.
 - The deb and AppImage packagers now install `ghostty-gtk-embed.so` into
   `usr/lib` when `scripts/ghostty-gtk-lib-probe.sh` has built it, so installed
   builds load the embedded Ghostty library via the binary RUNPATH

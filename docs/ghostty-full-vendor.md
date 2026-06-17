@@ -60,12 +60,17 @@ child-exit readiness/status, and clean pane teardown match the classic panes.
 The embedding ABI adds `ghostty_gtk_surface_exit_code` so the child-exit handler
 can report the real exit status (`Closed` / `Exited (n)` plus an abnormal-exit
 notification); a library built before that symbol degrades gracefully to a
-neutral "Closed". One lifecycle piece still needs the embedding ABI extended on
-the fork before it reaches parity:
+neutral "Closed".
 
-- the child PID (needed for ForkTTY's listening-port discovery). The pid is set
-  on Ghostty's io thread, so exposing it needs cross-thread plumbing rather than
-  a simple getter; it is deferred to a dedicated change.
+The child PID (needed for ForkTTY's listening-port discovery and the socket
+`surfaces` PID field) is exposed through `ghostty_gtk_surface_child_pid`. The pid
+is set on Ghostty's io thread, so the fork plumbs it across via a new
+`pid_available` surface mailbox message: the io thread pushes the pid after a
+successful spawn, the surface mailbox is drained on the apprt main thread and
+caches it on the core surface, and the getter reads that main-thread-owned field
+race-free. ForkTTY polls the getter briefly after spawn to record the pid; a
+library built before the symbol skips the poll and leaves port discovery
+unavailable for embedded panes.
 
 Copy/paste/select-all/find now reach parity through
 `ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action

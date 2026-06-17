@@ -66,6 +66,12 @@ pub(super) struct SurfacePid {
     pub(super) spawn_token: u64,
 }
 
+/// How often to poll an embedded Ghostty surface for its child PID, and the cap
+/// on attempts. The PID lands within milliseconds of spawn; the cap is a
+/// generous backstop so the timer never lingers if a surface never spawns.
+const EMBEDDED_GHOSTTY_PID_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 50;
+
 pub(super) fn remove_surface_pid_for_spawn(
     pids: &mut BTreeMap<String, SurfacePid>,
     surface_id: &str,
@@ -470,6 +476,48 @@ impl TerminalController {
                     close_surface_by_id(&state, &surface_id);
                 });
                 None
+            });
+        }
+
+        // PID parity: record the child PID for listening-port discovery and the
+        // socket `surfaces` PID field, matching the classic spawn callback. The
+        // PID lands on the surface shortly after init, so poll briefly until the
+        // embedded ABI returns it. Skipped when the loaded library predates the
+        // child-pid getter so older libs don't spin a pointless timer.
+        if embedder.supports_child_pid() {
+            self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
+            let spawn_token = self.next_spawn_token;
+            let embedder = Rc::clone(&embedder);
+            let surface_pids = self.surface_pids.clone();
+            let state = self.state.clone();
+            let surface_id = request.surface_id.clone();
+            let weak_widget = widget.downgrade();
+            let mut attempts: u32 = 0;
+            glib::timeout_add_local(EMBEDDED_GHOSTTY_PID_POLL_INTERVAL, move || {
+                let Some(widget) = weak_widget.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                attempts += 1;
+                if let Some(pid) = unsafe { embedder.surface_child_pid(&widget) } {
+                    surface_pids
+                        .borrow_mut()
+                        .insert(surface_id.clone(), SurfacePid { pid, spawn_token });
+                    if let Some(state) = &state {
+                        if let Ok(pid) = u32::try_from(pid) {
+                            if let Err(err) = state.terminal.mark_surface_pid(&surface_id, pid) {
+                                eprintln!(
+                                    "Failed to record embedded Ghostty surface pid {surface_id}: {err}"
+                                );
+                            }
+                        }
+                    }
+                    return glib::ControlFlow::Break;
+                }
+                if attempts >= EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS {
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
             });
         }
 
