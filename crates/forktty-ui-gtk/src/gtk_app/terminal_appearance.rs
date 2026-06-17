@@ -173,6 +173,8 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) adjust_underline_thickness: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_strikethrough_position: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_strikethrough_thickness: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_overline_position: Option<GhosttyMetricAdjustment>,
+    pub(super) adjust_overline_thickness: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_cursor_thickness: Option<GhosttyMetricAdjustment>,
     pub(super) adjust_cursor_height: Option<GhosttyMetricAdjustment>,
     pub(super) unfocused_split_opacity: f64,
@@ -769,6 +771,8 @@ impl Default for GhosttyTerminalAppearance {
             adjust_underline_thickness: None,
             adjust_strikethrough_position: None,
             adjust_strikethrough_thickness: None,
+            adjust_overline_position: None,
+            adjust_overline_thickness: None,
             adjust_cursor_thickness: None,
             adjust_cursor_height: None,
             unfocused_split_opacity: DEFAULT_UNFOCUSED_SPLIT_OPACITY,
@@ -892,6 +896,12 @@ impl GhosttyTerminalAppearance {
             }
             "adjust-strikethrough-thickness" => {
                 self.adjust_strikethrough_thickness = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-overline-position" => {
+                self.adjust_overline_position = parse_ghostty_metric_adjustment(&value);
+            }
+            "adjust-overline-thickness" => {
+                self.adjust_overline_thickness = parse_ghostty_metric_adjustment(&value);
             }
             "adjust-cursor-thickness" => {
                 self.adjust_cursor_thickness = parse_ghostty_metric_adjustment(&value);
@@ -1811,6 +1821,8 @@ mod tests {
             adjust-underline-thickness = 25%
             adjust-strikethrough-position = 10%
             adjust-strikethrough-thickness = 1
+            adjust-overline-position = 3
+            adjust-overline-thickness = 50%
             adjust-cursor-thickness = 50%
             adjust-cursor-height = -3
             "#,
@@ -1835,6 +1847,14 @@ mod tests {
         assert_eq!(
             appearance.adjust_strikethrough_thickness,
             Some(GhosttyMetricAdjustment::Pixels(1))
+        );
+        assert_eq!(
+            appearance.adjust_overline_position,
+            Some(GhosttyMetricAdjustment::Pixels(3))
+        );
+        assert_eq!(
+            appearance.adjust_overline_thickness,
+            Some(GhosttyMetricAdjustment::Percent(50.0))
         );
         assert_eq!(
             appearance.adjust_cursor_thickness,

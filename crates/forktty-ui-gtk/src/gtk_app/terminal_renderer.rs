@@ -153,6 +153,8 @@ struct RendererTextMetricAdjustments {
     underline_thickness: Option<GhosttyMetricAdjustment>,
     strikethrough_position: Option<GhosttyMetricAdjustment>,
     strikethrough_thickness: Option<GhosttyMetricAdjustment>,
+    overline_position: Option<GhosttyMetricAdjustment>,
+    overline_thickness: Option<GhosttyMetricAdjustment>,
     cursor_thickness: Option<GhosttyMetricAdjustment>,
     cursor_height: Option<GhosttyMetricAdjustment>,
 }
@@ -172,6 +174,7 @@ struct RendererCellStyle {
     italic: bool,
     underline: bool,
     strikethrough: bool,
+    overline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +189,7 @@ struct RendererTextRun {
     italic: bool,
     underline: bool,
     strikethrough: bool,
+    overline: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +290,8 @@ impl TerminalRenderer {
                 underline_thickness: appearance.adjust_underline_thickness,
                 strikethrough_position: appearance.adjust_strikethrough_position,
                 strikethrough_thickness: appearance.adjust_strikethrough_thickness,
+                overline_position: appearance.adjust_overline_position,
+                overline_thickness: appearance.adjust_overline_thickness,
                 cursor_thickness: appearance.adjust_cursor_thickness,
                 cursor_height: appearance.adjust_cursor_height,
             },
@@ -571,6 +577,7 @@ impl TerminalRenderer {
                     || cell.hyperlink
                     || link_cols.is_some_and(|(from, to)| col >= from && col < to),
                 strikethrough: cell.strikethrough,
+                overline: cell.overline,
             };
             let cell_span = cell_grid_span(cell);
             match &mut current {
@@ -786,6 +793,16 @@ impl TerminalRenderer {
                 2.0,
                 self.text_metric_adjustments.strikethrough_position,
                 self.text_metric_adjustments.strikethrough_thickness,
+            );
+        }
+        if run.overline {
+            draw_horizontal_metric_line(
+                cr,
+                (x, y, width),
+                1.0,
+                2.0,
+                self.text_metric_adjustments.overline_position,
+                self.text_metric_adjustments.overline_thickness,
             );
         }
     }
@@ -1107,6 +1124,7 @@ impl RendererTextRun {
             italic: style.italic,
             underline: style.underline,
             strikethrough: style.strikethrough,
+            overline: style.overline,
         }
     }
 
@@ -1119,6 +1137,7 @@ impl RendererTextRun {
             italic: self.italic,
             underline: self.underline,
             strikethrough: self.strikethrough,
+            overline: self.overline,
         }
     }
 }
@@ -1379,6 +1398,8 @@ mod tests {
             underline_thickness: Some(GhosttyMetricAdjustment::Percent(50.0)),
             strikethrough_position: Some(GhosttyMetricAdjustment::Percent(10.0)),
             strikethrough_thickness: Some(GhosttyMetricAdjustment::Pixels(1)),
+            overline_position: Some(GhosttyMetricAdjustment::Pixels(3)),
+            overline_thickness: Some(GhosttyMetricAdjustment::Percent(50.0)),
             cursor_thickness: Some(GhosttyMetricAdjustment::Percent(50.0)),
             cursor_height: Some(GhosttyMetricAdjustment::Pixels(-4)),
         };
@@ -1398,6 +1419,14 @@ mod tests {
         );
         assert_eq!(
             adjusted_metric(2.0, adjustments.strikethrough_thickness, 1.0),
+            3.0
+        );
+        assert_eq!(
+            adjusted_metric(1.0, adjustments.overline_position, 1.0),
+            4.0
+        );
+        assert_eq!(
+            adjusted_metric(2.0, adjustments.overline_thickness, 1.0),
             3.0
         );
         assert_eq!(adjusted_metric(2.0, adjustments.cursor_thickness, 1.0), 3.0);
@@ -1615,6 +1644,28 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert!(runs[0].underline);
         assert!(!runs[1].underline);
+    }
+
+    #[test]
+    fn terminal_renderer_tracks_overline_text_runs() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let mut overline_cell = test_cell("o", None, None);
+        overline_cell.overline = true;
+        let plain_cell = test_cell("p", None, None);
+        let row = TerminalRow {
+            cells: vec![overline_cell, plain_cell],
+            wrapped: false,
+        };
+
+        let runs = renderer.text_runs_for_row(&row);
+
+        assert_eq!(runs.len(), 2);
+        assert!(runs[0].overline);
+        assert!(!runs[1].overline);
     }
 
     #[test]
@@ -2064,6 +2115,7 @@ mod tests {
             faint: false,
             underline: false,
             strikethrough: false,
+            overline: false,
             inverse: false,
             invisible: false,
             hyperlink: false,

@@ -334,6 +334,7 @@ pub struct TerminalCell {
     pub faint: bool,
     pub underline: bool,
     pub strikethrough: bool,
+    pub overline: bool,
     pub inverse: bool,
     pub invisible: bool,
     pub hyperlink: bool,
@@ -818,6 +819,7 @@ impl GhosttyCore {
                     faint: style.faint,
                     underline: !matches!(style.underline, libghostty_vt::style::Underline::None),
                     strikethrough: style.strikethrough,
+                    overline: style.overline,
                     inverse: style.inverse,
                     invisible: style.invisible,
                     hyperlink: raw_cell.has_hyperlink()?,
@@ -2217,6 +2219,24 @@ mod tests {
 
         assert_eq!(frame.rows[0].cells[0].text, "f");
         assert!(frame.rows[0].cells[0].faint);
+    }
+
+    #[test]
+    fn core_render_frame_marks_overline_cells() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[53mover\x1b[55m plain").unwrap();
+
+        let frame = core.render_frame().unwrap();
+
+        assert_eq!(frame.rows[0].cells[0].text, "o");
+        assert!(frame.rows[0].cells[0].overline);
+        assert!(!frame.rows[0].cells[5].overline);
     }
 
     #[test]
