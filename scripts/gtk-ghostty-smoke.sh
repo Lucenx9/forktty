@@ -111,8 +111,8 @@ surface_count() {
 }
 
 focused_surface_id() {
-  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --json |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["surface_id"])'
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" top --json |
+    python3 -c 'import json,sys; data=json.load(sys.stdin); workspaces=data.get("workspaces", []); active=next((workspace for workspace in workspaces if workspace.get("active")), workspaces[0] if workspaces else {}); print(active.get("focused_surface_id", ""))'
 }
 
 wait_surface_pid() {
@@ -147,7 +147,7 @@ send_text_wait() {
 surface_contains() {
   local id="$1"
   local needle="$2"
-  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$id" | grep -q "$needle"
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$id" 2>/dev/null | grep -q "$needle"
 }
 
 wait_surface_contains() {
