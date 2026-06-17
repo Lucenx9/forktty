@@ -72,15 +72,15 @@ All notable changes to ForkTTY are documented here.
   thread race-free; ForkTTY polls the getter briefly after spawn to record the
   PID, with a Linux direct-child process fallback while the embedded surface
   finishes startup, and the ABI falls back to Ghostty's PTY foreground PID while
-  the mailbox value is not yet visible. Probe-visible PID parity remains tracked
-  in the embedded parity matrix.
+  the mailbox value is not yet visible.
 - The socket `surface.list` result, and therefore `forktty surfaces --json`,
   now includes live runtime fields (`shell`, `cols`, `rows`, and `pid` when
   known) in the same rows as the model metadata.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies socket
   `capture-tail` and that embedded pane startup did not fall back to the
-  classic renderer. PID exposure remains tracked in the embedded parity matrix.
+  classic renderer. The smoke test also requires embedded panes to expose a
+  positive PID through `forktty surfaces --json`.
 - The deb and AppImage packagers now install `ghostty-gtk-embed.so` into
   `usr/lib` when `scripts/ghostty-gtk-lib-probe.sh` has built it, so installed
   builds load the embedded Ghostty library via the binary RUNPATH

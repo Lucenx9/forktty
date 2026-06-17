@@ -56,7 +56,7 @@ exercised) · `n/a`.
 | 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | pending |
 | 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): surface lifecycle; **manual**: session restore after app restart | pending |
 | 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus action and socket splits | pass |
-| 11 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; **pending**: Probe still warns that the initial surface did not expose a child pid | pending |
+| 11 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
 
 ## Wiring already in place (so the rows above can pass)
 
@@ -67,9 +67,9 @@ exercised) · `n/a`.
   (keybinding action by name); ForkTTY routes the `Ctrl+Shift+C/V/A/F`
   accelerators and command palette to the focused embedded surface.
 - **Child PID** — `ghostty_gtk_surface_child_pid` fed by a `pid_available`
-  surface mailbox message; ForkTTY attempts to record it for listening-port
-  discovery and the socket `surfaces` PID field, but the Probe still tracks
-  reliable PID visibility as pending.
+  surface mailbox message; ForkTTY records it for listening-port discovery and
+  the socket `surfaces` PID field, and the Probe requires the initial embedded
+  pane to expose a positive PID.
 - **Socket text** — `send_text` / `read_text` (visible + full) ABIs back the
   socket `send_text`, `read_text`, and `capture_tail` requests.
 
