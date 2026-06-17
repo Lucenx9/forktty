@@ -45,6 +45,11 @@ fn configured_theme_colors() -> GhosttyThemeColors {
     }
 }
 
+fn configured_kitty_image_storage_limit() -> Option<u64> {
+    let config = config::load_config().unwrap_or_default();
+    terminal_kitty_image_storage_limit_for_config(&config)
+}
+
 fn parse_hex_rgb(hex: &str) -> TerminalRgb {
     let hex = hex.trim().trim_start_matches('#');
     let channel = |range: std::ops::Range<usize>| {
@@ -82,6 +87,10 @@ impl TerminalRuntime {
         .map_err(|err| TerminalError::Backend(err.to_string()))?;
         core.apply_theme_colors(&configured_theme_colors())
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        if let Some(limit) = configured_kitty_image_storage_limit() {
+            core.set_kitty_image_storage_limit(limit)
+                .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        }
         let pty = PtySession::spawn(request, size)
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
         Ok(Self {

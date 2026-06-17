@@ -857,9 +857,18 @@ pub trait DecodePng: 'static {
 /// graphics::set_png_decoder(RustPngDecoder::new());
 /// ```
 #[cfg(all(feature = "kitty-graphics", feature = "png"))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RustPngDecoder {
     buf: Vec<u8>,
+}
+#[cfg(all(feature = "kitty-graphics", feature = "png"))]
+impl RustPngDecoder {
+    // FORKTTY PATCH: upstream documents RustPngDecoder::new(), but the
+    // vendored revision did not expose it.
+    /// Create a PNG decoder backed by the Rust `png` crate.
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 #[cfg(all(feature = "kitty-graphics", feature = "png"))]
 impl DecodePng for RustPngDecoder {
@@ -881,10 +890,9 @@ impl DecodePng for RustPngDecoder {
 
         let mut frame = decoder.read_info().ok()?;
         let buf_size = frame.output_buffer_size()?;
-        if buf_size > self.buf.capacity() {
-            self.buf.reserve(buf_size - self.buf.capacity());
-        }
-        self.buf.fill(0);
+        // FORKTTY PATCH: `reserve` leaves len unchanged, so next_frame saw an
+        // empty buffer and rejected valid PNG uploads.
+        self.buf.resize(buf_size, 0);
 
         let info = frame.next_frame(&mut self.buf).ok()?;
 

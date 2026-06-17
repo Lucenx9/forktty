@@ -1,8 +1,8 @@
 use super::terminal_geometry::{terminal_grid_geometry, TerminalGridGeometry, TERMINAL_PADDING_PX};
 use super::*;
 use forktty_terminal::ghostty::core::{
-    TerminalCell, TerminalCellWidth, TerminalCursorStyle, TerminalFrame, TerminalRgb, TerminalRow,
-    TerminalViewportPosition,
+    TerminalCell, TerminalCellWidth, TerminalCursorStyle, TerminalFrame, TerminalKittyImage,
+    TerminalKittyImageLayer, TerminalRgb, TerminalRow, TerminalViewportPosition,
 };
 use std::{f64::consts::PI, fmt};
 
@@ -318,9 +318,6 @@ impl TerminalRenderer {
     ) {
         let defaults = self.frame_defaults(frame);
         let default_background = defaults.background;
-        default_background.set_cairo_source(cr);
-        cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-        let _ = cr.fill();
         let metrics = renderer_cell_metrics_from_size(cell_size);
         let grid = terminal_grid_geometry(
             width,
@@ -332,6 +329,17 @@ impl TerminalRenderer {
         );
         let origin_x = f64::from(grid.origin_x);
         let origin_y = f64::from(grid.origin_y);
+
+        self.draw_kitty_images_for_layer(
+            cr,
+            frame,
+            TerminalKittyImageLayer::BelowBackground,
+            metrics,
+            grid,
+        );
+        default_background.set_cairo_source(cr);
+        cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+        let _ = cr.fill();
 
         for (row_idx, row) in frame.rows.iter().enumerate() {
             let y = origin_y + row_idx as f64 * metrics.height;
@@ -345,9 +353,6 @@ impl TerminalRenderer {
                         (to - from) as f64 * metrics.width,
                     )
                 });
-            let link_cols = hover_link.and_then(|(start, end)| {
-                selection_cols_for_row(start, end, row_idx, row.cells.len())
-            });
             for background in self.background_runs_for_frame_row(frame, row) {
                 background.background.set_cairo_source(cr);
                 cr.rectangle(
@@ -369,7 +374,31 @@ impl TerminalRenderer {
                 cr.rectangle(x, y, width, metrics.height);
                 let _ = cr.fill();
             }
+        }
 
+        self.draw_kitty_images_for_layer(
+            cr,
+            frame,
+            TerminalKittyImageLayer::BelowText,
+            metrics,
+            grid,
+        );
+
+        for (row_idx, row) in frame.rows.iter().enumerate() {
+            let y = origin_y + row_idx as f64 * metrics.height;
+            let selected_span = selection
+                .and_then(|(start, end)| {
+                    selection_cols_for_row(start, end, row_idx, row.cells.len())
+                })
+                .map(|(from, to)| {
+                    (
+                        origin_x + from as f64 * metrics.width,
+                        (to - from) as f64 * metrics.width,
+                    )
+                });
+            let link_cols = hover_link.and_then(|(start, end)| {
+                selection_cols_for_row(start, end, row_idx, row.cells.len())
+            });
             self.draw_row_text(cr, frame, row, metrics, origin_x, y, None, link_cols);
 
             if let Some((x, width)) = selected_span {
@@ -389,6 +418,14 @@ impl TerminalRenderer {
                 let _ = cr.restore();
             }
         }
+
+        self.draw_kitty_images_for_layer(
+            cr,
+            frame,
+            TerminalKittyImageLayer::AboveText,
+            metrics,
+            grid,
+        );
 
         if let Some(mut cursor) = self.cursor_overlay_for_frame(frame) {
             if !cursor_state.focused {
@@ -419,6 +456,23 @@ impl TerminalRenderer {
         }
         if cursor_state.visual_bell_active {
             paint_visual_bell_border(cr, width, height);
+        }
+    }
+
+    fn draw_kitty_images_for_layer(
+        &self,
+        cr: &gtk::cairo::Context,
+        frame: &TerminalFrame,
+        layer: TerminalKittyImageLayer,
+        metrics: RendererCellMetrics,
+        grid: TerminalGridGeometry,
+    ) {
+        for image in frame
+            .kitty_images
+            .iter()
+            .filter(|image| image.layer == layer)
+        {
+            draw_kitty_image(cr, image, metrics, grid);
         }
     }
 
@@ -793,6 +847,91 @@ fn draw_layout_fitted_to_cells(
     let _ = cr.restore();
 }
 
+fn draw_kitty_image(
+    cr: &gtk::cairo::Context,
+    image: &TerminalKittyImage,
+    metrics: RendererCellMetrics,
+    grid: TerminalGridGeometry,
+) {
+    if image.image_width == 0
+        || image.image_height == 0
+        || image.source_width == 0
+        || image.source_height == 0
+        || image.pixel_width == 0
+        || image.pixel_height == 0
+    {
+        return;
+    }
+    let Some(data) = cairo_argb32_from_rgba(&image.rgba, image.image_width, image.image_height)
+    else {
+        return;
+    };
+    let Ok(width) = i32::try_from(image.image_width) else {
+        return;
+    };
+    let Ok(height) = i32::try_from(image.image_height) else {
+        return;
+    };
+    let Some(stride) = width.checked_mul(4) else {
+        return;
+    };
+    let Ok(surface) = gtk::cairo::ImageSurface::create_for_data(
+        data,
+        gtk::cairo::Format::ARgb32,
+        width,
+        height,
+        stride,
+    ) else {
+        return;
+    };
+
+    let dest_x = f64::from(grid.origin_x)
+        + f64::from(image.viewport_col) * metrics.width
+        + f64::from(image.x_offset);
+    let dest_y = f64::from(grid.origin_y)
+        + f64::from(image.viewport_row) * metrics.height
+        + f64::from(image.y_offset);
+    let dest_width = f64::from(image.pixel_width);
+    let dest_height = f64::from(image.pixel_height);
+    let scale_x = dest_width / f64::from(image.source_width);
+    let scale_y = dest_height / f64::from(image.source_height);
+
+    let _ = cr.save();
+    cr.rectangle(dest_x, dest_y, dest_width, dest_height);
+    cr.clip();
+    cr.translate(
+        dest_x - f64::from(image.source_x) * scale_x,
+        dest_y - f64::from(image.source_y) * scale_y,
+    );
+    cr.scale(scale_x, scale_y);
+    let pattern = gtk::cairo::SurfacePattern::create(&surface);
+    pattern.set_extend(gtk::cairo::Extend::Pad);
+    pattern.set_filter(gtk::cairo::Filter::Nearest);
+    let _ = cr.set_source(&pattern);
+    let _ = cr.paint();
+    let _ = cr.restore();
+}
+
+fn cairo_argb32_from_rgba(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    let pixels = (width as usize).checked_mul(height as usize)?;
+    let len = pixels.checked_mul(4)?;
+    if rgba.len() < len {
+        return None;
+    }
+    let mut out = Vec::with_capacity(len);
+    for pixel in rgba[..len].chunks_exact(4) {
+        let alpha = u16::from(pixel[3]);
+        let premultiply = |value: u8| ((u16::from(value) * alpha + 127) / 255) as u8;
+        out.extend_from_slice(&[
+            premultiply(pixel[2]),
+            premultiply(pixel[1]),
+            premultiply(pixel[0]),
+            pixel[3],
+        ]);
+    }
+    Some(out)
+}
+
 fn fitted_layout_x_scale(natural_width: i32, target_width: f64) -> f64 {
     if natural_width <= 0 || target_width <= 0.0 {
         return 1.0;
@@ -981,7 +1120,9 @@ fn paint_visual_bell_border(cr: &gtk::cairo::Context, width: i32, height: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forktty_terminal::ghostty::core::{TerminalCell, TerminalRgb, TerminalRow};
+    use forktty_terminal::ghostty::core::{
+        TerminalCell, TerminalKittyImage, TerminalKittyImageLayer, TerminalRgb, TerminalRow,
+    };
 
     #[test]
     fn terminal_renderer_maps_default_colors_to_ansi_palette() {
@@ -1564,6 +1705,76 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_draws_kitty_images() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("Monospace 12"),
+        );
+        let mut frame = test_frame(
+            parse_rgb("#ffffff"),
+            parse_rgb("#000000"),
+            TerminalRow {
+                cells: vec![test_cell(" ", None, None)],
+                wrapped: false,
+            },
+        );
+        frame.kitty_images.push(TerminalKittyImage {
+            layer: TerminalKittyImageLayer::AboveText,
+            viewport_col: 0,
+            viewport_row: 0,
+            x_offset: 0,
+            y_offset: 0,
+            pixel_width: 8,
+            pixel_height: 16,
+            source_x: 0,
+            source_y: 0,
+            source_width: 1,
+            source_height: 1,
+            image_width: 1,
+            image_height: 1,
+            rgba: vec![255, 0, 0, 255],
+        });
+
+        assert_eq!(rendered_pixel(&renderer, &frame, 10, 10), [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn terminal_renderer_hides_kitty_images_below_opaque_background() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("Monospace 12"),
+        );
+        let mut frame = test_frame(
+            parse_rgb("#ffffff"),
+            parse_rgb("#000000"),
+            TerminalRow {
+                cells: vec![test_cell(" ", None, None)],
+                wrapped: false,
+            },
+        );
+        frame.kitty_images.push(TerminalKittyImage {
+            layer: TerminalKittyImageLayer::BelowBackground,
+            viewport_col: 0,
+            viewport_row: 0,
+            x_offset: 0,
+            y_offset: 0,
+            pixel_width: 8,
+            pixel_height: 16,
+            source_x: 0,
+            source_y: 0,
+            source_width: 1,
+            source_height: 1,
+            image_width: 1,
+            image_height: 1,
+            rgba: vec![255, 0, 0, 255],
+        });
+
+        assert_eq!(rendered_pixel(&renderer, &frame, 10, 10), [0, 0, 0, 255]);
+    }
+
+    #[test]
     fn unfocused_split_dim_uses_ghostty_opacity_and_fill() {
         let dim = unfocused_split_dim_from_appearance(0.72, "#102030");
 
@@ -1671,7 +1882,43 @@ mod tests {
                 .map(|color| parse_rgb(&color)),
             cursor: None,
             rows: vec![row],
+            kitty_images: Vec::new(),
         }
+    }
+
+    fn rendered_pixel(
+        renderer: &TerminalRenderer,
+        frame: &TerminalFrame,
+        x: i32,
+        y: i32,
+    ) -> [u8; 4] {
+        let mut surface =
+            gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 20, 28).unwrap();
+        let cr = gtk::cairo::Context::new(&surface).unwrap();
+        renderer.draw_frame(
+            &cr,
+            20,
+            28,
+            (8, 16),
+            frame,
+            None,
+            None,
+            RendererCursorState {
+                focused: true,
+                blink_visible: true,
+                has_siblings: false,
+                model_focused: true,
+                visual_bell_active: false,
+            },
+            None,
+        );
+        drop(cr);
+        surface.flush();
+
+        let stride = surface.stride() as usize;
+        let data = surface.data().unwrap();
+        let offset = y as usize * stride + x as usize * 4;
+        data[offset..offset + 4].try_into().unwrap()
     }
 
     fn parse_rgb(value: &str) -> TerminalRgb {

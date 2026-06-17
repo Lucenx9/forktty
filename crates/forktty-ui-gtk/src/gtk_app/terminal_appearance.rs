@@ -17,6 +17,7 @@ const TERMINAL_ZOOM_MAX_LEVEL: i32 = 12;
 const GHOSTTY_SCROLLBACK_BYTES_PER_LINE: usize = 2048;
 const MAX_GHOSTTY_APPEARANCE_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_TERMINAL_SCROLLBACK_LINES: usize = 500_000;
+const MAX_GHOSTTY_IMAGE_STORAGE_LIMIT_BYTES: u64 = u32::MAX as u64;
 const DEFAULT_UNFOCUSED_SPLIT_OPACITY: f64 = 0.92;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,6 +79,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_family_bold_italic: Option<String>,
     pub(super) font_size_pt: Option<f64>,
     pub(super) scrollback_limit_bytes: Option<usize>,
+    pub(super) image_storage_limit_bytes: Option<u64>,
     pub(super) cursor_opacity: f64,
     pub(super) faint_opacity: f64,
     pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
@@ -121,6 +123,12 @@ pub(super) fn terminal_mouse_scroll_multipliers_for_config(
     config: &config::AppConfig,
 ) -> MouseScrollMultipliers {
     ghostty_terminal_appearance_for_config(config).mouse_scroll_multipliers
+}
+
+pub(super) fn terminal_kitty_image_storage_limit_for_config(
+    config: &config::AppConfig,
+) -> Option<u64> {
+    ghostty_terminal_appearance_for_config(config).image_storage_limit_bytes
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -472,6 +480,7 @@ impl Default for GhosttyTerminalAppearance {
             font_family_bold_italic: None,
             font_size_pt: None,
             scrollback_limit_bytes: None,
+            image_storage_limit_bytes: None,
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             mouse_scroll_multipliers: MouseScrollMultipliers::default(),
@@ -503,6 +512,9 @@ impl GhosttyTerminalAppearance {
             }
             "scrollback-limit" => {
                 self.scrollback_limit_bytes = parse_ghostty_integer_literal(&value)
+            }
+            "image-storage-limit" => {
+                self.image_storage_limit_bytes = parse_ghostty_byte_limit(&value)
             }
             "background" => {
                 set_color(&mut self.colors.background, &value);
@@ -930,6 +942,25 @@ fn parse_ghostty_integer_literal(value: &str) -> Option<usize> {
     value.replace('_', "").parse().ok()
 }
 
+fn parse_ghostty_byte_limit(value: &str) -> Option<u64> {
+    let compact = value
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '_')
+        .collect::<String>();
+    let lower = compact.to_ascii_lowercase();
+    let (digits, factor) = [
+        ("gb", 1_000_000_000_u64),
+        ("mb", 1_000_000_u64),
+        ("kb", 1_000_u64),
+        ("b", 1_u64),
+    ]
+    .into_iter()
+    .find_map(|(suffix, factor)| lower.strip_suffix(suffix).map(|digits| (digits, factor)))
+    .unwrap_or((lower.as_str(), 1));
+    let bytes = digits.parse::<u64>().ok()?.checked_mul(factor)?;
+    (bytes <= MAX_GHOSTTY_IMAGE_STORAGE_LIMIT_BYTES).then_some(bytes)
+}
+
 fn unquote_ghostty_value(value: &str) -> String {
     value
         .strip_prefix('"')
@@ -1045,5 +1076,14 @@ mod tests {
             appearance.adjust_cell_height,
             Some(GhosttyMetricAdjustment::Percent(10.0))
         );
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_image_storage_limit() {
+        let appearance = ghostty_terminal_appearance_from_text("image-storage-limit = 64MB");
+        assert_eq!(appearance.image_storage_limit_bytes, Some(64_000_000));
+
+        let disabled = ghostty_terminal_appearance_from_text("image-storage-limit = 0");
+        assert_eq!(disabled.image_storage_limit_bytes, Some(0));
     }
 }

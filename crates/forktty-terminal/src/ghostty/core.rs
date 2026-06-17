@@ -6,6 +6,7 @@ use libghostty_vt::{
         Action as GhosttyKeyAction, Encoder as GhosttyKeyEncoder, Event as GhosttyKeyEvent,
         Key as GhosttyKey, Mods as GhosttyKeyMods,
     },
+    kitty::graphics as kitty_graphics,
     mouse::{
         Action as GhosttyMouseAction, Button as GhosttyMouseButton, Encoder as GhosttyMouseEncoder,
         EncoderSize as GhosttyMouseEncoderSize, Event as GhosttyMouseEvent,
@@ -27,6 +28,7 @@ const TERMINAL_MODE_TAIL_LIMIT: usize = 64;
 const TERMINAL_THEME_RESET_TAIL_LIMIT: usize = 256;
 // libghostty-vt can abort during later reflow after a one-row resize.
 const MIN_RESIZE_ROWS: u16 = 2;
+const DEFAULT_KITTY_IMAGE_STORAGE_LIMIT_BYTES: u64 = 320 * 1000 * 1000;
 
 /// ghostty's `max_scrollback` is a page-memory budget in BYTES, not rows
 /// (`Screen.zig`: "max_scrollback is the amount of scrollback to keep in
@@ -284,6 +286,32 @@ pub struct TerminalFrame {
     pub palette: [TerminalRgb; 16],
     pub cursor: Option<TerminalCursor>,
     pub rows: Vec<TerminalRow>,
+    pub kitty_images: Vec<TerminalKittyImage>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalKittyImageLayer {
+    BelowBackground,
+    BelowText,
+    AboveText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalKittyImage {
+    pub layer: TerminalKittyImageLayer,
+    pub viewport_col: i32,
+    pub viewport_row: i32,
+    pub x_offset: u32,
+    pub y_offset: u32,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    pub source_x: u32,
+    pub source_y: u32,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,6 +388,7 @@ impl From<CellWide> for TerminalCellWidth {
 
 impl GhosttyCore {
     pub fn new(options: GhosttyCoreOptions) -> Result<Self> {
+        kitty_graphics::set_png_decoder(Some(Box::new(kitty_graphics::RustPngDecoder::new())))?;
         let events = Rc::new(RefCell::new(Vec::new()));
         let mut terminal = Box::new(Terminal::new(TerminalOptions {
             cols: options.cols,
@@ -368,6 +397,10 @@ impl GhosttyCore {
                 .scrollback_lines
                 .saturating_mul(SCROLLBACK_BYTES_PER_LINE),
         })?);
+        terminal.set_kitty_image_storage_limit(DEFAULT_KITTY_IMAGE_STORAGE_LIMIT_BYTES)?;
+        terminal.set_kitty_image_from_file_allowed(true)?;
+        terminal.set_kitty_image_from_temp_file_allowed(true)?;
+        terminal.set_kitty_image_from_shared_mem_allowed(true)?;
         terminal
             .on_pty_write({
                 let events = events.clone();
@@ -517,6 +550,11 @@ impl GhosttyCore {
     /// forwarded to it instead of scrolling the local viewport.
     pub fn is_mouse_tracking(&self) -> Result<bool> {
         self.terminal.is_mouse_tracking()
+    }
+
+    pub fn set_kitty_image_storage_limit(&mut self, limit: u64) -> Result<()> {
+        self.terminal.set_kitty_image_storage_limit(limit)?;
+        Ok(())
     }
 
     /// Plain-text dump of the entire scrollable area (scrollback history plus
@@ -727,6 +765,7 @@ impl GhosttyCore {
             palette,
             cursor,
             rows: Vec::new(),
+            kitty_images: Vec::new(),
         };
         let mut row_iterator = RowIterator::new()?;
         let mut cell_iterator = CellIterator::new()?;
@@ -767,8 +806,45 @@ impl GhosttyCore {
                 wrapped,
             });
         }
+        frame.kitty_images = self.kitty_images_for_frame()?;
 
         Ok(frame)
+    }
+
+    fn kitty_images_for_frame(&self) -> Result<Vec<TerminalKittyImage>> {
+        let graphics = self.terminal.kitty_graphics()?;
+        let mut iter = kitty_graphics::PlacementIterator::new()?;
+        let mut placements = iter.update(&graphics)?;
+        let mut images = Vec::new();
+        while placements.next().is_some() {
+            let Some(image) = graphics.image(placements.image_id()?) else {
+                continue;
+            };
+            let info = placements.placement_render_info(&image, &self.terminal)?;
+            if !info.viewport_visible || info.pixel_width == 0 || info.pixel_height == 0 {
+                continue;
+            }
+            let Some(rgba) = kitty_image_rgba_pixels(&image)? else {
+                continue;
+            };
+            images.push(TerminalKittyImage {
+                layer: kitty_image_layer_from_z(placements.z()?),
+                viewport_col: info.viewport_col,
+                viewport_row: info.viewport_row,
+                x_offset: placements.x_offset()?,
+                y_offset: placements.y_offset()?,
+                pixel_width: info.pixel_width,
+                pixel_height: info.pixel_height,
+                source_x: info.source_x,
+                source_y: info.source_y,
+                source_width: info.source_width,
+                source_height: info.source_height,
+                image_width: image.width()?,
+                image_height: image.height()?,
+                rgba,
+            });
+        }
+        Ok(images)
     }
 
     /// The OSC 8 hyperlink URI under the given viewport cell, if any.
@@ -1185,6 +1261,74 @@ fn csi_private_params_contain(params: &[u8], expected: &[u8]) -> bool {
         .any(|param| param == expected)
 }
 
+fn kitty_image_layer_from_z(z: i32) -> TerminalKittyImageLayer {
+    if z < i32::MIN / 2 {
+        TerminalKittyImageLayer::BelowBackground
+    } else if z < 0 {
+        TerminalKittyImageLayer::BelowText
+    } else {
+        TerminalKittyImageLayer::AboveText
+    }
+}
+
+fn kitty_image_rgba_pixels(image: &kitty_graphics::Image<'_>) -> Result<Option<Vec<u8>>> {
+    let width = image.width()? as usize;
+    let height = image.height()? as usize;
+    let Some(pixels) = width.checked_mul(height) else {
+        return Ok(None);
+    };
+    let data = image.data()?;
+    let rgba = match image.format()? {
+        kitty_graphics::ImageFormat::Rgba => {
+            let Some(len) = pixels.checked_mul(4) else {
+                return Ok(None);
+            };
+            if data.len() < len {
+                return Ok(None);
+            }
+            data[..len].to_vec()
+        }
+        kitty_graphics::ImageFormat::Rgb => {
+            let Some(len) = pixels.checked_mul(3) else {
+                return Ok(None);
+            };
+            if data.len() < len {
+                return Ok(None);
+            }
+            let mut out = Vec::with_capacity(pixels * 4);
+            for pixel in data[..len].chunks_exact(3) {
+                out.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+            }
+            out
+        }
+        kitty_graphics::ImageFormat::Gray => {
+            if data.len() < pixels {
+                return Ok(None);
+            }
+            let mut out = Vec::with_capacity(pixels * 4);
+            for gray in &data[..pixels] {
+                out.extend_from_slice(&[*gray, *gray, *gray, 255]);
+            }
+            out
+        }
+        kitty_graphics::ImageFormat::GrayAlpha => {
+            let Some(len) = pixels.checked_mul(2) else {
+                return Ok(None);
+            };
+            if data.len() < len {
+                return Ok(None);
+            }
+            let mut out = Vec::with_capacity(pixels * 4);
+            for pixel in data[..len].chunks_exact(2) {
+                out.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]);
+            }
+            out
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(rgba))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1471,6 +1615,119 @@ mod tests {
         assert!(core.is_mouse_tracking().unwrap());
         core.feed(b"\x1b[?1000l").unwrap();
         assert!(!core.is_mouse_tracking().unwrap());
+    }
+
+    #[test]
+    fn core_enables_kitty_image_storage_by_default() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert_eq!(
+            core.terminal.kitty_image_storage_limit().unwrap(),
+            320 * 1000 * 1000
+        );
+    }
+
+    #[test]
+    fn core_enables_ghostty_kitty_image_loading_media_by_default() {
+        let core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        assert!(core.terminal.is_kitty_image_from_file_allowed().unwrap());
+        assert!(core
+            .terminal
+            .is_kitty_image_from_temp_file_allowed()
+            .unwrap());
+        assert!(core
+            .terminal
+            .is_kitty_image_from_shared_mem_allowed()
+            .unwrap());
+    }
+
+    #[test]
+    fn core_accepts_inline_png_kitty_images() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.resize(80, 24, 8, 16).unwrap();
+
+        core.feed(
+            b"\x1b_Ga=T,f=100,q=1;\
+              iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA\
+              DUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==\
+              \x1b\\",
+        )
+        .unwrap();
+
+        let graphics = core.terminal.kitty_graphics().unwrap();
+        let mut iter = libghostty_vt::kitty::graphics::PlacementIterator::new().unwrap();
+        let mut placements = iter.update(&graphics).unwrap();
+        let placement = placements.next().expect("kitty placement");
+        let image = graphics
+            .image(placement.image_id().unwrap())
+            .expect("kitty image");
+
+        assert_eq!(image.width().unwrap(), 1);
+        assert_eq!(image.height().unwrap(), 1);
+        assert_eq!(image.data().unwrap(), &[255, 0, 0, 255]);
+        assert!(placements.next().is_none());
+    }
+
+    #[test]
+    fn core_render_frame_snapshots_kitty_images() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.resize(80, 24, 8, 16).unwrap();
+
+        core.feed(
+            b"\x1b_Ga=T,f=100,q=1;\
+              iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA\
+              DUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==\
+              \x1b\\",
+        )
+        .unwrap();
+
+        let frame = core.render_frame().unwrap();
+
+        assert_eq!(frame.kitty_images.len(), 1);
+        let image = &frame.kitty_images[0];
+        assert_eq!(image.layer, TerminalKittyImageLayer::AboveText);
+        assert_eq!(image.viewport_col, 0);
+        assert_eq!(image.viewport_row, 0);
+        assert_eq!(image.pixel_width, 1);
+        assert_eq!(image.pixel_height, 1);
+        assert_eq!(image.image_width, 1);
+        assert_eq!(image.image_height, 1);
+        assert_eq!(image.rgba, vec![255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn core_allows_overriding_kitty_image_storage_limit() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.set_kitty_image_storage_limit(0).unwrap();
+
+        assert_eq!(core.terminal.kitty_image_storage_limit().unwrap(), 0);
     }
 
     #[test]

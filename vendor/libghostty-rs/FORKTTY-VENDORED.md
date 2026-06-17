@@ -27,6 +27,9 @@ Local changes, marked `FORKTTY PATCH`:
   upstream workspace root, plus an empty `[workspace]` table, so the crates
   resolve standalone under `[patch.crates-io]` — cargo resolves patch paths
   against the patching workspace, where the inherited keys don't exist.
+- `crates/libghostty-vt/src/kitty/graphics.rs`: expose a `RustPngDecoder::new`
+  constructor and resize its decode buffer before `png::Reader::next_frame`,
+  so ForkTTY can install the documented Rust PNG decoder for Kitty images.
 - Upstream workspace scaffolding not needed by the two crates was removed:
   `Cargo.toml`, `Cargo.lock`, `example/`, `flake.*`, `AGENTS.md`.
 

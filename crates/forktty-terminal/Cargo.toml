@@ -11,7 +11,7 @@ description = "ForkTTY terminal backend trait with headless and Ghostty adapters
 
 [features]
 default = []
-ghostty-vt = ["dep:libghostty-vt", "dep:nix", "dep:libc"]
+ghostty-vt = ["dep:libghostty-vt", "libghostty-vt/png", "dep:nix", "dep:libc"]
 
 [dependencies]
 forktty-core = { path = "../forktty-core" }
