@@ -70,6 +70,7 @@ Usage:
   forktty list-progress [--workspace-id <id>]
   forktty clear-progress [--key <key>]
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty log [message] [--message <message>] [--level info|warn|error]
   forktty logs [--workspace-id <id>]
   forktty clear-logs [--workspace-id <id>]
@@ -770,6 +771,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "list-progress" => handle_list_progress(&context, args),
         "clear-progress" => handle_clear_progress(&context, args),
         "statusline" | "status-line" | "status:summary" => handle_statusline(&context, args),
+        "feed" | "feed-list" | "feed:list" => handle_feed(&context, args),
         "log" => handle_log(&context, args),
         "logs" | "list-logs" => handle_logs(&context, args),
         "clear-logs" => handle_clear_logs(&context, args),
@@ -2349,6 +2351,45 @@ fn format_status_summary_progress(progress: &Value) -> String {
     } else {
         format!("{label}={value}")
     }
+}
+
+fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "feed")?;
+    reject_unknown_options(
+        &parsed.options,
+        &["workspace-id", "workspace-name", "worktree-name", "limit"],
+        "feed",
+    )?;
+    let mut params = build_target_params(&parsed.options, "feed")?;
+    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
+        params.insert("limit".to_string(), Value::Number(limit.into()));
+    }
+    let result = send_socket_request(&context.socket_path, "feed.list", Value::Object(params))?;
+    if context.json {
+        return print_json(&result);
+    }
+    let Some(items) = result.as_array() else {
+        return Ok(());
+    };
+    if items.is_empty() {
+        return write_stdout_line("No feed items");
+    }
+    for item in items {
+        write_stdout_line(&format_feed_line(item))?;
+    }
+    Ok(())
+}
+
+fn format_feed_line(item: &Value) -> String {
+    let item_type = safe_string_field(item, "type").unwrap_or_else(|| "item".to_string());
+    let workspace = safe_string_field(item, "workspace_id").unwrap_or_else(|| "global".to_string());
+    let title = safe_string_field(item, "title").unwrap_or_else(|| "(untitled)".to_string());
+    let body = safe_string_field(item, "body")
+        .filter(|body| !body.is_empty())
+        .map(|body| format!(" — {body}"))
+        .unwrap_or_default();
+    format!("[{item_type}] {workspace} · {title}{body}")
 }
 
 fn handle_split_surface(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -11288,6 +11329,40 @@ mod tests {
         );
         assert_eq!(request["method"], "status.summary");
         assert_eq!(request["params"]["workspace_name"], "main");
+    }
+
+    #[test]
+    fn feed_requests_feed_list_with_workspace_selector_and_limit() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [
+                        {
+                            "type": "approval",
+                            "title": "Permission",
+                            "body": "Run command?",
+                            "kind": "prompt",
+                            "workspace_id": "w1",
+                            "surface_id": "s1",
+                            "created_at_ms": 123
+                        }
+                    ],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_feed(
+                    &ctx_for(socket_path),
+                    strings(&["--workspace-id", "w1", "--limit", "20"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "feed.list");
+        assert_eq!(request["params"]["workspace_id"], "w1");
+        assert_eq!(request["params"]["limit"], 20);
     }
 
     #[test]
