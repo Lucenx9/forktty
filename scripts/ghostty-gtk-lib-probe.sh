@@ -37,7 +37,13 @@ if [[ -z "$lib_path" ]]; then
   exit 1
 fi
 
-if ! nm -D "$lib_path" | grep -Eq '(^|[[:space:]])ghostty_gtk_surface_exit_code$'; then
-  echo "Ghostty GTK embedding library is missing ghostty_gtk_surface_exit_code" >&2
-  exit 1
-fi
+for symbol in \
+  ghostty_gtk_surface_exit_code \
+  ghostty_gtk_surface_child_pid \
+  ghostty_gtk_surface_perform_action
+do
+  if ! nm -D "$lib_path" | grep -Eq "(^|[[:space:]])${symbol}$"; then
+    echo "Ghostty GTK embedding library is missing ${symbol}" >&2
+    exit 1
+  fi
+done

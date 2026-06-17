@@ -69,15 +69,18 @@ All notable changes to ForkTTY are documented here.
   pid to the GTK main thread race-free; ForkTTY polls the getter briefly after
   spawn to record the PID. Older libraries without the symbol skip the poll and
   leave port discovery unavailable for embedded panes.
+- The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
+  `perform_action` ABI symbols, and its smoke test verifies PID exposure,
+  socket `capture-tail`, and that embedded pane startup did not fall back to the
+  classic renderer.
 - The deb and AppImage packagers now install `ghostty-gtk-embed.so` into
   `usr/lib` when `scripts/ghostty-gtk-lib-probe.sh` has built it, so installed
   builds load the embedded Ghostty library via the binary RUNPATH
   (`$ORIGIN/../lib`) without needing `FORKTTY_GHOSTTY_GTK_LIB`. The step is
-  optional: packaging still succeeds when the library is absent. `forktty
-  doctor` now warns, only when embedded panes are opted in via
-  `FORKTTY_GHOSTTY_GTK_PANES`, if the library is missing from every candidate
-  path. Release CI does not yet build the library by default, so stable release
-  artifacts still omit it until the renderer switch.
+  optional: packaging still succeeds when the library is absent, and `forktty
+  doctor` warns only when embedded panes are opted in via
+  `appearance.embedded_ghostty = true` or `FORKTTY_GHOSTTY_GTK_PANES=1` and the
+  library is missing from every candidate path.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

@@ -115,6 +115,20 @@ focused_surface_id() {
     python3 -c 'import json,sys; print(json.load(sys.stdin)["surface_id"])'
 }
 
+wait_surface_pid() {
+  local id="$1"
+  for _ in {1..60}; do
+    if "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
+      python3 -c 'import json,sys; id=sys.argv[1]; surfaces=json.load(sys.stdin); item=next((surface for surface in surfaces if surface.get("id") == id), None); assert item is not None; pid=item.get("pid"); assert isinstance(pid, int) and pid > 0' "$id"
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "gtk-ghostty smoke: surface $id did not expose a child pid" >&2
+  exit 1
+}
+
 send_text_wait() {
   local id="$1"
   local text="$2"
@@ -149,8 +163,11 @@ wait_surface_contains() {
   exit 1
 }
 
+wait_surface_pid "$surface_id"
 send_text_wait "$surface_id" $'echo forktty-smoke-ok\r' "initial terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-ok" "initial terminal readback"
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$surface_id" --lines 5 |
+  grep -q "forktty-smoke-ok"
 
 base_cols="$(snapshot_field cols)"
 base_rows="$(snapshot_field rows)"
@@ -207,6 +224,7 @@ if [[ -z "$action_surface_id" ]]; then
 fi
 send_text_wait "$action_surface_id" $'echo forktty-smoke-action-split-ok\r' "action split terminal"
 wait_surface_contains "$action_surface_id" "forktty-smoke-action-split-ok" "action split terminal readback"
+wait_surface_pid "$action_surface_id"
 
 new_surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" split-surface --surface-id "$surface_id" --axis vertical --json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
@@ -215,6 +233,7 @@ new_surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" split-surface --surface
 
 send_text_wait "$new_surface_id" $'echo forktty-smoke-split-ok\r' "split terminal"
 wait_surface_contains "$new_surface_id" "forktty-smoke-split-ok" "split terminal readback"
+wait_surface_pid "$new_surface_id"
 
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" focus-surface "$surface_id" >/dev/null
 gapplication action dev.forktty.forktty focus-next-pane >/dev/null
@@ -252,5 +271,11 @@ fi
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" clear-notifications >/dev/null
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" notifications --json |
   python3 -c 'import json,sys; assert json.load(sys.stdin) == []'
+
+if grep -Eiq 'failed to spawn experimental embedded Ghostty GTK pane|falling back:' "$TMP_DIR/forktty.stderr"; then
+  echo "gtk-ghostty smoke: embedded Ghostty pane fell back to the classic renderer" >&2
+  cat "$TMP_DIR/forktty.stderr" >&2 || true
+  exit 1
+fi
 
 echo "gtk-ghostty smoke: ok"

@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `e8a3802fb3fa73381e8e664d3da7fa3b6b469f95`
+- Pin: `dea78d72f871f0429a7bd32a9c34809571bbe656`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -86,13 +86,13 @@ development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
 `scripts/build-appimage.sh` install it into `usr/lib`, and the binary loads it
 through its RUNPATH (`$ORIGIN/../lib`). The install step is best-effort:
 packaging still succeeds when the library is absent, and `forktty doctor` warns
-about the missing library only when `FORKTTY_GHOSTTY_GTK_PANES` opts the user
-into embedded panes. Release CI now builds the library before packaging
-(`scripts/ghostty-gtk-lib-probe.sh`), so stable release artifacts ship it; that
-build is best-effort and non-fatal while embedded panes are still opt-in, so a
-build failure leaves the artifacts on the classic renderer rather than blocking
-the release. When the embedded renderer becomes the default, that step should
-become required.
+about the missing library only when `appearance.embedded_ghostty = true` or
+`FORKTTY_GHOSTTY_GTK_PANES=1` opts the user into embedded panes. Release CI now
+builds the library before packaging (`scripts/ghostty-gtk-lib-probe.sh`), so
+stable release artifacts ship it; that build is best-effort and non-fatal while
+embedded panes are still opt-in, so a build failure leaves the artifacts on the
+classic renderer rather than blocking the release. When the embedded renderer
+becomes the default, that step should become required.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.
