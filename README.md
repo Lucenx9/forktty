@@ -107,6 +107,12 @@ Requirements:
 - `git` and Zig for the vendored `libghostty-vt-sys` build path used during
   the libghostty-vt terminal migration
 
+Developer repository checks also expect the full Ghostty source submodule:
+
+```bash
+git submodule update --init vendor/ghostty
+```
+
 Debian / Ubuntu:
 
 ```bash
@@ -500,6 +506,7 @@ Useful commands:
 
 ```bash
 cargo fmt --all --check
+git submodule update --init vendor/ghostty
 cargo run -p xtask -- check
 cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
 cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings

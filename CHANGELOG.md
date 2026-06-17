@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
+  cmux-style renderer/widget integration spike; release builds still use the
+  existing GTK/libghostty-vt runtime until that bridge is proven.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

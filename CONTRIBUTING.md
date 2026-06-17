@@ -89,8 +89,9 @@ cargo deny check    # optional, requires cargo-deny
 - Native socket CLI and hook behavior is covered by Rust tests in
   `crates/forktty-ui-gtk/src/socket_cli.rs`.
 - Repository consistency checks live in the Rust `xtask` crate. Run
-  `cargo run -p xtask -- check` after editing hook templates or release
-  automation.
+  `git submodule update --init vendor/ghostty` once, then
+  `cargo run -p xtask -- check` after editing hook templates, release
+  automation, or the Ghostty source pin.
 - GTK runtime smoke is manual; see [`docs/release-qa.md`](docs/release-qa.md).
 
 Prefer tests that pin observable behavior (socket responses, config

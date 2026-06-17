@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -135,6 +135,10 @@ const VTE_CHECK_PATHS: &[&str] = &[
     "scripts",
 ];
 
+const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
+const GHOSTTY_VENDOR_URL: &str = "https://github.com/ghostty-org/ghostty.git";
+const GHOSTTY_VENDOR_REV: &str = "e8e7fea103ab8bff5384673a60e04b59939738dd";
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -175,6 +179,7 @@ Usage:
 fn check_all() -> Result<()> {
     check_no_legacy_node_cli()?;
     check_no_vte_references()?;
+    check_full_ghostty_vendor()?;
     check_hook_templates()
 }
 
@@ -260,6 +265,64 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         && haystack
             .windows(needle.len())
             .any(|window| window == needle)
+}
+
+fn check_full_ghostty_vendor() -> Result<()> {
+    let root = repo_root();
+    let gitmodules_path = root.join(".gitmodules");
+    let gitmodules = fs::read_to_string(&gitmodules_path)
+        .map_err(|err| format!("failed to read {}: {err}", gitmodules_path.display()))?;
+    validate_ghostty_gitmodules(&gitmodules)?;
+
+    let path = root.join(GHOSTTY_VENDOR_PATH);
+    for file in ["build.zig", "include/ghostty.h", "LICENSE"] {
+        let required = path.join(file);
+        if !required.is_file() {
+            return Err(format!(
+                "{} is missing; run `git submodule update --init {GHOSTTY_VENDOR_PATH}`",
+                required.display()
+            ));
+        }
+    }
+
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|err| format!("failed to run git for {GHOSTTY_VENDOR_PATH}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to read {GHOSTTY_VENDOR_PATH} revision: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let actual = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if actual != GHOSTTY_VENDOR_REV {
+        return Err(format!(
+            "{GHOSTTY_VENDOR_PATH} must be pinned to {GHOSTTY_VENDOR_REV}, got {actual}"
+        ));
+    }
+
+    println!("full Ghostty vendor: {actual}");
+    Ok(())
+}
+
+fn validate_ghostty_gitmodules(raw: &str) -> Result<()> {
+    if !raw.contains("[submodule \"vendor/ghostty\"]") {
+        return Err(format!(
+            ".gitmodules must contain submodule section for {GHOSTTY_VENDOR_PATH}"
+        ));
+    }
+    for line in [
+        format!("path = {GHOSTTY_VENDOR_PATH}"),
+        format!("url = {GHOSTTY_VENDOR_URL}"),
+    ] {
+        if !raw.lines().any(|raw_line| raw_line.trim() == line) {
+            return Err(format!(".gitmodules is missing `{line}`"));
+        }
+    }
+    Ok(())
 }
 
 fn check_hook_templates() -> Result<()> {
@@ -423,4 +486,20 @@ fn validate_hook_command(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_full_ghostty_submodule_manifest() {
+        let raw = r#"
+[submodule "vendor/ghostty"]
+	path = vendor/ghostty
+	url = https://github.com/ghostty-org/ghostty.git
+"#;
+
+        assert!(validate_ghostty_gitmodules(raw).is_ok());
+    }
 }

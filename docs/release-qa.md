@@ -7,6 +7,7 @@ package regressions that unit tests cannot see.
 
 ```bash
 cargo fmt --all --check
+git submodule update --init vendor/ghostty
 cargo run -p xtask -- check
 cargo test --workspace --no-default-features --features gtk-ghostty
 cargo clippy --workspace --no-default-features --features gtk-ghostty -- -D warnings

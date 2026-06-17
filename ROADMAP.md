@@ -147,7 +147,8 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [ ] Better notification inbox grouping and actions.
 - [ ] Full theme customization beyond Ghostty-imported terminal appearance.
 - [ ] Broader Ghostty option compatibility where the GTK/libghostty-vt runtime exposes a real matching knob.
-- [ ] Replace the custom GTK/Pango/Cairo terminal renderer with an upstream Ghostty embeddable renderer/widget if Ghostty exposes a stable Linux API that fits ForkTTY panes, splits, socket automation, and session restore.
+- [x] Pin full upstream Ghostty source in-tree for a cmux-style renderer/widget integration spike.
+- [ ] Replace the custom GTK/Pango/Cairo terminal renderer with an upstream Ghostty embeddable renderer/widget or a small Ghostty fork patch if Linux exposes no stable API that fits ForkTTY panes, splits, socket automation, and session restore.
 - [ ] Multi-window support.
 - [ ] Browser visit recording and history/bookmark address-bar completion.
 - [ ] Remote-aware MCP/server integration.
