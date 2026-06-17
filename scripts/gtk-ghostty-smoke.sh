@@ -165,11 +165,11 @@ wait_surface_contains() {
   exit 1
 }
 
-wait_surface_pid "$surface_id"
 send_text_wait "$surface_id" $'echo forktty-smoke-ok\r' "initial terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-ok" "initial terminal readback"
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$surface_id" --lines 5 |
   grep -q "forktty-smoke-ok"
+wait_surface_pid "$surface_id"
 
 base_cols="$(snapshot_field cols)"
 base_rows="$(snapshot_field rows)"
