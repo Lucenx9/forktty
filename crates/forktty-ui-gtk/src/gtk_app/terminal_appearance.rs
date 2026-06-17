@@ -87,7 +87,6 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) unfocused_split_fill: String,
     pub(super) colors: TerminalColors,
     bold_color_explicit: bool,
-    unfocused_split_fill_explicit: bool,
 }
 
 pub(super) struct TerminalFontVariants {
@@ -118,38 +117,10 @@ pub(super) fn terminal_scrollback_lines_for_config(config: &config::AppConfig) -
     terminal_scrollback_lines_for_appearance(config, &appearance)
 }
 
-pub(super) fn terminal_unfocused_split_style_for_config(
-    config: &config::AppConfig,
-) -> (f64, String) {
-    let appearance = ghostty_terminal_appearance_for_config(config);
-    (
-        appearance.unfocused_split_opacity,
-        appearance.unfocused_split_fill,
-    )
-}
-
-pub(super) fn terminal_cursor_opacity_for_config(config: &config::AppConfig) -> f64 {
-    ghostty_terminal_appearance_for_config(config).cursor_opacity
-}
-
-pub(super) fn terminal_faint_opacity_for_config(config: &config::AppConfig) -> f64 {
-    ghostty_terminal_appearance_for_config(config).faint_opacity
-}
-
 pub(super) fn terminal_mouse_scroll_multipliers_for_config(
     config: &config::AppConfig,
 ) -> MouseScrollMultipliers {
     ghostty_terminal_appearance_for_config(config).mouse_scroll_multipliers
-}
-
-pub(super) fn terminal_cell_size_adjustments_for_config(
-    config: &config::AppConfig,
-) -> (
-    Option<GhosttyMetricAdjustment>,
-    Option<GhosttyMetricAdjustment>,
-) {
-    let appearance = ghostty_terminal_appearance_for_config(config);
-    (appearance.adjust_cell_width, appearance.adjust_cell_height)
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -216,11 +187,10 @@ pub(super) fn terminal_font_description_for_zoom_level(
     font
 }
 
-pub(super) fn terminal_font_variants_for_config(
-    config: &config::AppConfig,
+pub(super) fn terminal_font_variants_for_appearance(
+    appearance: &GhosttyTerminalAppearance,
     base: &gtk::pango::FontDescription,
 ) -> TerminalFontVariants {
-    let appearance = ghostty_terminal_appearance_for_config(config);
     TerminalFontVariants {
         bold: appearance
             .font_family_bold
@@ -260,7 +230,9 @@ pub(super) enum GhosttyColorScheme {
     Dark,
 }
 
-fn ghostty_terminal_appearance_for_config(config: &config::AppConfig) -> GhosttyTerminalAppearance {
+pub(super) fn ghostty_terminal_appearance_for_config(
+    config: &config::AppConfig,
+) -> GhosttyTerminalAppearance {
     ghostty_terminal_appearance(ghostty_color_scheme_for_config(config))
 }
 
@@ -506,10 +478,9 @@ impl Default for GhosttyTerminalAppearance {
             adjust_cell_width: None,
             adjust_cell_height: None,
             unfocused_split_opacity: DEFAULT_UNFOCUSED_SPLIT_OPACITY,
-            unfocused_split_fill: colors.background.clone(),
+            unfocused_split_fill: "#000000".to_string(),
             colors,
             bold_color_explicit: false,
-            unfocused_split_fill_explicit: false,
         }
     }
 }
@@ -534,11 +505,7 @@ impl GhosttyTerminalAppearance {
                 self.scrollback_limit_bytes = parse_ghostty_integer_literal(&value)
             }
             "background" => {
-                if set_color(&mut self.colors.background, &value)
-                    && !self.unfocused_split_fill_explicit
-                {
-                    self.unfocused_split_fill = self.colors.background.clone();
-                }
+                set_color(&mut self.colors.background, &value);
             }
             "foreground" => {
                 set_color(&mut self.colors.foreground, &value);
@@ -639,9 +606,7 @@ impl GhosttyTerminalAppearance {
     }
 
     fn apply_unfocused_split_fill(&mut self, value: &str) {
-        if set_color(&mut self.unfocused_split_fill, value) {
-            self.unfocused_split_fill_explicit = true;
-        }
+        set_color(&mut self.unfocused_split_fill, value);
     }
 
     fn apply_mouse_scroll_multiplier(&mut self, value: &str) {

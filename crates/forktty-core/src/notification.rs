@@ -149,11 +149,8 @@ fn write_desktop_notification_icon_file(
     }
 
     for _ in 0..4 {
-        let path = dir.join(format!(
-            "icon-{}.{}",
-            uuid::Uuid::new_v4(),
-            desktop_notification_icon_extension(data)
-        ));
+        let extension = desktop_notification_icon_extension(data)?;
+        let path = dir.join(format!("icon-{}.{}", uuid::Uuid::new_v4(), extension));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -172,17 +169,17 @@ fn write_desktop_notification_icon_file(
     None
 }
 
-fn desktop_notification_icon_extension(data: &[u8]) -> &'static str {
+fn desktop_notification_icon_extension(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "png"
+        Some("png")
     } else if data.starts_with(b"\xff\xd8\xff") {
-        "jpg"
+        Some("jpg")
     } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        "gif"
+        Some("gif")
     } else if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
-        "webp"
+        Some("webp")
     } else {
-        "img"
+        None
     }
 }
 
@@ -626,7 +623,7 @@ mod tests {
                     report_close: false,
                     buttons: Vec::new(),
                     icon_names: Vec::new(),
-                    icon_data: Some(b"PNG".to_vec()),
+                    icon_data: Some(b"\x89PNG\r\n\x1a\n".to_vec()),
                     icon_cache_id: Some("icon-1".to_string()),
                     urgency: None,
                     sound_name: None,
@@ -640,7 +637,36 @@ mod tests {
         let path = write_desktop_notification_icon_file(&notification, dir.path()).unwrap();
 
         assert!(path.starts_with(dir.path().join("forktty-notification-icons")));
-        assert_eq!(std::fs::read(&path).unwrap(), b"PNG");
+        assert_eq!(std::fs::read(&path).unwrap(), b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn terminal_notification_icon_data_ignores_unknown_image_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut model = WorkspaceModel::new();
+        let notification =
+            model.create_notification("Title", "Body", NotificationKind::Info, None, None);
+        let notification = model
+            .set_notification_terminal_metadata(
+                &notification.id,
+                Some(crate::TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: false,
+                    buttons: Vec::new(),
+                    icon_names: Vec::new(),
+                    icon_data: Some(b"not an image".to_vec()),
+                    icon_cache_id: Some("icon-1".to_string()),
+                    urgency: None,
+                    sound_name: None,
+                    expires_after_ms: None,
+                    app_name: None,
+                    notification_types: Vec::new(),
+                }),
+            )
+            .unwrap();
+
+        assert!(write_desktop_notification_icon_file(&notification, dir.path()).is_none());
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

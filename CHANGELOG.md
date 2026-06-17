@@ -34,17 +34,21 @@ All notable changes to ForkTTY are documented here.
 - OSC 99 notification identifiers now follow the protocol identifier character set before ForkTTY tracks or echoes them in replies.
 - OSC 99 payload types ForkTTY does not implement are now ignored instead of surfacing as terminal status text.
 - OSC 99 terminal notifications with the same `i` identifier now update the existing ForkTTY notification, and `p=close` dismisses that tracked notification.
+- OSC 99 single-part `p=title` notifications now use the payload as the notification title, same-id title/body updates preserve the prior title and terminal metadata, and no-id `p=close` closes the default `i=0` notification.
+- OSC 99 terminal notification payloads, report ids, same-id routing entries, expiry timers, and icon data are now bounded before decode/allocation so malformed PTY output cannot grow memory indefinitely.
 - OSC 99 desktop notifications now reuse the prior OS notification id on updates and close the tracked OS notification on `p=close` or in-app dismiss.
 - OSC 99 notifications that request reports now send in-app Open/Dismiss/Clear All activation and close replies back to the source terminal.
 - OSC 99 `n=` icon names now feed in-app and desktop notification icons instead of always showing the ForkTTY icon.
 - OSC 99 `f=` application names now act as in-app and desktop icon fallbacks when no `n=` icon name is provided.
 - OSC 99 `p=icon` binary payloads now render in the in-app notification panel when GTK can decode the image, respect `n=` icon-name precedence, and are passed to desktop notifications through bounded temporary image files under `$XDG_RUNTIME_DIR`.
+- OSC 99 desktop icon data is now ignored unless it has a recognized PNG, JPEG, GIF, or WebP signature.
 - OSC 99 `o=unfocused` and `o=invisible` notification occasions now suppress notifications for focused or already-visible terminal panes.
 - OSC 99 `f` application name and `t` notification type metadata are now retained, can be blocked with `notifications.blocked_terminal_apps` / `blocked_terminal_types`, and are exposed to `notification_command` for external filtering.
 - OSC 99 `u` urgency, `w` expiry, and base64 `s` sound metadata now feed desktop notification hints when supported, and positive `w` values also auto-dismiss in-app notifications.
 - OSC 99 button payloads now accept base64 text and the spec's U+2028 separator.
 - OSC 99 `p=?` and `p=alive` queries now reply to the source terminal with ForkTTY's supported notification capabilities and same-surface live notification ids.
 - Sidebar badges, duplicate GTK spawns, closed-terminal status handling, corrupt tab leaves, and scrollback settings copy now handle stale or delayed terminal state without misleading UI or backend readiness loss.
+- Persistent terminal scrollback is no longer deleted merely because restore is disabled, session saves now reject serialized data beyond the load cap, and scrollback snapshots are throttled while still flushing on child exit.
 - Terminal panes now size rows from one shared widget-measured cell size plus a small vertical guard, preventing agent TUIs from being clipped after resizes without inflating terminal line spacing.
 - Terminal styled text runs now fit the terminal cell grid, preventing colored inline-code spans from leaving visual gaps between words.
 - Terminal text selection and mouse hit-testing now use GTK content-box coordinates directly, fixing selections that were offset from the pointer.

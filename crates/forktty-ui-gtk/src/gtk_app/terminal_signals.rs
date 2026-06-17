@@ -76,9 +76,9 @@ pub(super) fn attach_terminal_signal_handlers(
     let pump_state = state.clone();
     let pump_surface_pids = surface_pids.clone();
     let mut metadata_notification_limiter = TerminalMetadataNotificationLimiter::default();
-    let persistent_scrollback_lines = config::load_config()
-        .map(|config| config.appearance.persistent_scrollback_lines as usize)
-        .unwrap_or_default();
+    let mut pump_config = config::load_config().unwrap_or_default();
+    let mut last_config_refresh = Instant::now();
+    let mut last_scrollback_snapshot = None::<Instant>;
     glib::timeout_add_local(Duration::from_millis(16), move || {
         let Some(pump_widget) = pump_widget_weak.upgrade() else {
             return glib::ControlFlow::Break;
@@ -120,22 +120,37 @@ pub(super) fn attach_terminal_signal_handlers(
                 if visual_bell {
                     pump_widget.flash_visual_bell();
                 }
-                for reply in apply_ghostty_events_to_model(
+                if last_config_refresh.elapsed() >= Duration::from_secs(1) {
+                    if let Ok(config) = config::load_config() {
+                        pump_config = config;
+                    }
+                    last_config_refresh = Instant::now();
+                }
+                for reply in apply_ghostty_events_to_model_with_config(
                     &pump_model,
                     &pump_workspace_id,
                     &pump_surface_id,
                     &events,
                     &mut metadata_notification_limiter,
+                    &pump_config,
                 ) {
                     pump_widget.send_text(&reply);
                 }
-                if persistent_scrollback_lines > 0 && (visible_content_changed || child_exited) {
+                let persistent_scrollback_lines =
+                    pump_config.appearance.persistent_scrollback_lines as usize;
+                let should_snapshot_scrollback = persistent_scrollback_lines > 0
+                    && (child_exited
+                        || (visible_content_changed
+                            && last_scrollback_snapshot
+                                .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))));
+                if should_snapshot_scrollback {
                     persist_terminal_scrollback_snapshot(
                         &pump_model,
                         &pump_widget,
                         &pump_surface_id,
                         persistent_scrollback_lines,
                     );
+                    last_scrollback_snapshot = Some(Instant::now());
                 }
                 if child_exited {
                     // The child is gone and pump_pty drained its final output;
@@ -190,6 +205,7 @@ pub(super) fn surface_status_key(surface_id: &str) -> String {
     format!("surface:{surface_id}:status")
 }
 
+#[cfg(test)]
 pub(super) fn apply_ghostty_events_to_model(
     model: &Arc<Mutex<WorkspaceModel>>,
     workspace_id: &str,
@@ -294,7 +310,11 @@ fn apply_ghostty_events_to_model_with_config(
                             if should_dispatch {
                                 dispatch_notification_with_loaded_config(&notification);
                             }
-                            schedule_osc99_notification_expiry(&model_for_expiry, &notification);
+                            schedule_osc99_notification_expiry(
+                                &model_for_expiry,
+                                &notification,
+                                metadata_notification_limiter,
+                            );
                         }
                         TerminalMetadataAction::Status => {
                             if model.surface(surface_id).is_none() {
@@ -506,13 +526,23 @@ fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
                 let Some(decoded) = osc99_decoded_payload(notification_payload, encoded) else {
                     return TerminalMetadataAction::Ignore;
                 };
-                if decoded.trim().is_empty() {
+                let decoded = decoded.trim();
+                if decoded.is_empty() {
                     return TerminalMetadataAction::Ignore;
+                }
+                if part == Osc99PayloadPart::Title {
+                    return TerminalMetadataAction::Notify {
+                        id: None,
+                        title: Some(truncate_single_line(decoded, 120)),
+                        body: String::new(),
+                        metadata: notification_metadata,
+                        occasion,
+                    };
                 }
                 TerminalMetadataAction::Notify {
                     id: None,
                     title: None,
-                    body: truncate_single_line(decoded.trim(), 240),
+                    body: truncate_single_line(decoded, 240),
                     metadata: notification_metadata,
                     occasion,
                 }
@@ -555,7 +585,6 @@ fn osc99_metadata_action(payload: &str) -> TerminalMetadataAction {
             }
         }
         "close" => safe_osc99_response_id(metadata)
-            .filter(|id| id != "0")
             .map(|id| TerminalMetadataAction::Close { id })
             .unwrap_or(TerminalMetadataAction::Ignore),
         "?" => safe_osc99_response_id(metadata)
@@ -664,12 +693,18 @@ fn pane_node_has_active_surface(node: &PaneNode, surface_id: &str) -> bool {
 }
 
 fn osc99_decoded_payload(payload: &str, encoded: bool) -> Option<String> {
+    if payload.len() > OSC99_MAX_TEXT_PAYLOAD_BYTES {
+        return None;
+    }
     if !encoded {
         return Some(payload.to_string());
     }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(payload.trim())
         .ok()?;
+    if bytes.len() > OSC99_MAX_TEXT_PAYLOAD_BYTES {
+        return None;
+    }
     String::from_utf8(bytes).ok()
 }
 
@@ -736,6 +771,7 @@ fn osc99_notification_metadata(
 
 fn safe_osc99_report_id(id: &str) -> Option<&str> {
     (!id.is_empty()
+        && id.len() <= OSC99_MAX_REPORT_ID_BYTES
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'+' | b'.')))
@@ -791,17 +827,17 @@ const OSC99_MAX_ICON_NAME_CHARS: usize = 120;
 const OSC99_MAX_ICON_DATA_BYTES: usize = 64 * 1024;
 const OSC99_MAX_ICON_DATA_CACHE_ENTRIES: usize = 64;
 const OSC99_MAX_DEFERRED_METADATA_ENTRIES: usize = 64;
+const OSC99_MAX_TRACKED_NOTIFICATIONS: usize = 256;
+const OSC99_MAX_TEXT_PAYLOAD_BYTES: usize = 256 * 1024;
+const OSC99_MAX_REPORT_ID_BYTES: usize = 128;
+const OSC99_MAX_ENCODED_ICON_DATA_BYTES: usize = OSC99_MAX_ICON_DATA_BYTES.div_ceil(3) * 4 + 4;
 const OSC99_MAX_SOUND_NAME_CHARS: usize = 120;
 const OSC99_MAX_APP_NAME_CHARS: usize = 120;
 const OSC99_MAX_NOTIFICATION_TYPES: usize = 8;
 const OSC99_MAX_NOTIFICATION_TYPE_CHARS: usize = 120;
 
 fn osc99_buttons(payload: &str, encoded: bool) -> Vec<String> {
-    let payload = if encoded {
-        osc99_base64_text(payload).unwrap_or_default()
-    } else {
-        payload.to_string()
-    };
+    let payload = osc99_decoded_payload(payload, encoded).unwrap_or_default();
     payload
         .split(['\n', '\u{2028}'])
         .filter_map(|line| {
@@ -824,15 +860,25 @@ fn osc99_icon_names(metadata: &str) -> Vec<String> {
 }
 
 fn osc99_base64_text(value: &str) -> Option<String> {
+    if value.len() > OSC99_MAX_TEXT_PAYLOAD_BYTES {
+        return None;
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(value.trim())
         .ok()?;
+    if bytes.len() > OSC99_MAX_TEXT_PAYLOAD_BYTES {
+        return None;
+    }
     String::from_utf8(bytes).ok()
 }
 
 fn osc99_icon_data(payload: &str) -> Option<Vec<u8>> {
+    let payload = payload.trim();
+    if payload.len() > OSC99_MAX_ENCODED_ICON_DATA_BYTES {
+        return None;
+    }
     let bytes = base64::engine::general_purpose::STANDARD
-        .decode(payload.trim())
+        .decode(payload)
         .ok()?;
     (!bytes.is_empty() && bytes.len() <= OSC99_MAX_ICON_DATA_BYTES).then_some(bytes)
 }
@@ -897,6 +943,8 @@ pub(super) struct TerminalMetadataNotificationLimiter {
     button_metadata: BTreeMap<String, TerminalNotificationMetadata>,
     icon_data: BTreeMap<String, Vec<u8>>,
     notifications: BTreeMap<String, String>,
+    #[cfg(not(test))]
+    expiry_timers: Rc<RefCell<BTreeMap<String, glib::SourceId>>>,
 }
 
 impl TerminalMetadataNotificationLimiter {
@@ -913,7 +961,7 @@ impl TerminalMetadataNotificationLimiter {
                     key,
                     TerminalNotificationMetadata {
                         id,
-                        report_activation: false,
+                        report_activation: true,
                         report_close: false,
                         buttons,
                         icon_names: Vec::new(),
@@ -983,6 +1031,19 @@ impl TerminalMetadataNotificationLimiter {
                     metadata,
                     occasion,
                 );
+            }
+            if prior_part == Some(Osc99PayloadPart::Body) && part == Osc99PayloadPart::Title {
+                return self.notify_from_title_and_body(
+                    Some(id),
+                    body,
+                    prior.unwrap_or_default(),
+                    encoded,
+                    metadata,
+                    occasion,
+                );
+            }
+            if prior.is_none() && part == Osc99PayloadPart::Title {
+                return self.notify_from_title_only(Some(id), body, encoded, metadata, occasion);
             }
             let mut complete_body = prior.unwrap_or_default();
             complete_body.push_str(&body);
@@ -1093,6 +1154,30 @@ impl TerminalMetadataNotificationLimiter {
         }
     }
 
+    fn notify_from_title_only(
+        &self,
+        id: Option<String>,
+        title: String,
+        encoded: bool,
+        metadata: Option<TerminalNotificationMetadata>,
+        occasion: Option<Osc99NotificationOccasion>,
+    ) -> TerminalMetadataAction {
+        let Some(title) = osc99_decoded_payload(&title, encoded) else {
+            return TerminalMetadataAction::Ignore;
+        };
+        let title = title.trim();
+        if title.is_empty() {
+            return TerminalMetadataAction::Ignore;
+        }
+        TerminalMetadataAction::Notify {
+            id,
+            title: Some(truncate_single_line(title, 120)),
+            body: String::new(),
+            metadata,
+            occasion,
+        }
+    }
+
     fn notify_from_title_and_body(
         &self,
         id: Option<String>,
@@ -1165,6 +1250,23 @@ impl TerminalMetadataNotificationLimiter {
     ) {
         let key = self.notification_key(workspace_id, surface_id, id);
         self.notifications.insert(key, notification_id);
+        while self.notifications.len() > OSC99_MAX_TRACKED_NOTIFICATIONS {
+            if let Some(key) = self.notifications.keys().next().cloned() {
+                self.notifications.remove(&key);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn prune_stale_notifications(&mut self, model: &WorkspaceModel) {
+        let live_ids = model
+            .list_notifications()
+            .into_iter()
+            .map(|notification| notification.id)
+            .collect::<BTreeSet<_>>();
+        self.notifications
+            .retain(|_, notification_id| live_ids.contains(notification_id));
     }
 
     fn forget_notification(
@@ -1226,6 +1328,7 @@ fn upsert_osc99_notification(
     update: Osc99NotificationUpdate,
 ) -> Option<(NotificationItem, bool)> {
     model.surface(surface_id)?;
+    limiter.prune_stale_notifications(model);
     let Osc99NotificationUpdate {
         id,
         title,
@@ -1238,16 +1341,24 @@ fn upsert_osc99_notification(
             .notification_id(workspace_id, surface_id, &id)
             .map(str::to_string)
         {
+            let existing_notification = model
+                .list_notifications()
+                .into_iter()
+                .find(|notification| notification.id == notification_id);
             let next_title = title
                 .clone()
                 .or_else(|| {
-                    model
-                        .list_notifications()
-                        .into_iter()
-                        .find(|notification| notification.id == notification_id)
-                        .map(|notification| notification.title)
+                    existing_notification
+                        .as_ref()
+                        .map(|notification| notification.title.clone())
                 })
                 .unwrap_or_else(|| "Terminal notification".to_string());
+            let next_metadata = merge_osc99_notification_metadata(
+                existing_notification
+                    .as_ref()
+                    .and_then(|notification| notification.terminal_metadata.clone()),
+                metadata.clone(),
+            );
             if let Some(notification) = model.update_notification(
                 &notification_id,
                 next_title,
@@ -1255,7 +1366,7 @@ fn upsert_osc99_notification(
                 NotificationKind::Info,
             ) {
                 let notification = model
-                    .set_notification_terminal_metadata(&notification.id, metadata.clone())
+                    .set_notification_terminal_metadata(&notification.id, next_metadata)
                     .unwrap_or(notification);
                 let should_dispatch = limiter.should_dispatch(workspace_id, surface_id);
                 return Some((notification, should_dispatch));
@@ -1301,10 +1412,11 @@ fn upsert_osc99_notification(
 fn schedule_osc99_notification_expiry(
     model: &Arc<Mutex<WorkspaceModel>>,
     notification: &NotificationItem,
+    limiter: &mut TerminalMetadataNotificationLimiter,
 ) {
     #[cfg(test)]
     {
-        let _ = (model, notification);
+        let _ = (model, notification, limiter);
     }
 
     #[cfg(not(test))]
@@ -1317,19 +1429,38 @@ fn schedule_osc99_notification_expiry(
             return;
         };
         if delay_ms <= 0 {
+            if let Some(source_id) = limiter.expiry_timers.borrow_mut().remove(&notification.id) {
+                source_id.remove();
+            }
             return;
         }
 
         let model = model.clone();
         let notification_id = notification.id.clone();
+        if let Some(source_id) = limiter.expiry_timers.borrow_mut().remove(&notification_id) {
+            source_id.remove();
+        }
         let created_at_ms = notification.created_at_ms;
-        glib::timeout_add_local_once(Duration::from_millis(delay_ms as u64), move || {
-            if let Ok(mut model) = model.lock() {
-                if dismiss_current_osc99_notification(&mut model, &notification_id, created_at_ms) {
-                    close_desktop_notification(&notification_id);
+        let expiry_timers = limiter.expiry_timers.clone();
+        let timer_notification_id = notification_id.clone();
+        let expiring_notification_id = notification_id.clone();
+        let source_id =
+            glib::timeout_add_local_once(Duration::from_millis(delay_ms as u64), move || {
+                expiry_timers.borrow_mut().remove(&timer_notification_id);
+                if let Ok(mut model) = model.lock() {
+                    if dismiss_current_osc99_notification(
+                        &mut model,
+                        &expiring_notification_id,
+                        created_at_ms,
+                    ) {
+                        close_desktop_notification(&expiring_notification_id);
+                    }
                 }
-            }
-        });
+            });
+        limiter
+            .expiry_timers
+            .borrow_mut()
+            .insert(notification_id, source_id);
     }
 }
 
@@ -1556,8 +1687,8 @@ mod ghostty_tests {
         let model = model.lock().unwrap();
         let notifications = model.list_notifications();
         assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].title, "Terminal notification");
-        assert_eq!(notifications[0].body, "Hello world");
+        assert_eq!(notifications[0].title, "Hello world");
+        assert_eq!(notifications[0].body, "");
         assert!(model.list_status(&workspace_id).is_empty());
     }
 
@@ -1585,6 +1716,30 @@ mod ghostty_tests {
         assert_eq!(notifications[0].title, "Terminal notification");
         assert_eq!(notifications[0].body, "Hello world");
         assert!(model.list_status(&workspace_id).is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_title_only_uses_payload_as_title() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        apply_events(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "p=title;Build finished".to_string(),
+            })],
+        );
+
+        let notifications = model.lock().unwrap().list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title, "Build finished");
+        assert_eq!(notifications[0].body, "");
     }
 
     #[test]
@@ -1834,6 +1989,41 @@ mod ghostty_tests {
     }
 
     #[test]
+    fn ghostty_osc99_buttons_enable_button_reports_without_report_flag() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=buttons;Retry".to_string(),
+            })],
+            &mut limiter,
+        );
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=body;Failed".to_string(),
+            })],
+            &mut limiter,
+        );
+
+        let notifications = model.lock().unwrap().list_notifications();
+        let metadata = notifications[0].terminal_metadata.as_ref().unwrap();
+        assert_eq!(metadata.buttons, ["Retry"]);
+        assert!(metadata.report_activation);
+    }
+
+    #[test]
     fn ghostty_osc99_buttons_decode_base64_line_separators() {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let (workspace_id, surface_id) = {
@@ -2011,6 +2201,37 @@ mod ghostty_tests {
         );
         assert_eq!(
             osc99_metadata_action("i=build,1:p=?;"),
+            TerminalMetadataAction::Ignore
+        );
+    }
+
+    #[test]
+    fn ghostty_osc99_rejects_oversized_payloads_and_ids_before_decoding() {
+        assert_eq!(
+            osc99_metadata_action(&format!(
+                "p=body;{}",
+                "x".repeat(OSC99_MAX_TEXT_PAYLOAD_BYTES + 1)
+            )),
+            TerminalMetadataAction::Ignore
+        );
+        assert_eq!(
+            osc99_metadata_action(&format!(
+                "i={}:p=body;Done",
+                "x".repeat(OSC99_MAX_REPORT_ID_BYTES + 1)
+            )),
+            TerminalMetadataAction::Notify {
+                id: None,
+                title: None,
+                body: "Done".to_string(),
+                metadata: None,
+                occasion: None,
+            }
+        );
+        assert_eq!(
+            osc99_metadata_action(&format!(
+                "g=icon:e=1:p=icon;{}",
+                "x".repeat(OSC99_MAX_ENCODED_ICON_DATA_BYTES + 1)
+            )),
             TerminalMetadataAction::Ignore
         );
     }
@@ -2229,6 +2450,45 @@ mod ghostty_tests {
     }
 
     #[test]
+    fn ghostty_osc99_same_id_update_preserves_title_and_metadata() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:a=report:p=title;Build".to_string(),
+            })],
+            &mut limiter,
+        );
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=build:p=body;Done".to_string(),
+            })],
+            &mut limiter,
+        );
+
+        let notifications = model.lock().unwrap().list_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title, "Build");
+        assert_eq!(notifications[0].body, "Done");
+        assert!(notifications[0]
+            .terminal_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.report_activation));
+    }
+
+    #[test]
     fn ghostty_osc99_close_dismisses_same_id_notification() {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let (workspace_id, surface_id) = {
@@ -2259,6 +2519,54 @@ mod ghostty_tests {
         );
 
         assert!(model.lock().unwrap().list_notifications().is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_close_without_id_closes_default_id_notification() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            (workspace.id, workspace.focused_surface_id)
+        };
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "i=0:p=body;Build done".to_string(),
+            })],
+            &mut limiter,
+        );
+        apply_ghostty_events_to_model(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
+                payload: "p=close;".to_string(),
+            })],
+            &mut limiter,
+        );
+
+        assert!(model.lock().unwrap().list_notifications().is_empty());
+    }
+
+    #[test]
+    fn ghostty_osc99_tracked_notification_ids_are_bounded() {
+        let mut limiter = TerminalMetadataNotificationLimiter::default();
+
+        for index in 0..300 {
+            limiter.remember_notification(
+                "workspace",
+                "surface",
+                &format!("id-{index}"),
+                format!("notification-{index}"),
+            );
+        }
+
+        assert!(limiter.notifications.len() <= OSC99_MAX_TRACKED_NOTIFICATIONS);
     }
 
     #[test]

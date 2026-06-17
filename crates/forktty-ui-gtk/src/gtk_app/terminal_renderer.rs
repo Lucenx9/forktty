@@ -253,21 +253,22 @@ impl TerminalRenderer {
         config: &config::AppConfig,
         font: gtk::pango::FontDescription,
     ) -> Self {
-        let variants = terminal_font_variants_for_config(config, &font);
-        let (opacity, fill) = terminal_unfocused_split_style_for_config(config);
-        let (cell_width_adjustment, cell_height_adjustment) =
-            terminal_cell_size_adjustments_for_config(config);
+        let appearance = ghostty_terminal_appearance_for_config(config);
+        let variants = terminal_font_variants_for_appearance(&appearance, &font);
         Self {
-            palette: RendererPalette::from_terminal_colors(&terminal_colors_for_config(config)),
+            palette: RendererPalette::from_terminal_colors(&appearance.colors),
             font,
             bold_font: variants.bold,
             italic_font: variants.italic,
             bold_italic_font: variants.bold_italic,
-            cursor_opacity: terminal_cursor_opacity_for_config(config),
-            faint_opacity: terminal_faint_opacity_for_config(config),
-            cell_width_adjustment,
-            cell_height_adjustment,
-            unfocused_split_dim: unfocused_split_dim_from_appearance(opacity, &fill),
+            cursor_opacity: appearance.cursor_opacity,
+            faint_opacity: appearance.faint_opacity,
+            cell_width_adjustment: appearance.adjust_cell_width,
+            cell_height_adjustment: appearance.adjust_cell_height,
+            unfocused_split_dim: unfocused_split_dim_from_appearance(
+                appearance.unfocused_split_opacity,
+                &appearance.unfocused_split_fill,
+            ),
         }
     }
 

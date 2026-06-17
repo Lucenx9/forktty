@@ -92,7 +92,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Native `.deb` package installing `forktty`.
 - [x] Desktop entry and icon under `packaging/linux`.
 - [x] CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
-- [x] Runtime GTK/Ghostty smoke script for isolated socket boot, terminal input/readback, runtime zoom reflow/reset, GTK action split/focus behavior, socket split readback, and socket notification create/list/clear.
+- [x] Runtime GTK/Ghostty smoke script for isolated socket boot, terminal input/readback, runtime zoom reflow/reset, GTK action split/focus behavior, socket split readback, and notification CLI create/list/clear.
 - [x] GitHub prerelease workflow that uploads the Debian package, experimental AppImage, and shared `SHA256SUMS`.
 
 ## Backlog

@@ -586,14 +586,8 @@ fn normalize_notification_filter_values(values: Vec<String>) -> Vec<String> {
         .into_iter()
         .filter_map(|value| {
             let value = value.trim();
-            (!value.is_empty()).then(|| {
-                value
-                    .chars()
-                    .take(MAX_NOTIFICATION_FILTER_VALUE_CHARS)
-                    .collect()
-            })
+            (!value.is_empty()).then(|| value.to_string())
         })
-        .take(MAX_NOTIFICATION_FILTER_VALUES)
         .collect()
 }
 
@@ -1226,6 +1220,17 @@ mod tests {
             config.notifications.blocked_terminal_types,
             ["build.error", "ci"]
         );
+    }
+
+    #[test]
+    fn validate_config_rejects_overlong_terminal_notification_filter() {
+        let mut config = AppConfig::default();
+        config.general.shell = dummy_executable_path();
+        config.notifications.blocked_terminal_apps =
+            vec!["x".repeat(MAX_NOTIFICATION_FILTER_VALUE_CHARS + 1)];
+
+        let err = validate_config(&normalize_loaded_config(config)).unwrap_err();
+        assert!(err.to_string().contains("blocked_terminal_apps entries"));
     }
 
     fn assert_recovery_and_get_quarantined_path(
