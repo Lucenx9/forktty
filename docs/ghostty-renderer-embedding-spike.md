@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`4936a2c4ddc27075f726eebf59b95d592c3a7413`.
+`9c90558c886fc04ec5f018e90db7e5639512c8ff`.
 
 ## Result
 
@@ -59,6 +59,11 @@ The exact ABI can change during the spike. The important constraint is that
 ForkTTY needs a GTK widget it can pack into an existing pane, plus lifecycle,
 focus, resize, input, selection/read-text, and PTY/session hooks that do not
 require Ghostty to own the whole application window.
+
+The fork also keeps Ghostty's internal GTK application pointer separate from
+the host `GApplication`, and skips Ghostty's pre-init GTK environment setup
+when the embedding library is loaded after the host process has already
+initialized GTK.
 
 ## Next Cut
 

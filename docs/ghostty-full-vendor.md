@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `4936a2c4ddc27075f726eebf59b95d592c3a7413`
+- Pin: `9c90558c886fc04ec5f018e90db7e5639512c8ff`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -18,7 +18,9 @@ next renderer bridge spike, not a release-runtime dependency yet. The fork adds
 an experimental `emit-gtk-lib` build artifact and `ghostty_gtk.h`; it does not
 replace ForkTTY panes yet. The GTK embedding library keeps Ghostty's internal
 application pointer separate from the host `GApplication` default so loading
-the probe does not claim ForkTTY's process-global GTK application.
+the probe does not claim ForkTTY's process-global GTK application, and it skips
+Ghostty's pre-init GTK environment setup when GTK is already initialized by the
+host process.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.
