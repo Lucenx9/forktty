@@ -63,6 +63,8 @@ Usage:
   forktty worktree-attach <branch> [--cwd <repo>]
   forktty worktree-remove <branch-or-worktree> [--cwd <repo>]
   forktty worktree-merge <branch-or-worktree> [--cwd <repo>]
+  forktty actions [--cwd <repo>] [--json]
+  forktty action-run <id> [--cwd <repo>] [--json]
   forktty set-status --key <key> --value <value> [--label <label>] [--color <color>]
   forktty list-status [--workspace-id <id>]
   forktty clear-status [--key <key>]
@@ -71,6 +73,7 @@ Usage:
   forktty clear-progress [--key <key>]
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
+  forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
   forktty workflow-get <workflow-id> [--json]
   forktty workflow-upsert [--workflow-id <id>] [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--agent <agent>] [--session-id <id>] [--mode <mode>] [--status <status>] [--goal <text>] [--memory <text>] [--json]
@@ -770,6 +773,12 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         }
         "worktree-remove" | "worktree:remove" => handle_worktree_remove(&context, args),
         "worktree-merge" | "worktree:merge" => handle_worktree_merge(&context, args),
+        "actions" | "project-actions" | "project:action:list" => {
+            handle_project_action_list(&context, args)
+        }
+        "action-run" | "project-action-run" | "project:action:run" => {
+            handle_project_action_run(&context, args)
+        }
         "set-status" => handle_set_status(&context, args),
         "list-status" => handle_list_status(&context, args),
         "clear-status" => handle_clear_status(&context, args),
@@ -2376,6 +2385,13 @@ fn format_status_summary_progress(progress: &Value) -> String {
 
 fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
+    if parsed
+        .positionals
+        .first()
+        .is_some_and(|arg| arg == "respond")
+    {
+        return handle_feed_respond(context, parsed);
+    }
     require_no_args(&parsed.positionals, "feed")?;
     reject_unknown_options(
         &parsed.options,
@@ -2400,6 +2416,38 @@ fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         write_stdout_line(&format_feed_line(item))?;
     }
     Ok(())
+}
+
+fn handle_feed_respond(context: &CliContext, parsed: ParsedFlags) -> CliResult<()> {
+    if parsed.positionals.len() != 2 {
+        return Err(CliError::new(
+            "feed respond: expected feed respond <approval-id> --decision approve|deny",
+        ));
+    }
+    reject_unknown_options(&parsed.options, &["decision"], "feed respond")?;
+    let decision = non_blank_string_option(&parsed.options, "decision", "--decision")?
+        .ok_or_else(|| CliError::new("feed respond: missing --decision approve|deny"))?;
+    if !matches!(decision.trim(), "approve" | "approved" | "deny" | "denied") {
+        return Err(CliError::new(
+            "feed respond: --decision must be approve or deny",
+        ));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "feed.approval.respond",
+        json!({
+            "id": parsed.positionals[1],
+            "decision": decision,
+        }),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format!(
+        "Recorded {} for {}",
+        safe_string_field(&result, "approval_state").unwrap_or_else(|| "decision".to_string()),
+        safe_string_field(&result, "id").unwrap_or_else(|| "approval".to_string())
+    ))
 }
 
 fn format_feed_line(item: &Value) -> String {
@@ -3843,6 +3891,66 @@ fn handle_worktree_merge(context: &CliContext, args: Vec<String>) -> CliResult<(
     }
 }
 
+fn handle_project_action_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "actions")?;
+    reject_unknown_options(&parsed.options, &["cwd"], "actions")?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "project.action.list",
+        project_action_params(&parsed, None)?,
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    if let Some(actions) = result.as_array() {
+        for action in actions {
+            write_stdout_line(&format_project_action_line(action))?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_project_action_run(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &["cwd"], "action-run")?;
+    if parsed.positionals.len() != 1 {
+        return Err(CliError::new("action-run requires exactly one <id>"));
+    }
+    let id = parsed.positionals[0].trim();
+    if id.is_empty() {
+        return Err(CliError::new("action-run requires a non-empty <id>"));
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "project.action.run",
+        project_action_params(&parsed, Some(id))?,
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format!(
+        "Started action {} in {}",
+        safe_string_field(&result, "id").unwrap_or_else(|| id.to_string()),
+        safe_string_field(&result, "surface_id").unwrap_or_else(|| "new surface".to_string())
+    ))
+}
+
+fn project_action_params(parsed: &ParsedFlags, id: Option<&str>) -> CliResult<Value> {
+    let cwd = non_blank_string_option(&parsed.options, "cwd", "--cwd")?
+        .map(|value| value.trim().to_string())
+        .or_else(caller_cwd)
+        .ok_or_else(|| {
+            CliError::new("project actions require --cwd, PWD, or the current directory")
+        })?;
+    let mut params = Map::new();
+    params.insert("cwd".to_string(), Value::String(cwd));
+    if let Some(id) = id {
+        params.insert("id".to_string(), Value::String(id.to_string()));
+    }
+    Ok(Value::Object(params))
+}
+
 fn worktree_params(
     parsed: &ParsedFlags,
     require_name: bool,
@@ -3925,6 +4033,13 @@ fn format_worktree_line(worktree: &Value) -> String {
         .map(|status| format!(" {status}"))
         .unwrap_or_default();
     format!("{branch} [{name}] {path}{status}")
+}
+
+fn format_project_action_line(action: &Value) -> String {
+    let id = safe_string_field(action, "id").unwrap_or_else(|| "(unknown)".to_string());
+    let label = safe_string_field(action, "label").unwrap_or_else(|| id.clone());
+    let cwd = safe_string_field(action, "cwd").unwrap_or_else(|| ".".to_string());
+    format!("{id} - {label} [{cwd}]")
 }
 
 fn handle_set_status(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -11916,6 +12031,101 @@ mod tests {
         assert_eq!(request["params"]["query"], "evidence");
         assert_eq!(request["params"]["since_seq"], 2);
         assert_eq!(request["params"]["limit"], 10);
+    }
+
+    #[test]
+    fn project_actions_request_action_list_with_cwd() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": [{
+                        "id": "test",
+                        "label": "Run tests",
+                        "argv": ["cargo", "test"],
+                        "cwd": "."
+                    }],
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_project_action_list(&ctx_for(socket_path), strings(&["--cwd", "/repo"]))
+                    .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "project.action.list");
+        assert_eq!(request["params"]["cwd"], "/repo");
+    }
+
+    #[test]
+    fn project_action_run_requests_action_run_with_id_and_cwd() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "test",
+                        "label": "Run tests",
+                        "surface_id": "surface-2",
+                        "argv": ["cargo", "test"],
+                        "cwd": "/repo"
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_project_action_run(
+                    &ctx_for(socket_path),
+                    strings(&["test", "--cwd", "/repo"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "project.action.run");
+        assert_eq!(request["params"]["id"], "test");
+        assert_eq!(request["params"]["cwd"], "/repo");
+    }
+
+    #[test]
+    fn feed_respond_records_approval_decision() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "notification-1",
+                        "type": "approval",
+                        "approval_state": "approved"
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_feed(
+                    &ctx_for(socket_path),
+                    strings(&["respond", "notification-1", "--decision", "approve"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "feed.approval.respond");
+        assert_eq!(request["params"]["id"], "notification-1");
+        assert_eq!(request["params"]["decision"], "approve");
+    }
+
+    #[test]
+    fn feed_respond_rejects_invalid_decision_before_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_feed(
+                &ctx,
+                strings(&["respond", "notification-1", "--decision", "later"]),
+            ),
+            "approve or deny",
+        );
     }
 
     #[test]
