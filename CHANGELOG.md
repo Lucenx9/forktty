@@ -47,6 +47,14 @@ All notable changes to ForkTTY are documented here.
   older libraries without the symbol fall back to the neutral "Closed". The
   child PID is still not exposed, so listening-port discovery stays unavailable
   for embedded panes until the ABI is extended further.
+- Experimental embedded Ghostty panes now reach copy/paste/select-all/find
+  parity with classic panes: the `Ctrl+Shift+C/V/A/F` accelerators (and the
+  command palette equivalents) route to the focused embedded surface instead of
+  no-opping, with find opening Ghostty's native search overlay. The embedding
+  ABI gains `ghostty_gtk_surface_perform_action`, which performs a Ghostty
+  keybinding action by name (e.g. `copy_to_clipboard`, `start_search`); older
+  libraries without the symbol degrade to a logged no-op. Mouse selection
+  already works natively inside the embedded surface.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

@@ -26,7 +26,31 @@ type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_c
 type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
 type SurfaceExitCode = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut u32) -> i32;
+type SurfacePerformAction = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char) -> i32;
 type TextFree = unsafe extern "C" fn(*mut GhosttyGtkText);
+
+/// A Ghostty keybinding action ForkTTY drives on a focused embedded surface to
+/// reach copy/paste/select-all/search parity with classic panes. The string
+/// values match Ghostty's `keybind` action grammar and are parsed on the
+/// Ghostty side by `ghostty_gtk_surface_perform_action`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EmbeddedSurfaceAction {
+    Copy,
+    Paste,
+    SelectAll,
+    StartSearch,
+}
+
+impl EmbeddedSurfaceAction {
+    pub(super) fn as_ghostty_action(self) -> &'static str {
+        match self {
+            EmbeddedSurfaceAction::Copy => "copy_to_clipboard",
+            EmbeddedSurfaceAction::Paste => "paste_from_clipboard",
+            EmbeddedSurfaceAction::SelectAll => "select_all",
+            EmbeddedSurfaceAction::StartSearch => "start_search",
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Default)]
@@ -61,6 +85,7 @@ pub(super) struct GhosttyGtkEmbedder {
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
     surface_exit_code: Option<SurfaceExitCode>,
+    surface_perform_action: Option<SurfacePerformAction>,
     text_free: Option<TextFree>,
 }
 
@@ -84,6 +109,8 @@ impl GhosttyGtkEmbedder {
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL) };
         let surface_exit_code =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL) };
+        let surface_perform_action =
+            unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL) };
         let text_free = unsafe { load_optional_symbol(&library, GHOSTTY_GTK_TEXT_FREE_SYMBOL) };
 
         let context = NonNull::new(unsafe { context_new() })
@@ -106,6 +133,7 @@ impl GhosttyGtkEmbedder {
             surface_send_text,
             surface_read_text,
             surface_exit_code,
+            surface_perform_action,
             text_free,
         })
     }
@@ -201,6 +229,24 @@ impl GhosttyGtkEmbedder {
             return None;
         }
         Some(i32::try_from(code).unwrap_or(i32::MAX))
+    }
+
+    /// Performs a Ghostty keybinding action on the surface. Returns whether
+    /// Ghostty reported the action as performed (e.g. copy is a no-op without a
+    /// selection). Errors only when the embedding library lacks the symbol.
+    pub(super) unsafe fn perform_action(
+        &self,
+        widget: &gtk::Widget,
+        action: EmbeddedSurfaceAction,
+    ) -> Result<bool, String> {
+        let Some(surface_perform_action) = self.surface_perform_action else {
+            return Err("Ghostty GTK library does not export perform-action support".to_string());
+        };
+        let action_cstr = CString::new(action.as_ghostty_action())
+            .map_err(|_| "Ghostty GTK action contains an interior NUL".to_string())?;
+        let performed =
+            unsafe { surface_perform_action(widget.to_glib_none().0, action_cstr.as_ptr()) };
+        Ok(performed != 0)
     }
 
     pub(super) unsafe fn read_text_snapshot(
@@ -322,6 +368,8 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
 pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
 pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_surface_exit_code";
+pub(super) const GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL: &[u8] =
+    b"ghostty_gtk_surface_perform_action";
 pub(super) const GHOSTTY_GTK_TEXT_FREE_SYMBOL: &[u8] = b"ghostty_gtk_text_free";
 
 fn embedded_ghostty_text_from_raw(raw: &GhosttyGtkText) -> Result<EmbeddedGhosttyText, String> {
@@ -461,6 +509,36 @@ mod tests {
         assert_eq!(
             symbol_name(GHOSTTY_GTK_TEXT_FREE_SYMBOL),
             "ghostty_gtk_text_free"
+        );
+    }
+
+    #[test]
+    fn perform_action_symbol_is_declared() {
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL),
+            "ghostty_gtk_surface_perform_action"
+        );
+    }
+
+    #[test]
+    fn embedded_surface_actions_map_to_ghostty_keybind_grammar() {
+        // These strings are parsed by Ghostty's `Binding.Action.parse`; a typo
+        // makes the action a silent no-op, so pin the exact grammar.
+        assert_eq!(
+            EmbeddedSurfaceAction::Copy.as_ghostty_action(),
+            "copy_to_clipboard"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::Paste.as_ghostty_action(),
+            "paste_from_clipboard"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::SelectAll.as_ghostty_action(),
+            "select_all"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::StartSearch.as_ghostty_action(),
+            "start_search"
         );
     }
 

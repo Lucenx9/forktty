@@ -631,10 +631,61 @@ impl TerminalController {
             .cloned()
     }
 
+    /// True when GTK focus currently lives inside `widget` (an embedded Ghostty
+    /// surface focuses its internal GL area, never the wrapper widget itself).
+    fn embedded_widget_has_focus(&self, widget: &gtk::Widget) -> bool {
+        let Some(focus) = gtk::prelude::GtkWindowExt::focus(&self.parent_window) else {
+            return false;
+        };
+        &focus == widget || focus.is_ancestor(widget)
+    }
+
+    /// The embedded Ghostty surface that owns GTK focus, mirroring
+    /// `gtk_focused_widget` for the embedded-pane path.
+    fn focused_embedded_pane(&self) -> Option<gtk::Widget> {
+        self.embedded_ghostty_panes
+            .values()
+            .find(|widget| self.embedded_widget_has_focus(widget))
+            .cloned()
+    }
+
+    /// The embedded Ghostty surface the model considers focused; used by the
+    /// command palette, which owns GTK focus itself while open.
+    fn model_focused_embedded_pane(&self) -> Option<gtk::Widget> {
+        let surface_id = {
+            let model = self.model.lock().ok()?;
+            model.active_workspace()?.focused_surface_id
+        };
+        self.embedded_ghostty_panes.get(&surface_id).cloned()
+    }
+
+    /// Routes a clipboard/search action to the embedded Ghostty surface via its
+    /// keybinding ABI. Returns `true` once routed (the accelerator is consumed)
+    /// even if Ghostty reports the action as a no-op (e.g. copy with no
+    /// selection); `false` only when the embedding library lacks the symbol.
+    fn perform_embedded_action(&self, widget: &gtk::Widget, action: EmbeddedSurfaceAction) -> bool {
+        let Some(embedder) = self.embedded_ghostty.as_ref() else {
+            return false;
+        };
+        match unsafe { embedder.perform_action(widget, action) } {
+            Ok(_) => true,
+            Err(err) => {
+                eprintln!(
+                    "forktty: embedded Ghostty {} unavailable: {err}",
+                    action.as_ghostty_action()
+                );
+                false
+            }
+        }
+    }
+
     // App-wide clipboard accelerators must only affect a terminal that currently
     // owns GTK focus; the model focus can legitimately be stale while dialogs or
     // search entries are active.
     pub(super) fn copy_focused_terminal(&self) -> bool {
+        if let Some(widget) = self.focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::Copy);
+        }
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
@@ -643,6 +694,9 @@ impl TerminalController {
     }
 
     pub(super) fn paste_focused_terminal(&self) -> bool {
+        if let Some(widget) = self.focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::Paste);
+        }
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
@@ -651,6 +705,9 @@ impl TerminalController {
     }
 
     pub(super) fn select_all_focused_terminal(&self) -> bool {
+        if let Some(widget) = self.focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::SelectAll);
+        }
         let Some(widget) = self.gtk_focused_widget() else {
             return false;
         };
@@ -708,10 +765,23 @@ impl TerminalController {
             .find(|(_, widget)| widget.has_terminal_focus())
             .map(|(surface_id, _)| surface_id.clone())
             .or_else(|| {
+                self.embedded_ghostty_panes
+                    .iter()
+                    .find(|(_, widget)| self.embedded_widget_has_focus(widget))
+                    .map(|(surface_id, _)| surface_id.clone())
+            })
+            .or_else(|| {
                 let model = self.model.lock().ok()?;
                 Some(model.active_workspace()?.focused_surface_id)
             });
-        let Some(chrome) = surface_id.and_then(|id| self.chromes.get(&id)) else {
+        let Some(surface_id) = surface_id else {
+            return false;
+        };
+        // Embedded panes have no ForkTTY search bar; open Ghostty's own overlay.
+        if let Some(widget) = self.embedded_ghostty_panes.get(&surface_id) {
+            return self.perform_embedded_action(widget, EmbeddedSurfaceAction::StartSearch);
+        }
+        let Some(chrome) = self.chromes.get(&surface_id) else {
             return false;
         };
         if !chrome.search_supported {
@@ -725,6 +795,9 @@ impl TerminalController {
     // Explicit commands from the command palette intentionally target the active
     // terminal, because the palette itself owns GTK focus while the user chooses.
     pub(super) fn copy_active_terminal(&self) -> bool {
+        if let Some(widget) = self.model_focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::Copy);
+        }
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
@@ -733,6 +806,9 @@ impl TerminalController {
     }
 
     pub(super) fn paste_active_terminal(&self) -> bool {
+        if let Some(widget) = self.model_focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::Paste);
+        }
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };
@@ -741,6 +817,9 @@ impl TerminalController {
     }
 
     pub(super) fn select_all_active_terminal(&self) -> bool {
+        if let Some(widget) = self.model_focused_embedded_pane() {
+            return self.perform_embedded_action(&widget, EmbeddedSurfaceAction::SelectAll);
+        }
         let Some(widget) = self.model_focused_widget() else {
             return false;
         };

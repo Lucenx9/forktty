@@ -67,8 +67,13 @@ the fork before it reaches parity:
   on Ghostty's io thread, so exposing it needs cross-thread plumbing rather than
   a simple getter; it is deferred to a dedicated change.
 
-Search and copy/selection parity also remain to be wired. Use the default
-renderer path for those workflows until the remaining embedding hooks land.
+Copy/paste/select-all/find now reach parity through
+`ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action
+by name on the surface. ForkTTY's `Ctrl+Shift+C/V/A` accelerators and command
+palette route to the focused embedded surface, and find opens Ghostty's native
+search overlay (`start_search`); mouse selection already works natively inside
+the embedded widget. A library built before that symbol degrades to a logged
+no-op.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.
