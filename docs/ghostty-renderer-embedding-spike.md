@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`37a7ad2f2c88728b01baef0d8d3bd18d54a5bff1`.
+`eba2d75a85e4b08d6c9c6b03de1b9f9c0ceaa1a9`.
 
 ## Result
 
@@ -43,6 +43,8 @@ surface embeddable.
 The current fork starts the Ghostty-side API spike with:
 
 ```c
+#include <stddef.h>
+
 typedef struct _GtkWidget GtkWidget;
 typedef struct ghostty_gtk_context_s ghostty_gtk_context_t;
 
@@ -55,6 +57,11 @@ GtkWidget *ghostty_gtk_surface_new(ghostty_gtk_context_t *context);
 GtkWidget *ghostty_gtk_surface_new_with_working_directory(
     ghostty_gtk_context_t *context,
     const char *working_directory
+);
+int ghostty_gtk_surface_send_text(
+    GtkWidget *surface,
+    const char *text,
+    size_t text_len
 );
 void ghostty_gtk_surface_free(GtkWidget *surface);
 ```
@@ -76,7 +83,8 @@ The embedded `GtkApp` is initialized directly inside the heap-owned embedding
 context instead of a temporary stack value, keeping Ghostty's internal runtime
 app pointer stable after context creation. ForkTTY's fork also exposes a
 working-directory surface constructor so a packed Ghostty widget can start in
-the same cwd as the ForkTTY surface.
+the same cwd as the ForkTTY surface, plus a length-delimited text input ABI
+that writes raw bytes to the initialized Ghostty core surface.
 
 ## Next Cut
 
@@ -85,9 +93,9 @@ the same cwd as the ForkTTY surface.
    workflow. That workflow now builds `ghostty-gtk-embed.so` and starts the
    Rust probe under Xvfb with `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`.
 3. Keep the first packed Ghostty pane behind `FORKTTY_GHOSTTY_GTK_PANES=1`.
-   It is a renderer/lifecycle spike only: socket input/read-text, agent capture,
-   search, title/status propagation, and close/pid events still need explicit
-   Ghostty embedding hooks.
+   It remains experimental: socket input is wired through the new text input
+   ABI, while read-text, agent capture, search, title/status propagation, and
+   close/pid events still need explicit Ghostty embedding hooks.
 
 Do not replace ForkTTY's current renderer until step 3 is proven locally.
 

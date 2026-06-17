@@ -123,10 +123,18 @@ impl TerminalController {
             GtkTerminalCommand::SendText { surface_id, text } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.send_text(&text);
-                } else if self.embedded_ghostty_panes.contains_key(&surface_id) {
-                    eprintln!(
-                        "Dropped send-text for experimental embedded Ghostty GTK surface: {surface_id}"
-                    );
+                } else if let Some(widget) = self.embedded_ghostty_panes.get(&surface_id) {
+                    if let Some(embedder) = &self.embedded_ghostty {
+                        if let Err(err) = unsafe { embedder.send_text(widget, &text) } {
+                            eprintln!(
+                                "Failed to send text to experimental embedded Ghostty GTK surface {surface_id}: {err}"
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "Dropped send-text for experimental embedded Ghostty GTK surface without embedder: {surface_id}"
+                        );
+                    }
                 } else {
                     eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
                 }
@@ -332,6 +340,26 @@ impl TerminalController {
             });
         }
         widget.add_controller(focus);
+
+        if embedder.supports_send_text() {
+            if let Some(state) = self.state.clone() {
+                let surface_id = request.surface_id.clone();
+                widget.connect_local("init", false, move |_| {
+                    if let Err(err) = state.terminal.mark_surface_ready(&surface_id) {
+                        eprintln!(
+                            "Failed to mark embedded Ghostty GTK surface ready {surface_id}: {err}"
+                        );
+                    }
+                    None
+                });
+            }
+        } else {
+            eprintln!(
+                "Experimental embedded Ghostty GTK pane {} is not socket-ready: \
+                 library does not export send-text support",
+                request.surface_id
+            );
+        }
 
         if let Ok(mut model) = self.model.lock() {
             let _ = model.clear_status(

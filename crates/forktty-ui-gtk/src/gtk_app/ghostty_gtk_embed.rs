@@ -1,4 +1,4 @@
-use gtk::glib::translate::from_glib_full;
+use gtk::glib::translate::{from_glib_full, ToGlibPtr};
 use gtk4 as gtk;
 use libloading::Library;
 use std::ffi::{c_char, c_void, CString};
@@ -19,6 +19,7 @@ type ContextTick = unsafe extern "C" fn(*mut GhosttyGtkContext) -> i32;
 type SurfaceNew = unsafe extern "C" fn(*mut GhosttyGtkContext) -> *mut gtk::ffi::GtkWidget;
 type SurfaceNewWithWorkingDirectory =
     unsafe extern "C" fn(*mut GhosttyGtkContext, *const c_char) -> *mut gtk::ffi::GtkWidget;
+type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char, usize) -> i32;
 
 pub(super) struct GhosttyGtkEmbedder {
     _library: Library,
@@ -27,6 +28,7 @@ pub(super) struct GhosttyGtkEmbedder {
     context_tick: ContextTick,
     surface_new: SurfaceNew,
     surface_new_with_working_directory: Option<SurfaceNewWithWorkingDirectory>,
+    surface_send_text: Option<SurfaceSendText>,
 }
 
 impl GhosttyGtkEmbedder {
@@ -43,6 +45,8 @@ impl GhosttyGtkEmbedder {
         let surface_new_with_working_directory = unsafe {
             load_optional_symbol(&library, b"ghostty_gtk_surface_new_with_working_directory")
         };
+        let surface_send_text =
+            unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL) };
 
         let context = NonNull::new(unsafe { context_new() })
             .ok_or_else(|| format!("{} returned a null Ghostty context", path.display()))?;
@@ -61,6 +65,7 @@ impl GhosttyGtkEmbedder {
             context_tick,
             surface_new,
             surface_new_with_working_directory,
+            surface_send_text,
         })
     }
 
@@ -93,6 +98,31 @@ impl GhosttyGtkEmbedder {
 
     pub(super) unsafe fn tick(&self) {
         let _ = unsafe { (self.context_tick)(self.context.as_ptr()) };
+    }
+
+    pub(super) fn supports_send_text(&self) -> bool {
+        self.surface_send_text.is_some()
+    }
+
+    pub(super) unsafe fn send_text(&self, widget: &gtk::Widget, text: &str) -> Result<(), String> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        let Some(surface_send_text) = self.surface_send_text else {
+            return Err("Ghostty GTK library does not export send-text support".to_string());
+        };
+        let ok = unsafe {
+            surface_send_text(
+                widget.to_glib_none().0,
+                text.as_bytes().as_ptr().cast(),
+                text.len(),
+            )
+        };
+        if ok == 0 {
+            Err("Ghostty GTK surface rejected send-text".to_string())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -169,6 +199,8 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
         .to_string()
 }
 
+pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
+
 pub(super) fn ghostty_gtk_panes_enabled_from_env() -> bool {
     let Some(value) = std::env::var_os(GHOSTTY_GTK_PANES_ENV) else {
         return false;
@@ -203,5 +235,13 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|path| path.ends_with("vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so")));
+    }
+
+    #[test]
+    fn send_text_symbol_is_declared() {
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL),
+            "ghostty_gtk_surface_send_text"
+        );
     }
 }

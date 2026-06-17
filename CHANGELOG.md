@@ -32,6 +32,9 @@ All notable changes to ForkTTY are documented here.
 - The vendored Ghostty GTK embedding ABI can create surfaces with a working
   directory override so experimental Ghostty panes start in the ForkTTY
   surface cwd.
+- The experimental Ghostty GTK pane mode can now forward ForkTTY socket
+  `send_text` input to embedded Ghostty surfaces after the Ghostty core surface
+  is initialized.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
