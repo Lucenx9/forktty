@@ -55,7 +55,7 @@ exercised) · `n/a`.
 | 7 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | pending |
 | 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | pending |
 | 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): surface lifecycle; **manual**: session restore after app restart | pending |
-| 10 | Socket API | `surfaces` (incl. child PID), `read_text`, `capture_tail`, `send_text` behave as on classic panes | auto (smoke): surfaces/read-screen/send-text; auto (unit): capture_tail tail derivation, child-pid symbol | pending |
+| 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` behave as on classic panes; child PID remains required for port discovery | auto (smoke): surfaces/read-screen/capture-tail/send-text; auto (unit): capture_tail tail derivation, child-pid symbol; **pending**: child PID appears in `surfaces` | pending |
 
 ## Wiring already in place (so the rows above can pass)
 

@@ -72,9 +72,9 @@ All notable changes to ForkTTY are documented here.
   fallback when available and otherwise leave port discovery unavailable for
   embedded panes.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
-  `perform_action` ABI symbols, and its smoke test verifies PID exposure,
-  socket `capture-tail`, and that embedded pane startup did not fall back to the
-  classic renderer.
+  `perform_action` ABI symbols, and its smoke test verifies socket
+  `capture-tail` and that embedded pane startup did not fall back to the
+  classic renderer. PID exposure remains tracked in the embedded parity matrix.
 - The deb and AppImage packagers now install `ghostty-gtk-embed.so` into
   `usr/lib` when `scripts/ghostty-gtk-lib-probe.sh` has built it, so installed
   builds load the embedded Ghostty library via the binary RUNPATH
