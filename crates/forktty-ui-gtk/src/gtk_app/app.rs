@@ -76,7 +76,8 @@ pub(super) fn build_ui(app: &adw::Application) {
     #[cfg(feature = "browser")]
     let (browser_cmd_tx, browser_cmd_rx) =
         async_channel::unbounded::<forktty_core::BrowserCommand>();
-    let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path);
+    let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path)
+        .with_default_feed_store();
     #[cfg(feature = "browser")]
     let state = state.with_browser_cmd(browser_cmd_tx);
     if let Some(message) = config_load_warning.as_deref() {
