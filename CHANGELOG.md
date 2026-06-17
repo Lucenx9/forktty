@@ -76,6 +76,9 @@ All notable changes to ForkTTY are documented here.
 - The socket `surface.list` result, and therefore `forktty surfaces --json`,
   now includes live runtime fields (`shell`, `cols`, `rows`, and `pid` when
   known) in the same rows as the model metadata.
+- Experimental embedded Ghostty panes now back ForkTTY's Agent HUD tail reads
+  and inline agent replies, so agent surfaces keep showing recent output and
+  accepting panel replies when the embedded renderer is enabled.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies socket
   `capture-tail` and that embedded pane startup did not fall back to the

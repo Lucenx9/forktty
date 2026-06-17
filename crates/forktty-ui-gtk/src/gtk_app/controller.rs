@@ -89,6 +89,12 @@ pub(super) fn remove_surface_pid_for_spawn(
     true
 }
 
+pub(super) fn embedded_agent_tail_generation(known: Option<&AgentTailEntry>) -> u64 {
+    known
+        .map(|(generation, _)| generation.saturating_add(1))
+        .unwrap_or(0)
+}
+
 #[cfg(target_os = "linux")]
 pub(super) fn proc_stat_parent_pid(stat: &str) -> Option<u32> {
     let (_, rest) = stat.rsplit_once(") ")?;
@@ -840,27 +846,59 @@ impl TerminalController {
         surface_id: &str,
         known: Option<&AgentTailEntry>,
     ) -> Option<AgentTailEntry> {
-        let widget = self.widgets.get(surface_id)?;
-        let generation = widget.content_generation();
-        if let Some((known_generation, line)) = known {
-            if *known_generation == generation {
-                return Some((generation, line.clone()));
+        if let Some(widget) = self.widgets.get(surface_id) {
+            let generation = widget.content_generation();
+            if let Some((known_generation, line)) = known {
+                if *known_generation == generation {
+                    return Some((generation, line.clone()));
+                }
             }
+            let snapshot = widget
+                .read_text(surface_id, TerminalTextCapture::Tail { lines: 8 }, 4096)
+                .ok()?;
+            return Some((generation, last_nonempty_line(&snapshot.text)));
         }
-        let snapshot = widget
-            .read_text(surface_id, TerminalTextCapture::Tail { lines: 8 }, 4096)
-            .ok()?;
+        let widget = self.embedded_ghostty_panes.get(surface_id)?;
+        let embedder = self.embedded_ghostty.as_ref()?;
+        if !embedder.supports_read_text() {
+            return None;
+        }
+        let generation = embedded_agent_tail_generation(known);
+        let snapshot = unsafe {
+            embedder
+                .read_text_snapshot(
+                    widget,
+                    surface_id,
+                    TerminalTextCapture::Tail { lines: 8 },
+                    4096,
+                )
+                .ok()?
+        };
         Some((generation, last_nonempty_line(&snapshot.text)))
     }
 
     /// Writes `text` to `surface_id`'s terminal as if typed (the caller adds
     /// any trailing `\r`). `false` when the pane has no live widget.
     pub(super) fn send_text_to_surface(&self, surface_id: &str, text: &str) -> bool {
-        let Some(widget) = self.widgets.get(surface_id) else {
+        if let Some(widget) = self.widgets.get(surface_id) {
+            widget.send_text(text);
+            return true;
+        }
+        let Some(widget) = self.embedded_ghostty_panes.get(surface_id) else {
             return false;
         };
-        widget.send_text(text);
-        true
+        let Some(embedder) = self.embedded_ghostty.as_ref() else {
+            return false;
+        };
+        match unsafe { embedder.send_text(widget, text) } {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!(
+                    "Failed to send text to embedded Ghostty GTK surface {surface_id}: {err}"
+                );
+                false
+            }
+        }
     }
 
     /// Reveals the floating search bar of the focused terminal pane. The pane

@@ -1085,6 +1085,15 @@ fn agent_hud_tail_picks_last_nonempty_line() {
 }
 
 #[test]
+fn embedded_agent_hud_tail_generation_advances_without_content_generation() {
+    assert_eq!(embedded_agent_tail_generation(None), 0);
+    let known = (41, Some("old tail".to_string()));
+    assert_eq!(embedded_agent_tail_generation(Some(&known)), 42);
+    let maxed = (u64::MAX, Some("old tail".to_string()));
+    assert_eq!(embedded_agent_tail_generation(Some(&maxed)), u64::MAX);
+}
+
+#[test]
 fn agent_hud_focuses_existing_agent_surface() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());

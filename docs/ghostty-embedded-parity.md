@@ -70,8 +70,9 @@ exercised) · `n/a`.
   surface mailbox message; ForkTTY records it for listening-port discovery and
   the socket `surfaces` PID field, and the Probe requires the initial embedded
   pane to expose a positive PID.
-- **Socket text** — `send_text` / `read_text` (visible + full) ABIs back the
-  socket `send_text`, `read_text`, and `capture_tail` requests.
+- **Socket and agent text** — `send_text` / `read_text` (visible + full) ABIs
+  back the socket `send_text`, `read_text`, and `capture_tail` requests, plus
+  Agent HUD tail reads and inline agent replies.
 
 ## Promotion gate
 
