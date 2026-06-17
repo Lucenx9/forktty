@@ -71,15 +71,18 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 
 ### 2. Workflow State, Goals, And Memory
 
-- **Impact**: high. **Cost**: medium.
+- **Impact**: high. **Cost**: medium. **Status**: control-plane done.
 - OMX/OMC treat project-local `.omx/` / `.omc/` directories as a control plane:
   per-mode/per-session state, goal/spec artifacts, ledgers, session search,
   notepads, project memory, wiki/session capture, and compaction recovery.
-- ForkTTY has process session restore and metadata logs, but no durable
-  workflow-state/artifact layer for agent modes.
-- Scope: provider-neutral state roots, per-surface/session bindings, explicit
-  workflow phases, bounded artifact files, session search/replay, and
-  compaction-resistant notes that can be surfaced through hooks/MCP.
+- ForkTTY now has a provider-neutral, bounded `workflow-v1.json` state store
+  with per-workspace/surface/session/mode bindings, durable goal/status/memory
+  fields, replaceable plan steps, bounded evidence entries, and replayable
+  workflow events. It is exposed through `workflow.*` socket methods,
+  `forktty workflows` / `forktty workflow-*` CLI commands, and MCP
+  `workflow_*` tools for agent use.
+- Remaining scope: richer UI panels, project-local wiki/notepad file trees,
+  deep prompt/spec capture, and parity-side search/navigation surfaces.
 
 ### 3. Team Orchestration Runtime
 

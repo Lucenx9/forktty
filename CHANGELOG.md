@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Workflow control-plane methods (`workflow.list`, `workflow.get`,
+  `workflow.upsert`, `workflow.plan.set`, `workflow.evidence.add`,
+  `workflow.replay`) plus `forktty workflows`/`workflow-*` CLI commands and MCP
+  tools now persist bounded goal, mode/session memory, plan, evidence, and
+  replay events without adding parity UI panels.
 - Repo-local `forktty.json` project actions can now be listed and launched
   through `project.action.list` / `project.action.run` and the `forktty actions`
   / `forktty action-run` CLI. Actions are argv-only and limited to git repos

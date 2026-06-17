@@ -166,6 +166,25 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "feed"
             | "feed-list"
             | "feed:list"
+            | "workflows"
+            | "workflow-list"
+            | "workflow:list"
+            | "workflow.list"
+            | "workflow-get"
+            | "workflow:get"
+            | "workflow.get"
+            | "workflow-upsert"
+            | "workflow:upsert"
+            | "workflow.upsert"
+            | "workflow-plan-set"
+            | "workflow:plan-set"
+            | "workflow.plan.set"
+            | "workflow-evidence-add"
+            | "workflow:evidence-add"
+            | "workflow.evidence.add"
+            | "workflow-replay"
+            | "workflow:replay"
+            | "workflow.replay"
             | "log"
             | "logs"
             | "list-logs"
@@ -1327,6 +1346,25 @@ mod tests {
             "feed",
             "feed-list",
             "feed:list",
+            "workflows",
+            "workflow-list",
+            "workflow:list",
+            "workflow.list",
+            "workflow-get",
+            "workflow:get",
+            "workflow.get",
+            "workflow-upsert",
+            "workflow:upsert",
+            "workflow.upsert",
+            "workflow-plan-set",
+            "workflow:plan-set",
+            "workflow.plan.set",
+            "workflow-evidence-add",
+            "workflow:evidence-add",
+            "workflow.evidence.add",
+            "workflow-replay",
+            "workflow:replay",
+            "workflow.replay",
             "actions",
             "project-actions",
             "project:action:list",

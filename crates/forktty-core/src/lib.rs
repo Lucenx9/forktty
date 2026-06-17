@@ -15,6 +15,7 @@ pub mod project_actions;
 pub mod protocol;
 pub mod session;
 pub mod update;
+pub mod workflow;
 pub mod worktree;
 
 pub use agents::{
@@ -48,3 +49,9 @@ pub use project_actions::{
 };
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};
+pub use workflow::{
+    load_workflows, load_workflows_from_path, now_ms as workflow_now_ms, save_workflows_to_path,
+    update_workflows, update_workflows_at_path, workflow_store_path, WorkflowError, WorkflowEvent,
+    WorkflowEvidence, WorkflowEvidenceInput, WorkflowPlanStep, WorkflowPlanStepInput,
+    WorkflowQuery, WorkflowReplayQuery, WorkflowState, WorkflowStoreData, WorkflowUpsert,
+};
