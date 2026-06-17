@@ -25,6 +25,13 @@ All notable changes to ForkTTY are documented here.
   reference so the Rust probe can parent the surface without premature dispose.
 - The vendored Ghostty GTK embedding context now initializes Ghostty's GTK app
   state in-place so internal runtime pointers stay valid after context setup.
+- A local experimental `FORKTTY_GHOSTTY_GTK_PANES=1` mode can pack the
+  vendored Ghostty GTK widget into terminal panes after
+  `ghostty-gtk-embed.so` has been built; this is a renderer/lifecycle spike,
+  not the default runtime path yet.
+- The vendored Ghostty GTK embedding ABI can create surfaces with a working
+  directory override so experimental Ghostty panes start in the ForkTTY
+  surface cwd.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

@@ -9,6 +9,7 @@ pub(super) struct PaneChrome {
     pub(super) cwd: gtk::Label,
     pub(super) attention_dot: gtk::Box,
     pub(super) search_bar: PaneSearchBar,
+    pub(super) search_supported: bool,
 }
 
 pub(super) type SplitResizeCallback = Rc<dyn Fn(&[String], &[String], f64)>;
@@ -21,6 +22,8 @@ pub(super) struct TerminalController {
     state: Option<SocketAppState>,
     toast_handle: Option<ToastHandle>,
     pub(super) widgets: BTreeMap<String, GhosttyTerminalWidget>,
+    embedded_ghostty_panes: BTreeMap<String, gtk::Widget>,
+    embedded_ghostty: Option<Rc<GhosttyGtkEmbedder>>,
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeSet<String>,
     last_layout_signature: Option<String>,
@@ -91,6 +94,8 @@ impl TerminalController {
             state: None,
             toast_handle: None,
             widgets: BTreeMap::new(),
+            embedded_ghostty_panes: BTreeMap::new(),
+            embedded_ghostty: None,
             chromes: BTreeMap::new(),
             pending_spawns: BTreeSet::new(),
             last_layout_signature: None,
@@ -118,6 +123,10 @@ impl TerminalController {
             GtkTerminalCommand::SendText { surface_id, text } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.send_text(&text);
+                } else if self.embedded_ghostty_panes.contains_key(&surface_id) {
+                    eprintln!(
+                        "Dropped send-text for experimental embedded Ghostty GTK surface: {surface_id}"
+                    );
                 } else {
                     eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
                 }
@@ -128,10 +137,15 @@ impl TerminalController {
                 max_bytes,
                 reply,
             } => {
-                let result = self.widgets.get(&surface_id).map_or_else(
-                    || Err(TerminalError::NotReady(surface_id.clone())),
-                    |widget| widget.read_text(&surface_id, capture, max_bytes),
-                );
+                let result = if let Some(widget) = self.widgets.get(&surface_id) {
+                    widget.read_text(&surface_id, capture, max_bytes)
+                } else if self.embedded_ghostty_panes.contains_key(&surface_id) {
+                    Err(TerminalError::Backend(
+                        "read-text is not supported by embedded Ghostty GTK panes yet".to_string(),
+                    ))
+                } else {
+                    Err(TerminalError::NotReady(surface_id.clone()))
+                };
                 let _ = reply.send(result);
             }
             GtkTerminalCommand::Resize {
@@ -147,6 +161,7 @@ impl TerminalController {
                 if let Some(chrome) = self.chromes.remove(&surface_id) {
                     detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
                 }
+                self.embedded_ghostty_panes.remove(&surface_id);
                 self.widgets.remove(&surface_id);
                 self.surface_pids.borrow_mut().remove(&surface_id);
                 #[cfg(feature = "browser")]
@@ -159,10 +174,25 @@ impl TerminalController {
     }
 
     fn spawn(&mut self, request: SpawnRequest) {
-        if self.widgets.contains_key(&request.surface_id) {
+        if self.widgets.contains_key(&request.surface_id)
+            || self
+                .embedded_ghostty_panes
+                .contains_key(&request.surface_id)
+        {
             return;
         }
         self.pending_spawns.remove(&request.surface_id);
+        if ghostty_gtk_panes_enabled_from_env() {
+            match self.spawn_embedded_ghostty(request.clone()) {
+                Ok(()) => return,
+                Err(err) => {
+                    eprintln!(
+                        "Failed to spawn experimental embedded Ghostty GTK pane {}; falling back: {err}",
+                        request.surface_id
+                    );
+                }
+            }
+        }
         let spawn_model = self.model.clone();
         let spawn_workspace_id = request.workspace_id.clone();
         let spawn_surface_id = request.surface_id.clone();
@@ -282,6 +312,60 @@ impl TerminalController {
                 self.rebuild_layout();
             }
         }
+    }
+
+    fn spawn_embedded_ghostty(&mut self, request: SpawnRequest) -> Result<(), String> {
+        let embedder = self.embedded_ghostty()?;
+        let widget = unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? };
+        widget.set_hexpand(true);
+        widget.set_vexpand(true);
+
+        let focus = gtk::EventControllerFocus::new();
+        {
+            let model = self.model.clone();
+            let surface_id = request.surface_id.clone();
+            focus.connect_enter(move |_| {
+                if let Ok(mut model) = model.lock() {
+                    let _ = model.focus_surface(&surface_id);
+                    let _ = model.mark_surface_unread(&surface_id, false);
+                }
+            });
+        }
+        widget.add_controller(focus);
+
+        if let Ok(mut model) = self.model.lock() {
+            let _ = model.clear_status(
+                &request.workspace_id,
+                Some(&surface_status_key(&request.surface_id)),
+            );
+        }
+        let chrome = build_embedded_ghostty_pane_chrome(
+            &request.surface_id,
+            &widget,
+            self.state.as_ref(),
+            &self.parent_window,
+        );
+        self.chromes.insert(request.surface_id.clone(), chrome);
+        self.embedded_ghostty_panes
+            .insert(request.surface_id.clone(), widget);
+        self.rebuild_layout();
+        Ok(())
+    }
+
+    fn embedded_ghostty(&mut self) -> Result<Rc<GhosttyGtkEmbedder>, String> {
+        if let Some(embedder) = &self.embedded_ghostty {
+            return Ok(Rc::clone(embedder));
+        }
+        let embedder = Rc::new(unsafe { GhosttyGtkEmbedder::load()? });
+        let embedder_for_tick = Rc::clone(&embedder);
+        glib::timeout_add_local(Duration::from_millis(16), move || {
+            unsafe {
+                embedder_for_tick.tick();
+            }
+            glib::ControlFlow::Continue
+        });
+        self.embedded_ghostty = Some(Rc::clone(&embedder));
+        Ok(embedder)
     }
 
     pub(super) fn rebuild_layout(&mut self) {
@@ -490,6 +574,9 @@ impl TerminalController {
         let Some(chrome) = surface_id.and_then(|id| self.chromes.get(&id)) else {
             return false;
         };
+        if !chrome.search_supported {
+            return false;
+        }
         chrome.search_bar.container.set_visible(true);
         chrome.search_bar.entry.grab_focus();
         true
@@ -540,6 +627,8 @@ impl TerminalController {
     fn queue_focus_for_surface(&self, surface_id: &str) {
         if let Some(widget) = self.widgets.get(surface_id) {
             queue_widget_focus(widget.widget());
+        } else if let Some(widget) = self.embedded_ghostty_panes.get(surface_id) {
+            queue_widget_focus(widget.clone());
         } else {
             // Browser panes are not in self.widgets; hand keyboard focus to the
             // pane's focus target so keyboard-only nav reaches the browser.
@@ -672,6 +761,7 @@ impl TerminalController {
                 continue;
             }
             if self.widgets.contains_key(&surface.id)
+                || self.embedded_ghostty_panes.contains_key(&surface.id)
                 || self.pending_spawns.contains(&surface.id)
                 || backend_surface_ids.contains(&surface.id)
             {

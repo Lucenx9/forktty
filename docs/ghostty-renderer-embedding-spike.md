@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`53949b9b3bb6d5f42215ca530ed190874f5f64b9`.
+`37a7ad2f2c88728b01baef0d8d3bd18d54a5bff1`.
 
 ## Result
 
@@ -52,6 +52,10 @@ int ghostty_gtk_context_register(ghostty_gtk_context_t *context);
 int ghostty_gtk_context_tick(ghostty_gtk_context_t *context);
 
 GtkWidget *ghostty_gtk_surface_new(ghostty_gtk_context_t *context);
+GtkWidget *ghostty_gtk_surface_new_with_working_directory(
+    ghostty_gtk_context_t *context,
+    const char *working_directory
+);
 void ghostty_gtk_surface_free(GtkWidget *surface);
 ```
 
@@ -70,7 +74,9 @@ The GTK surface constructor returns a sunk full `GtkWidget*` reference so
 gtk-rs and other embedders can use normal transfer-full ownership.
 The embedded `GtkApp` is initialized directly inside the heap-owned embedding
 context instead of a temporary stack value, keeping Ghostty's internal runtime
-app pointer stable after context creation.
+app pointer stable after context creation. ForkTTY's fork also exposes a
+working-directory surface constructor so a packed Ghostty widget can start in
+the same cwd as the ForkTTY surface.
 
 ## Next Cut
 
@@ -78,8 +84,10 @@ app pointer stable after context creation.
 2. Keep `forktty ghostty-gtk-probe` covered by the manual `Ghostty GTK Probe`
    workflow. That workflow now builds `ghostty-gtk-embed.so` and starts the
    Rust probe under Xvfb with `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`.
-3. Only after the probe renders locally, replace one ForkTTY terminal pane
-   behind a feature flag.
+3. Keep the first packed Ghostty pane behind `FORKTTY_GHOSTTY_GTK_PANES=1`.
+   It is a renderer/lifecycle spike only: socket input/read-text, agent capture,
+   search, title/status propagation, and close/pid events still need explicit
+   Ghostty embedding hooks.
 
 Do not replace ForkTTY's current renderer until step 3 is proven locally.
 

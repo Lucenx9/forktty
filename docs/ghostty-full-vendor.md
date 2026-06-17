@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `53949b9b3bb6d5f42215ca530ed190874f5f64b9`
+- Pin: `37a7ad2f2c88728b01baef0d8d3bd18d54a5bff1`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -23,7 +23,9 @@ artifact skips Ghostty's pre-init GTK environment setup when GTK is already
 initialized by the host process, and avoids standalone-app theme/shell startup
 pieces that are not needed for a packed widget. The embedded GTK app state is
 initialized in the heap-owned embedding context so Ghostty's runtime app
-pointer remains stable after context creation.
+pointer remains stable after context creation. The GTK surface ABI can also
+receive a working directory override so ForkTTY's experimental pane can start
+Ghostty in the surface cwd.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.
@@ -36,6 +38,21 @@ cargo run -p xtask -- check
 scripts/ghostty-gtk-build-probe.sh
 scripts/ghostty-gtk-lib-probe.sh
 ```
+
+After building the shared library, an experimental Ghostty-rendered pane can be
+enabled for local testing with:
+
+```bash
+FORKTTY_GHOSTTY_GTK_PANES=1 \
+FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
+  cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty
+```
+
+This mode is intentionally incomplete: it proves that ForkTTY can pack Ghostty's
+GTK widget in a pane and pass the cwd, but socket `send_text` / `read_text`,
+agent capture, search, and title/status plumbing are not available in embedded
+pane mode yet. Use the default renderer path for those workflows until Ghostty
+exposes the needed embedding hooks.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.

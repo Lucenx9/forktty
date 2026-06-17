@@ -6,12 +6,33 @@ pub(super) fn build_pane_chrome(
     state: Option<&SocketAppState>,
     parent: &adw::ApplicationWindow,
 ) -> PaneChrome {
+    build_pane_chrome_with_content(surface_id, widget.widget(), Some(widget), state, parent)
+}
+
+pub(super) fn build_embedded_ghostty_pane_chrome(
+    surface_id: &str,
+    widget: &gtk::Widget,
+    state: Option<&SocketAppState>,
+    parent: &adw::ApplicationWindow,
+) -> PaneChrome {
+    build_pane_chrome_with_content(surface_id, widget.clone(), None, state, parent)
+}
+
+fn build_pane_chrome_with_content(
+    surface_id: &str,
+    content: gtk::Widget,
+    terminal_widget: Option<&GhosttyTerminalWidget>,
+    state: Option<&SocketAppState>,
+    parent: &adw::ApplicationWindow,
+) -> PaneChrome {
     let pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
     pane.set_hexpand(true);
     pane.set_vexpand(true);
     pane.set_overflow(gtk::Overflow::Hidden);
     pane.add_css_class("terminal-pane");
-    widget.attach_navigation_key_fallback(&pane);
+    if let Some(widget) = terminal_widget {
+        widget.attach_navigation_key_fallback(&pane);
+    }
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("terminal-pane-header");
@@ -60,7 +81,7 @@ pub(super) fn build_pane_chrome(
     let terminal_overlay = gtk::Overlay::new();
     terminal_overlay.set_hexpand(true);
     terminal_overlay.set_vexpand(true);
-    terminal_overlay.set_child(Some(&widget.widget()));
+    terminal_overlay.set_child(Some(&content));
 
     let single_pane_actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     single_pane_actions.add_css_class("single-pane-actions");
@@ -86,12 +107,17 @@ pub(super) fn build_pane_chrome(
     single_pane_actions.append(&single_open_browser);
     terminal_overlay.add_overlay(&single_pane_actions);
 
-    let search_bar = build_pane_search_bar(widget);
+    let search_supported = terminal_widget.is_some();
+    let search_bar = terminal_widget
+        .map(build_pane_search_bar)
+        .unwrap_or_else(build_disabled_pane_search_bar);
     terminal_overlay.add_overlay(&search_bar.container);
 
     if let Some(state) = state {
         install_pane_reorder_dnd(&header, surface_id, state);
-        install_terminal_context_menu(widget, surface_id, state, parent);
+        if let Some(widget) = terminal_widget {
+            install_terminal_context_menu(widget, surface_id, state, parent);
+        }
         let surface_id_owned = surface_id.to_string();
         let state_for_h = state.clone();
         let sid_h = surface_id_owned.clone();
@@ -218,6 +244,7 @@ pub(super) fn build_pane_chrome(
         cwd,
         attention_dot,
         search_bar,
+        search_supported,
     }
 }
 

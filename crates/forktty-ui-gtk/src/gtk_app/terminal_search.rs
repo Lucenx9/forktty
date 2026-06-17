@@ -210,6 +210,13 @@ pub(super) struct PaneSearchBar {
     pub(super) entry: gtk::SearchEntry,
 }
 
+pub(super) fn build_disabled_pane_search_bar() -> PaneSearchBar {
+    let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    container.set_visible(false);
+    let entry = gtk::SearchEntry::new();
+    PaneSearchBar { container, entry }
+}
+
 /// Builds the floating per-pane search bar overlaid on the terminal. Hidden
 /// until `app.find` reveals it; Escape or the close button hides it again and
 /// hands focus back to the terminal.
