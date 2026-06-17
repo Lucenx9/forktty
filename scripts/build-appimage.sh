@@ -151,6 +151,44 @@ copy_vendored_ghostty_shell_integration() {
   cp -a "$source_dir" "$APPDIR/usr/share/ghostty/shell-integration"
 }
 
+copy_vendored_ghostty_terminfo() {
+  command -v tic >/dev/null || {
+    echo "tic is required to package Ghostty terminfo" >&2
+    exit 1
+  }
+  command -v zig >/dev/null || {
+    echo "zig is required to generate Ghostty terminfo" >&2
+    exit 1
+  }
+
+  local source_dir tmp_dir
+  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/terminfo' -type d -print -quit)"
+  if [[ -z "$source_dir" ]]; then
+    echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
+    exit 1
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  ln -s "$source_dir/main.zig" "$tmp_dir/main.zig"
+  ln -s "$source_dir/Source.zig" "$tmp_dir/Source.zig"
+  ln -s "$source_dir/ghostty.zig" "$tmp_dir/ghostty.zig"
+  cat > "$tmp_dir/gen.zig" <<'ZIG'
+const std = @import("std");
+const terminfo = @import("main.zig");
+pub fn main() !void {
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    try terminfo.ghostty.encode(stdout);
+    try stdout.flush();
+}
+ZIG
+
+  zig run "$tmp_dir/gen.zig" > "$tmp_dir/ghostty.terminfo"
+  tic -x -o "$APPDIR/usr/share/terminfo" "$tmp_dir/ghostty.terminfo"
+  rm -rf "$tmp_dir"
+}
+
 copy_forktty_icon_assets() {
   local source_dir="$ROOT_DIR/packaging/linux/icons/hicolor"
   local target_dir="$APPDIR/usr/share/icons/hicolor"
@@ -323,6 +361,7 @@ write_appimage_hicolor_index_theme
 # $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
 copy_vendored_ghostty_shell_integration
+copy_vendored_ghostty_terminfo
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"

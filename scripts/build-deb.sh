@@ -54,6 +54,44 @@ copy_vendored_ghostty_shell_integration() {
   cp -a "$source_dir" "$PKG_ROOT/usr/share/ghostty/shell-integration"
 }
 
+copy_vendored_ghostty_terminfo() {
+  command -v tic >/dev/null || {
+    echo "tic is required to package Ghostty terminfo" >&2
+    exit 1
+  }
+  command -v zig >/dev/null || {
+    echo "zig is required to generate Ghostty terminfo" >&2
+    exit 1
+  }
+
+  local source_dir tmp_dir
+  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/terminfo' -type d -print -quit)"
+  if [[ -z "$source_dir" ]]; then
+    echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
+    exit 1
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  ln -s "$source_dir/main.zig" "$tmp_dir/main.zig"
+  ln -s "$source_dir/Source.zig" "$tmp_dir/Source.zig"
+  ln -s "$source_dir/ghostty.zig" "$tmp_dir/ghostty.zig"
+  cat > "$tmp_dir/gen.zig" <<'ZIG'
+const std = @import("std");
+const terminfo = @import("main.zig");
+pub fn main() !void {
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    try terminfo.ghostty.encode(stdout);
+    try stdout.flush();
+}
+ZIG
+
+  zig run "$tmp_dir/gen.zig" > "$tmp_dir/ghostty.terminfo"
+  tic -x -o "$PKG_ROOT/usr/share/terminfo" "$tmp_dir/ghostty.terminfo"
+  rm -rf "$tmp_dir"
+}
+
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
   exit 1
@@ -103,6 +141,7 @@ install -Dm755 "$GHOSTTY_LIB" "$PKG_ROOT/usr/lib/libghostty-vt.so.0.1.0"
 ln -s libghostty-vt.so.0.1.0 "$PKG_ROOT/usr/lib/libghostty-vt.so.0"
 ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
 copy_vendored_ghostty_shell_integration
+copy_vendored_ghostty_terminfo
 install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
   "$PKG_ROOT/usr/share/icons/hicolor/128x128/apps/forktty.png"

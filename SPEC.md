@@ -67,7 +67,7 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 
 1. A workspace or split creates a surface in `WorkspaceModel`.
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
-3. The Ghostty adapter creates a Ghostty-backed terminal, applies font and color appearance from Ghostty's config plus ForkTTY scrollback settings, and spawns the configured shell. Runtime zoom shortcuts scale the open GTK panes without persisting font settings. When Ghostty shell-integration resources are available, ForkTTY injects the upstream zsh/bash/fish/elvish/nushell startup integration and packages those resources in Linux release artifacts.
+3. The Ghostty adapter creates a Ghostty-backed terminal, applies font and color appearance from Ghostty's config plus ForkTTY scrollback settings, and spawns the configured shell. Runtime zoom shortcuts scale the open GTK panes without persisting font settings. When Ghostty shell-integration resources are available, ForkTTY injects the upstream zsh/bash/fish/elvish/nushell startup integration and packages those resources plus Ghostty terminfo in Linux release artifacts.
 4. Child processes inherit:
    - `TERM=xterm-ghostty` with matching terminfo when available, otherwise `TERM=xterm-256color`
    - `COLORTERM=truecolor`
