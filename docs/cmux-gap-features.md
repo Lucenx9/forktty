@@ -121,11 +121,11 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - cmux reads project config for actions and layout/workspace behavior.
 - OMX/OMC also use project-local workflow files for prompts, skills, agents,
   plans, specs, notes, and runtime configuration.
-- ForkTTY has global config and worktree layout settings, but no repo-local
-  action/skill/workflow manifest.
-- Scope: bounded `forktty.json`, argv-only commands, command-palette entries,
-  socket exposure, per-workspace layout hints, and a deliberately small project
-  guidance manifest before any plugin API.
+- ForkTTY now has a bounded repo-local `forktty.json` action manifest with
+  argv-only commands exposed through socket and CLI.
+- Remaining scope: command-palette entries, per-workspace layout hints, skills,
+  prompts, and a deliberately small project guidance manifest before any plugin
+  API.
 
 ### 7. Right Sidebar, Dock, And Custom Sidebars
 

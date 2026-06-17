@@ -151,6 +151,12 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "worktree:remove"
             | "worktree-merge"
             | "worktree:merge"
+            | "actions"
+            | "project-actions"
+            | "project:action:list"
+            | "action-run"
+            | "project-action-run"
+            | "project:action:run"
             | "set-status"
             | "list-status"
             | "clear-status"
@@ -1242,6 +1248,14 @@ mod tests {
             CliAction::SocketCli(vec![OsString::from("capabilities")])
         );
         assert_eq!(
+            parse::<_, &str>(["forktty", "actions", "--cwd", "/repo"]),
+            CliAction::SocketCli(vec![
+                OsString::from("actions"),
+                OsString::from("--cwd"),
+                OsString::from("/repo")
+            ])
+        );
+        assert_eq!(
             parse::<_, &str>(["forktty", "events", "--no-replay"]),
             CliAction::SocketCli(vec![
                 OsString::from("events"),
@@ -1313,6 +1327,12 @@ mod tests {
             "feed",
             "feed-list",
             "feed:list",
+            "actions",
+            "project-actions",
+            "project:action:list",
+            "action-run",
+            "project-action-run",
+            "project:action:run",
             "top",
         ] {
             assert!(is_socket_cli_command(command), "{command}");
