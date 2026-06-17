@@ -5,6 +5,7 @@ pub mod browser_history;
 pub mod command_safety;
 pub mod config;
 pub mod events;
+pub mod feed;
 pub mod model;
 pub mod notification;
 pub mod ports;
@@ -25,6 +26,7 @@ pub use browser_cmd::{
     BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, MAX_BROWSER_RESULT_BYTES,
 };
 pub use command_safety::{validate_worktree_name, WorktreeNameError};
+pub use feed::{FeedApprovalState, FeedEntry, FeedEntryType, FeedError, FeedStore};
 
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, UpdateConfig};

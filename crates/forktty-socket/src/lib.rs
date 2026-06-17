@@ -4,8 +4,9 @@ use forktty_core::{
     command_safety::is_valid_ssh_host, config, dispatch_notification, normalize_agent_status,
     validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
     AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
-    JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
-    SurfaceKind, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse,
+    LogLevel, NotificationItem, NotificationKind, SplitAxis, StatusHookMetadata, SurfaceKind,
+    WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -93,6 +94,7 @@ pub const METHODS: &[&str] = &[
     "browser.reload",
     "browser.snapshot",
     "events.subscribe",
+    "feed.approval.respond",
     "feed.list",
     "agent.health",
     "agent.list",
@@ -140,6 +142,7 @@ pub const METHODS: &[&str] = &[
 #[cfg(not(feature = "browser"))]
 pub const METHODS: &[&str] = &[
     "events.subscribe",
+    "feed.approval.respond",
     "feed.list",
     "agent.health",
     "agent.list",
@@ -352,6 +355,7 @@ pub struct SocketAppState {
     /// engine is wired (no `browser` feature, or headless), in which case the
     /// browser scripting verbs report unavailable.
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
+    feed_store: Arc<Mutex<Option<FeedStore>>>,
     hook_session_targets: Arc<Mutex<HookSessionTargets>>,
 }
 
@@ -372,6 +376,7 @@ impl SocketAppState {
             notification_dispatch: true,
             events,
             browser_cmd: None,
+            feed_store: Arc::new(Mutex::new(None)),
             hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
         }
     }
@@ -383,6 +388,30 @@ impl SocketAppState {
 
     pub fn with_browser_cmd(mut self, sender: async_channel::Sender<BrowserCommand>) -> Self {
         self.browser_cmd = Some(sender);
+        self
+    }
+
+    pub fn with_default_feed_store(self) -> Self {
+        match FeedStore::open_default() {
+            Ok(Some(store)) => self.with_feed_store(store),
+            Ok(None) => self,
+            Err(err) => {
+                eprintln!("forktty feed history disabled: {err}");
+                self
+            }
+        }
+    }
+
+    pub fn with_feed_store_path(self, path: impl AsRef<Path>) -> Result<Self, String> {
+        FeedStore::open_at(path)
+            .map(|store| self.with_feed_store(store))
+            .map_err(|err| err.to_string())
+    }
+
+    fn with_feed_store(self, store: FeedStore) -> Self {
+        if let Ok(mut feed_store) = self.feed_store.lock() {
+            *feed_store = Some(store);
+        }
         self
     }
 }
@@ -643,7 +672,11 @@ fn spawn_event_tick(state: SocketAppState) {
                 // and surface to all subscribers. Skip the tick instead.
                 Err(std::sync::TryLockError::Poisoned(_)) => continue,
             };
-            for event in events::diff(&prev, &next) {
+            let events = events::diff(&prev, &next);
+            if let Err(err) = record_feed_events(&state, &events) {
+                eprintln!("forktty feed history update failed: {err}");
+            }
+            for event in events {
                 let _ = state.events.send(event);
             }
             prev = next;
@@ -659,6 +692,117 @@ fn current_snapshot(model: &Arc<Mutex<WorkspaceModel>>) -> Snapshot {
         // worse than a possibly mid-mutation (read-only) snapshot, and the
         // next healthy tick re-asserts the true state anyway.
         Err(poisoned) => events::snapshot(&poisoned.into_inner()),
+    }
+}
+
+fn record_feed_events(state: &SocketAppState, events: &[ModelEvent]) -> Result<(), String> {
+    let mut store = state
+        .feed_store
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let Some(store) = store.as_mut() else {
+        return Ok(());
+    };
+    for event in events {
+        if let Some(entry) = feed_entry_from_event(event) {
+            store.append(entry).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn record_feed_entry(state: &SocketAppState, entry: FeedEntry) -> Result<(), String> {
+    let mut store = state
+        .feed_store
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let Some(store) = store.as_mut() else {
+        return Ok(());
+    };
+    store.append(entry).map_err(|err| err.to_string())
+}
+
+fn feed_entry_from_notification(item: &NotificationItem) -> FeedEntry {
+    let is_approval = item.kind == NotificationKind::Prompt;
+    FeedEntry {
+        id: item.id.clone(),
+        entry_type: if is_approval {
+            FeedEntryType::Approval
+        } else {
+            FeedEntryType::Notification
+        },
+        title: item.title.clone(),
+        body: item.body.clone(),
+        workspace_id: item.workspace_id.clone(),
+        surface_id: item.surface_id.clone(),
+        created_at_ms: item.created_at_ms,
+        approval_state: is_approval.then_some(FeedApprovalState::Pending),
+    }
+}
+
+fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
+    match event {
+        ModelEvent::NotificationAdded {
+            id,
+            workspace_id,
+            surface_id,
+            kind,
+            title,
+            body,
+            created_at_ms,
+        } => Some(feed_entry_from_notification(&NotificationItem {
+            id: id.clone(),
+            title: title.clone(),
+            body: body.clone(),
+            kind: *kind,
+            created_at_ms: *created_at_ms,
+            read: false,
+            workspace_id: workspace_id.clone(),
+            surface_id: surface_id.clone(),
+            terminal_metadata: None,
+        })),
+        ModelEvent::StatusChanged {
+            workspace_id,
+            key,
+            label,
+            value: Some(value),
+        } => {
+            let now = u128::from(current_unix_epoch_ms());
+            Some(FeedEntry {
+                id: format!("feed:{now}:{workspace_id}:status:{key}"),
+                entry_type: FeedEntryType::Status,
+                title: label.clone(),
+                body: value.clone(),
+                workspace_id: Some(workspace_id.clone()),
+                surface_id: None,
+                created_at_ms: now,
+                approval_state: None,
+            })
+        }
+        ModelEvent::ProgressChanged {
+            workspace_id,
+            key,
+            label,
+            value: Some(value),
+            total,
+        } => {
+            let now = u128::from(current_unix_epoch_ms());
+            let body = match total {
+                Some(total) => format!("{}/{}", feed_number(*value), feed_number(*total)),
+                None => feed_number(*value),
+            };
+            Some(FeedEntry {
+                id: format!("feed:{now}:{workspace_id}:progress:{key}"),
+                entry_type: FeedEntryType::Progress,
+                title: label.clone(),
+                body,
+                workspace_id: Some(workspace_id.clone()),
+                surface_id: None,
+                created_at_ms: now,
+                approval_state: None,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -693,6 +837,29 @@ pub async fn dispatch(
             "version": env!("CARGO_PKG_VERSION"),
             "methods": METHODS,
         })),
+        "feed.approval.respond" => {
+            let id = required_trimmed_string(&params, "id")?;
+            ensure_max_text_size("id", id)?;
+            let decision = feed_approval_decision_from_params(&params)?;
+            let mut store = state
+                .feed_store
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let Some(store) = store.as_mut() else {
+                return Err(DispatchError::Other(
+                    "Feed history is not available".to_string(),
+                ));
+            };
+            store
+                .decide_approval(id, decision)
+                .map(|entry| json!(entry))
+                .map_err(|err| match err {
+                    forktty_core::FeedError::NotFound(_) => {
+                        DispatchError::NotFound("feed entry".to_string())
+                    }
+                    other => DispatchError::Other(other.to_string()),
+                })
+        }
         "feed.list" => {
             let model = state
                 .model
@@ -708,6 +875,11 @@ pub async fn dispatch(
                 Err(err) => return Err(err),
             };
             let limit = optional_u64_param(&params, "limit")?.unwrap_or(50).min(200) as usize;
+            if let Ok(store) = state.feed_store.lock() {
+                if let Some(store) = store.as_ref() {
+                    return Ok(json!(store.list(workspace_id.as_deref(), limit)));
+                }
+            }
             Ok(json!(feed_list(&model, workspace_id.as_deref(), limit)))
         }
         "agent.health" => {
@@ -1647,6 +1819,9 @@ pub async fn dispatch(
             if state.notification_dispatch {
                 dispatch_notification_with_loaded_config(&item);
             }
+            if let Err(err) = record_feed_entry(state, feed_entry_from_notification(&item)) {
+                eprintln!("forktty feed history update failed: {err}");
+            }
             Ok(json!(item))
         }
         "notification.list" => {
@@ -2388,6 +2563,16 @@ fn feed_number(value: f64) -> String {
         format!("{value:.0}")
     } else {
         value.to_string()
+    }
+}
+
+fn feed_approval_decision_from_params(params: &Value) -> Result<FeedApprovalState, DispatchError> {
+    match required_trimmed_string(params, "decision")? {
+        "approve" | "approved" => Ok(FeedApprovalState::Approved),
+        "deny" | "denied" => Ok(FeedApprovalState::Denied),
+        other => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter decision: expected approve or deny, got {other}"
+        ))),
     }
 }
 
@@ -6186,6 +6371,88 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item["type"] == "progress" && item["title"] == "Build"));
+    }
+
+    #[tokio::test]
+    async fn feed_list_reads_persisted_feed_entries_and_records_approval_decisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (state, _) = test_state();
+        let state = state.with_feed_store_path(&feed_path).unwrap();
+        let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+        {
+            let prev = current_snapshot(&state.model);
+            state.model.lock().unwrap().create_notification(
+                "Permission",
+                "Run command?",
+                NotificationKind::Prompt,
+                Some(workspace_id.clone()),
+                None,
+            );
+            let next = current_snapshot(&state.model);
+            record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
+        }
+
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+        let approval_id = feed[0]["id"].as_str().unwrap();
+        assert_eq!(feed[0]["type"], "approval");
+        assert_eq!(feed[0]["approval_state"], "pending");
+
+        let decided = dispatch(
+            &state,
+            "feed.approval.respond",
+            json!({"id": approval_id, "decision": "approved"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(decided["approval_state"], "approved");
+        assert_eq!(
+            forktty_core::FeedStore::open_at(&feed_path)
+                .unwrap()
+                .list(None, 10)[0]
+                .approval_state,
+            Some(forktty_core::FeedApprovalState::Approved)
+        );
+    }
+
+    #[tokio::test]
+    async fn feed_list_sees_socket_created_notification_without_waiting_for_event_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (state, _) = test_state();
+        let state = state.with_feed_store_path(&feed_path).unwrap();
+        let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+        dispatch(
+            &state,
+            "notification.create",
+            json!({
+                "workspace_id": workspace_id,
+                "kind": "prompt",
+                "title": "Permission",
+                "body": "Run command?"
+            }),
+        )
+        .await
+        .unwrap();
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(feed[0]["type"], "approval");
+        assert_eq!(feed[0]["title"], "Permission");
+        assert_eq!(feed[0]["approval_state"], "pending");
     }
 
     #[tokio::test]
