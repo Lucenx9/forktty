@@ -19,7 +19,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config git \
+            meson ninja-build python3 python3-gi \
             libgtk-4-dev libadwaita-1-dev
+
+      - name: Install blueprint-compiler
+        run: |
+          blueprint_compiler_commit=31b62c24a72c1670d2d93dcdf2d130f1ae12778e
+          git clone --filter=blob:none --no-checkout \
+            https://gitlab.gnome.org/GNOME/blueprint-compiler.git \
+            /tmp/blueprint-compiler
+          git -C /tmp/blueprint-compiler fetch --depth 1 origin "${blueprint_compiler_commit}"
+          git -C /tmp/blueprint-compiler checkout --detach "${blueprint_compiler_commit}"
+          meson setup /tmp/blueprint-compiler-build /tmp/blueprint-compiler --prefix=/usr
+          sudo ninja -C /tmp/blueprint-compiler-build install
+          blueprint-compiler --version
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
