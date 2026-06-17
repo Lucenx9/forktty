@@ -63,14 +63,13 @@ require Ghostty to own the whole application window.
 ## Next Cut
 
 1. Keep the `emit-gtk-lib` fork branch compiling on Ubuntu CI.
-2. Run `forktty ghostty-gtk-probe` with `FORKTTY_GHOSTTY_GTK_LIB` pointing at a
-   built `ghostty-gtk-embed.so` to exercise widget creation in isolation.
-3. Add a reproducible CI or xvfb smoke test for the Rust probe once the built
-   `ghostty-gtk-embed.so` is available as an artifact.
-4. Only after the probe renders locally, replace one ForkTTY terminal pane behind a
-   feature flag.
+2. Keep `forktty ghostty-gtk-probe` covered by the manual `Ghostty GTK Probe`
+   workflow. That workflow now builds `ghostty-gtk-embed.so` and starts the
+   Rust probe under Xvfb with `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`.
+3. Only after the probe renders locally, replace one ForkTTY terminal pane
+   behind a feature flag.
 
-Do not replace ForkTTY's current renderer until step 4 is proven locally.
+Do not replace ForkTTY's current renderer until step 3 is proven locally.
 
 ## Build Probe
 
@@ -88,6 +87,14 @@ The GTK widget probe is intentionally separate from the normal app launch:
 ```bash
 scripts/ghostty-gtk-lib-probe.sh
 FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
+  cargo run -p forktty-ui-gtk -- ghostty-gtk-probe
+```
+
+For a non-interactive probe smoke test, set an auto-exit delay:
+
+```bash
+FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
+FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS=750 \
   cargo run -p forktty-ui-gtk -- ghostty-gtk-probe
 ```
 

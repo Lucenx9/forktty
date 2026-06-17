@@ -13,6 +13,7 @@ use std::time::Duration;
 use super::{install_gtk_runtime_defaults, APP_ID};
 
 const GHOSTTY_GTK_LIB_ENV: &str = "FORKTTY_GHOSTTY_GTK_LIB";
+const GHOSTTY_GTK_PROBE_EXIT_AFTER_MS_ENV: &str = "FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS";
 
 #[repr(C)]
 struct GhosttyGtkContext(c_void);
@@ -24,15 +25,36 @@ type ContextTick = unsafe extern "C" fn(*mut GhosttyGtkContext) -> i32;
 type SurfaceNew = unsafe extern "C" fn(*mut GhosttyGtkContext) -> *mut gtk::ffi::GtkWidget;
 
 pub(super) fn run() -> i32 {
+    let auto_exit_delay = match probe_auto_exit_delay() {
+        Ok(delay) => delay,
+        Err(err) => {
+            eprintln!("forktty ghostty-gtk-probe: {err}");
+            return 2;
+        }
+    };
+    let exit_status = Rc::new(Cell::new(0));
+    let exit_status_for_activate = Rc::clone(&exit_status);
+
     install_gtk_runtime_defaults();
     let app = adw::Application::builder()
         .application_id(format!("{APP_ID}.GhosttyGtkProbe"))
         .build();
-    app.connect_activate(build_probe_ui);
-    app.run().into()
+    app.connect_activate(move |app| {
+        build_probe_ui(app, auto_exit_delay, Rc::clone(&exit_status_for_activate));
+    });
+    let gtk_status: i32 = app.run().into();
+    if gtk_status == 0 {
+        exit_status.get()
+    } else {
+        gtk_status
+    }
 }
 
-fn build_probe_ui(app: &adw::Application) {
+fn build_probe_ui(
+    app: &adw::Application,
+    auto_exit_delay: Option<Duration>,
+    exit_status: Rc<Cell<i32>>,
+) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("ForkTTY Ghostty GTK Probe")
@@ -67,12 +89,28 @@ fn build_probe_ui(app: &adw::Application) {
                     glib::Propagation::Proceed
                 });
             }
-            Err(err) => window.set_content(Some(&error_content(&err))),
+            Err(err) => {
+                exit_status.set(1);
+                window.set_content(Some(&error_content(&err)));
+            }
         },
-        Err(err) => window.set_content(Some(&error_content(&err))),
+        Err(err) => {
+            exit_status.set(1);
+            window.set_content(Some(&error_content(&err)));
+        }
     }
 
+    schedule_auto_exit(app, auto_exit_delay);
     window.present();
+}
+
+fn schedule_auto_exit(app: &adw::Application, delay: Option<Duration>) {
+    if let Some(delay) = delay {
+        let app = app.clone();
+        glib::timeout_add_local_once(delay, move || {
+            app.quit();
+        });
+    }
 }
 
 fn error_content(message: &str) -> gtk::Box {
@@ -210,6 +248,32 @@ fn symbol_name(name: &[u8]) -> String {
         .to_string()
 }
 
+fn probe_auto_exit_delay() -> Result<Option<Duration>, String> {
+    let Some(value) = std::env::var_os(GHOSTTY_GTK_PROBE_EXIT_AFTER_MS_ENV) else {
+        return Ok(None);
+    };
+    let value = value.to_str().ok_or_else(|| {
+        format!("{GHOSTTY_GTK_PROBE_EXIT_AFTER_MS_ENV} must be UTF-8 milliseconds")
+    })?;
+    parse_auto_exit_delay(value)
+        .map_err(|err| format!("{GHOSTTY_GTK_PROBE_EXIT_AFTER_MS_ENV} {err}"))
+}
+
+fn parse_auto_exit_delay(value: &str) -> Result<Option<Duration>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let millis = value
+        .parse::<u64>()
+        .map_err(|_| "must be an integer number of milliseconds".to_string())?;
+    if millis == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(Duration::from_millis(millis)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +295,24 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|path| path.ends_with("vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so")));
+    }
+
+    #[test]
+    fn parse_auto_exit_delay_accepts_positive_millis() {
+        assert_eq!(
+            parse_auto_exit_delay("250").unwrap(),
+            Some(Duration::from_millis(250))
+        );
+    }
+
+    #[test]
+    fn parse_auto_exit_delay_disables_on_zero_or_empty() {
+        assert_eq!(parse_auto_exit_delay("0").unwrap(), None);
+        assert_eq!(parse_auto_exit_delay("").unwrap(), None);
+    }
+
+    #[test]
+    fn parse_auto_exit_delay_rejects_invalid_values() {
+        assert!(parse_auto_exit_delay("soon").is_err());
     }
 }

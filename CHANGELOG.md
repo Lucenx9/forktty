@@ -15,6 +15,10 @@ All notable changes to ForkTTY are documented here.
   GTK build used before attempting the Linux renderer embedding patch.
 - A manual `Ghostty GTK Probe` GitHub Actions workflow can run that upstream
   Ghostty GTK build on Ubuntu without blocking the normal ForkTTY CI.
+- `forktty ghostty-gtk-probe` can auto-exit with
+  `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`, and the manual Ghostty GTK Probe
+  workflow now smoke-tests the Rust GTK widget bridge under Xvfb after building
+  the vendored Ghostty GTK embedding library.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
