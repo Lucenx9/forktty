@@ -37,31 +37,6 @@ fn gdk_disable_with_ghostty_opengl_defaults(value: &str) -> String {
     entries.join(",")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::gdk_disable_with_ghostty_opengl_defaults;
-
-    #[test]
-    fn gdk_disable_defaults_force_desktop_opengl_for_embedded_ghostty() {
-        assert_eq!(
-            gdk_disable_with_ghostty_opengl_defaults(""),
-            "gles-api,vulkan"
-        );
-    }
-
-    #[test]
-    fn gdk_disable_defaults_preserve_existing_entries_without_duplicates() {
-        assert_eq!(
-            gdk_disable_with_ghostty_opengl_defaults("debug, vulkan"),
-            "debug,vulkan,gles-api"
-        );
-        assert_eq!(
-            gdk_disable_with_ghostty_opengl_defaults("gles-api,vulkan"),
-            "gles-api,vulkan"
-        );
-    }
-}
-
 pub(super) fn build_ui(app: &adw::Application) {
     // ForkTTY is single-instance: a second launch of the binary delegates to
     // this process over DBus and fires `activate` again. Without this guard
@@ -1464,4 +1439,29 @@ pub(super) fn install_global_quake_shortcut(
         }
         glib::ControlFlow::Continue
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gdk_disable_with_ghostty_opengl_defaults;
+
+    #[test]
+    fn gdk_disable_defaults_force_desktop_opengl_for_embedded_ghostty() {
+        assert_eq!(
+            gdk_disable_with_ghostty_opengl_defaults(""),
+            "gles-api,vulkan"
+        );
+    }
+
+    #[test]
+    fn gdk_disable_defaults_preserve_existing_entries_without_duplicates() {
+        assert_eq!(
+            gdk_disable_with_ghostty_opengl_defaults("debug, vulkan"),
+            "debug,vulkan,gles-api"
+        );
+        assert_eq!(
+            gdk_disable_with_ghostty_opengl_defaults("gles-api,vulkan"),
+            "gles-api,vulkan"
+        );
+    }
 }
