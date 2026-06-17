@@ -105,6 +105,7 @@ pub(super) struct GhosttyTerminalWidget {
     // Agent TUIs often grab mouse tracking. For them, a short click should
     // still reach the app, while a real drag should select text locally.
     local_selection_on_mouse_drag: Rc<Cell<bool>>,
+    selection_clear_on_typing: bool,
 }
 
 #[derive(Default)]
@@ -185,6 +186,7 @@ impl GhosttyTerminalWidget {
             config, font,
         )));
         let mouse_scroll_multipliers = terminal_mouse_scroll_multipliers_for_config(config);
+        let selection_clear_on_typing = terminal_selection_clear_on_typing_for_config(config);
         let im_context = gtk::IMMulticontext::new();
         im_context.set_client_widget(Some(&drawing_area));
         {
@@ -253,7 +255,13 @@ impl GhosttyTerminalWidget {
                     // Typing snaps the blink phase to visible so the cursor
                     // never disappears mid-keystroke.
                     cursor_blink_visible.set(true);
-                    write_terminal_input(&runtime, &selection, &drawing_area, input);
+                    write_terminal_input(
+                        &runtime,
+                        &selection,
+                        &drawing_area,
+                        input,
+                        selection_clear_on_typing,
+                    );
                 }
             });
             let cursor_blink_visible_for_key = cursor_blink_visible.clone();
@@ -289,7 +297,13 @@ impl GhosttyTerminalWidget {
                     return glib::Propagation::Proceed;
                 };
                 cursor_blink_visible_for_key.set(true);
-                write_terminal_input(&runtime, &selection_for_key, &drawing_area, input);
+                write_terminal_input(
+                    &runtime,
+                    &selection_for_key,
+                    &drawing_area,
+                    input,
+                    selection_clear_on_typing,
+                );
                 glib::Propagation::Stop
             });
             key_controller.connect_key_released({
@@ -965,6 +979,7 @@ impl GhosttyTerminalWidget {
             search_index: Rc::new(Cell::new(None)),
             search_cache: Rc::new(RefCell::new(None)),
             search_invalidated: Rc::new(SearchInvalidatedSlot::default()),
+            selection_clear_on_typing,
         };
         widget.attach_cursor_blink_timer();
         widget
@@ -1014,6 +1029,7 @@ impl GhosttyTerminalWidget {
             search_invalidated: Rc::downgrade(&self.search_invalidated),
             hover_link: Rc::downgrade(&self.hover_link),
             local_selection_on_mouse_drag: Rc::downgrade(&self.local_selection_on_mouse_drag),
+            selection_clear_on_typing: self.selection_clear_on_typing,
         }
     }
 
@@ -1358,6 +1374,7 @@ pub(super) struct WeakGhosttyTerminalWidget {
     search_invalidated: std::rc::Weak<SearchInvalidatedSlot>,
     hover_link: std::rc::Weak<RefCell<Option<HoverLink>>>,
     local_selection_on_mouse_drag: std::rc::Weak<Cell<bool>>,
+    selection_clear_on_typing: bool,
 }
 
 impl WeakGhosttyTerminalWidget {
@@ -1379,6 +1396,7 @@ impl WeakGhosttyTerminalWidget {
             search_invalidated: self.search_invalidated.upgrade()?,
             hover_link: self.hover_link.upgrade()?,
             local_selection_on_mouse_drag: self.local_selection_on_mouse_drag.upgrade()?,
+            selection_clear_on_typing: self.selection_clear_on_typing,
         })
     }
 }
@@ -2449,9 +2467,10 @@ fn route_middle_click(
 fn kick_viewport_to_bottom(
     runtime: &Rc<RefCell<TerminalRuntime>>,
     selection: &Rc<RefCell<TerminalSelection>>,
+    clear_selection: bool,
 ) -> Result<bool, TerminalError> {
     let scrolled = runtime.borrow_mut().scroll_viewport_to_bottom()?;
-    if scrolled {
+    if scrolled && clear_selection {
         selection.borrow_mut().clear();
     }
     Ok(scrolled)
@@ -2514,7 +2533,7 @@ fn paste_clipboard_text(
                 return;
             }
         };
-        if let Err(err) = kick_viewport_to_bottom(&runtime, &selection) {
+        if let Err(err) = kick_viewport_to_bottom(&runtime, &selection, true) {
             eprintln!("Failed to scroll terminal to bottom: {err}");
         }
         if let Err(err) = runtime.borrow_mut().paste_text(text.as_str()) {
@@ -2566,8 +2585,9 @@ fn write_terminal_input(
     selection: &Rc<RefCell<TerminalSelection>>,
     drawing_area: &gtk::DrawingArea,
     input: TerminalInput,
+    clear_selection: bool,
 ) {
-    if let Err(err) = kick_viewport_to_bottom(runtime, selection) {
+    if let Err(err) = kick_viewport_to_bottom(runtime, selection, clear_selection) {
         eprintln!("Failed to scroll terminal to bottom: {err}");
     }
     let result = match input {
@@ -2622,7 +2642,13 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
     }
 
     fn write_input(&self, input: TerminalInput) {
-        write_terminal_input(&self.runtime, &self.selection, &self.drawing_area, input);
+        write_terminal_input(
+            &self.runtime,
+            &self.selection,
+            &self.drawing_area,
+            input,
+            self.selection_clear_on_typing,
+        );
     }
 
     fn grab_terminal_focus(&self) {
@@ -3465,7 +3491,7 @@ mod selection_tests {
             .extend_drag(SelectionPoint { row: 0, col: 3 });
         selection.borrow_mut().end_drag();
 
-        kick_viewport_to_bottom(&runtime, &selection).unwrap();
+        kick_viewport_to_bottom(&runtime, &selection, true).unwrap();
 
         let viewport = runtime.borrow().viewport_position().unwrap();
         assert_eq!(viewport.top + viewport.rows, viewport.total);
@@ -3481,7 +3507,40 @@ mod selection_tests {
             .borrow_mut()
             .extend_drag(SelectionPoint { row: 0, col: 3 });
         selection.borrow_mut().end_drag();
-        kick_viewport_to_bottom(&runtime, &selection).unwrap();
+        kick_viewport_to_bottom(&runtime, &selection, true).unwrap();
+        assert!(selection.borrow().normalized_range().is_some());
+    }
+
+    #[test]
+    fn kick_viewport_can_keep_selection_for_ghostty_config() {
+        let request = SpawnRequest {
+            surface_id: "surface-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            shell: "/bin/sh".to_string(),
+            args: vec!["-lc".to_string(), "sleep 10".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        };
+        let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
+        runtime
+            .feed_pty_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix")
+            .unwrap();
+        runtime.scroll_viewport_lines(-2).unwrap();
+        let runtime = Rc::new(RefCell::new(runtime));
+        let selection = Rc::new(RefCell::new(TerminalSelection::default()));
+        selection
+            .borrow_mut()
+            .begin_drag(SelectionPoint { row: 0, col: 0 });
+        selection
+            .borrow_mut()
+            .extend_drag(SelectionPoint { row: 0, col: 3 });
+        selection.borrow_mut().end_drag();
+
+        kick_viewport_to_bottom(&runtime, &selection, false).unwrap();
+
+        let viewport = runtime.borrow().viewport_position().unwrap();
+        assert_eq!(viewport.top + viewport.rows, viewport.total);
         assert!(selection.borrow().normalized_range().is_some());
     }
 

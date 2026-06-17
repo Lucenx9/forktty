@@ -83,6 +83,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) image_storage_limit_bytes: Option<u64>,
     pub(super) cursor_style: Option<TerminalCursorStyle>,
     pub(super) cursor_style_blink: Option<bool>,
+    pub(super) selection_clear_on_typing: Option<bool>,
     pub(super) cursor_opacity: f64,
     pub(super) faint_opacity: f64,
     pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
@@ -139,6 +140,18 @@ pub(super) fn terminal_cursor_style_sequence_for_config(
 ) -> Option<Vec<u8>> {
     let appearance = ghostty_terminal_appearance_for_config(config);
     cursor_style_sequence_for_appearance(&appearance)
+}
+
+pub(super) fn terminal_selection_clear_on_typing_for_config(config: &config::AppConfig) -> bool {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_selection_clear_on_typing_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_selection_clear_on_typing_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> bool {
+    appearance.selection_clear_on_typing.unwrap_or(true)
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -493,6 +506,7 @@ impl Default for GhosttyTerminalAppearance {
             image_storage_limit_bytes: None,
             cursor_style: None,
             cursor_style_blink: None,
+            selection_clear_on_typing: None,
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             mouse_scroll_multipliers: MouseScrollMultipliers::default(),
@@ -530,6 +544,9 @@ impl GhosttyTerminalAppearance {
             }
             "cursor-style" => self.apply_cursor_style(&value),
             "cursor-style-blink" => self.apply_cursor_style_blink(&value),
+            "selection-clear-on-typing" => {
+                self.selection_clear_on_typing = parse_ghostty_optional_bool(&value)
+            }
             "background" => {
                 set_color(&mut self.colors.background, &value);
             }
@@ -1185,5 +1202,21 @@ mod tests {
         assert_eq!(reset.cursor_style, None);
         assert_eq!(reset.cursor_style_blink, None);
         assert_eq!(cursor_style_sequence_for_appearance(&reset), None);
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_selection_clear_on_typing() {
+        let config = config::AppConfig::default();
+        let appearance = ghostty_terminal_appearance_from_text("selection-clear-on-typing = false");
+
+        assert!(!terminal_selection_clear_on_typing_for_appearance(
+            &config,
+            &appearance
+        ));
+
+        let reset = ghostty_terminal_appearance_from_text("selection-clear-on-typing =");
+        assert!(terminal_selection_clear_on_typing_for_appearance(
+            &config, &reset
+        ));
     }
 }

@@ -58,6 +58,8 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `cursor-style` and `cursor-style-blink` now seed the GTK terminal
   cursor default for DECSCUSR-backed cursor styles.
 - Ghostty `faint-opacity` now controls SGR faint text opacity in GTK terminal panes.
+- Ghostty `selection-clear-on-typing` now controls whether typing after a
+  scroll-to-bottom keeps or clears a finished terminal selection.
 - Ghostty `mouse-scroll-multiplier` now controls GTK terminal precision and discrete scroll distance.
 - Ghostty `adjust-cell-width` and `adjust-cell-height` now adjust GTK terminal cell metrics using pixel or percentage values.
 - Ghostty `unfocused-split-opacity` and `unfocused-split-fill` now control ForkTTY's inactive split dim overlay.
