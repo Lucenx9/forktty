@@ -705,11 +705,22 @@ impl TerminalController {
 
     fn set_terminal_zoom_level(&mut self, zoom_level: i32) {
         let zoom_level = next_terminal_zoom_level(zoom_level, 0);
-        if self.terminal_zoom_level.replace(zoom_level) == zoom_level {
+        let previous_zoom_level = self.terminal_zoom_level.replace(zoom_level);
+        if previous_zoom_level == zoom_level {
             return;
         }
         for widget in self.widgets.values() {
             widget.set_zoom_level(zoom_level);
+        }
+        let embedded_action = if zoom_level == 0 {
+            EmbeddedSurfaceAction::ResetFontSize
+        } else if zoom_level > previous_zoom_level {
+            EmbeddedSurfaceAction::IncreaseFontSize
+        } else {
+            EmbeddedSurfaceAction::DecreaseFontSize
+        };
+        for widget in self.embedded_ghostty_panes.values() {
+            let _ = self.perform_embedded_action(widget, embedded_action);
         }
     }
 

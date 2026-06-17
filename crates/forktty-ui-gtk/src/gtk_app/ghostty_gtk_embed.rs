@@ -40,6 +40,9 @@ pub(super) enum EmbeddedSurfaceAction {
     Paste,
     SelectAll,
     StartSearch,
+    IncreaseFontSize,
+    DecreaseFontSize,
+    ResetFontSize,
 }
 
 impl EmbeddedSurfaceAction {
@@ -49,6 +52,9 @@ impl EmbeddedSurfaceAction {
             EmbeddedSurfaceAction::Paste => "paste_from_clipboard",
             EmbeddedSurfaceAction::SelectAll => "select_all",
             EmbeddedSurfaceAction::StartSearch => "start_search",
+            EmbeddedSurfaceAction::IncreaseFontSize => "increase_font_size:1",
+            EmbeddedSurfaceAction::DecreaseFontSize => "decrease_font_size:1",
+            EmbeddedSurfaceAction::ResetFontSize => "reset_font_size",
         }
     }
 }
@@ -575,6 +581,18 @@ mod tests {
         assert_eq!(
             EmbeddedSurfaceAction::StartSearch.as_ghostty_action(),
             "start_search"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::IncreaseFontSize.as_ghostty_action(),
+            "increase_font_size:1"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::DecreaseFontSize.as_ghostty_action(),
+            "decrease_font_size:1"
+        );
+        assert_eq!(
+            EmbeddedSurfaceAction::ResetFontSize.as_ghostty_action(),
+            "reset_font_size"
         );
     }
 

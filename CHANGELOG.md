@@ -62,6 +62,9 @@ All notable changes to ForkTTY are documented here.
   keybinding action by name (e.g. `copy_to_clipboard`, `start_search`); older
   libraries without the symbol degrade to a logged no-op. Mouse selection
   already works natively inside the embedded surface.
+- Experimental embedded Ghostty panes now route ForkTTY zoom actions to
+  Ghostty's native font-size actions, so `Ctrl+plus`, `Ctrl+minus`, reset zoom,
+  and command-palette zoom affect embedded panes as well as classic panes.
 - Experimental embedded Ghostty panes now expose their child PID, so
   listening-port discovery and the socket `surfaces` PID field reach parity with
   classic panes. The embedding ABI gains `ghostty_gtk_surface_child_pid`, fed by
