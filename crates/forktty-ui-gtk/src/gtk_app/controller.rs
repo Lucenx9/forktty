@@ -238,7 +238,10 @@ impl TerminalController {
             return;
         }
         self.pending_spawns.remove(&request.surface_id);
-        if ghostty_gtk_panes_enabled_from_env() {
+        let embedded_opt_in = config::load_config()
+            .map(|config| config.appearance.embedded_ghostty)
+            .unwrap_or(false);
+        if ghostty_gtk_panes_enabled(embedded_opt_in) {
             match self.spawn_embedded_ghostty(request.clone()) {
                 Ok(()) => return,
                 Err(err) => {

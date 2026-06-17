@@ -717,7 +717,9 @@ fn collect_report(scope: DoctorScope) -> DoctorReport {
         #[cfg(feature = "gtk-ghostty")]
         append_embedded_ghostty_lib_warnings(
             &mut warnings,
-            crate::gtk_app::ghostty_gtk_embed::ghostty_gtk_panes_enabled_from_env(),
+            crate::gtk_app::ghostty_gtk_embed::ghostty_gtk_panes_enabled(
+                resolve_embedded_ghostty_opt_in(config_path.as_deref()),
+            ),
             &crate::gtk_app::ghostty_gtk_embed::library_candidates(),
         );
     }
@@ -985,10 +987,12 @@ fn append_appimage_runtime_warnings(
     }
 }
 
-/// Warns when embedded Ghostty panes are opted in (`FORKTTY_GHOSTTY_GTK_PANES`)
-/// but `ghostty-gtk-embed.so` is on none of the loader's candidate paths, so the
-/// panes would fail to load. Silent otherwise: the default renderer never needs
-/// the library, so a normal install must not see this warning.
+/// Warns when embedded Ghostty panes are opted in (via the
+/// `appearance.embedded_ghostty` config option or the `FORKTTY_GHOSTTY_GTK_PANES`
+/// environment variable) but `ghostty-gtk-embed.so` is on none of the loader's
+/// candidate paths, so the panes would fail to load. Silent otherwise: the
+/// default renderer never needs the library, so a normal install must not see
+/// this warning.
 #[cfg(feature = "gtk-ghostty")]
 fn append_embedded_ghostty_lib_warnings(
     warnings: &mut Vec<String>,
@@ -1007,10 +1011,10 @@ fn append_embedded_ghostty_lib_warnings(
         .collect::<Vec<_>>()
         .join(", ");
     warnings.push(format!(
-        "embedded Ghostty panes are enabled (FORKTTY_GHOSTTY_GTK_PANES) but \
-         ghostty-gtk-embed.so was not found (searched: {searched}); panes will fail \
-         to load. Build it with scripts/ghostty-gtk-lib-probe.sh or set \
-         FORKTTY_GHOSTTY_GTK_LIB."
+        "embedded Ghostty panes are enabled (appearance.embedded_ghostty or \
+         FORKTTY_GHOSTTY_GTK_PANES) but ghostty-gtk-embed.so was not found \
+         (searched: {searched}); panes will fail to load. Build it with \
+         scripts/ghostty-gtk-lib-probe.sh or set FORKTTY_GHOSTTY_GTK_LIB."
     ));
 }
 
@@ -1111,6 +1115,15 @@ fn resolve_telemetry_anonymous_ping(config_path: Option<&Path>) -> bool {
         .unwrap_or_default()
         .telemetry
         .anonymous_ping
+}
+
+#[cfg(feature = "gtk-ghostty")]
+fn resolve_embedded_ghostty_opt_in(config_path: Option<&Path>) -> bool {
+    config_path
+        .and_then(|path| forktty_core::config::load_config_from_path(path).ok())
+        .unwrap_or_default()
+        .appearance
+        .embedded_ghostty
 }
 
 fn collect_hooks() -> Vec<HookState> {

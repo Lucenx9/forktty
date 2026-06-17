@@ -488,6 +488,15 @@ pub(crate) fn ghostty_gtk_panes_enabled_from_env() -> bool {
     )
 }
 
+/// Resolve whether embedded Ghostty panes are enabled. Both the
+/// `appearance.embedded_ghostty` config option and the
+/// `FORKTTY_GHOSTTY_GTK_PANES` environment variable are opt-ins; either one
+/// enables embedded panes. The renderer switch (roadmap item 4) stays off by
+/// default until the parity matrix is validated.
+pub(crate) fn ghostty_gtk_panes_enabled(config_opt_in: bool) -> bool {
+    config_opt_in || ghostty_gtk_panes_enabled_from_env()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,6 +576,15 @@ mod tests {
             EmbeddedSurfaceAction::StartSearch.as_ghostty_action(),
             "start_search"
         );
+    }
+
+    #[test]
+    fn config_opt_in_enables_panes_regardless_of_env() {
+        // The config opt-in alone must enable embedded panes, independent of the
+        // FORKTTY_GHOSTTY_GTK_PANES environment variable (the other opt-in).
+        // `true || env` is deterministic without touching the process
+        // environment, so this stays safe under parallel test execution.
+        assert!(ghostty_gtk_panes_enabled(true));
     }
 
     #[test]

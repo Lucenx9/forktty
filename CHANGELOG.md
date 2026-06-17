@@ -43,6 +43,10 @@ All notable changes to ForkTTY are documented here.
   works on installed builds without a manual library build. The build is
   best-effort and non-fatal while embedded panes remain opt-in: if it fails, the
   release still ships with the classic renderer only.
+- The experimental embedded Ghostty renderer can now be opted into from
+  `config.toml` via `appearance.embedded_ghostty = true` (off by default), in
+  addition to the `FORKTTY_GHOSTTY_GTK_PANES` environment variable. `forktty
+  doctor` flags a missing embedding library for either opt-in.
 - Experimental embedded Ghostty panes now wire surface lifecycle into the
   ForkTTY model: title changes mirror into the model, child-process exit drops
   the surface from the ready set, sets a closed/`Exited (n)` status, and raises
