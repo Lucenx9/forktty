@@ -87,3 +87,17 @@ jobs:
             echo "::endgroup::"
           fi
           exit "${status}"
+
+      # Embedded Ghostty pane parity smoke: run the same socket-API smoke that
+      # gates classic panes, but with embedded Ghostty panes enabled, so the
+      # parity matrix's "auto (smoke)" rows (resize, input, split/focus, socket
+      # API, lifecycle) are exercised against live embedded panes. The env vars
+      # propagate to the app the script launches; the script self-manages Xvfb
+      # and an isolated D-Bus session. See docs/ghostty-embedded-parity.md.
+      - name: ForkTTY embedded Ghostty pane parity smoke
+        env:
+          FORKTTY_GHOSTTY_GTK_PANES: "1"
+          FORKTTY_GHOSTTY_GTK_LIB: vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so
+          FORKTTY_SMOKE_BUILD: "0"
+          NO_AT_BRIDGE: "1"
+        run: scripts/gtk-ghostty-smoke.sh
