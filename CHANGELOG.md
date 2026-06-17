@@ -19,6 +19,8 @@ All notable changes to ForkTTY are documented here.
   `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`, and the manual Ghostty GTK Probe
   workflow now smoke-tests the Rust GTK widget bridge under Xvfb after building
   the vendored Ghostty GTK embedding library.
+- The vendored Ghostty GTK embedding library now avoids standalone-app theme
+  startup when registered inside ForkTTY's host GTK application.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

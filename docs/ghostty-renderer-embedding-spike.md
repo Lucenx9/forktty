@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`8ddad7d760ec0d56c11e144c18091e9e18acc8fb`.
+`afb923daba793f31b765f420cb193bc3a51733a5`.
 
 ## Result
 
@@ -63,9 +63,9 @@ require Ghostty to own the whole application window.
 The fork also keeps Ghostty's internal GTK application pointer separate from
 the host `GApplication`, and skips Ghostty's pre-init GTK environment setup
 when the embedding library is loaded after the host process has already
-initialized GTK. In embedding mode it also skips the full Ghostty GTK shell
-startup pieces that belong to the standalone app, such as signal handlers,
-application actions, global shortcuts, and config-error dialogs.
+initialized GTK. In embedding mode it also skips Ghostty GTK startup pieces
+that belong to the standalone app, including theme-manager sync, signal
+handlers, application actions, global shortcuts, and config-error dialogs.
 
 ## Next Cut
 
