@@ -65,3 +65,29 @@ require Ghostty to own the whole application window.
    feature flag.
 
 Do not replace ForkTTY's current renderer until step 4 is proven locally.
+
+## Build Probe
+
+Run the upstream GTK build probe with:
+
+```bash
+scripts/ghostty-gtk-build-probe.sh
+```
+
+On the current Arch-style local toolchain this does not reach the Ghostty API
+work yet. Zig 0.15.2 attempts to link helper executables against GCC 16.1.1
+startup objects containing `.sframe` relocations and fails with:
+
+```text
+fatal linker error: unhandled relocation type R_X86_64_PC64
+note: in .../crt1.o:.sframe
+```
+
+Forcing `use_lld = false` on the helper executables still emits `-fno-lld` and
+fails on the same relocation. Forcing `use_lld = true` changes the command to
+`-flld`, but the helper compile terminates without a useful diagnostic. The
+submodule was restored after this probe; no unverified Ghostty patch is kept.
+
+The next implementation attempt should run the same script on CI/Ubuntu or a
+Zig/toolchain combination that can link the GTK helper executables, then add
+the minimal `GtkWidget*` embedding API there.

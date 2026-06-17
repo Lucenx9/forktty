@@ -23,6 +23,7 @@ for the current upstream embedding status and the next Ghostty-side API cut.
 ```bash
 git submodule update --init vendor/ghostty
 cargo run -p xtask -- check
+scripts/ghostty-gtk-build-probe.sh
 ```
 
 `xtask check` fails if the submodule is missing, points at the wrong upstream,
