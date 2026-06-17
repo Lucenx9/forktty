@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`44919aae10f9af4c9279bdda2537c7e86e1fdff0`.
+`4936a2c4ddc27075f726eebf59b95d592c3a7413`.
 
 ## Result
 
@@ -65,9 +65,9 @@ require Ghostty to own the whole application window.
 1. Keep the `emit-gtk-lib` fork branch compiling on Ubuntu CI.
 2. Run `forktty ghostty-gtk-probe` with `FORKTTY_GHOSTTY_GTK_LIB` pointing at a
    built `ghostty-gtk-embed.so` to exercise widget creation in isolation.
-3. Resolve the `Application.default()` ownership issue so Ghostty does not have
-   to own the whole host `GApplication`.
-4. Only after the probe renders, replace one ForkTTY terminal pane behind a
+3. Add a reproducible CI or xvfb smoke test for the Rust probe once the built
+   `ghostty-gtk-embed.so` is available as an artifact.
+4. Only after the probe renders locally, replace one ForkTTY terminal pane behind a
    feature flag.
 
 Do not replace ForkTTY's current renderer until step 4 is proven locally.
