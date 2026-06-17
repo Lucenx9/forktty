@@ -54,7 +54,7 @@ exercised) · `n/a`.
 | 6 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | pending |
 | 7 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | pending |
 | 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | pending |
-| 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): surface lifecycle; **manual**: session restore after app restart | pending |
+| 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): child exit marks surface not writable and sets `Closed`; **manual**: session restore after app restart | pending |
 | 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus action and socket splits | pass |
 | 11 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
 

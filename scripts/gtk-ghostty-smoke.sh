@@ -164,6 +164,37 @@ wait_surface_contains() {
   exit 1
 }
 
+wait_surface_not_writable() {
+  local id="$1"
+  local label="$2"
+  for _ in {1..40}; do
+    if ! "$BIN" --socket "$FORKTTY_SOCKET_PATH" send-text --surface-id "$id" $'echo forktty-smoke-should-not-write\r' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "gtk-ghostty smoke: $label stayed writable after child exit" >&2
+  exit 1
+}
+
+wait_surface_status() {
+  local workspace="$1"
+  local id="$2"
+  local expected="$3"
+  local key="surface:${id}:status"
+  for _ in {1..40}; do
+    if "$BIN" --socket "$FORKTTY_SOCKET_PATH" list-status --workspace-id "$workspace" --json |
+      python3 -c 'import json,sys; items=json.load(sys.stdin); key=sys.argv[1]; expected=sys.argv[2]; item=next((entry for entry in items if entry.get("key") == key), None); sys.exit(0 if item and item.get("value") == expected else 1)' "$key" "$expected"
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "gtk-ghostty smoke: surface $id did not report status $expected" >&2
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" list-status --workspace-id "$workspace" --json >&2 || true
+  exit 1
+}
+
 send_text_wait "$surface_id" $'echo forktty-smoke-ok\r' "initial terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-ok" "initial terminal readback"
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$surface_id" --lines 5 |
@@ -274,6 +305,10 @@ fi
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" clear-notifications >/dev/null
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" notifications --json |
   python3 -c 'import json,sys; assert json.load(sys.stdin) == []'
+
+send_text_wait "$new_surface_id" $'exit\r' "split terminal exit"
+wait_surface_not_writable "$new_surface_id" "split terminal"
+wait_surface_status "$workspace_id" "$new_surface_id" "Closed"
 
 if grep -Eiq 'failed to spawn experimental embedded Ghostty GTK pane|falling back:' "$TMP_DIR/forktty.stderr"; then
   echo "gtk-ghostty smoke: embedded Ghostty pane fell back to the classic renderer" >&2

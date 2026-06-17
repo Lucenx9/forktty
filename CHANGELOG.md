@@ -80,7 +80,8 @@ All notable changes to ForkTTY are documented here.
   `perform_action` ABI symbols, and its smoke test verifies socket
   `capture-tail` and that embedded pane startup did not fall back to the
   classic renderer. The smoke test also requires embedded panes to expose a
-  positive PID through `forktty surfaces --json`.
+  positive PID through `forktty surfaces --json` and verifies that a clean child
+  exit marks the pane non-writable with a `Closed` status.
 - The deb and AppImage packagers now install `ghostty-gtk-embed.so` into
   `usr/lib` when `scripts/ghostty-gtk-lib-probe.sh` has built it, so installed
   builds load the embedded Ghostty library via the binary RUNPATH
