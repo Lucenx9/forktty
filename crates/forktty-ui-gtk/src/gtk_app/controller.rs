@@ -81,6 +81,39 @@ pub(super) fn remove_surface_pid_for_spawn(
     true
 }
 
+/// Reflect an embedded Ghostty child-process exit into the model: set the pane
+/// status and, on an abnormal exit, build a notification to dispatch. Mirrors
+/// the classic-pane `ChildExit` handling in `terminal_signals.rs`. `exit_code`
+/// is `None` when the embedded ABI does not expose the code, in which case the
+/// status is neutral and no notification is raised. Returns the notification to
+/// dispatch (outside the model lock), if any.
+pub(super) fn apply_embedded_child_exit(
+    model: &mut WorkspaceModel,
+    workspace_id: &str,
+    surface_id: &str,
+    exit_code: Option<i32>,
+) -> Option<NotificationItem> {
+    model.surface(surface_id)?;
+    let status = embedded_child_exit_status(exit_code);
+    let _ = model.set_status(
+        workspace_id,
+        surface_status_key(surface_id),
+        status.label,
+        status.value,
+        status.color,
+    );
+    match exit_code {
+        Some(code) if code != 0 => Some(model.create_notification(
+            "Terminal exited",
+            format!("Process exited with status {code}. Use Restart Pane to spawn it again."),
+            NotificationKind::Info,
+            Some(workspace_id.to_string()),
+            Some(surface_id.to_string()),
+        )),
+        _ => None,
+    }
+}
+
 impl TerminalController {
     pub(super) fn new(
         container: gtk::Box,
@@ -387,11 +420,13 @@ impl TerminalController {
 
         // Exit/readiness parity: when the child process exits, drop the surface
         // out of the ready set and reflect the closed state in its status. The
-        // exact exit code is not yet exposed by the embedded ABI, so the status
+        // exact exit code is read through the embedded ABI when available; if
+        // the loaded library predates that getter it stays None and the status
         // is the neutral "Closed" (see embedded_child_exit_status).
         {
             let model = self.model.clone();
             let state = self.state.clone();
+            let embedder = Rc::clone(&embedder);
             let surface_id = request.surface_id.clone();
             let workspace_id = request.workspace_id.clone();
             widget.connect_notify_local(Some("child-exited"), move |widget, _| {
@@ -406,17 +441,18 @@ impl TerminalController {
                         ),
                     }
                 }
-                let status = embedded_child_exit_status(None);
-                if let Ok(mut model) = model.lock() {
-                    if model.surface(&surface_id).is_some() {
-                        let _ = model.set_status(
-                            &workspace_id,
-                            surface_status_key(&surface_id),
-                            status.label,
-                            status.value,
-                            status.color,
-                        );
-                    }
+                let exit_code = unsafe { embedder.surface_exit_code(widget) };
+                let notification = match model.lock() {
+                    Ok(mut model) => apply_embedded_child_exit(
+                        &mut model,
+                        &workspace_id,
+                        &surface_id,
+                        exit_code,
+                    ),
+                    Err(_) => None,
+                };
+                if let Some(notification) = notification {
+                    dispatch_notification_with_loaded_config(&notification);
                 }
             });
         }

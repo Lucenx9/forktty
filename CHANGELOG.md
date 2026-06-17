@@ -40,11 +40,13 @@ All notable changes to ForkTTY are documented here.
   the vendored Ghostty GTK embedding ABI.
 - Experimental embedded Ghostty panes now wire surface lifecycle into the
   ForkTTY model: title changes mirror into the model, child-process exit drops
-  the surface from the ready set and shows a closed status, and a Ghostty
-  close-request tears the pane down cleanly so no stale pane is left behind.
-  The exact exit code and child PID are not yet exposed by the embedding ABI, so
-  the exit status is the neutral "Closed" and port discovery stays unavailable
-  for embedded panes until the ABI is extended.
+  the surface from the ready set, sets a closed/`Exited (n)` status, and raises
+  an abnormal-exit notification, and a Ghostty close-request tears the pane down
+  cleanly so no stale pane is left behind. The embedding ABI gains
+  `ghostty_gtk_surface_exit_code` so embedded panes report the real exit status;
+  older libraries without the symbol fall back to the neutral "Closed". The
+  child PID is still not exposed, so listening-port discovery stays unavailable
+  for embedded panes until the ABI is extended further.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

@@ -20,3 +20,24 @@ zig build \
   -Dcpu=baseline \
   -fno-sys=gtk4-layer-shell \
   --summary failures
+
+lib_path=""
+for candidate in \
+  zig-out/lib/ghostty-gtk-embed.so \
+  zig-out/lib/libghostty-gtk-embed.so
+do
+  if [[ -f "$candidate" ]]; then
+    lib_path="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$lib_path" ]]; then
+  echo "Ghostty GTK probe did not emit an embedding library" >&2
+  exit 1
+fi
+
+if ! nm -D "$lib_path" | grep -Eq '(^|[[:space:]])ghostty_gtk_surface_exit_code$'; then
+  echo "Ghostty GTK embedding library is missing ghostty_gtk_surface_exit_code" >&2
+  exit 1
+fi

@@ -439,6 +439,60 @@ fn child_exit_pid_removal_ignores_stale_spawn_tokens() {
 }
 
 #[test]
+fn embedded_child_exit_sets_closed_status_without_notification_for_clean_exit() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+
+    let notification = apply_embedded_child_exit(&mut model, &workspace_id, &surface_id, Some(0));
+
+    assert!(notification.is_none());
+    let status = model
+        .list_status(&workspace_id)
+        .into_iter()
+        .find(|entry| entry.key == surface_status_key(&surface_id))
+        .expect("status entry");
+    assert_eq!(status.value, "Closed");
+    assert_eq!(status.color, None);
+    assert!(model.list_notifications().is_empty());
+}
+
+#[test]
+fn embedded_child_exit_flags_abnormal_exit_with_notification() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+
+    let notification = apply_embedded_child_exit(&mut model, &workspace_id, &surface_id, Some(3))
+        .expect("abnormal exit notification");
+
+    assert_eq!(notification.title, "Terminal exited");
+    assert!(notification.body.contains("status 3"));
+    let status = model
+        .list_status(&workspace_id)
+        .into_iter()
+        .find(|entry| entry.key == surface_status_key(&surface_id))
+        .expect("status entry");
+    assert_eq!(status.value, "Exited (3)");
+    assert_eq!(status.color, Some("yellow".to_string()));
+}
+
+#[test]
+fn embedded_child_exit_ignores_closed_surface() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+
+    let notification =
+        apply_embedded_child_exit(&mut model, &workspace_id, "missing-surface", Some(1));
+
+    assert!(notification.is_none());
+    assert!(model.list_status(&workspace_id).is_empty());
+}
+
+#[test]
 fn detects_visible_prompt_text() {
     assert!(looks_like_prompt("build finished\n> "));
     assert!(looks_like_prompt("? Continue (Y/n)"));

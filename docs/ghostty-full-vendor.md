@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `39effd5c71a97608a75cdf782bd536456d7a4bba`
+- Pin: `e8a3802fb3fa73381e8e664d3da7fa3b6b469f95`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -54,15 +54,18 @@ FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
 This mode is intentionally incomplete: it proves that ForkTTY can pack Ghostty's
 GTK widget in a pane, pass the cwd, forward socket `send_text`, and answer
 socket `read_text`/`capture_tail` after Ghostty initializes the core surface.
-Surface lifecycle is partially wired: ForkTTY connects to the Ghostty surface's
-`notify::title`, `notify::child-exited`, and `close-request` GObject signals so
-title changes, child-exit readiness/status, and clean pane teardown match the
-classic panes without a new ABI symbol. Two lifecycle pieces still need the
-embedding ABI extended on the fork before they reach parity:
+Surface lifecycle is wired through the Ghostty surface's `notify::title`,
+`notify::child-exited`, and `close-request` GObject signals so title changes,
+child-exit readiness/status, and clean pane teardown match the classic panes.
+The embedding ABI adds `ghostty_gtk_surface_exit_code` so the child-exit handler
+can report the real exit status (`Closed` / `Exited (n)` plus an abnormal-exit
+notification); a library built before that symbol degrades gracefully to a
+neutral "Closed". One lifecycle piece still needs the embedding ABI extended on
+the fork before it reaches parity:
 
-- the exact child exit code (today's embedded exit status is the neutral
-  "Closed" because the code is not exposed as a property), and
-- the child PID (needed for ForkTTY's listening-port discovery).
+- the child PID (needed for ForkTTY's listening-port discovery). The pid is set
+  on Ghostty's io thread, so exposing it needs cross-thread plumbing rather than
+  a simple getter; it is deferred to a dedicated change.
 
 Search and copy/selection parity also remain to be wired. Use the default
 renderer path for those workflows until the remaining embedding hooks land.

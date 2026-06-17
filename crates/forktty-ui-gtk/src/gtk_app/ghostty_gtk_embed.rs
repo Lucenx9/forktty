@@ -25,6 +25,7 @@ type SurfaceNewWithWorkingDirectory =
 type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char, usize) -> i32;
 type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
+type SurfaceExitCode = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut u32) -> i32;
 type TextFree = unsafe extern "C" fn(*mut GhosttyGtkText);
 
 #[repr(C)]
@@ -59,6 +60,7 @@ pub(super) struct GhosttyGtkEmbedder {
     surface_new_with_working_directory: Option<SurfaceNewWithWorkingDirectory>,
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
+    surface_exit_code: Option<SurfaceExitCode>,
     text_free: Option<TextFree>,
 }
 
@@ -80,6 +82,8 @@ impl GhosttyGtkEmbedder {
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL) };
         let surface_read_text =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL) };
+        let surface_exit_code =
+            unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL) };
         let text_free = unsafe { load_optional_symbol(&library, GHOSTTY_GTK_TEXT_FREE_SYMBOL) };
 
         let context = NonNull::new(unsafe { context_new() })
@@ -101,6 +105,7 @@ impl GhosttyGtkEmbedder {
             surface_new_with_working_directory,
             surface_send_text,
             surface_read_text,
+            surface_exit_code,
             text_free,
         })
     }
@@ -184,6 +189,18 @@ impl GhosttyGtkEmbedder {
         let result = embedded_ghostty_text_from_raw(&raw);
         unsafe { text_free(&mut raw) };
         result
+    }
+
+    /// The exit code of the surface's child process, or `None` if it is still
+    /// running or the embedded ABI does not export the exit-code getter.
+    pub(super) unsafe fn surface_exit_code(&self, widget: &gtk::Widget) -> Option<i32> {
+        let surface_exit_code = self.surface_exit_code?;
+        let mut code: u32 = 0;
+        let exited = unsafe { surface_exit_code(widget.to_glib_none().0, &mut code) };
+        if exited == 0 {
+            return None;
+        }
+        Some(i32::try_from(code).unwrap_or(i32::MAX))
     }
 
     pub(super) unsafe fn read_text_snapshot(
@@ -304,6 +321,7 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
 
 pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
+pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_surface_exit_code";
 pub(super) const GHOSTTY_GTK_TEXT_FREE_SYMBOL: &[u8] = b"ghostty_gtk_text_free";
 
 fn embedded_ghostty_text_from_raw(raw: &GhosttyGtkText) -> Result<EmbeddedGhosttyText, String> {
@@ -362,9 +380,9 @@ fn text_line_count(text: &str) -> usize {
 /// Status shown on an embedded Ghostty pane after its child process exits.
 ///
 /// Mirrors the classic-pane `ChildExit` status (see `terminal_signals.rs`).
-/// `exit_code` is `None` until the embedded ABI exposes the real code (the
-/// staged plan in `docs/ghostty-full-vendor.md` adds it); without it we report
-/// a neutral "Closed" because we cannot tell a clean exit from a crash.
+/// `exit_code` is read through `surface_exit_code`; it stays `None` when the
+/// loaded embedding library predates that getter, in which case we report a
+/// neutral "Closed" because we cannot tell a clean exit from a crash.
 pub(super) struct EmbeddedChildExitStatus {
     pub(super) label: &'static str,
     pub(super) value: String,
@@ -435,6 +453,10 @@ mod tests {
         assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL),
             "ghostty_gtk_surface_read_text"
+        );
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL),
+            "ghostty_gtk_surface_exit_code"
         );
         assert_eq!(
             symbol_name(GHOSTTY_GTK_TEXT_FREE_SYMBOL),
