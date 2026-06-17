@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -95,7 +96,21 @@ pub fn load_project_actions(
             "actions is limited to {MAX_PROJECT_ACTIONS} entries"
         )));
     }
-    raw.actions.into_iter().map(validate_action).collect()
+    let mut ids = BTreeSet::new();
+    raw.actions
+        .into_iter()
+        .map(validate_action)
+        .map(|action| {
+            let action = action?;
+            if !ids.insert(action.id.clone()) {
+                return Err(ProjectActionError::Invalid(format!(
+                    "duplicate action id: {}",
+                    action.id
+                )));
+            }
+            Ok(action)
+        })
+        .collect()
 }
 
 pub fn action_cwd(
@@ -323,6 +338,22 @@ mod tests {
         let err = load_project_actions(dir.path()).unwrap_err().to_string();
 
         assert!(err.contains("shell command string"));
+    }
+
+    #[test]
+    fn rejects_duplicate_action_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        write_actions(
+            dir.path(),
+            r#"{"actions":[
+                {"id":"test","label":"One","argv":["cargo","test"]},
+                {"id":"test","label":"Two","argv":["cargo","check"]}
+            ]}"#,
+        );
+
+        let err = load_project_actions(dir.path()).unwrap_err().to_string();
+
+        assert!(err.contains("duplicate action id"));
     }
 
     #[test]

@@ -1241,14 +1241,12 @@ pub async fn dispatch(
                 model.surface(&surface.id).cloned().unwrap_or(surface)
             };
             let mut argv = action.argv.clone();
-            let program = argv.remove(0);
+            let program = resolve_project_action_program(&action_cwd, &argv.remove(0))?;
             let request =
                 SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
                     .with_args(argv.clone());
             if let Err(err) = state.terminal.spawn(request) {
-                if let Ok(mut model) = state.model.lock() {
-                    model.close_surface(&surface.id);
-                }
+                rollback_surface_creation(state, &surface.id)?;
                 return Err(err.into());
             }
             Ok(json!({
@@ -2770,6 +2768,8 @@ fn project_action_source_surface_id(
     let project_root = fs::canonicalize(project_root).map_err(|err| {
         DispatchError::PreconditionFailed(format!("Cannot resolve project root: {err}"))
     })?;
+    let project_repo =
+        canonical_repo_common_dir(&project_root).map_err(DispatchError::PreconditionFailed)?;
     let workspaces = {
         let model = state
             .model
@@ -2779,13 +2779,43 @@ fn project_action_source_surface_id(
     };
     workspaces
         .into_iter()
-        .find_map(|workspace| {
-            fs::canonicalize(&workspace.working_dir)
-                .ok()
-                .filter(|cwd| cwd.starts_with(&project_root))
-                .map(|_| workspace.focused_surface_id)
+        .filter_map(|workspace| {
+            let cwd = fs::canonicalize(&workspace.working_dir).ok()?;
+            let repo = canonical_repo_common_dir(&cwd).ok()?;
+            if repo != project_repo {
+                return None;
+            }
+            let score = if project_root.starts_with(&cwd) {
+                0
+            } else if cwd.starts_with(&project_root) {
+                1
+            } else {
+                2
+            };
+            Some((score, workspace.focused_surface_id))
         })
+        .min_by_key(|(score, _)| *score)
+        .map(|(_, surface_id)| surface_id)
         .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))
+}
+
+fn resolve_project_action_program(
+    action_cwd: &Path,
+    program: &str,
+) -> Result<String, DispatchError> {
+    let path = Path::new(program);
+    if path.is_absolute() || path.components().count() == 1 {
+        return Ok(program.to_string());
+    }
+    let resolved = fs::canonicalize(action_cwd.join(path)).map_err(|err| {
+        DispatchError::PreconditionFailed(format!("Cannot resolve project action program: {err}"))
+    })?;
+    if !resolved.starts_with(action_cwd) {
+        return Err(DispatchError::PreconditionFailed(
+            "project action program escapes action cwd".to_string(),
+        ));
+    }
+    Ok(resolved.to_string_lossy().to_string())
 }
 
 fn project_action_error(err: forktty_core::ProjectActionError) -> DispatchError {
@@ -9387,13 +9417,14 @@ mod tests {
                     {
                         "id": "test",
                         "label": "Run tests",
-                        "argv": ["cargo", "test"],
+                        "argv": ["./gradlew", "test"],
                         "cwd": "."
                     }
                 ]
             }"#,
         )
         .unwrap();
+        fs::write(repo_dir.path().join("gradlew"), "#!/bin/sh\n").unwrap();
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let backend = Arc::new(HeadlessTerminalBackend::new());
         let state = SocketAppState::new(
@@ -9423,8 +9454,12 @@ mod tests {
         .await
         .unwrap();
         let surface_id = run["surface_id"].as_str().unwrap();
-        assert_eq!(run["argv"], json!(["cargo", "test"]));
-        assert_eq!(backend.spawn_shell(surface_id).unwrap(), "cargo");
+        let gradlew = fs::canonicalize(repo_dir.path().join("gradlew")).unwrap();
+        assert_eq!(run["argv"], json!([gradlew, "test"]));
+        assert_eq!(
+            backend.spawn_shell(surface_id).unwrap(),
+            gradlew.to_string_lossy()
+        );
         assert_eq!(backend.spawn_args(surface_id).unwrap(), vec!["test"]);
         assert_eq!(
             backend
@@ -9451,6 +9486,50 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code(), "precondition_failed");
+    }
+
+    #[tokio::test]
+    async fn project_actions_run_from_linked_worktree_authorized_repo() {
+        let repo_dir = make_temp_repo();
+        fs::write(
+            repo_dir.path().join("forktty.json"),
+            r#"{"actions":[{"id":"test","label":"Run tests","argv":["cargo","test"],"cwd":"."}]}"#,
+        )
+        .unwrap();
+        let created = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            "topic/project-action-linked",
+            "../forktty-worktrees/{name}",
+        )
+        .unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from(&created.path)).unwrap();
+
+        let listed = dispatch(
+            &state,
+            "project.action.list",
+            json!({"cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed[0]["id"], "test");
+        let run = dispatch(
+            &state,
+            "project.action.run",
+            json!({"cwd": repo_dir.path(), "id": "test"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(run["argv"], json!(["cargo", "test"]));
     }
 
     #[tokio::test]
