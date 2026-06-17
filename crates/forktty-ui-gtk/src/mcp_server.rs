@@ -541,6 +541,293 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "team_list" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "status",
+                    "query",
+                    "limit",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            insert_optional_non_blank_param(args, &mut params, "status")?;
+            insert_optional_non_blank_param(args, &mut params, "query")?;
+            insert_optional_u64_param(args, &mut params, "limit")?;
+            SocketCall {
+                method: "team.list",
+                params,
+            }
+        }
+        "team_get" => {
+            reject_unexpected(args, &["team_id"], name)?;
+            SocketCall {
+                method: "team.get",
+                params: map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]),
+            }
+        }
+        "team_upsert" => {
+            reject_unexpected(
+                args,
+                &[
+                    "team_id",
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "leader_surface_id",
+                    "name",
+                    "status",
+                    "goal",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            params.insert(
+                "team_id".to_string(),
+                Value::String(required_non_blank(args, "team_id")?),
+            );
+            insert_optional_non_blank_param(args, &mut params, "leader_surface_id")?;
+            insert_optional_non_blank_param(args, &mut params, "name")?;
+            insert_optional_non_blank_param(args, &mut params, "status")?;
+            insert_optional_string_param(args, &mut params, "goal")?;
+            SocketCall {
+                method: "team.upsert",
+                params,
+            }
+        }
+        "team_worker_upsert" => {
+            reject_unexpected(
+                args,
+                &[
+                    "team_id",
+                    "worker_id",
+                    "role",
+                    "agent",
+                    "surface_id",
+                    "worktree_name",
+                    "status",
+                    "assigned_task_id",
+                ],
+                name,
+            )?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "role")?;
+            insert_optional_non_blank_param(args, &mut params, "agent")?;
+            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            insert_optional_non_blank_param(args, &mut params, "worktree_name")?;
+            insert_optional_non_blank_param(args, &mut params, "status")?;
+            insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
+            SocketCall {
+                method: "team.worker.upsert",
+                params,
+            }
+        }
+        "team_worker_heartbeat" => {
+            reject_unexpected(
+                args,
+                &["team_id", "worker_id", "status", "assigned_task_id"],
+                name,
+            )?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "status")?;
+            insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
+            SocketCall {
+                method: "team.worker.heartbeat",
+                params,
+            }
+        }
+        "team_worker_launch" => {
+            reject_unexpected(
+                args,
+                &[
+                    "team_id",
+                    "worker_id",
+                    "agent",
+                    "role",
+                    "assigned_task_id",
+                    "worktree_name",
+                    "args",
+                ],
+                name,
+            )?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+                ("agent", required_non_blank(args, "agent")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "role")?;
+            insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
+            insert_optional_non_blank_param(args, &mut params, "worktree_name")?;
+            if let Some(extra_args) = optional_string_array(args, "args")? {
+                params.insert(
+                    "args".to_string(),
+                    Value::Array(extra_args.into_iter().map(Value::String).collect()),
+                );
+            }
+            SocketCall {
+                method: "team.worker.launch",
+                params,
+            }
+        }
+        "team_worker_health" => {
+            reject_unexpected(args, &["team_id", "stale_after_ms"], name)?;
+            let mut params = map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]);
+            insert_optional_u64_param(args, &mut params, "stale_after_ms")?;
+            SocketCall {
+                method: "team.worker.health",
+                params,
+            }
+        }
+        "team_worker_nudge" => {
+            reject_unexpected(args, &["team_id", "worker_id", "text"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+            ]);
+            insert_optional_string_param(args, &mut params, "text")?;
+            SocketCall {
+                method: "team.worker.nudge",
+                params,
+            }
+        }
+        "team_worker_shutdown" => {
+            reject_unexpected(args, &["team_id", "worker_id", "text"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("worker_id", required_non_blank(args, "worker_id")?),
+            ]);
+            insert_optional_string_param(args, &mut params, "text")?;
+            SocketCall {
+                method: "team.worker.shutdown",
+                params,
+            }
+        }
+        "team_task_upsert" => {
+            reject_unexpected(
+                args,
+                &[
+                    "team_id",
+                    "task_id",
+                    "title",
+                    "status",
+                    "detail",
+                    "depends_on",
+                    "assigned_worker_id",
+                ],
+                name,
+            )?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("task_id", required_non_blank(args, "task_id")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "title")?;
+            insert_optional_non_blank_param(args, &mut params, "status")?;
+            insert_optional_string_param(args, &mut params, "detail")?;
+            if let Some(depends_on) = optional_string_array(args, "depends_on")? {
+                params.insert(
+                    "depends_on".to_string(),
+                    Value::Array(depends_on.into_iter().map(Value::String).collect()),
+                );
+            }
+            insert_optional_non_blank_param(args, &mut params, "assigned_worker_id")?;
+            SocketCall {
+                method: "team.task.upsert",
+                params,
+            }
+        }
+        "team_message_send" => {
+            reject_unexpected(
+                args,
+                &[
+                    "team_id",
+                    "message_id",
+                    "from",
+                    "to_worker_id",
+                    "task_id",
+                    "body",
+                ],
+                name,
+            )?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("from", required_non_blank(args, "from")?),
+                ("body", required_non_empty_string(args, "body")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "message_id")?;
+            insert_optional_non_blank_param(args, &mut params, "to_worker_id")?;
+            insert_optional_non_blank_param(args, &mut params, "task_id")?;
+            SocketCall {
+                method: "team.message.send",
+                params,
+            }
+        }
+        "team_message_dispatch" => {
+            reject_unexpected(args, &["team_id", "message_id", "worker_id"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("message_id", required_non_blank(args, "message_id")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "worker_id")?;
+            SocketCall {
+                method: "team.message.dispatch",
+                params,
+            }
+        }
+        "team_message_ack" => {
+            reject_unexpected(args, &["team_id", "message_id", "worker_id"], name)?;
+            let mut params = map_from_pairs([
+                ("team_id", required_non_blank(args, "team_id")?),
+                ("message_id", required_non_blank(args, "message_id")?),
+            ]);
+            insert_optional_non_blank_param(args, &mut params, "worker_id")?;
+            SocketCall {
+                method: "team.message.ack",
+                params,
+            }
+        }
+        "team_inbox" => {
+            reject_unexpected(
+                args,
+                &["team_id", "worker_id", "include_delivered", "limit"],
+                name,
+            )?;
+            let mut params = map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]);
+            insert_optional_non_blank_param(args, &mut params, "worker_id")?;
+            insert_optional_bool_param(args, &mut params, "include_delivered")?;
+            insert_optional_u64_param(args, &mut params, "limit")?;
+            SocketCall {
+                method: "team.inbox",
+                params,
+            }
+        }
+        "team_summary" => {
+            reject_unexpected(args, &["team_id"], name)?;
+            SocketCall {
+                method: "team.summary",
+                params: map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]),
+            }
+        }
+        "team_events" => {
+            reject_unexpected(args, &["team_id", "since_seq", "limit"], name)?;
+            let mut params = Map::new();
+            insert_optional_non_blank_param(args, &mut params, "team_id")?;
+            insert_optional_u64_param(args, &mut params, "since_seq")?;
+            insert_optional_u64_param(args, &mut params, "limit")?;
+            SocketCall {
+                method: "team.events",
+                params,
+            }
+        }
         "status_summary" => {
             reject_unexpected(
                 args,
@@ -1002,6 +1289,50 @@ fn map_from_pairs<const N: usize>(pairs: [(&str, String); N]) -> Map<String, Val
         .collect()
 }
 
+fn insert_optional_non_blank_param(
+    args: &Map<String, Value>,
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<(), ToolCallError> {
+    if let Some(value) = optional_non_blank(args, key)? {
+        params.insert(key.to_string(), Value::String(value));
+    }
+    Ok(())
+}
+
+fn insert_optional_string_param(
+    args: &Map<String, Value>,
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<(), ToolCallError> {
+    if let Some(value) = optional_string(args, key)? {
+        params.insert(key.to_string(), Value::String(value));
+    }
+    Ok(())
+}
+
+fn insert_optional_u64_param(
+    args: &Map<String, Value>,
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<(), ToolCallError> {
+    if let Some(value) = optional_u64(args, key)? {
+        params.insert(key.to_string(), Value::Number(value.into()));
+    }
+    Ok(())
+}
+
+fn insert_optional_bool_param(
+    args: &Map<String, Value>,
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<(), ToolCallError> {
+    if let Some(value) = optional_bool(args, key)? {
+        params.insert(key.to_string(), Value::Bool(value));
+    }
+    Ok(())
+}
+
 fn reject_unexpected(
     args: &Map<String, Value>,
     allowed: &[&str],
@@ -1082,6 +1413,52 @@ fn optional_u64(
     }
 }
 
+fn optional_bool(
+    args: &Map<String, Value>,
+    key: &'static str,
+) -> Result<Option<bool>, ToolCallError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(ToolCallError::validation(format!(
+            "{key} must be a boolean"
+        ))),
+    }
+}
+
+fn optional_string_array(
+    args: &Map<String, Value>,
+    key: &'static str,
+) -> Result<Option<Vec<String>>, ToolCallError> {
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Value::Array(items) = value else {
+        return Err(ToolCallError::validation(format!(
+            "{key} must be an array of strings"
+        )));
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(value) = item.as_str() else {
+            return Err(ToolCallError::validation(format!(
+                "{key} must be an array of strings"
+            )));
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(ToolCallError::validation(format!(
+                "{key} entries must not be empty"
+            )));
+        }
+        values.push(value.to_string());
+    }
+    Ok(Some(values))
+}
+
 fn optional_enum(
     args: &Map<String, Value>,
     key: &'static str,
@@ -1129,6 +1506,22 @@ fn success_text(name: &str, result: &Value) -> String {
         "agent_hibernate" => "Hibernated ForkTTY agent session.".to_string(),
         "agent_reclaim" => "Reclaimed ForkTTY idle agent sessions.".to_string(),
         "agent_resume" => "Resumed ForkTTY agent session in a new tab.".to_string(),
+        "team_list" => "Listed ForkTTY teams.".to_string(),
+        "team_get" => "Read ForkTTY team state.".to_string(),
+        "team_upsert" => "Updated ForkTTY team state.".to_string(),
+        "team_worker_upsert" => "Updated ForkTTY team worker state.".to_string(),
+        "team_worker_heartbeat" => "Recorded ForkTTY team worker heartbeat.".to_string(),
+        "team_worker_launch" => "Launched ForkTTY team worker pane.".to_string(),
+        "team_worker_health" => "Read ForkTTY team worker health.".to_string(),
+        "team_worker_nudge" => "Nudged ForkTTY team worker pane.".to_string(),
+        "team_worker_shutdown" => "Requested ForkTTY team worker shutdown.".to_string(),
+        "team_task_upsert" => "Updated ForkTTY team task state.".to_string(),
+        "team_message_send" => "Queued ForkTTY team message.".to_string(),
+        "team_message_dispatch" => "Dispatched ForkTTY team message to a worker pane.".to_string(),
+        "team_message_ack" => "Acknowledged ForkTTY team message.".to_string(),
+        "team_inbox" => "Read ForkTTY team inbox.".to_string(),
+        "team_summary" => "Summarized ForkTTY team state.".to_string(),
+        "team_events" => "Listed ForkTTY team events.".to_string(),
         "status_summary" => "Built ForkTTY status summary.".to_string(),
         "workflow_list" => "Listed ForkTTY workflows.".to_string(),
         "workflow_get" => "Read ForkTTY workflow state.".to_string(),
@@ -1331,6 +1724,235 @@ fn tool_specs() -> Vec<ToolSpec> {
                 &["surface_id"],
                 json!({
                     "surface_id": string_prop("Source surface id with a persisted agent session from agent_list or status_summary."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_list",
+            annotations: read_only_annotations(),
+            description: "List ForkTTY team orchestration records for the current or selected workspace. Use before updating workers, tasks, or mailbox messages.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                    "status": string_prop("Optional team status filter."),
+                    "query": string_prop("Optional substring query across team id, name, and goal."),
+                    "limit": integer_prop("Maximum teams to return."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_get",
+            annotations: read_only_annotations(),
+            description: "Read one ForkTTY team orchestration record including workers, tasks, and mailbox messages.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Team id from team_list or team_upsert."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_upsert",
+            annotations: mutating_annotations(false, true),
+            description: "Create or update a ForkTTY team orchestration record. This stores leader metadata only; it does not open UI panes.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Stable team id."),
+                    "workspace_id": string_prop("Workspace id to associate with the team; defaults from FORKTTY_WORKSPACE_ID when present."),
+                    "workspace_name": string_prop("Workspace name to associate with the team."),
+                    "worktree_name": string_prop("Worktree name to associate with the team."),
+                    "leader_surface_id": string_prop("Surface id for the leader pane."),
+                    "name": string_prop("Human team name."),
+                    "status": string_prop("Team status, for example active, paused, or done."),
+                    "goal": string_prop("Team goal or brief."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_upsert",
+            annotations: mutating_annotations(false, true),
+            description: "Create or update a worker record for a ForkTTY team. Surface/worktree fields are references; this does not spawn panes.",
+            input_schema: object_schema(
+                &["team_id", "worker_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Stable worker id."),
+                    "role": string_prop("Worker role."),
+                    "agent": string_prop("Agent/provider name."),
+                    "surface_id": string_prop("Surface id used by this worker."),
+                    "worktree_name": string_prop("Worktree name assigned to this worker."),
+                    "status": string_prop("Worker status, for example idle, running, busy, or blocked."),
+                    "assigned_task_id": string_prop("Task id currently assigned to this worker."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_heartbeat",
+            annotations: mutating_annotations(false, true),
+            description: "Record a worker heartbeat/status update for a ForkTTY team.",
+            input_schema: object_schema(
+                &["team_id", "worker_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "status": string_prop("Current worker status."),
+                    "assigned_task_id": string_prop("Current assigned task id."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_launch",
+            annotations: mutating_annotations(false, false),
+            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. Supported agents are codex, claude, gemini, opencode, and antigravity.",
+            input_schema: object_schema(
+                &["team_id", "worker_id", "agent"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "agent": string_prop("Provider to launch: codex, claude, gemini, opencode, or antigravity."),
+                    "role": string_prop("Worker role."),
+                    "assigned_task_id": string_prop("Task id currently assigned to this worker."),
+                    "worktree_name": string_prop("Worktree name assigned to this worker."),
+                    "args": string_array_prop("Extra argv entries appended after the provider executable."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_health",
+            annotations: read_only_annotations(),
+            description: "Read per-worker team health including stale heartbeat, surface presence, nudge, launch, and shutdown-request timestamps.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "stale_after_ms": integer_prop("Heartbeat age after which running workers are reported stale."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_nudge",
+            annotations: mutating_annotations(false, false),
+            description: "Send a nudge message to a team worker's attached terminal pane and record the nudge timestamp after delivery succeeds.",
+            input_schema: object_schema(
+                &["team_id", "worker_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "text": string_prop("Optional exact text to send; defaults to a heartbeat request."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_worker_shutdown",
+            annotations: mutating_annotations(false, false),
+            description: "Request safe shutdown by sending text to a team worker's attached terminal pane and marking the worker shutdown_requested after delivery succeeds.",
+            input_schema: object_schema(
+                &["team_id", "worker_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id."),
+                    "text": string_prop("Optional exact shutdown request text."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_task_upsert",
+            annotations: mutating_annotations(false, true),
+            description: "Create or update a ForkTTY team task. Dependencies must form a DAG.",
+            input_schema: object_schema(
+                &["team_id", "task_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "task_id": string_prop("Stable task id."),
+                    "title": string_prop("Task title."),
+                    "status": string_prop("Task status, for example open, running, done, blocked, or cancelled."),
+                    "detail": string_prop("Task detail or notes."),
+                    "depends_on": string_array_prop("Task ids this task depends on."),
+                    "assigned_worker_id": string_prop("Worker id assigned to this task."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_message_send",
+            annotations: mutating_annotations(false, false),
+            description: "Queue a mailbox message for a ForkTTY team worker or team-wide coordination.",
+            input_schema: object_schema(
+                &["team_id", "from", "body"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "message_id": string_prop("Optional stable message id; ForkTTY generates one when omitted."),
+                    "from": string_prop("Sender id, usually leader or a worker id."),
+                    "to_worker_id": string_prop("Target worker id. Omit for team-wide messages."),
+                    "task_id": string_prop("Related task id."),
+                    "body": string_prop("Message body. Whitespace is preserved."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_message_dispatch",
+            annotations: mutating_annotations(false, false),
+            description: "Send a queued ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the text.",
+            input_schema: object_schema(
+                &["team_id", "message_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "message_id": string_prop("Message id."),
+                    "worker_id": string_prop("Required when dispatching a team-wide message."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_message_ack",
+            annotations: mutating_annotations(false, true),
+            description: "Acknowledge a ForkTTY team mailbox message.",
+            input_schema: object_schema(
+                &["team_id", "message_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "message_id": string_prop("Message id."),
+                    "worker_id": string_prop("Optional worker id guard for worker-targeted acknowledgements."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_inbox",
+            annotations: read_only_annotations(),
+            description: "Read pending mailbox messages for a ForkTTY team or worker.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "worker_id": string_prop("Worker id to filter messages."),
+                    "include_delivered": boolean_prop("Include already acknowledged messages."),
+                    "limit": integer_prop("Maximum messages to return."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_summary",
+            annotations: read_only_annotations(),
+            description: "Return aggregate counts for a ForkTTY team: workers, active workers, tasks, pending messages, and last event.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_events",
+            annotations: read_only_annotations(),
+            description: "List ForkTTY team orchestration events for polling or audit.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "team_id": string_prop("Optional team id filter."),
+                    "since_seq": integer_prop("Only return events with seq greater than this value."),
+                    "limit": integer_prop("Maximum events to return."),
                 }),
             ),
         },
@@ -1622,6 +2244,21 @@ fn integer_prop(description: &str) -> Value {
     })
 }
 
+fn boolean_prop(description: &str) -> Value {
+    json!({
+        "type": "boolean",
+        "description": description,
+    })
+}
+
+fn string_array_prop(description: &str) -> Value {
+    json!({
+        "type": "array",
+        "items": { "type": "string" },
+        "description": description,
+    })
+}
+
 fn enum_prop(description: &str, values: &[&str]) -> Value {
     json!({
         "type": "string",
@@ -1809,7 +2446,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(resource_text.contains(
-            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, worktrees, status, terminal read/capture, or sending text to another surface."
+            "Use ForkTTY tools when the task involves panes, workspaces, agent sessions, workflow memory, team orchestration state, worktrees, status, terminal read/capture, or sending text to another surface."
         ));
         assert!(resource_text.contains(
             "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
@@ -1944,6 +2581,118 @@ mod tests {
 
         assert_eq!(method, "agent.resume");
         assert_eq!(params["surface_id"], "surface-1");
+    }
+
+    #[test]
+    fn team_tools_map_to_socket_team_methods() {
+        let (method, params) = build_socket_call_for_test(
+            "team_upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": "w1",
+                "leader_surface_id": "s1",
+                "name": "Launch",
+                "goal": "ship runtime"
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.upsert");
+        assert_eq!(params["team_id"], "team-1");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["leader_surface_id"], "s1");
+        assert_eq!(params["goal"], "ship runtime");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_heartbeat",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "status": "running",
+                "assigned_task_id": "task-1"
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.heartbeat");
+        assert_eq!(params["assigned_task_id"], "task-1");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-2",
+                "agent": "codex",
+                "args": ["--model", "test"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.launch");
+        assert_eq!(params["agent"], "codex");
+        assert_eq!(params["args"], json!(["--model", "test"]));
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_health",
+            json!({"team_id": "team-1", "stale_after_ms": 123}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.health");
+        assert_eq!(params["stale_after_ms"], 123);
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_nudge",
+            json!({"team_id": "team-1", "worker_id": "worker-2", "text": "ping\r"}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.nudge");
+        assert_eq!(params["text"], "ping\r");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_worker_shutdown",
+            json!({"team_id": "team-1", "worker_id": "worker-2"}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.shutdown");
+        assert_eq!(params["worker_id"], "worker-2");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_task_upsert",
+            json!({
+                "team_id": "team-1",
+                "task_id": "task-1",
+                "depends_on": ["task-0", "task-base"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.task.upsert");
+        assert_eq!(params["depends_on"], json!(["task-0", "task-base"]));
+
+        let (method, params) = build_socket_call_for_test(
+            "team_message_send",
+            json!({
+                "team_id": "team-1",
+                "from": "leader",
+                "body": "  continue\n",
+                "to_worker_id": "worker-1"
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.message.send");
+        assert_eq!(params["body"], "  continue\n");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_message_dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1", "worker_id": "worker-1"}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.message.dispatch");
+        assert_eq!(params["message_id"], "msg-1");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_inbox",
+            json!({"team_id": "team-1", "worker_id": "worker-1", "include_delivered": true}),
+        )
+        .unwrap();
+        assert_eq!(method, "team.inbox");
+        assert_eq!(params["include_delivered"], true);
     }
 
     #[test]

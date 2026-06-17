@@ -217,6 +217,40 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "resume-agent"
             | "agent-resume"
             | "agent:resume"
+            | "teams"
+            | "team-list"
+            | "team:list"
+            | "team.list"
+            | "team-get"
+            | "team:get"
+            | "team.get"
+            | "team-upsert"
+            | "team:upsert"
+            | "team.upsert"
+            | "team-worker-upsert"
+            | "team:worker-upsert"
+            | "team.worker.upsert"
+            | "team-worker-heartbeat"
+            | "team:worker-heartbeat"
+            | "team.worker.heartbeat"
+            | "team-task-upsert"
+            | "team:task-upsert"
+            | "team.task.upsert"
+            | "team-message-send"
+            | "team:message-send"
+            | "team.message.send"
+            | "team-message-ack"
+            | "team:message-ack"
+            | "team.message.ack"
+            | "team-inbox"
+            | "team:inbox"
+            | "team.inbox"
+            | "team-summary"
+            | "team:summary"
+            | "team.summary"
+            | "team-events"
+            | "team:events"
+            | "team.events"
             | "statusline"
             | "status-line"
             | "status:summary"
@@ -1405,6 +1439,67 @@ mod tests {
                 OsString::from("feed"),
                 OsString::from("--limit"),
                 OsString::from("5")
+            ])
+        );
+    }
+
+    #[test]
+    fn team_commands_are_recognized_as_socket_cli_commands() {
+        for command in [
+            "teams",
+            "team-list",
+            "team:list",
+            "team.list",
+            "team-get",
+            "team:get",
+            "team.get",
+            "team-upsert",
+            "team:upsert",
+            "team.upsert",
+            "team-worker-upsert",
+            "team:worker-upsert",
+            "team.worker.upsert",
+            "team-worker-heartbeat",
+            "team:worker-heartbeat",
+            "team.worker.heartbeat",
+            "team-task-upsert",
+            "team:task-upsert",
+            "team.task.upsert",
+            "team-message-send",
+            "team:message-send",
+            "team.message.send",
+            "team-message-ack",
+            "team:message-ack",
+            "team.message.ack",
+            "team-inbox",
+            "team:inbox",
+            "team.inbox",
+            "team-summary",
+            "team:summary",
+            "team.summary",
+            "team-events",
+            "team:events",
+            "team.events",
+        ] {
+            assert!(is_socket_cli_command(command), "{command}");
+        }
+        assert_eq!(
+            parse::<_, &str>([
+                "forktty",
+                "team-message-send",
+                "team-1",
+                "--from",
+                "leader",
+                "--body",
+                "go"
+            ]),
+            CliAction::SocketCli(vec![
+                OsString::from("team-message-send"),
+                OsString::from("team-1"),
+                OsString::from("--from"),
+                OsString::from("leader"),
+                OsString::from("--body"),
+                OsString::from("go")
             ])
         );
     }

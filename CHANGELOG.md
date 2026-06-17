@@ -5,6 +5,12 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Team orchestration state is now available as a provider-neutral control
+  plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
+  tools, covering leader/worker metadata, task DAGs, mailbox messages,
+  heartbeats, provider worker launch into tabs, pane dispatch confirmations,
+  worker health/lifecycle snapshots, idle nudges, safe shutdown requests,
+  summaries, and event polling without adding parity UI yet.
 - `agent.hibernate`, `agent.reclaim`, `forktty hibernate-agent`,
   `forktty reclaim-agents`, and MCP `agent_hibernate`/`agent_reclaim` can now
   close idle, locally resumable agent terminal processes, mark their persisted

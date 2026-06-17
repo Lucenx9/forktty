@@ -106,7 +106,11 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
   workflow list/get/upsert, plan, evidence, replay, and compaction-resistant
   goal/memory fields are available; richer parity UI panels remain out of
   scope.
-- [ ] Team orchestration runtime: leader/worker state, task DAGs, mailbox/dispatch, worker heartbeats, status/summary, and optional worktree-backed workers.
+- [x] Team orchestration runtime: leader/worker state, task DAGs,
+  mailbox/dispatch, worker heartbeats, worker launch, pane dispatch,
+  health/lifecycle snapshots, idle nudges, safe shutdown requests, and optional
+  worktree-backed worker references are available through socket/CLI/MCP;
+  parity UI remains future work.
 - [x] Feed/approval bridge: `feed.list` / `forktty feed` now reads a bounded
   durable feed history, and `feed.approval.respond` / `forktty feed respond`
   records approval decisions for workflow consumers.
