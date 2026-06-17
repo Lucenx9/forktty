@@ -12,6 +12,7 @@ pub mod pr;
 pub mod profile;
 pub mod protocol;
 pub mod session;
+pub mod team;
 pub mod update;
 pub mod worktree;
 
@@ -40,4 +41,10 @@ pub use notification::{
 };
 pub use profile::{ProfileError, ProfileId, ProfileMeta, ProfileStore};
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+pub use team::{
+    load_teams, load_teams_from_path, now_ms as team_now_ms, save_teams_to_path, team_store_path,
+    update_teams, update_teams_at_path, TeamError, TeamEvent, TeamEventQuery, TeamHeartbeat,
+    TeamInboxQuery, TeamMessage, TeamMessageAck, TeamMessageSend, TeamQuery, TeamState,
+    TeamStoreData, TeamSummary, TeamTask, TeamTaskUpsert, TeamUpsert, TeamWorker, TeamWorkerUpsert,
+};
 pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};

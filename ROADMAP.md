@@ -99,7 +99,10 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 - [ ] Agent hibernation/session lifecycle: suspend/restore UI, provider-side stale-session validation beyond local command readiness, process reclaim, configurable reclaim policy, and explicit suspended-state handling.
 - [ ] Workflow control plane: per-session/per-mode state files, durable goal/plan/evidence artifacts, session search/replay, and compaction-resistant project memory.
-- [ ] Team orchestration runtime: leader/worker state, task DAGs, mailbox/dispatch, worker heartbeats, status/summary, and optional worktree-backed workers.
+- [x] Team orchestration runtime: leader/worker state, task DAGs,
+  mailbox/dispatch, worker heartbeats, status/summary, and optional
+  worktree-backed worker references are available through socket/CLI/MCP;
+  parity UI, provider launchers, and shutdown automation remain future work.
 - [ ] Feed/approval bridge: minimal read-only `feed.list` / `forktty feed`
   snapshot is available; durable history and actionable permission events are
   still pending.

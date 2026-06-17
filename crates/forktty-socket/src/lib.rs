@@ -123,6 +123,17 @@ pub const METHODS: &[&str] = &[
     "system.capabilities",
     "system.ping",
     "system.top",
+    "team.events",
+    "team.get",
+    "team.inbox",
+    "team.list",
+    "team.message.ack",
+    "team.message.send",
+    "team.summary",
+    "team.task.upsert",
+    "team.upsert",
+    "team.worker.heartbeat",
+    "team.worker.upsert",
     "topology.tree",
     "workspace.close",
     "workspace.create",
@@ -170,6 +181,17 @@ pub const METHODS: &[&str] = &[
     "system.capabilities",
     "system.ping",
     "system.top",
+    "team.events",
+    "team.get",
+    "team.inbox",
+    "team.list",
+    "team.message.ack",
+    "team.message.send",
+    "team.summary",
+    "team.task.upsert",
+    "team.upsert",
+    "team.worker.heartbeat",
+    "team.worker.upsert",
     "topology.tree",
     "workspace.close",
     "workspace.create",
@@ -303,6 +325,22 @@ impl From<forktty_core::worktree::WorktreeError> for DispatchError {
     }
 }
 
+impl From<forktty_core::TeamError> for DispatchError {
+    fn from(err: forktty_core::TeamError) -> Self {
+        use forktty_core::TeamError as T;
+        match err {
+            T::TeamNotFound(_) => DispatchError::NotFound("team".to_string()),
+            T::WorkerNotFound(_) => DispatchError::NotFound("worker".to_string()),
+            T::TaskNotFound(_) => DispatchError::NotFound("task".to_string()),
+            T::MessageNotFound(_) => DispatchError::NotFound("message".to_string()),
+            T::Invalid(message) => DispatchError::InvalidParam(message),
+            T::UnsupportedVersion(_) | T::Json(_) | T::Io(_) => {
+                DispatchError::Other(err.to_string())
+            }
+        }
+    }
+}
+
 impl From<TerminalError> for DispatchError {
     fn from(err: TerminalError) -> Self {
         match err {
@@ -345,6 +383,7 @@ pub struct SocketAppState {
     pub shell: String,
     pub socket_path: PathBuf,
     pub notification_dispatch: bool,
+    pub team_store_path: Option<PathBuf>,
     /// Broadcast channel feeding `events.subscribe` connections. The background
     /// tick task in [`serve`] is the sole producer.
     pub events: broadcast::Sender<ModelEvent>,
@@ -370,6 +409,11 @@ impl SocketAppState {
             shell: shell.into(),
             socket_path: socket_path.into(),
             notification_dispatch: true,
+            team_store_path: if cfg!(test) {
+                None
+            } else {
+                forktty_core::team_store_path().ok()
+            },
             events,
             browser_cmd: None,
             hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
@@ -709,6 +753,162 @@ pub async fn dispatch(
             };
             let limit = optional_u64_param(&params, "limit")?.unwrap_or(50).min(200) as usize;
             Ok(json!(feed_list(&model, workspace_id.as_deref(), limit)))
+        }
+        "team.list" => {
+            let workspace_id = optional_team_workspace_id(state, &params)?;
+            let query = forktty_core::TeamQuery {
+                workspace_id,
+                status: optional_non_blank_string_param(&params, "status")?.map(str::to_string),
+                query: optional_non_blank_string_param(&params, "query")?.map(str::to_string),
+                limit: optional_u64_param(&params, "limit")?.map(|limit| limit as usize),
+            };
+            let store = forktty_core::load_teams_from_path(team_store_path(state)?)
+                .map_err(DispatchError::from)?;
+            Ok(json!(store.list(&query)))
+        }
+        "team.get" => {
+            let team_id = required_trimmed_string(&params, "team_id")?;
+            let store = forktty_core::load_teams_from_path(team_store_path(state)?)
+                .map_err(DispatchError::from)?;
+            store
+                .get(team_id)
+                .map(|team| json!(team))
+                .ok_or(DispatchError::NotFound("team".to_string()))
+        }
+        "team.upsert" => {
+            let (workspace_id, leader_surface_id) =
+                team_target_ids(state, &params, "leader_surface_id")?;
+            let input = forktty_core::TeamUpsert {
+                team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                workspace_id,
+                leader_surface_id,
+                name: optional_non_blank_string_param(&params, "name")?.map(str::to_string),
+                status: optional_non_blank_string_param(&params, "status")?.map(str::to_string),
+                goal: optional_string_param(&params, "goal")?.map(str::to_string),
+            };
+            let team = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.upsert_team(input, forktty_core::team_now_ms())
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!(team))
+        }
+        "team.worker.upsert" => {
+            validate_optional_surface_id(state, &params, "surface_id")?;
+            validate_optional_worktree_name(&params)?;
+            let input = forktty_core::TeamWorkerUpsert {
+                team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                worker_id: required_trimmed_string(&params, "worker_id")?.to_string(),
+                role: optional_non_blank_string_param(&params, "role")?.map(str::to_string),
+                agent: optional_non_blank_string_param(&params, "agent")?.map(str::to_string),
+                surface_id: optional_non_blank_string_param(&params, "surface_id")?
+                    .map(str::to_string),
+                worktree_name: optional_non_blank_string_param(&params, "worktree_name")?
+                    .map(str::to_string),
+                status: optional_non_blank_string_param(&params, "status")?.map(str::to_string),
+                assigned_task_id: optional_non_blank_string_param(&params, "assigned_task_id")?
+                    .map(str::to_string),
+            };
+            let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.upsert_worker(input, forktty_core::team_now_ms())
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!(worker))
+        }
+        "team.worker.heartbeat" => {
+            let input = forktty_core::TeamHeartbeat {
+                team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                worker_id: required_trimmed_string(&params, "worker_id")?.to_string(),
+                status: optional_non_blank_string_param(&params, "status")?.map(str::to_string),
+                assigned_task_id: optional_non_blank_string_param(&params, "assigned_task_id")?
+                    .map(str::to_string),
+            };
+            let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.heartbeat(input, forktty_core::team_now_ms())
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!(worker))
+        }
+        "team.task.upsert" => {
+            let input = forktty_core::TeamTaskUpsert {
+                team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                task_id: required_trimmed_string(&params, "task_id")?.to_string(),
+                title: optional_non_blank_string_param(&params, "title")?.map(str::to_string),
+                status: optional_non_blank_string_param(&params, "status")?.map(str::to_string),
+                detail: optional_string_param(&params, "detail")?.map(str::to_string),
+                depends_on: optional_string_array_param(&params, "depends_on")?,
+                assigned_worker_id: optional_non_blank_string_param(&params, "assigned_worker_id")?
+                    .map(str::to_string),
+            };
+            let task = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.upsert_task(input, forktty_core::team_now_ms())
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!(task))
+        }
+        "team.message.send" => {
+            let input = forktty_core::TeamMessageSend {
+                team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                message_id: optional_non_blank_string_param(&params, "message_id")?
+                    .map(str::to_string),
+                from: required_trimmed_string(&params, "from")?.to_string(),
+                to_worker_id: optional_non_blank_string_param(&params, "to_worker_id")?
+                    .map(str::to_string),
+                task_id: optional_non_blank_string_param(&params, "task_id")?.map(str::to_string),
+                body: required_string_param(&params, "body")?.to_string(),
+            };
+            let message = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.send_message(input, forktty_core::team_now_ms())
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!(message))
+        }
+        "team.message.ack" => {
+            let input = forktty_core::TeamMessageAck {
+                team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                message_id: required_trimmed_string(&params, "message_id")?.to_string(),
+                worker_id: optional_non_blank_string_param(&params, "worker_id")?
+                    .map(str::to_string),
+            };
+            let message = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+                store.ack_message(input, forktty_core::team_now_ms())
+            })
+            .map_err(DispatchError::from)?;
+            Ok(json!(message))
+        }
+        "team.inbox" => {
+            let store = forktty_core::load_teams_from_path(team_store_path(state)?)
+                .map_err(DispatchError::from)?;
+            let messages = store
+                .inbox(&forktty_core::TeamInboxQuery {
+                    team_id: required_trimmed_string(&params, "team_id")?.to_string(),
+                    worker_id: optional_non_blank_string_param(&params, "worker_id")?
+                        .map(str::to_string),
+                    include_delivered: optional_bool_param(&params, "include_delivered")?
+                        .unwrap_or(false),
+                    limit: optional_u64_param(&params, "limit")?.map(|limit| limit as usize),
+                })
+                .map_err(DispatchError::from)?;
+            Ok(json!(messages))
+        }
+        "team.summary" => {
+            let team_id = required_trimmed_string(&params, "team_id")?;
+            let store = forktty_core::load_teams_from_path(team_store_path(state)?)
+                .map_err(DispatchError::from)?;
+            let summary = store.summary(team_id).map_err(DispatchError::from)?;
+            Ok(json!(summary))
+        }
+        "team.events" => {
+            let store = forktty_core::load_teams_from_path(team_store_path(state)?)
+                .map_err(DispatchError::from)?;
+            let events = store
+                .events(&forktty_core::TeamEventQuery {
+                    team_id: optional_non_blank_string_param(&params, "team_id")?
+                        .map(str::to_string),
+                    since_seq: optional_u64_param(&params, "since_seq")?,
+                    limit: optional_u64_param(&params, "limit")?.map(|limit| limit as usize),
+                })
+                .map_err(DispatchError::from)?;
+            Ok(json!(events))
         }
         "agent.health" => {
             let model = state
@@ -3224,6 +3424,170 @@ fn required_string_param<'a>(
     value
         .as_str()
         .ok_or_else(|| format!("Invalid parameter {key}: expected string").into())
+}
+
+fn optional_string_param<'a>(
+    params: &'a Value,
+    key: &'static str,
+) -> Result<Option<&'a str>, DispatchError> {
+    match params.get(key) {
+        Some(Value::String(value)) => Ok(Some(value.as_str())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(format!("Invalid parameter {key}: expected string").into()),
+    }
+}
+
+fn optional_bool_param(params: &Value, key: &'static str) -> Result<Option<bool>, DispatchError> {
+    match params.get(key) {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(format!("Invalid parameter {key}: expected boolean").into()),
+    }
+}
+
+fn optional_string_array_param(
+    params: &Value,
+    key: &'static str,
+) -> Result<Option<Vec<String>>, DispatchError> {
+    match params.get(key) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        DispatchError::InvalidParam(format!(
+                            "Invalid parameter {key}: expected array of non-empty strings"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(format!("Invalid parameter {key}: expected array").into()),
+    }
+}
+
+fn team_store_path(state: &SocketAppState) -> Result<&Path, DispatchError> {
+    state
+        .team_store_path
+        .as_deref()
+        .ok_or_else(|| DispatchError::Other("Team store is unavailable".to_string()))
+}
+
+fn optional_team_workspace_id(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Option<String>, DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    match team_workspace_selector_from_params(params)? {
+        Some(selector) => model
+            .workspace_id_for(selector)
+            .map(Some)
+            .ok_or(DispatchError::NotFound("workspace".to_string())),
+        None => Ok(None),
+    }
+}
+
+fn team_target_ids(
+    state: &SocketAppState,
+    params: &Value,
+    surface_key: &'static str,
+) -> Result<(Option<String>, Option<String>), DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let mut workspace_id = match team_workspace_selector_from_params(params)? {
+        Some(selector) => Some(
+            model
+                .workspace_id_for(selector)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+        ),
+        None => None,
+    };
+    let surface_id = optional_non_blank_string_param(params, surface_key)?.map(str::to_string);
+    if let Some(surface_id) = surface_id.as_deref() {
+        let surface = model
+            .surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            if surface.workspace_id != workspace_id {
+                return Err(DispatchError::InvalidParam(format!(
+                    "{surface_key} does not belong to workspace {workspace_id}"
+                )));
+            }
+        } else {
+            workspace_id = Some(surface.workspace_id.clone());
+        }
+    }
+    Ok((workspace_id, surface_id))
+}
+
+fn team_workspace_selector_from_params(
+    params: &Value,
+) -> Result<Option<WorkspaceSelector<'_>>, DispatchError> {
+    let mut selectors = Vec::new();
+    for (key, kind) in [
+        ("workspace_id", WorkspaceSelectorKind::Id),
+        ("workspaceId", WorkspaceSelectorKind::Id),
+        ("workspace_name", WorkspaceSelectorKind::Name),
+        ("workspaceName", WorkspaceSelectorKind::Name),
+        ("worktreeName", WorkspaceSelectorKind::WorktreeName),
+        ("worktree_name", WorkspaceSelectorKind::WorktreeName),
+    ] {
+        if let Some(value) = optional_non_blank_string_param(params, key)? {
+            selectors.push(WorkspaceSelectorParam { key, kind, value });
+        }
+    }
+    if selectors.is_empty() {
+        return Ok(None);
+    }
+    if selectors.len() > 1 {
+        return Err(format!(
+            "Ambiguous workspace selector: cannot combine {}",
+            format_param_names(selectors.iter().map(|selector| selector.key))
+        )
+        .into());
+    }
+    let selector = &selectors[0];
+    match selector.kind {
+        WorkspaceSelectorKind::Id => Ok(Some(WorkspaceSelector::Id(selector.value))),
+        WorkspaceSelectorKind::Name => Ok(Some(WorkspaceSelector::Name(selector.value))),
+        WorkspaceSelectorKind::WorktreeName => {
+            Ok(Some(WorkspaceSelector::WorktreeName(selector.value)))
+        }
+    }
+}
+
+fn validate_optional_surface_id(
+    state: &SocketAppState,
+    params: &Value,
+    key: &'static str,
+) -> Result<(), DispatchError> {
+    let Some(surface_id) = optional_non_blank_string_param(params, key)? else {
+        return Ok(());
+    };
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if model.surface(surface_id).is_some() {
+        Ok(())
+    } else {
+        Err(DispatchError::NotFound("surface".to_string()))
+    }
+}
+
+fn validate_optional_worktree_name(params: &Value) -> Result<(), DispatchError> {
+    if let Some(worktree_name) = optional_non_blank_string_param(params, "worktree_name")? {
+        validate_worktree_name(worktree_name)?;
+    }
+    Ok(())
 }
 
 fn workspace_create_name_from_params(params: &Value) -> Result<&str, DispatchError> {
@@ -6186,6 +6550,160 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item["type"] == "progress" && item["title"] == "Build"));
+    }
+
+    #[tokio::test]
+    async fn dispatches_team_orchestration_runtime_methods() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        let team = dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id,
+                "name": "Launch",
+                "goal": "ship runtime"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(team["workspace_id"], workspace_id);
+        assert_eq!(team["leader_surface_id"], surface_id);
+
+        let worker = dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id,
+                "role": "implementer",
+                "status": "idle"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(worker["surface_id"], surface_id);
+
+        let task = dispatch(
+            &state,
+            "team.task.upsert",
+            json!({
+                "team_id": "team-1",
+                "task_id": "task-1",
+                "title": "Build team runtime",
+                "assigned_worker_id": "worker-1"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(task["assigned_worker_id"], "worker-1");
+
+        let heartbeat = dispatch(
+            &state,
+            "team.worker.heartbeat",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "status": "running",
+                "assigned_task_id": "task-1"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(heartbeat["status"], "running");
+        assert!(heartbeat["last_heartbeat_ms"].as_u64().unwrap() > 0);
+
+        let message = dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "task_id": "task-1",
+                "body": "continue\n"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(message["delivered"], false);
+
+        let inbox = dispatch(
+            &state,
+            "team.inbox",
+            json!({"team_id": "team-1", "worker_id": "worker-1"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(inbox.as_array().unwrap().len(), 1);
+
+        let ack = dispatch(
+            &state,
+            "team.message.ack",
+            json!({"team_id": "team-1", "message_id": "msg-1", "worker_id": "worker-1"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ack["delivered"], true);
+
+        let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(summary["workers_total"], 1);
+        assert_eq!(summary["workers_active"], 1);
+        assert_eq!(summary["tasks_open"], 1);
+        assert_eq!(summary["messages_pending"], 0);
+
+        let listed = dispatch(&state, "team.list", json!({"workspace_id": workspace_id}))
+            .await
+            .unwrap();
+        assert_eq!(listed[0]["id"], "team-1");
+        let fetched = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(fetched["workers"].as_array().unwrap().len(), 1);
+        let events = dispatch(&state, "team.events", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert!(events.as_array().unwrap().len() >= 6);
+    }
+
+    #[tokio::test]
+    async fn team_upsert_rejects_leader_surface_from_another_workspace() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let first = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let first_surface_id = first[0]["focused_surface_id"].as_str().unwrap();
+        let other = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "other", "workingDir": "/tmp"}),
+        )
+        .await
+        .unwrap();
+        let err = dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": other["id"].clone(),
+                "leader_surface_id": first_surface_id
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+        assert!(err.to_string().contains("leader_surface_id"));
     }
 
     #[tokio::test]

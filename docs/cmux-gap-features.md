@@ -87,11 +87,13 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - cmux has teammate/provider launchers; OMX/OMC go deeper with leader/worker
   state, task DAGs, mailbox/dispatch, worker heartbeat/status, tmux-backed
   workers, idle nudges, shutdown, and optional worktree-backed workers.
-- ForkTTY can create panes/worktrees and send text, but it does not yet own a
-  team lifecycle or worker protocol.
-- Scope: leader/worker model, task files, mailbox/inbox, dispatch
-  confirmations, worker health, state/event summaries, safe shutdown, and
-  mapping workers to ForkTTY panes/worktrees instead of tmux panes.
+- ForkTTY now owns a minimal provider-neutral team control plane through
+  `team.*`, `forktty team-*`, and MCP `team_*`: leader/workspace metadata,
+  worker records, task DAG validation, mailbox/inbox, heartbeats, summaries,
+  event polling, and optional surface/worktree references.
+- Remaining scope: teammate/provider launchers, dispatch confirmations that
+  drive panes, richer worker health/lifecycle, safe shutdown/idle nudges, and
+  parity UI for supervising teams.
 
 ### 4. Feed And Approval Bridge
 
