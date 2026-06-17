@@ -80,7 +80,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 
 - [x] Auto/Light/Dark theme-source selection in Settings.
 - [x] Per-pane Ghostty scrollback and audible-bell controls.
-- [x] Ghostty config appearance import for font, colors, `theme`, `config-file`, named colors, ANSI palette entries, `scrollback-limit`, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming.
+- [x] Ghostty config appearance import for font, colors, `theme`, `config-file`, named colors, ANSI palette entries, `scrollback-limit`, cursor style/blink defaults, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming.
 - [x] Ghostty shell integration for spawned zsh/bash/fish/elvish/nushell shells when upstream resources are available, with release packages bundling those resources.
 - [x] Ghostty terminfo bundled in Linux packages so packaged shells can use `TERM=xterm-ghostty`.
 - [x] Kitty image protocol storage/loading media, PNG decode, and GTK/Cairo drawing enabled at Ghostty's default limit, with `image-storage-limit` imported; advanced renderer parity still depends on renderer work.

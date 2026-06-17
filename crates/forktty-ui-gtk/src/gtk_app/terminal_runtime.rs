@@ -50,6 +50,11 @@ fn configured_kitty_image_storage_limit() -> Option<u64> {
     terminal_kitty_image_storage_limit_for_config(&config)
 }
 
+fn configured_cursor_style_sequence() -> Option<Vec<u8>> {
+    let config = config::load_config().unwrap_or_default();
+    terminal_cursor_style_sequence_for_config(&config)
+}
+
 fn parse_hex_rgb(hex: &str) -> TerminalRgb {
     let hex = hex.trim().trim_start_matches('#');
     let channel = |range: std::ops::Range<usize>| {
@@ -89,6 +94,10 @@ impl TerminalRuntime {
             .map_err(|err| TerminalError::Backend(err.to_string()))?;
         if let Some(limit) = configured_kitty_image_storage_limit() {
             core.set_kitty_image_storage_limit(limit)
+                .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        }
+        if let Some(sequence) = configured_cursor_style_sequence() {
+            core.feed(&sequence)
                 .map_err(|err| TerminalError::Backend(err.to_string()))?;
         }
         let pty = PtySession::spawn(request, size)

@@ -1,4 +1,5 @@
 use super::*;
+use forktty_terminal::ghostty::core::TerminalCursorStyle;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -80,6 +81,8 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_size_pt: Option<f64>,
     pub(super) scrollback_limit_bytes: Option<usize>,
     pub(super) image_storage_limit_bytes: Option<u64>,
+    pub(super) cursor_style: Option<TerminalCursorStyle>,
+    pub(super) cursor_style_blink: Option<bool>,
     pub(super) cursor_opacity: f64,
     pub(super) faint_opacity: f64,
     pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
@@ -129,6 +132,13 @@ pub(super) fn terminal_kitty_image_storage_limit_for_config(
     config: &config::AppConfig,
 ) -> Option<u64> {
     ghostty_terminal_appearance_for_config(config).image_storage_limit_bytes
+}
+
+pub(super) fn terminal_cursor_style_sequence_for_config(
+    config: &config::AppConfig,
+) -> Option<Vec<u8>> {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    cursor_style_sequence_for_appearance(&appearance)
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -481,6 +491,8 @@ impl Default for GhosttyTerminalAppearance {
             font_size_pt: None,
             scrollback_limit_bytes: None,
             image_storage_limit_bytes: None,
+            cursor_style: None,
+            cursor_style_blink: None,
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             mouse_scroll_multipliers: MouseScrollMultipliers::default(),
@@ -516,6 +528,8 @@ impl GhosttyTerminalAppearance {
             "image-storage-limit" => {
                 self.image_storage_limit_bytes = parse_ghostty_byte_limit(&value)
             }
+            "cursor-style" => self.apply_cursor_style(&value),
+            "cursor-style-blink" => self.apply_cursor_style_blink(&value),
             "background" => {
                 set_color(&mut self.colors.background, &value);
             }
@@ -611,6 +625,30 @@ impl GhosttyTerminalAppearance {
             "unfocused-split-fill" => self.apply_unfocused_split_fill(&value),
             _ => {}
         }
+    }
+
+    fn apply_cursor_style(&mut self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() {
+            self.cursor_style = None;
+            return;
+        }
+        self.cursor_style = match value {
+            "block" => Some(TerminalCursorStyle::Block),
+            "bar" => Some(TerminalCursorStyle::Bar),
+            "underline" => Some(TerminalCursorStyle::Underline),
+            "block_hollow" => Some(TerminalCursorStyle::BlockHollow),
+            _ => self.cursor_style,
+        };
+    }
+
+    fn apply_cursor_style_blink(&mut self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() {
+            self.cursor_style_blink = None;
+            return;
+        }
+        self.cursor_style_blink = parse_ghostty_optional_bool(value).or(self.cursor_style_blink);
     }
 
     fn apply_font_family(&mut self, value: String) {
@@ -723,11 +761,40 @@ fn set_terminal_color(target: &mut String, value: &str, foreground: &str, backgr
     }
 }
 
+fn cursor_style_sequence_for_appearance(appearance: &GhosttyTerminalAppearance) -> Option<Vec<u8>> {
+    if appearance.cursor_style.is_none() && appearance.cursor_style_blink.is_none() {
+        return None;
+    }
+    let code = match (
+        appearance
+            .cursor_style
+            .unwrap_or(TerminalCursorStyle::Block),
+        appearance.cursor_style_blink.unwrap_or(true),
+    ) {
+        (TerminalCursorStyle::Block, true) => 1,
+        (TerminalCursorStyle::Block, false) => 2,
+        (TerminalCursorStyle::Underline, true) => 3,
+        (TerminalCursorStyle::Underline, false) => 4,
+        (TerminalCursorStyle::Bar, true) => 5,
+        (TerminalCursorStyle::Bar, false) => 6,
+        (TerminalCursorStyle::BlockHollow, _) => return None,
+    };
+    Some(format!("\x1b[{code} q").into_bytes())
+}
+
 fn parse_ghostty_bool(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "" | "1" | "true" | "t" | "yes" | "y" | "on"
     )
+}
+
+fn parse_ghostty_optional_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "t" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "f" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn load_ghostty_theme(
@@ -1085,5 +1152,38 @@ mod tests {
 
         let disabled = ghostty_terminal_appearance_from_text("image-storage-limit = 0");
         assert_eq!(disabled.image_storage_limit_bytes, Some(0));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_cursor_style_defaults() {
+        let appearance = ghostty_terminal_appearance_from_text(
+            r#"
+            cursor-style = bar
+            cursor-style-blink = false
+            "#,
+        );
+
+        assert_eq!(
+            appearance.cursor_style,
+            Some(forktty_terminal::ghostty::core::TerminalCursorStyle::Bar)
+        );
+        assert_eq!(appearance.cursor_style_blink, Some(false));
+        assert_eq!(
+            cursor_style_sequence_for_appearance(&appearance),
+            Some(b"\x1b[6 q".to_vec())
+        );
+
+        let reset = ghostty_terminal_appearance_from_text(
+            r#"
+            cursor-style = underline
+            cursor-style-blink = false
+            cursor-style =
+            cursor-style-blink =
+            "#,
+        );
+
+        assert_eq!(reset.cursor_style, None);
+        assert_eq!(reset.cursor_style_blink, None);
+        assert_eq!(cursor_style_sequence_for_appearance(&reset), None);
     }
 }

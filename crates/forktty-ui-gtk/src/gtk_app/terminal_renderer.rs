@@ -229,7 +229,8 @@ struct ScrollbackIndicatorGeometry {
 }
 
 /// How the cursor overlay should be drawn for the current frame: unfocused
-/// panes get a steady hollow cursor, focused panes blink with `blink_visible`.
+/// panes get a steady hollow cursor; focused panes blink only when Ghostty says
+/// the cursor is blinkable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RendererCursorState {
     pub(super) focused: bool,
@@ -428,11 +429,12 @@ impl TerminalRenderer {
         );
 
         if let Some(mut cursor) = self.cursor_overlay_for_frame(frame) {
+            let cursor_blinks = frame.cursor.is_some_and(|cursor| cursor.blink);
             if !cursor_state.focused {
                 // Unfocused panes show a hollow cursor so the pane that will
                 // receive keystrokes is unambiguous; it never blinks.
                 cursor.style = RendererCursorStyle::BlockHollow;
-            } else if !cursor_state.blink_visible {
+            } else if cursor_blinks && !cursor_state.blink_visible {
                 // Hidden half of the focused cursor's blink cycle.
                 cursor.cell_span = 0;
             }
@@ -1687,6 +1689,41 @@ mod tests {
     }
 
     #[test]
+    fn terminal_renderer_keeps_steady_cursor_visible_when_blink_timer_is_off() {
+        let config = config::AppConfig::default();
+        let renderer = TerminalRenderer::from_config_with_font(
+            &config,
+            gtk::pango::FontDescription::from_string("monospace 12"),
+        );
+        let frame = test_frame(
+            parse_rgb("#d7d7d7"),
+            parse_rgb("#181818"),
+            TerminalRow {
+                cells: vec![test_cell(" ", None, None)],
+                wrapped: false,
+            },
+        )
+        .with_steady_cursor(0, 0);
+
+        assert_eq!(
+            rendered_pixel_with_cursor_state(
+                &renderer,
+                &frame,
+                10,
+                10,
+                RendererCursorState {
+                    focused: true,
+                    blink_visible: false,
+                    has_siblings: false,
+                    model_focused: true,
+                    visual_bell_active: false,
+                },
+            ),
+            renderer_color_bgra(renderer.palette.cursor)
+        );
+    }
+
+    #[test]
     fn terminal_renderer_dims_only_unfocused_panes_with_siblings() {
         assert!(!should_dim_pane(true, false, false));
         assert!(!should_dim_pane(false, false, false));
@@ -1892,17 +1929,11 @@ mod tests {
         x: i32,
         y: i32,
     ) -> [u8; 4] {
-        let mut surface =
-            gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 20, 28).unwrap();
-        let cr = gtk::cairo::Context::new(&surface).unwrap();
-        renderer.draw_frame(
-            &cr,
-            20,
-            28,
-            (8, 16),
+        rendered_pixel_with_cursor_state(
+            renderer,
             frame,
-            None,
-            None,
+            x,
+            y,
             RendererCursorState {
                 focused: true,
                 blink_visible: true,
@@ -1910,8 +1941,20 @@ mod tests {
                 model_focused: true,
                 visual_bell_active: false,
             },
-            None,
-        );
+        )
+    }
+
+    fn rendered_pixel_with_cursor_state(
+        renderer: &TerminalRenderer,
+        frame: &TerminalFrame,
+        x: i32,
+        y: i32,
+        cursor_state: RendererCursorState,
+    ) -> [u8; 4] {
+        let mut surface =
+            gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 20, 28).unwrap();
+        let cr = gtk::cairo::Context::new(&surface).unwrap();
+        renderer.draw_frame(&cr, 20, 28, (8, 16), frame, None, None, cursor_state, None);
         drop(cr);
         surface.flush();
 
@@ -1919,6 +1962,10 @@ mod tests {
         let data = surface.data().unwrap();
         let offset = y as usize * stride + x as usize * 4;
         data[offset..offset + 4].try_into().unwrap()
+    }
+
+    fn renderer_color_bgra(color: RendererColor) -> [u8; 4] {
+        [color.blue, color.green, color.red, 255]
     }
 
     fn parse_rgb(value: &str) -> TerminalRgb {
@@ -1932,6 +1979,7 @@ mod tests {
 
     trait TestFrameCursor {
         fn with_cursor(self, x: u16, y: u16) -> Self;
+        fn with_steady_cursor(self, x: u16, y: u16) -> Self;
         fn with_cursor_style(
             self,
             x: u16,
@@ -1949,6 +1997,19 @@ mod tests {
                 visible: true,
                 at_wide_tail: false,
                 style: forktty_terminal::ghostty::core::TerminalCursorStyle::Block,
+                blink: true,
+            });
+            self
+        }
+
+        fn with_steady_cursor(mut self, x: u16, y: u16) -> Self {
+            self.cursor = Some(forktty_terminal::ghostty::core::TerminalCursor {
+                x,
+                y,
+                visible: true,
+                at_wide_tail: false,
+                style: forktty_terminal::ghostty::core::TerminalCursorStyle::Block,
+                blink: false,
             });
             self
         }
@@ -1965,6 +2026,7 @@ mod tests {
                 visible: true,
                 at_wide_tail: false,
                 style,
+                blink: true,
             });
             self
         }
@@ -1976,6 +2038,7 @@ mod tests {
                 visible: true,
                 at_wide_tail: true,
                 style: forktty_terminal::ghostty::core::TerminalCursorStyle::Block,
+                blink: true,
             });
             self
         }

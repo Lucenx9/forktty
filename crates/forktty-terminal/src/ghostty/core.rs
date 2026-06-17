@@ -345,6 +345,7 @@ pub struct TerminalCursor {
     pub visible: bool,
     pub at_wide_tail: bool,
     pub style: TerminalCursorStyle,
+    pub blink: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -745,6 +746,7 @@ impl GhosttyCore {
         let palette = std::array::from_fn(|index| TerminalRgb::from(colors.palette[index]));
         let cursor = if snapshot.cursor_visible()? {
             let style = TerminalCursorStyle::from(snapshot.cursor_visual_style()?);
+            let blink = snapshot.cursor_blinking()?;
             snapshot
                 .cursor_viewport()?
                 .map(|CursorViewport { x, y, at_wide_tail }| TerminalCursor {
@@ -753,6 +755,7 @@ impl GhosttyCore {
                     visible: true,
                     at_wide_tail,
                     style,
+                    blink,
                 })
         } else {
             None
@@ -2213,6 +2216,22 @@ mod tests {
         let cursor = core.render_frame().unwrap().cursor.unwrap();
 
         assert_eq!(cursor.style, TerminalCursorStyle::Underline);
+    }
+
+    #[test]
+    fn core_render_frame_preserves_cursor_blinking() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+
+        core.feed(b"\x1b[4 q").unwrap();
+        assert!(!core.render_frame().unwrap().cursor.unwrap().blink);
+
+        core.feed(b"\x1b[3 q").unwrap();
+        assert!(core.render_frame().unwrap().cursor.unwrap().blink);
     }
 
     #[test]

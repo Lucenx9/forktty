@@ -55,6 +55,8 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `cell-foreground`/`cell-background` cursor and selection color references, plus legacy `cursor-invert-fg-bg` and `selection-invert-fg-bg`, are now honored by GTK terminal panes.
 - Ghostty `bold-color` and legacy `bold-is-bright` are now honored by GTK terminal panes, including bright ANSI mapping for bold base-color text.
 - Ghostty `cursor-opacity` now controls the GTK terminal cursor overlay.
+- Ghostty `cursor-style` and `cursor-style-blink` now seed the GTK terminal
+  cursor default for DECSCUSR-backed cursor styles.
 - Ghostty `faint-opacity` now controls SGR faint text opacity in GTK terminal panes.
 - Ghostty `mouse-scroll-multiplier` now controls GTK terminal precision and discrete scroll distance.
 - Ghostty `adjust-cell-width` and `adjust-cell-height` now adjust GTK terminal cell metrics using pixel or percentage values.
@@ -68,6 +70,8 @@ All notable changes to ForkTTY are documented here.
 - The GTK/Ghostty smoke script now verifies GTK action split/focus behavior, socket split readback, and the socket notification create/list/clear flow.
 
 ### Fixed
+- GTK terminal panes now keep Ghostty steady cursor styles visible instead of
+  hiding every focused cursor during the blink timer's off phase.
 - Ghostty config and theme appearance loading now enforces the oversized-file guard before reading or applying colors.
 - OSC 99 terminal notifications now decode `e=1` base64 title/body payloads and accumulate same-id `d=0`/`d=1` title/body chunks instead of dropping them as unsupported metadata.
 - OSC 99 multipart title/body notifications now keep the title separate from later body updates instead of concatenating both into notification text.
