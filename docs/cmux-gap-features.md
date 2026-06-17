@@ -62,24 +62,30 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   agent terminal surfaces during session restore using the saved resume cwd as a
   provider flag where available or as the child process cwd otherwise (Codex can
   also infer cwd from local `session_meta` JSONL for older ForkTTY session
-  files), and exposes read-only reclaim
-  candidates through `agent.reclaim.plan`, `forktty agent-reclaim-plan`, and MCP
-  `agent_reclaim_plan`.
-- Remaining scope: actual stop/hibernate, configurable automatic reclaim,
-  provider-side stale-session checks beyond local command/PATH readiness,
-  richer UI controls, and explicit suspended-state semantics.
+  files), exposes read-only reclaim candidates through `agent.reclaim.plan`,
+  `forktty agent-reclaim-plan`, and MCP `agent_reclaim_plan`, and can now
+  hibernate/reclaim idle locally resumable sessions through `agent.hibernate`,
+  `agent.reclaim`, `forktty hibernate-agent`, `forktty reclaim-agents`, and MCP
+  `agent_hibernate`/`agent_reclaim`. Hibernated sessions persist an explicit
+  `suspended` lifecycle and do not auto-respawn; explicit resume still uses the
+  argv-only provider path.
+- Remaining scope: provider-side stale-session checks beyond local command/PATH
+  readiness and richer UI controls.
 
 ### 2. Workflow State, Goals, And Memory
 
-- **Impact**: high. **Cost**: medium.
+- **Impact**: high. **Cost**: medium. **Status**: control-plane done.
 - OMX/OMC treat project-local `.omx/` / `.omc/` directories as a control plane:
   per-mode/per-session state, goal/spec artifacts, ledgers, session search,
   notepads, project memory, wiki/session capture, and compaction recovery.
-- ForkTTY has process session restore and metadata logs, but no durable
-  workflow-state/artifact layer for agent modes.
-- Scope: provider-neutral state roots, per-surface/session bindings, explicit
-  workflow phases, bounded artifact files, session search/replay, and
-  compaction-resistant notes that can be surfaced through hooks/MCP.
+- ForkTTY now has a provider-neutral, bounded `workflow-v1.json` state store
+  with per-workspace/surface/session/mode bindings, durable goal/status/memory
+  fields, replaceable plan steps, bounded evidence entries, and replayable
+  workflow events. It is exposed through `workflow.*` socket methods,
+  `forktty workflows` / `forktty workflow-*` CLI commands, and MCP
+  `workflow_*` tools for agent use.
+- Remaining scope: richer UI panels, project-local wiki/notepad file trees,
+  deep prompt/spec capture, and parity-side search/navigation surfaces.
 
 ### 3. Team Orchestration Runtime
 
@@ -102,10 +108,11 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   status string.
 - OMC adds permission handlers, subagent tracking, persistent-mode Stop
   enforcement, and action-oriented hook context.
-- ForkTTY has notifications, metadata logs, and a notification panel, but no
-  normalized approval/activity feed with actionable permission history.
-- Scope: durable in-process feed entries, permission-request actions, filtering
-  by workspace/surface/provider, and socket/event exposure.
+- ForkTTY has notifications, metadata logs, a notification panel, bounded
+  durable feed history, workspace filtering, and approval decision state through
+  `feed.approval.respond`.
+- Remaining scope: provider-specific permission replies, richer provider
+  filtering, and UI surfaces over the feed.
 
 ### 5. Remote Daemon And SSH Depth
 
@@ -122,11 +129,11 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
 - cmux reads project config for actions and layout/workspace behavior.
 - OMX/OMC also use project-local workflow files for prompts, skills, agents,
   plans, specs, notes, and runtime configuration.
-- ForkTTY has global config and worktree layout settings, but no repo-local
-  action/skill/workflow manifest.
-- Scope: bounded `forktty.json`, argv-only commands, command-palette entries,
-  socket exposure, per-workspace layout hints, and a deliberately small project
-  guidance manifest before any plugin API.
+- ForkTTY now has a bounded repo-local `forktty.json` action manifest with
+  argv-only commands exposed through socket and CLI.
+- Remaining scope: command-palette entries, per-workspace layout hints, skills,
+  prompts, and a deliberately small project guidance manifest before any plugin
+  API.
 
 ### 7. Right Sidebar, Dock, And Custom Sidebars
 

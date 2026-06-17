@@ -11,9 +11,26 @@ All notable changes to ForkTTY are documented here.
   heartbeats, provider worker launch into tabs, pane dispatch confirmations,
   worker health/lifecycle snapshots, idle nudges, safe shutdown requests,
   summaries, and event polling without adding parity UI yet.
+- `agent.hibernate`, `agent.reclaim`, `forktty hibernate-agent`,
+  `forktty reclaim-agents`, and MCP `agent_hibernate`/`agent_reclaim` can now
+  close idle, locally resumable agent terminal processes, mark their persisted
+  sessions `suspended`, and leave them resumable through the existing
+  `agent.resume` path without adding parity UI panels.
+- Workflow control-plane methods (`workflow.list`, `workflow.get`,
+  `workflow.upsert`, `workflow.plan.set`, `workflow.evidence.add`,
+  `workflow.replay`) plus `forktty workflows`/`workflow-*` CLI commands and MCP
+  tools now persist bounded goal, mode/session memory, plan, evidence, and
+  replay events without adding parity UI panels.
+- Repo-local `forktty.json` project actions can now be listed and launched
+  through `project.action.list` / `project.action.run` and the `forktty actions`
+  / `forktty action-run` CLI. Actions are argv-only and limited to git repos
+  already open in ForkTTY.
 - `feed.list` and `forktty feed` now expose a minimal read-only feed snapshot
   that normalizes current notifications, approval prompts, status, and progress
   without adding durable feed history yet.
+- Feed history now persists bounded notification, approval, status, and progress
+  events to `feed.json`; `feed.approval.respond` / `forktty feed respond` can
+  mark approval rows approved or denied for later workflow consumers.
 - `forktty top` / `system.top` now return a read-only workspace and surface
   health snapshot with focus, unread, kind, cwd, shell, size, PID when known,
   agent lifecycle, status, and progress fields.

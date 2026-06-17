@@ -151,6 +151,12 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "worktree:remove"
             | "worktree-merge"
             | "worktree:merge"
+            | "actions"
+            | "project-actions"
+            | "project:action:list"
+            | "action-run"
+            | "project-action-run"
+            | "project:action:run"
             | "set-status"
             | "list-status"
             | "clear-status"
@@ -160,6 +166,25 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "feed"
             | "feed-list"
             | "feed:list"
+            | "workflows"
+            | "workflow-list"
+            | "workflow:list"
+            | "workflow.list"
+            | "workflow-get"
+            | "workflow:get"
+            | "workflow.get"
+            | "workflow-upsert"
+            | "workflow:upsert"
+            | "workflow.upsert"
+            | "workflow-plan-set"
+            | "workflow:plan-set"
+            | "workflow.plan.set"
+            | "workflow-evidence-add"
+            | "workflow:evidence-add"
+            | "workflow.evidence.add"
+            | "workflow-replay"
+            | "workflow:replay"
+            | "workflow.replay"
             | "log"
             | "logs"
             | "list-logs"
@@ -181,6 +206,14 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "agent-reclaim-plan"
             | "agent:reclaim-plan"
             | "agent.reclaim.plan"
+            | "hibernate-agent"
+            | "agent-hibernate"
+            | "agent:hibernate"
+            | "agent.hibernate"
+            | "reclaim-agents"
+            | "agent-reclaim"
+            | "agent:reclaim"
+            | "agent.reclaim"
             | "resume-agent"
             | "agent-resume"
             | "agent:resume"
@@ -1276,6 +1309,14 @@ mod tests {
             CliAction::SocketCli(vec![OsString::from("capabilities")])
         );
         assert_eq!(
+            parse::<_, &str>(["forktty", "actions", "--cwd", "/repo"]),
+            CliAction::SocketCli(vec![
+                OsString::from("actions"),
+                OsString::from("--cwd"),
+                OsString::from("/repo")
+            ])
+        );
+        assert_eq!(
             parse::<_, &str>(["forktty", "events", "--no-replay"]),
             CliAction::SocketCli(vec![
                 OsString::from("events"),
@@ -1338,6 +1379,14 @@ mod tests {
             "agent-reclaim-plan",
             "agent:reclaim-plan",
             "agent.reclaim.plan",
+            "hibernate-agent",
+            "agent-hibernate",
+            "agent:hibernate",
+            "agent.hibernate",
+            "reclaim-agents",
+            "agent-reclaim",
+            "agent:reclaim",
+            "agent.reclaim",
             "resume-agent",
             "agent-resume",
             "agent:resume",
@@ -1347,6 +1396,31 @@ mod tests {
             "feed",
             "feed-list",
             "feed:list",
+            "workflows",
+            "workflow-list",
+            "workflow:list",
+            "workflow.list",
+            "workflow-get",
+            "workflow:get",
+            "workflow.get",
+            "workflow-upsert",
+            "workflow:upsert",
+            "workflow.upsert",
+            "workflow-plan-set",
+            "workflow:plan-set",
+            "workflow.plan.set",
+            "workflow-evidence-add",
+            "workflow:evidence-add",
+            "workflow.evidence.add",
+            "workflow-replay",
+            "workflow:replay",
+            "workflow.replay",
+            "actions",
+            "project-actions",
+            "project:action:list",
+            "action-run",
+            "project-action-run",
+            "project:action:run",
             "top",
         ] {
             assert!(is_socket_cli_command(command), "{command}");

@@ -4,8 +4,10 @@ use forktty_core::{
     command_safety::is_valid_ssh_host, config, dispatch_notification, normalize_agent_status,
     validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
     AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
-    JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationKind, SplitAxis, StatusHookMetadata,
-    SurfaceKind, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse,
+    LogLevel, NotificationItem, NotificationKind, SplitAxis, StatusHookMetadata, SurfaceKind,
+    WorkflowEvidenceInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowReplayQuery,
+    WorkflowUpsert, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -94,10 +96,13 @@ pub const METHODS: &[&str] = &[
     "browser.reload",
     "browser.snapshot",
     "events.subscribe",
+    "feed.approval.respond",
     "feed.list",
     "agent.health",
+    "agent.hibernate",
     "agent.list",
     "agent.reclaim.plan",
+    "agent.reclaim",
     "agent.resume",
     "metadata.clear_logs",
     "metadata.clear_progress",
@@ -113,6 +118,8 @@ pub const METHODS: &[&str] = &[
     "notification.list",
     "pane.new_tab",
     "pane.select_tab",
+    "project.action.list",
+    "project.action.run",
     "surface.close",
     "surface.focus",
     "surface.capture_tail",
@@ -146,6 +153,12 @@ pub const METHODS: &[&str] = &[
     "workspace.create_ssh",
     "workspace.list",
     "workspace.select",
+    "workflow.evidence.add",
+    "workflow.get",
+    "workflow.list",
+    "workflow.plan.set",
+    "workflow.replay",
+    "workflow.upsert",
     "worktree.attach",
     "worktree.create",
     "worktree.list",
@@ -157,10 +170,13 @@ pub const METHODS: &[&str] = &[
 #[cfg(not(feature = "browser"))]
 pub const METHODS: &[&str] = &[
     "events.subscribe",
+    "feed.approval.respond",
     "feed.list",
     "agent.health",
+    "agent.hibernate",
     "agent.list",
     "agent.reclaim.plan",
+    "agent.reclaim",
     "agent.resume",
     "metadata.clear_logs",
     "metadata.clear_progress",
@@ -176,6 +192,8 @@ pub const METHODS: &[&str] = &[
     "notification.list",
     "pane.new_tab",
     "pane.select_tab",
+    "project.action.list",
+    "project.action.run",
     "surface.close",
     "surface.focus",
     "surface.capture_tail",
@@ -209,6 +227,12 @@ pub const METHODS: &[&str] = &[
     "workspace.create_ssh",
     "workspace.list",
     "workspace.select",
+    "workflow.evidence.add",
+    "workflow.get",
+    "workflow.list",
+    "workflow.plan.set",
+    "workflow.replay",
+    "workflow.upsert",
     "worktree.attach",
     "worktree.create",
     "worktree.list",
@@ -393,6 +417,7 @@ pub struct SocketAppState {
     pub terminal: SharedTerminalBackend,
     pub shell: String,
     pub socket_path: PathBuf,
+    pub workflow_store_path: Option<PathBuf>,
     pub notification_dispatch: bool,
     pub team_store_path: Option<PathBuf>,
     /// Broadcast channel feeding `events.subscribe` connections. The background
@@ -402,6 +427,7 @@ pub struct SocketAppState {
     /// engine is wired (no `browser` feature, or headless), in which case the
     /// browser scripting verbs report unavailable.
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
+    feed_store: Arc<Mutex<Option<FeedStore>>>,
     hook_session_targets: Arc<Mutex<HookSessionTargets>>,
 }
 
@@ -419,6 +445,7 @@ impl SocketAppState {
             terminal,
             shell: shell.into(),
             socket_path: socket_path.into(),
+            workflow_store_path: forktty_core::workflow_store_path().ok(),
             notification_dispatch: true,
             team_store_path: if cfg!(test) {
                 None
@@ -427,6 +454,7 @@ impl SocketAppState {
             },
             events,
             browser_cmd: None,
+            feed_store: Arc::new(Mutex::new(None)),
             hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
         }
     }
@@ -438,6 +466,35 @@ impl SocketAppState {
 
     pub fn with_browser_cmd(mut self, sender: async_channel::Sender<BrowserCommand>) -> Self {
         self.browser_cmd = Some(sender);
+        self
+    }
+
+    pub fn with_workflow_store_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.workflow_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_default_feed_store(self) -> Self {
+        match FeedStore::open_default() {
+            Ok(Some(store)) => self.with_feed_store(store),
+            Ok(None) => self,
+            Err(err) => {
+                eprintln!("forktty feed history disabled: {err}");
+                self
+            }
+        }
+    }
+
+    pub fn with_feed_store_path(self, path: impl AsRef<Path>) -> Result<Self, String> {
+        FeedStore::open_at(path)
+            .map(|store| self.with_feed_store(store))
+            .map_err(|err| err.to_string())
+    }
+
+    fn with_feed_store(self, store: FeedStore) -> Self {
+        if let Ok(mut feed_store) = self.feed_store.lock() {
+            *feed_store = Some(store);
+        }
         self
     }
 }
@@ -698,7 +755,11 @@ fn spawn_event_tick(state: SocketAppState) {
                 // and surface to all subscribers. Skip the tick instead.
                 Err(std::sync::TryLockError::Poisoned(_)) => continue,
             };
-            for event in events::diff(&prev, &next) {
+            let events = events::diff(&prev, &next);
+            if let Err(err) = record_feed_events(&state, &events) {
+                eprintln!("forktty feed history update failed: {err}");
+            }
+            for event in events {
                 let _ = state.events.send(event);
             }
             prev = next;
@@ -714,6 +775,141 @@ fn current_snapshot(model: &Arc<Mutex<WorkspaceModel>>) -> Snapshot {
         // worse than a possibly mid-mutation (read-only) snapshot, and the
         // next healthy tick re-asserts the true state anyway.
         Err(poisoned) => events::snapshot(&poisoned.into_inner()),
+    }
+}
+
+fn record_feed_events(state: &SocketAppState, events: &[ModelEvent]) -> Result<(), String> {
+    let mut store = state
+        .feed_store
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let Some(store) = store.as_mut() else {
+        return Ok(());
+    };
+    for event in events {
+        if let Some(entry) = feed_entry_from_event(event) {
+            store.append(entry).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn record_feed_entry(state: &SocketAppState, entry: FeedEntry) -> Result<(), String> {
+    let mut store = state
+        .feed_store
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let Some(store) = store.as_mut() else {
+        return Ok(());
+    };
+    store.append(entry).map_err(|err| err.to_string())
+}
+
+fn feed_entry_from_notification(item: &NotificationItem) -> FeedEntry {
+    let is_approval = item.kind == NotificationKind::Prompt;
+    FeedEntry {
+        id: item.id.clone(),
+        entry_type: if is_approval {
+            FeedEntryType::Approval
+        } else {
+            FeedEntryType::Notification
+        },
+        kind: Some(notification_kind_name(item.kind).to_string()),
+        read: item.read,
+        key: None,
+        value: None,
+        total: None,
+        title: item.title.clone(),
+        body: item.body.clone(),
+        workspace_id: item.workspace_id.clone(),
+        surface_id: item.surface_id.clone(),
+        created_at_ms: item.created_at_ms,
+        approval_state: is_approval.then_some(FeedApprovalState::Pending),
+    }
+}
+
+fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
+    match event {
+        ModelEvent::NotificationAdded {
+            id,
+            workspace_id,
+            surface_id,
+            kind,
+            title,
+            body,
+            created_at_ms,
+        } => Some(feed_entry_from_notification(&NotificationItem {
+            id: id.clone(),
+            title: title.clone(),
+            body: body.clone(),
+            kind: *kind,
+            created_at_ms: *created_at_ms,
+            read: false,
+            workspace_id: workspace_id.clone(),
+            surface_id: surface_id.clone(),
+            terminal_metadata: None,
+        })),
+        ModelEvent::StatusChanged {
+            workspace_id,
+            key,
+            label,
+            value: Some(value),
+        } => {
+            let now = u128::from(current_unix_epoch_ms());
+            Some(FeedEntry {
+                id: format!("feed:{now}:{workspace_id}:status:{key}"),
+                entry_type: FeedEntryType::Status,
+                kind: Some("status".to_string()),
+                read: false,
+                key: Some(key.clone()),
+                value: None,
+                total: None,
+                title: label.clone(),
+                body: value.clone(),
+                workspace_id: Some(workspace_id.clone()),
+                surface_id: None,
+                created_at_ms: now,
+                approval_state: None,
+            })
+        }
+        ModelEvent::ProgressChanged {
+            workspace_id,
+            key,
+            label,
+            value: Some(value),
+            total,
+        } => {
+            let now = u128::from(current_unix_epoch_ms());
+            let body = match total {
+                Some(total) => format!("{}/{}", feed_number(*value), feed_number(*total)),
+                None => feed_number(*value),
+            };
+            Some(FeedEntry {
+                id: format!("feed:{now}:{workspace_id}:progress:{key}"),
+                entry_type: FeedEntryType::Progress,
+                kind: Some("progress".to_string()),
+                read: false,
+                key: Some(key.clone()),
+                value: Some(*value),
+                total: *total,
+                title: label.clone(),
+                body,
+                workspace_id: Some(workspace_id.clone()),
+                surface_id: None,
+                created_at_ms: now,
+                approval_state: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn notification_kind_name(kind: NotificationKind) -> &'static str {
+    match kind {
+        NotificationKind::Prompt => "prompt",
+        NotificationKind::Error => "error",
+        NotificationKind::Info => "info",
+        NotificationKind::Custom => "custom",
     }
 }
 
@@ -748,6 +944,29 @@ pub async fn dispatch(
             "version": env!("CARGO_PKG_VERSION"),
             "methods": METHODS,
         })),
+        "feed.approval.respond" => {
+            let id = required_trimmed_string(&params, "id")?;
+            ensure_max_text_size("id", id)?;
+            let decision = feed_approval_decision_from_params(&params)?;
+            let mut store = state
+                .feed_store
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let Some(store) = store.as_mut() else {
+                return Err(DispatchError::NotReady(
+                    "Feed history is not available".to_string(),
+                ));
+            };
+            store
+                .decide_approval(id, decision)
+                .map(|entry| json!(entry))
+                .map_err(|err| match err {
+                    forktty_core::FeedError::NotFound(_) => {
+                        DispatchError::NotFound("feed entry".to_string())
+                    }
+                    other => DispatchError::Other(other.to_string()),
+                })
+        }
         "feed.list" => {
             let model = state
                 .model
@@ -763,8 +982,19 @@ pub async fn dispatch(
                 Err(err) => return Err(err),
             };
             let limit = optional_u64_param(&params, "limit")?.unwrap_or(50).min(200) as usize;
+            if let Ok(store) = state.feed_store.lock() {
+                if let Some(store) = store.as_ref() {
+                    return Ok(json!(store.list(workspace_id.as_deref(), limit)));
+                }
+            }
             Ok(json!(feed_list(&model, workspace_id.as_deref(), limit)))
         }
+        "workflow.list" => workflow_list(state, &params),
+        "workflow.get" => workflow_get(state, &params),
+        "workflow.upsert" => workflow_upsert(state, &params),
+        "workflow.plan.set" => workflow_plan_set(state, &params),
+        "workflow.evidence.add" => workflow_evidence_add(state, &params),
+        "workflow.replay" => workflow_replay(state, &params),
         "team.list" => {
             let workspace_id = optional_team_workspace_id(state, &params)?;
             let query = forktty_core::TeamQuery {
@@ -1044,6 +1274,7 @@ pub async fn dispatch(
                 .map_err(DispatchError::from)?;
             Ok(json!(events))
         }
+
         "agent.health" => {
             let model = state
                 .model
@@ -1060,6 +1291,7 @@ pub async fn dispatch(
             };
             Ok(json!(agent_health_rows(&model, workspace_id.as_deref())))
         }
+        "agent.hibernate" => hibernate_agent_session(state, &params),
         "agent.list" => {
             let model = state
                 .model
@@ -1098,6 +1330,7 @@ pub async fn dispatch(
                 min_idle_ms,
             ))
         }
+        "agent.reclaim" => reclaim_agent_sessions(state, &params),
         "agent.resume" => resume_agent_session(state, &params),
         "status.summary" => {
             let workspace_id = resolve_workspace_id_for_metadata(state, &params)?;
@@ -1542,6 +1775,52 @@ pub async fn dispatch(
             };
             Ok(json!(result))
         }
+        "project.action.list" => {
+            let (_, actions) = project_actions_for_params(state, &params).await?;
+            Ok(json!(actions))
+        }
+        "project.action.run" => {
+            let id = required_trimmed_string(&params, "id")?;
+            ensure_max_text_size("id", id)?;
+            let (project_root, actions) = project_actions_for_params(state, &params).await?;
+            let action = forktty_core::find_action(&actions, id).map_err(project_action_error)?;
+            let action_cwd = {
+                let project_root = project_root.clone();
+                let action = action.clone();
+                run_project_action_blocking(move || forktty_core::action_cwd(project_root, &action))
+                    .await?
+            };
+            let source_surface_id = project_action_source_surface_id(state, &project_root)?;
+            let surface = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let surface = model
+                    .add_tab(&source_surface_id)
+                    .ok_or(DispatchError::NotFound("surface".to_string()))?;
+                model.set_surface_title(&surface.id, action.label.clone());
+                model.set_surface_cwd(&surface.id, action_cwd.clone());
+                model.surface(&surface.id).cloned().unwrap_or(surface)
+            };
+            let mut argv = action.argv.clone();
+            let program = resolve_project_action_program(&action_cwd, &argv.remove(0))?;
+            let request =
+                SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
+                    .with_args(argv.clone());
+            if let Err(err) = state.terminal.spawn(request) {
+                rollback_surface_creation(state, &surface.id)?;
+                return Err(err.into());
+            }
+            Ok(json!({
+                "id": action.id,
+                "label": action.label,
+                "surface_id": surface.id,
+                "workspace_id": surface.workspace_id,
+                "cwd": action_cwd,
+                "argv": std::iter::once(program).chain(argv.into_iter()).collect::<Vec<_>>(),
+            }))
+        }
         "surface.list" => {
             let model = state
                 .model
@@ -1981,6 +2260,9 @@ pub async fn dispatch(
             if state.notification_dispatch {
                 dispatch_notification_with_loaded_config(&item);
             }
+            if let Err(err) = record_feed_entry(state, feed_entry_from_notification(&item)) {
+                eprintln!("forktty feed history update failed: {err}");
+            }
             Ok(json!(item))
         }
         "notification.list" => {
@@ -2388,6 +2670,7 @@ fn agent_reclaim_protect_reason(
         "idle" => {}
         "needs_input" => return Some("needs_input".to_string()),
         "running" => return Some("running".to_string()),
+        "suspended" => return Some("suspended".to_string()),
         "ended" => return Some("ended".to_string()),
         _ => return Some("unknown_lifecycle".to_string()),
     }
@@ -2405,6 +2688,179 @@ fn agent_reclaim_protect_reason(
         return Some("recent_activity".to_string());
     }
     None
+}
+
+fn hibernate_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let surface_id = required_surface_id(params)?;
+    let min_idle_ms = optional_u64_param(params, "min_idle_ms")?.unwrap_or(0);
+    hibernate_agent_surface(state, surface_id, min_idle_ms)
+}
+
+fn reclaim_agent_sessions(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let min_idle_ms =
+        optional_u64_param(params, "min_idle_ms")?.unwrap_or(DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS);
+    let limit = optional_u64_param(params, "limit")?.unwrap_or(200).min(200) as usize;
+    let plan = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let workspace_id = match workspace_selector_from_params(params) {
+            Ok(selector) => Some(
+                model
+                    .workspace_id_for(selector)
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+            ),
+            Err(DispatchError::MissingParam(_)) => None,
+            Err(err) => return Err(err),
+        };
+        agent_reclaim_plan(&model, workspace_id.as_deref(), min_idle_ms)
+    };
+
+    let candidate_ids = plan
+        .get("candidates")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row.get("surface_id").and_then(Value::as_str))
+        .take(limit)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    let mut hibernated = Vec::new();
+    let mut failed = Vec::new();
+    for surface_id in candidate_ids {
+        match hibernate_agent_surface(state, &surface_id, min_idle_ms) {
+            Ok(row) => hibernated.push(row),
+            Err(err) => failed.push(json!({
+                "surface_id": surface_id,
+                "code": err.code(),
+                "error": err.to_string(),
+            })),
+        }
+    }
+
+    Ok(json!({
+        "policy": plan.get("policy").cloned().unwrap_or(Value::Null),
+        "hibernated": hibernated,
+        "protected": plan.get("protected").cloned().unwrap_or_else(|| json!([])),
+        "failed": failed,
+    }))
+}
+
+fn hibernate_agent_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+    min_idle_ms: u64,
+) -> Result<Value, DispatchError> {
+    let now_ms = current_unix_epoch_ms();
+    let path = std::env::var_os("PATH");
+    let (surface, status, agent, session_id, resume_cwd, permission_mode, argv, idle_ms) = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let surface = model
+            .surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        if !matches!(surface.kind, SurfaceKind::Terminal) {
+            return Err(DispatchError::PreconditionFailed(
+                "Only terminal agent surfaces can be hibernated".to_string(),
+            ));
+        }
+        let agent_session = surface.agent_session.as_ref().ok_or_else(|| {
+            DispatchError::PreconditionFailed(
+                "Surface has no persisted agent session to hibernate".to_string(),
+            )
+        })?;
+        match agent_session.lifecycle {
+            AgentSessionLifecycle::Idle => {}
+            AgentSessionLifecycle::Suspended => {
+                return Err(DispatchError::PreconditionFailed(
+                    "Agent session is already suspended".to_string(),
+                ));
+            }
+            lifecycle => {
+                return Err(DispatchError::PreconditionFailed(format!(
+                    "Only idle agent sessions can be hibernated (current lifecycle: {lifecycle:?})"
+                )));
+            }
+        }
+        if agent_session.last_activity_ms == 0 {
+            return Err(DispatchError::PreconditionFailed(
+                "Agent session activity is unknown".to_string(),
+            ));
+        }
+        let idle_ms = now_ms.saturating_sub(agent_session.last_activity_ms);
+        if idle_ms < min_idle_ms {
+            return Err(DispatchError::PreconditionFailed(format!(
+                "Agent session idle age {idle_ms}ms is below the reclaim policy {min_idle_ms}ms"
+            )));
+        }
+        let resume_cwd = effective_agent_resume_cwd(agent_session);
+        let (ready, reason, _program, _executable, argv) = agent_resume_readiness(
+            agent_session.agent,
+            &agent_session.session_id,
+            resume_cwd.as_deref(),
+            agent_session.permission_mode.as_deref(),
+            path.as_deref(),
+        );
+        if !ready {
+            return Err(DispatchError::PreconditionFailed(format!(
+                "Agent session cannot be resumed safely: {reason}"
+            )));
+        }
+        let previous_last_activity_ms = agent_session.last_activity_ms;
+        let workspace_id = surface.workspace_id.clone();
+        let agent = agent_session.agent;
+        let session_id = agent_session.session_id.clone();
+        let permission_mode = agent_session.permission_mode.clone();
+        model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Suspended);
+        model.set_surface_agent_session_last_activity_ms(surface_id, now_ms);
+        let _ = model.mark_surface_unread(surface_id, false);
+        let status = model.set_status(
+            &workspace_id,
+            surface_status_key(surface_id),
+            "Agent",
+            "Suspended",
+            Some("yellow".to_string()),
+        );
+        if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
+            model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Idle);
+            model.set_surface_agent_session_last_activity_ms(surface_id, previous_last_activity_ms);
+            return Err(DispatchError::Other(err));
+        }
+        let surface = model
+            .surface(surface_id)
+            .cloned()
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        (
+            surface,
+            status.ok_or(DispatchError::NotFound("workspace".to_string()))?,
+            agent,
+            session_id,
+            resume_cwd,
+            permission_mode,
+            argv,
+            idle_ms,
+        )
+    };
+
+    Ok(json!({
+        "surface": surface,
+        "agent": agent,
+        "session_id": session_id,
+        "resume_cwd": resume_cwd,
+        "permission_mode": permission_mode,
+        "lifecycle": "suspended",
+        "idle_ms": idle_ms,
+        "argv": argv,
+        "status": status,
+    }))
+}
+
+fn surface_status_key(surface_id: &str) -> String {
+    format!("surface:{surface_id}:status")
 }
 
 fn agent_session_lifecycle_from_hook(
@@ -2725,6 +3181,259 @@ fn feed_number(value: f64) -> String {
     }
 }
 
+fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let (workspace_id, surface_id) = workflow_target_ids(state, params)?;
+    let session_id = optional_non_blank_string_param(params, "session_id")?.map(str::to_string);
+    let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
+    let limit = optional_u64_param(params, "limit")?.map(|limit| limit as usize);
+    let path = workflow_store_path(state)?;
+    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    Ok(json!(store.list(&WorkflowQuery {
+        workspace_id,
+        surface_id,
+        session_id,
+        query,
+        limit,
+    })))
+}
+
+fn workflow_get(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let workflow_id = required_workflow_id(params)?;
+    let path = workflow_store_path(state)?;
+    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    store
+        .get(workflow_id)
+        .map(|workflow| json!(workflow))
+        .ok_or_else(|| DispatchError::NotFound("workflow".to_string()))
+}
+
+fn workflow_upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let (workspace_id, surface_id) = workflow_target_ids(state, params)?;
+    let input = WorkflowUpsert {
+        workflow_id: optional_workflow_id(params)?.map(str::to_string),
+        workspace_id,
+        surface_id,
+        agent: optional_non_blank_string_param(params, "agent")?.map(str::to_string),
+        session_id: optional_non_blank_string_param(params, "session_id")?.map(str::to_string),
+        mode: optional_non_blank_string_param(params, "mode")?.map(str::to_string),
+        status: optional_non_blank_string_param(params, "status")?.map(str::to_string),
+        goal: optional_non_blank_string_param(params, "goal")?.map(str::to_string),
+        memory: optional_non_blank_string_param(params, "memory")?.map(str::to_string),
+    };
+    let path = workflow_store_path(state)?;
+    let workflow = forktty_core::update_workflows_at_path(path, |store| {
+        store.upsert(input, forktty_core::workflow_now_ms())
+    })
+    .map_err(workflow_error)?;
+    Ok(json!(workflow))
+}
+
+fn workflow_plan_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let workflow_id = required_workflow_id(params)?.to_string();
+    let steps = workflow_plan_steps(params)?;
+    let path = workflow_store_path(state)?;
+    let workflow = forktty_core::update_workflows_at_path(path, |store| {
+        store.set_plan(&workflow_id, steps, forktty_core::workflow_now_ms())
+    })
+    .map_err(workflow_error)?;
+    Ok(json!(workflow))
+}
+
+fn workflow_evidence_add(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let workflow_id = required_workflow_id(params)?.to_string();
+    let evidence = workflow_evidence_input(params)?;
+    let path = workflow_store_path(state)?;
+    let workflow = forktty_core::update_workflows_at_path(path, |store| {
+        store.add_evidence(&workflow_id, evidence, forktty_core::workflow_now_ms())
+    })
+    .map_err(workflow_error)?;
+    Ok(json!(workflow))
+}
+
+fn workflow_replay(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let workflow_id = optional_workflow_id(params)?.map(str::to_string);
+    let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
+    let since_seq = optional_u64_param(params, "since_seq")?;
+    let limit = optional_u64_param(params, "limit")?.map(|limit| limit as usize);
+    let path = workflow_store_path(state)?;
+    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    Ok(json!(store.replay(&WorkflowReplayQuery {
+        workflow_id,
+        query,
+        since_seq,
+        limit,
+    })))
+}
+
+fn workflow_store_path(state: &SocketAppState) -> Result<&Path, DispatchError> {
+    state.workflow_store_path.as_deref().ok_or_else(|| {
+        DispatchError::PreconditionFailed(
+            "Workflow store path is unavailable on this system".to_string(),
+        )
+    })
+}
+
+fn workflow_target_ids(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<(Option<String>, Option<String>), DispatchError> {
+    let surface_id = optional_surface_id_param(params)?.map(str::to_string);
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let workspace_id = match workspace_selector_from_params(params) {
+        Ok(selector) => Some(
+            model
+                .workspace_id_for(selector)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+        ),
+        Err(DispatchError::MissingParam(_)) => None,
+        Err(err) => return Err(err),
+    };
+    let surface_workspace_id = match surface_id.as_deref() {
+        Some(surface_id) => Some(
+            model
+                .surface(surface_id)
+                .ok_or(DispatchError::NotFound("surface".to_string()))?
+                .workspace_id
+                .clone(),
+        ),
+        None => None,
+    };
+    if let (Some(workspace_id), Some(surface_workspace_id)) =
+        (workspace_id.as_deref(), surface_workspace_id.as_deref())
+    {
+        if workspace_id != surface_workspace_id {
+            return Err(DispatchError::InvalidParam(
+                "surface_id does not belong to the selected workspace".to_string(),
+            ));
+        }
+    }
+    Ok((workspace_id.or(surface_workspace_id), surface_id))
+}
+
+fn workflow_plan_steps(params: &Value) -> Result<Vec<WorkflowPlanStepInput>, DispatchError> {
+    let Some(value) = params.get("steps").or_else(|| params.get("plan")) else {
+        return Err(DispatchError::MissingParam("steps"));
+    };
+    let Some(items) = value.as_array() else {
+        return Err(DispatchError::InvalidParam(
+            "Invalid parameter steps: expected array".to_string(),
+        ));
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let Some(object) = item.as_object() else {
+                return Err(DispatchError::InvalidParam(format!(
+                    "Invalid parameter steps[{index}]: expected object"
+                )));
+            };
+            Ok(WorkflowPlanStepInput {
+                id: required_object_string(object, "id", "steps")?.to_string(),
+                title: required_object_string(object, "title", "steps")?.to_string(),
+                status: required_object_string(object, "status", "steps")?.to_string(),
+                detail: optional_object_string(object, "detail", "steps")?.map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+fn workflow_evidence_input(params: &Value) -> Result<WorkflowEvidenceInput, DispatchError> {
+    let evidence_id = optional_non_blank_string_param(params, "evidence_id")?.map(str::to_string);
+    let kind = required_trimmed_string(params, "kind")?.to_string();
+    let title = required_trimmed_string(params, "title")?.to_string();
+    let text = optional_non_empty_raw_string_param(params, "text")?.map(str::to_string);
+    let path = optional_non_blank_string_param(params, "path")?.map(PathBuf::from);
+    if text.is_none() && path.is_none() {
+        return Err(DispatchError::MissingParam("text"));
+    }
+    Ok(WorkflowEvidenceInput {
+        id: evidence_id,
+        kind,
+        title,
+        text,
+        path,
+    })
+}
+
+fn required_workflow_id(params: &Value) -> Result<&str, DispatchError> {
+    optional_workflow_id(params)?.ok_or(DispatchError::MissingParam("workflow_id"))
+}
+
+fn optional_non_empty_raw_string_param<'a>(
+    params: &'a Value,
+    key: &str,
+) -> Result<Option<&'a str>, DispatchError> {
+    let Some(value) = params.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    match value.as_str() {
+        Some(value) if !value.trim().is_empty() => Ok(Some(value)),
+        Some(_) => Err(format!("Invalid parameter {key}: must not be empty").into()),
+        None => Err(format!("Invalid parameter {key}: expected string").into()),
+    }
+}
+
+fn optional_workflow_id(params: &Value) -> Result<Option<&str>, DispatchError> {
+    optional_non_blank_string_param(params, "workflow_id")
+}
+
+fn required_object_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+    parent: &str,
+) -> Result<&'a str, DispatchError> {
+    optional_object_string(object, key, parent)?.ok_or_else(|| {
+        DispatchError::InvalidParam(format!("Invalid parameter {parent}: missing {key}"))
+    })
+}
+
+fn optional_object_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+    parent: &str,
+) -> Result<Option<&'a str>, DispatchError> {
+    let Some(value) = object.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    match value.as_str().map(str::trim) {
+        Some(value) if !value.is_empty() => Ok(Some(value)),
+        Some(_) => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {parent}.{key}: must not be empty"
+        ))),
+        None => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {parent}.{key}: expected string"
+        ))),
+    }
+}
+
+fn workflow_error(err: forktty_core::WorkflowError) -> DispatchError {
+    match err {
+        forktty_core::WorkflowError::NotFound => DispatchError::NotFound("workflow".to_string()),
+        forktty_core::WorkflowError::InvalidData(message) => DispatchError::InvalidParam(message),
+        other => DispatchError::Other(other.to_string()),
+    }
+}
+
+fn feed_approval_decision_from_params(params: &Value) -> Result<FeedApprovalState, DispatchError> {
+    match required_trimmed_string(params, "decision")? {
+        "approve" | "approved" => Ok(FeedApprovalState::Approved),
+        "deny" | "denied" => Ok(FeedApprovalState::Denied),
+        other => Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter decision: expected approve or deny, got {other}"
+        ))),
+    }
+}
+
 fn topology_tree(model: &WorkspaceModel, workspace_id: Option<&str>) -> Value {
     let workspaces = model
         .list_workspaces()
@@ -3019,6 +3728,98 @@ where
     }
 }
 
+async fn run_project_action_blocking<T, F>(task: F) -> Result<T, DispatchError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, forktty_core::ProjectActionError> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(task).await {
+        Ok(result) => result.map_err(project_action_error),
+        Err(err) => Err(format!("Project action task failed: {err}").into()),
+    }
+}
+
+async fn project_actions_for_params(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<(PathBuf, Vec<forktty_core::ProjectAction>), DispatchError> {
+    let cwd = resolve_open_repo_cwd_param(state, params, &["cwd"], "cwd").await?;
+    let project_root =
+        run_project_action_blocking(move || forktty_core::discover_project_root(cwd)).await?;
+    let actions = {
+        let project_root = project_root.clone();
+        run_project_action_blocking(move || forktty_core::load_project_actions(project_root))
+            .await?
+    };
+    Ok((project_root, actions))
+}
+
+fn project_action_source_surface_id(
+    state: &SocketAppState,
+    project_root: &Path,
+) -> Result<String, DispatchError> {
+    let project_root = fs::canonicalize(project_root).map_err(|err| {
+        DispatchError::PreconditionFailed(format!("Cannot resolve project root: {err}"))
+    })?;
+    let project_repo =
+        canonical_repo_common_dir(&project_root).map_err(DispatchError::PreconditionFailed)?;
+    let workspaces = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.list_workspaces()
+    };
+    workspaces
+        .into_iter()
+        .filter_map(|workspace| {
+            let cwd = fs::canonicalize(&workspace.working_dir).ok()?;
+            let repo = canonical_repo_common_dir(&cwd).ok()?;
+            if repo != project_repo {
+                return None;
+            }
+            let score = if project_root.starts_with(&cwd) {
+                0
+            } else if cwd.starts_with(&project_root) {
+                1
+            } else {
+                2
+            };
+            Some((score, workspace.focused_surface_id))
+        })
+        .min_by_key(|(score, _)| *score)
+        .map(|(_, surface_id)| surface_id)
+        .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))
+}
+
+fn resolve_project_action_program(
+    action_cwd: &Path,
+    program: &str,
+) -> Result<String, DispatchError> {
+    let path = Path::new(program);
+    if path.is_absolute() || path.components().count() == 1 {
+        return Ok(program.to_string());
+    }
+    let resolved = fs::canonicalize(action_cwd.join(path)).map_err(|err| {
+        DispatchError::PreconditionFailed(format!("Cannot resolve project action program: {err}"))
+    })?;
+    if !resolved.starts_with(action_cwd) {
+        return Err(DispatchError::PreconditionFailed(
+            "project action program escapes action cwd".to_string(),
+        ));
+    }
+    Ok(resolved.to_string_lossy().to_string())
+}
+
+fn project_action_error(err: forktty_core::ProjectActionError) -> DispatchError {
+    match err {
+        forktty_core::ProjectActionError::NotFound(_) => {
+            DispatchError::NotFound("project action".to_string())
+        }
+        other => DispatchError::PreconditionFailed(other.to_string()),
+    }
+}
+
 async fn finish_removal_blocking(
     removal: worktree::PreparedWorktreeRemoval,
     delete_branch: bool,
@@ -3103,6 +3904,9 @@ pub fn spawn_request_for_surface(
     let Some(agent_session) = &surface.agent_session else {
         return Some(request);
     };
+    if agent_session.lifecycle == AgentSessionLifecycle::Suspended {
+        return None;
+    }
     let resume_cwd = effective_agent_resume_cwd(agent_session);
     let Ok(command) = agent_resume_command_with_cwd_and_permission_mode(
         agent_session.agent,
@@ -5842,16 +6646,30 @@ mod tests {
         }
     }
 
+    fn write_fake_codex(dir: &Path) -> PathBuf {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let codex = dir.join("codex");
+        {
+            let mut file = fs::File::create(&codex).unwrap();
+            writeln!(file, "#!/bin/sh").unwrap();
+        }
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+        codex
+    }
+
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let backend = Arc::new(HeadlessTerminalBackend::new());
-        let state = SocketAppState::new(
+        let mut state = SocketAppState::new(
             model,
             backend.clone(),
             "/bin/sh",
             PathBuf::from("/tmp/forktty.sock"),
         )
         .with_notification_dispatch(false);
+        state.workflow_store_path = None;
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
     }
@@ -5975,6 +6793,34 @@ mod tests {
                 "codex-session-1".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn spawn_request_skips_suspended_agent_terminal_surface() {
+        let surface = forktty_core::Surface {
+            id: "surface-agent".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            title: "agent".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: forktty_core::SurfaceKind::Terminal,
+            agent_session: Some(forktty_core::AgentSession {
+                agent: AgentKind::Codex,
+                session_id: "codex-session-1".to_string(),
+                resume_cwd: Some(PathBuf::from("/tmp/forktty-project")),
+                permission_mode: None,
+                lifecycle: AgentSessionLifecycle::Suspended,
+                last_activity_ms: 12_345,
+            }),
+            persisted_scrollback: None,
+        };
+
+        assert!(spawn_request_for_surface(
+            SpawnRequest::for_surface(&surface, "/bin/sh", "/tmp/forktty.sock"),
+            &surface,
+        )
+        .is_none());
     }
 
     #[test]
@@ -7152,6 +7998,193 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "invalid_param");
         assert!(err.to_string().contains("leader_surface_id"));
+    }
+
+    #[tokio::test]
+    async fn dispatches_workflow_control_plane_methods() {
+        let (state, _) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let workflow = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "surface_id": surface_id,
+                "agent": "codex",
+                "session_id": "codex-session-1",
+                "mode": "review",
+                "status": "running",
+                "goal": "Review the current branch",
+                "memory": "Watch socket behavior"
+            }),
+        )
+        .await
+        .unwrap();
+        let workflow_id = workflow["id"].as_str().unwrap();
+        assert_eq!(workflow["workspace_id"], workspace_id);
+        assert_eq!(workflow["surface_id"], surface_id);
+        assert_eq!(workflow_id, "session:codex:codex-session-1:review");
+
+        let planned = dispatch(
+            &state,
+            "workflow.plan.set",
+            json!({
+                "workflow_id": workflow_id,
+                "steps": [
+                    {"id": "inspect", "title": "Inspect socket changes", "status": "done"},
+                    {"id": "test", "title": "Run tests", "status": "pending", "detail": "socket"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(planned["plan"].as_array().unwrap().len(), 2);
+
+        let evidenced = dispatch(
+            &state,
+            "workflow.evidence.add",
+            json!({
+                "workflow_id": workflow_id,
+                "evidence_id": "socket-test",
+                "kind": "test",
+                "title": "workflow socket test",
+                "text": "  passed\n"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(evidenced["evidence"][0]["id"], "socket-test");
+        assert_eq!(evidenced["evidence"][0]["text"], "  passed\n");
+
+        let listed = dispatch(
+            &state,
+            "workflow.list",
+            json!({"workspace_id": workspace_id, "query": "socket", "limit": 10}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed[0]["id"], workflow_id);
+
+        let fetched = dispatch(&state, "workflow.get", json!({"workflow_id": workflow_id}))
+            .await
+            .unwrap();
+        assert_eq!(fetched["memory"], "Watch socket behavior");
+
+        let replay = dispatch(
+            &state,
+            "workflow.replay",
+            json!({"workflow_id": workflow_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(replay.as_array().unwrap().len(), 3);
+        assert_eq!(replay[2]["kind"], "workflow.evidence.added");
+
+        let other_workspace_id = {
+            let mut model = state.model.lock().unwrap();
+            model.create_workspace("other", "/tmp").id
+        };
+        let error = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workspace_id": other_workspace_id,
+                "surface_id": surface_id,
+                "workflow_id": "bad-target"
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "invalid_param");
+    }
+
+    #[tokio::test]
+    async fn feed_list_reads_persisted_feed_entries_and_records_approval_decisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (state, _) = test_state();
+        let state = state.with_feed_store_path(&feed_path).unwrap();
+        let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+        {
+            let prev = current_snapshot(&state.model);
+            state.model.lock().unwrap().create_notification(
+                "Permission",
+                "Run command?",
+                NotificationKind::Prompt,
+                Some(workspace_id.clone()),
+                None,
+            );
+            let next = current_snapshot(&state.model);
+            record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
+        }
+
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+        let approval_id = feed[0]["id"].as_str().unwrap();
+        assert_eq!(feed[0]["type"], "approval");
+        assert_eq!(feed[0]["kind"], "prompt");
+        assert_eq!(feed[0]["read"], false);
+        assert_eq!(feed[0]["approval_state"], "pending");
+
+        let decided = dispatch(
+            &state,
+            "feed.approval.respond",
+            json!({"id": approval_id, "decision": "approved"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(decided["approval_state"], "approved");
+        assert_eq!(
+            forktty_core::FeedStore::open_at(&feed_path)
+                .unwrap()
+                .list(None, 10)[0]
+                .approval_state,
+            Some(forktty_core::FeedApprovalState::Approved)
+        );
+    }
+
+    #[tokio::test]
+    async fn feed_list_sees_socket_created_notification_without_waiting_for_event_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (state, _) = test_state();
+        let state = state.with_feed_store_path(&feed_path).unwrap();
+        let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+        dispatch(
+            &state,
+            "notification.create",
+            json!({
+                "workspace_id": workspace_id,
+                "kind": "prompt",
+                "title": "Permission",
+                "body": "Run command?"
+            }),
+        )
+        .await
+        .unwrap();
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(feed[0]["type"], "approval");
+        assert_eq!(feed[0]["title"], "Permission");
+        assert_eq!(feed[0]["approval_state"], "pending");
     }
 
     #[tokio::test]
@@ -9424,16 +10457,8 @@ mod tests {
 
     #[test]
     fn agent_reclaim_plan_marks_only_old_idle_ready_sessions_as_candidates() {
-        use std::io::Write as _;
-        use std::os::unix::fs::PermissionsExt as _;
-
         let dir = tempfile::tempdir().unwrap();
-        let codex = dir.path().join("codex");
-        {
-            let mut file = fs::File::create(&codex).unwrap();
-            writeln!(file, "#!/bin/sh").unwrap();
-        }
-        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
+        write_fake_codex(dir.path());
 
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -9473,6 +10498,199 @@ mod tests {
         assert_eq!(plan["protected"].as_array().unwrap().len(), 1);
         assert_eq!(plan["protected"][0]["surface_id"], protected_surface_id);
         assert_eq!(plan["protected"][0]["protect_reason"], "needs_input");
+    }
+
+    #[test]
+    fn agent_reclaim_plan_protects_suspended_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1"));
+        assert!(model
+            .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Suspended,));
+        assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1_000));
+
+        let plan =
+            agent_reclaim_plan_with_path(&model, None, Some(dir.path().as_os_str()), 10_000, 5_000);
+
+        assert!(plan["candidates"].as_array().unwrap().is_empty());
+        assert_eq!(plan["protected"][0]["surface_id"], surface_id);
+        assert_eq!(plan["protected"][0]["protect_reason"], "suspended");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_hibernate_marks_idle_ready_session_suspended_and_closes_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let (state, backend) = test_state();
+        let surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model
+                .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+            surface_id
+        };
+
+        let hibernated = dispatch(
+            &state,
+            "agent.hibernate",
+            json!({"surface_id": surface_id, "min_idle_ms": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hibernated["surface"]["id"], surface_id);
+        assert_eq!(hibernated["agent"], "codex");
+        assert_eq!(hibernated["session_id"], "codex-session-1");
+        assert_eq!(hibernated["lifecycle"], "suspended");
+        assert_eq!(
+            hibernated["argv"],
+            json!(["codex", "resume", "codex-session-1"])
+        );
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .all(|surface| surface.surface_id != surface_id));
+
+        let model = state.model.lock().unwrap();
+        let surface = model.surface(&surface_id).unwrap();
+        assert_eq!(
+            surface.agent_session.as_ref().unwrap().lifecycle,
+            AgentSessionLifecycle::Suspended
+        );
+        assert_eq!(
+            model.list_status(&surface.workspace_id)[0].key,
+            surface_status_key(&surface_id)
+        );
+        assert_eq!(
+            model.list_status(&surface.workspace_id)[0].value,
+            "Suspended"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_hibernate_rejects_running_session_without_closing_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let (state, backend) = test_state();
+        let surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+            surface_id
+        };
+
+        let err = dispatch(&state, "agent.hibernate", json!({"surface_id": surface_id}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed");
+        assert!(err.to_string().contains("Only idle"));
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_reclaim_hibernates_only_plan_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+        let (candidate_surface_id, protected_surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let candidate_surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &candidate_surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_lifecycle(
+                &candidate_surface_id,
+                AgentSessionLifecycle::Idle,
+            ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&candidate_surface_id, 1));
+
+            let protected_surface_id = model.add_tab(&candidate_surface_id).unwrap().id;
+            assert!(model.set_surface_agent_session(
+                &protected_surface_id,
+                AgentKind::Codex,
+                "codex-session-2",
+            ));
+            assert!(model.set_surface_agent_session_lifecycle(
+                &protected_surface_id,
+                AgentSessionLifecycle::Running,
+            ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&protected_surface_id, 1));
+            (candidate_surface_id, protected_surface_id)
+        };
+
+        let reclaimed = dispatch(
+            &state,
+            "agent.reclaim",
+            json!({"min_idle_ms": 0, "limit": 5}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(reclaimed["hibernated"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            reclaimed["hibernated"][0]["surface"]["id"],
+            candidate_surface_id
+        );
+        assert_eq!(reclaimed["failed"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            reclaimed["protected"][0]["surface_id"],
+            protected_surface_id
+        );
+        assert_eq!(reclaimed["protected"][0]["protect_reason"], "running");
+
+        let model = state.model.lock().unwrap();
+        assert_eq!(
+            model
+                .surface(&candidate_surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .lifecycle,
+            AgentSessionLifecycle::Suspended
+        );
+        assert_eq!(
+            model
+                .surface(&protected_surface_id)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .unwrap()
+                .lifecycle,
+            AgentSessionLifecycle::Running
+        );
     }
 
     #[tokio::test]
@@ -10229,6 +11447,131 @@ mod tests {
             backend.sent_text(&surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn project_actions_list_and_run_from_open_repo_only() {
+        let repo_dir = make_temp_repo();
+        fs::write(
+            repo_dir.path().join("forktty.json"),
+            r#"{
+                "actions": [
+                    {
+                        "id": "test",
+                        "label": "Run tests",
+                        "argv": ["./gradlew", "test"],
+                        "cwd": "."
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        fs::write(repo_dir.path().join("gradlew"), "#!/bin/sh\n").unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();
+
+        let listed = dispatch(
+            &state,
+            "project.action.list",
+            json!({"cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed[0]["id"], "test");
+        assert_eq!(listed[0]["label"], "Run tests");
+
+        let run = dispatch(
+            &state,
+            "project.action.run",
+            json!({"cwd": repo_dir.path(), "id": "test"}),
+        )
+        .await
+        .unwrap();
+        let surface_id = run["surface_id"].as_str().unwrap();
+        let gradlew = fs::canonicalize(repo_dir.path().join("gradlew")).unwrap();
+        assert_eq!(run["argv"], json!([gradlew, "test"]));
+        assert_eq!(
+            backend.spawn_shell(surface_id).unwrap(),
+            gradlew.to_string_lossy()
+        );
+        assert_eq!(backend.spawn_args(surface_id).unwrap(), vec!["test"]);
+        assert_eq!(
+            backend
+                .surfaces()
+                .unwrap()
+                .into_iter()
+                .find(|surface| surface.surface_id == surface_id)
+                .unwrap()
+                .cwd,
+            repo_dir.path()
+        );
+
+        let unopened_repo = make_temp_repo();
+        fs::write(
+            unopened_repo.path().join("forktty.json"),
+            r#"{"actions":[{"id":"x","label":"X","argv":["cargo","test"]}]}"#,
+        )
+        .unwrap();
+        let err = dispatch(
+            &state,
+            "project.action.list",
+            json!({"cwd": unopened_repo.path()}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "precondition_failed");
+    }
+
+    #[tokio::test]
+    async fn project_actions_run_from_linked_worktree_authorized_repo() {
+        let repo_dir = make_temp_repo();
+        fs::write(
+            repo_dir.path().join("forktty.json"),
+            r#"{"actions":[{"id":"test","label":"Run tests","argv":["cargo","test"],"cwd":"."}]}"#,
+        )
+        .unwrap();
+        let created = worktree::create(
+            repo_dir.path().to_str().unwrap(),
+            "topic/project-action-linked",
+            "../forktty-worktrees/{name}",
+        )
+        .unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model,
+            backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from(&created.path)).unwrap();
+
+        let listed = dispatch(
+            &state,
+            "project.action.list",
+            json!({"cwd": repo_dir.path()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed[0]["id"], "test");
+        let run = dispatch(
+            &state,
+            "project.action.run",
+            json!({"cwd": repo_dir.path(), "id": "test"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(run["argv"], json!(["cargo", "test"]));
     }
 
     #[tokio::test]

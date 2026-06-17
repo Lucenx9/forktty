@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::model::WorkspaceModel;
+use crate::NotificationKind;
 
 /// A single observed change to the workspace model.
 ///
@@ -65,12 +66,14 @@ pub enum ModelEvent {
     StatusChanged {
         workspace_id: String,
         key: String,
+        label: String,
         value: Option<String>,
     },
     /// A progress entry changed. `value` is `None` when the key was cleared.
     ProgressChanged {
         workspace_id: String,
         key: String,
+        label: String,
         value: Option<f64>,
         total: Option<f64>,
     },
@@ -78,8 +81,11 @@ pub enum ModelEvent {
     NotificationAdded {
         id: String,
         workspace_id: Option<String>,
+        surface_id: Option<String>,
+        kind: NotificationKind,
         title: String,
         body: String,
+        created_at_ms: u128,
     },
     PortsChanged {
         workspace_id: String,
@@ -108,10 +114,25 @@ pub enum SurfaceSnapKind {
 pub struct WsSnap {
     pub name: String,
     pub focused_surface_id: String,
-    pub status: BTreeMap<String, String>,
-    pub progress: BTreeMap<String, (f64, Option<f64>)>,
+    pub status: BTreeMap<String, StatusSnap>,
+    pub progress: BTreeMap<String, ProgressSnap>,
     pub ports: Vec<u16>,
     pub pr: Option<String>,
+}
+
+/// Per-status fields tracked for edge-triggered emission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusSnap {
+    pub label: String,
+    pub value: String,
+}
+
+/// Per-progress fields tracked for edge-triggered emission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgressSnap {
+    pub label: String,
+    pub value: f64,
+    pub total: Option<f64>,
 }
 
 /// Per-surface fields tracked for diffing.
@@ -124,11 +145,27 @@ pub struct SurfSnap {
 }
 
 /// Per-notification fields tracked for edge-triggered emission.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NotifSnap {
     pub workspace_id: Option<String>,
+    pub surface_id: Option<String>,
+    pub kind: NotificationKind,
     pub title: String,
     pub body: String,
+    pub created_at_ms: u128,
+}
+
+impl Default for NotifSnap {
+    fn default() -> Self {
+        Self {
+            workspace_id: None,
+            surface_id: None,
+            kind: NotificationKind::Info,
+            title: String::new(),
+            body: String::new(),
+            created_at_ms: 0,
+        }
+    }
 }
 
 /// Compact, owned view of the model used to compute [`ModelEvent`]s.
@@ -150,11 +187,24 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
     for workspace in model.list_workspaces() {
         let mut status = BTreeMap::new();
         for entry in model.list_status(&workspace.id) {
-            status.insert(entry.key, entry.value);
+            status.insert(
+                entry.key,
+                StatusSnap {
+                    label: entry.label,
+                    value: entry.value,
+                },
+            );
         }
         let mut progress = BTreeMap::new();
         for entry in model.list_progress(&workspace.id) {
-            progress.insert(entry.key, (entry.value, entry.total));
+            progress.insert(
+                entry.key,
+                ProgressSnap {
+                    label: entry.label,
+                    value: entry.value,
+                    total: entry.total,
+                },
+            );
         }
         for surface in model.list_surfaces(Some(&workspace.id)) {
             let (kind, url) = match surface.kind {
@@ -194,8 +244,11 @@ pub fn snapshot(model: &WorkspaceModel) -> Snapshot {
                 item.id,
                 NotifSnap {
                     workspace_id: item.workspace_id,
+                    surface_id: item.surface_id,
+                    kind: item.kind,
                     title: item.title,
                     body: item.body,
+                    created_at_ms: item.created_at_ms,
                 },
             )
         })
@@ -343,8 +396,11 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
             events.push(ModelEvent::NotificationAdded {
                 id: id.clone(),
                 workspace_id: notif.workspace_id.clone(),
+                surface_id: notif.surface_id.clone(),
+                kind: notif.kind,
                 title: notif.title.clone(),
                 body: notif.body.clone(),
+                created_at_ms: notif.created_at_ms,
             });
         }
     }
@@ -354,24 +410,26 @@ pub fn diff(prev: &Snapshot, next: &Snapshot) -> Vec<ModelEvent> {
 
 fn diff_status(
     workspace_id: &str,
-    prev: &BTreeMap<String, String>,
-    next: &BTreeMap<String, String>,
+    prev: &BTreeMap<String, StatusSnap>,
+    next: &BTreeMap<String, StatusSnap>,
 ) -> Vec<ModelEvent> {
     let mut events = Vec::new();
-    for (key, value) in next {
-        if prev.get(key) != Some(value) {
+    for (key, status) in next {
+        if prev.get(key) != Some(status) {
             events.push(ModelEvent::StatusChanged {
                 workspace_id: workspace_id.to_string(),
                 key: key.clone(),
-                value: Some(value.clone()),
+                label: status.label.clone(),
+                value: Some(status.value.clone()),
             });
         }
     }
-    for key in prev.keys() {
+    for (key, status) in prev {
         if !next.contains_key(key) {
             events.push(ModelEvent::StatusChanged {
                 workspace_id: workspace_id.to_string(),
                 key: key.clone(),
+                label: status.label.clone(),
                 value: None,
             });
         }
@@ -381,25 +439,27 @@ fn diff_status(
 
 fn diff_progress(
     workspace_id: &str,
-    prev: &BTreeMap<String, (f64, Option<f64>)>,
-    next: &BTreeMap<String, (f64, Option<f64>)>,
+    prev: &BTreeMap<String, ProgressSnap>,
+    next: &BTreeMap<String, ProgressSnap>,
 ) -> Vec<ModelEvent> {
     let mut events = Vec::new();
-    for (key, value) in next {
-        if prev.get(key) != Some(value) {
+    for (key, progress) in next {
+        if prev.get(key) != Some(progress) {
             events.push(ModelEvent::ProgressChanged {
                 workspace_id: workspace_id.to_string(),
                 key: key.clone(),
-                value: Some(value.0),
-                total: value.1,
+                label: progress.label.clone(),
+                value: Some(progress.value),
+                total: progress.total,
             });
         }
     }
-    for key in prev.keys() {
+    for (key, progress) in prev {
         if !next.contains_key(key) {
             events.push(ModelEvent::ProgressChanged {
                 workspace_id: workspace_id.to_string(),
                 key: key.clone(),
+                label: progress.label.clone(),
                 value: None,
                 total: None,
             });
@@ -634,16 +694,19 @@ mod tests {
         prev.workspaces.insert("w1".into(), ws("main", "s1"));
         let mut next = prev.clone();
         // add key "a", change nothing else
-        next.workspaces
-            .get_mut("w1")
-            .unwrap()
-            .status
-            .insert("a".into(), "1".into());
+        next.workspaces.get_mut("w1").unwrap().status.insert(
+            "a".into(),
+            StatusSnap {
+                label: "A".into(),
+                value: "1".into(),
+            },
+        );
         assert_eq!(
             diff(&prev, &next),
             vec![ModelEvent::StatusChanged {
                 workspace_id: "w1".into(),
                 key: "a".into(),
+                label: "A".into(),
                 value: Some("1".into()),
             }]
         );
@@ -654,6 +717,7 @@ mod tests {
             vec![ModelEvent::StatusChanged {
                 workspace_id: "w1".into(),
                 key: "a".into(),
+                label: "A".into(),
                 value: None,
             }]
         );
@@ -664,16 +728,20 @@ mod tests {
         let mut prev = Snapshot::default();
         prev.workspaces.insert("w1".into(), ws("main", "s1"));
         let mut next = prev.clone();
-        next.workspaces
-            .get_mut("w1")
-            .unwrap()
-            .progress
-            .insert("build".into(), (0.5, Some(1.0)));
+        next.workspaces.get_mut("w1").unwrap().progress.insert(
+            "build".into(),
+            ProgressSnap {
+                label: "Build".into(),
+                value: 0.5,
+                total: Some(1.0),
+            },
+        );
         assert_eq!(
             diff(&prev, &next),
             vec![ModelEvent::ProgressChanged {
                 workspace_id: "w1".into(),
                 key: "build".into(),
+                label: "Build".into(),
                 value: Some(0.5),
                 total: Some(1.0),
             }]
@@ -688,8 +756,21 @@ mod tests {
         let prev = Snapshot::default();
         let mut next = Snapshot::default();
         let mut w = ws("main", "s1");
-        w.status.insert("build".into(), "ok".into());
-        w.progress.insert("dl".into(), (0.5, Some(1.0)));
+        w.status.insert(
+            "build".into(),
+            StatusSnap {
+                label: "Build".into(),
+                value: "ok".into(),
+            },
+        );
+        w.progress.insert(
+            "dl".into(),
+            ProgressSnap {
+                label: "Download".into(),
+                value: 0.5,
+                total: Some(1.0),
+            },
+        );
         w.ports = vec![3000];
         w.pr = Some("#1 OPEN".into());
         next.workspaces.insert("w1".into(), w);
@@ -705,11 +786,13 @@ mod tests {
         assert!(events.contains(&ModelEvent::StatusChanged {
             workspace_id: "w1".into(),
             key: "build".into(),
+            label: "Build".into(),
             value: Some("ok".into()),
         }));
         assert!(events.contains(&ModelEvent::ProgressChanged {
             workspace_id: "w1".into(),
             key: "dl".into(),
+            label: "Download".into(),
             value: Some(0.5),
             total: Some(1.0),
         }));
@@ -816,8 +899,11 @@ mod tests {
             "n1".into(),
             NotifSnap {
                 workspace_id: Some("w1".into()),
+                surface_id: Some("s1".into()),
+                kind: NotificationKind::Info,
                 title: "hi".into(),
                 body: "there".into(),
+                created_at_ms: 1,
             },
         );
         let mut next = prev.clone();
@@ -825,8 +911,11 @@ mod tests {
             "n2".into(),
             NotifSnap {
                 workspace_id: None,
+                surface_id: None,
+                kind: NotificationKind::Prompt,
                 title: "new".into(),
                 body: "body".into(),
+                created_at_ms: 2,
             },
         );
         assert_eq!(
@@ -834,8 +923,11 @@ mod tests {
             vec![ModelEvent::NotificationAdded {
                 id: "n2".into(),
                 workspace_id: None,
+                surface_id: None,
+                kind: NotificationKind::Prompt,
                 title: "new".into(),
                 body: "body".into(),
+                created_at_ms: 2,
             }]
         );
         // Removing a notification yields nothing.

@@ -121,6 +121,7 @@ pub enum AgentSessionLifecycle {
     Running,
     Idle,
     NeedsInput,
+    Suspended,
     Ended,
     #[default]
     Unknown,
@@ -1310,6 +1311,14 @@ impl WorkspaceModel {
             return false;
         };
         surface.title = title.into();
+        true
+    }
+
+    pub fn set_surface_cwd(&mut self, surface_id: &str, cwd: PathBuf) -> bool {
+        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+            return false;
+        };
+        surface.cwd = cwd;
         true
     }
 
