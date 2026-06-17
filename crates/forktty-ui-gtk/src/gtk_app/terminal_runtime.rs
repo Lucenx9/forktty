@@ -321,6 +321,18 @@ impl TerminalRuntime {
         self.core.tail_text(lines).unwrap_or_default()
     }
 
+    pub(super) fn viewport_selection_text(
+        &self,
+        start_col: u16,
+        start_row: u32,
+        end_col: u16,
+        end_row: u32,
+    ) -> Result<String, TerminalError> {
+        self.core
+            .viewport_selection_text(start_col, start_row, end_col, end_row)
+            .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
     /// Changes whenever [`Self::full_text`] may have changed; viewport
     /// scrolling does not count.
     pub(super) fn content_generation(&self) -> u64 {

@@ -527,6 +527,36 @@ impl GhosttyCore {
         self.format_plain_text(false, true)
     }
 
+    /// Format an inclusive viewport-cell selection using libghostty-vt's
+    /// selection formatter.
+    pub fn viewport_selection_text(
+        &self,
+        start_col: u16,
+        start_row: u32,
+        end_col: u16,
+        end_row: u32,
+    ) -> Result<String> {
+        let start = self.terminal.grid_ref(Point::Viewport(PointCoordinate {
+            x: start_col,
+            y: start_row,
+        }))?;
+        let end = self.terminal.grid_ref(Point::Viewport(PointCoordinate {
+            x: end_col,
+            y: end_row,
+        }))?;
+        let selection = Selection::new(start, end, false);
+        let mut formatter = Formatter::new(
+            &self.terminal,
+            FormatterOptions::new()
+                .with_format(Format::Plain)
+                .with_trim(false)
+                .with_unwrap(true)
+                .with_selection(&selection),
+        )?;
+        let bytes = formatter.format_alloc(None::<&libghostty_vt::alloc::Allocator<'static>>)?;
+        Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
+    }
+
     /// Plain-text dump of at most the last `lines` scrollable rows.
     ///
     /// Unlike [`Self::full_text`], this formats a bounded selection near the
@@ -2079,6 +2109,40 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["abcdefghijklmno", "tail"]
         );
+    }
+
+    #[test]
+    fn viewport_selection_text_preserves_whitespace_and_unwraps_soft_wraps() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 5,
+            rows: 4,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"foo   \r\nabcdef").unwrap();
+
+        assert_eq!(core.viewport_selection_text(3, 0, 4, 0).unwrap(), "  ");
+
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 5,
+            rows: 4,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"abcdef").unwrap();
+        assert_eq!(core.viewport_selection_text(0, 0, 0, 1).unwrap(), "abcdef");
+
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 5,
+            rows: 3,
+            scrollback_lines: 10,
+        })
+        .unwrap();
+
+        core.feed(b"alpha").unwrap();
+        assert_eq!(core.viewport_selection_text(0, 1, 4, 1).unwrap(), "");
     }
 
     #[test]

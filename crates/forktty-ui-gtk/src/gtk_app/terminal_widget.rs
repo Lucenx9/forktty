@@ -508,8 +508,9 @@ impl GhosttyTerminalWidget {
                                             line_selection_in_frame(&frame, point.row)
                                         };
                                         match range {
-                                            Some((start, end)) => commit_selection_range(
+                                            Some((start, end)) => commit_selection_range_with_runtime_fallback(
                                                 &mut selection,
+                                                &runtime,
                                                 &frame,
                                                 start,
                                                 end,
@@ -1664,7 +1665,13 @@ fn finalize_selection_drag(
     match selection.normalized_range() {
         Some((start, end)) if should_commit_selection_range(start, end, commit_single_cell) => {
             match runtime.borrow_mut().render_frame() {
-                Ok(frame) => commit_selection_range(&mut selection, &frame, start, end),
+                Ok(frame) => commit_selection_range_with_runtime_fallback(
+                    &mut selection,
+                    runtime,
+                    &frame,
+                    start,
+                    end,
+                ),
                 Err(err) => {
                     eprintln!("Failed to extract terminal selection: {err}");
                     selection.clear();
@@ -1736,10 +1743,69 @@ fn commit_selection_range(
     start: SelectionPoint,
     end: SelectionPoint,
 ) {
+    let text = selection_text_from_frame(frame, start, end);
+    commit_selection_text(selection, start, end, text);
+}
+
+fn commit_selection_range_with_runtime_fallback(
+    selection: &mut TerminalSelection,
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) {
+    if selection_range_contains_invisible_cells(frame, start, end) {
+        commit_selection_range(selection, frame, start, end);
+        return;
+    }
+    if let Err(err) = commit_selection_range_from_runtime(selection, runtime, start, end) {
+        eprintln!("Failed to extract terminal selection through Ghostty: {err}");
+        commit_selection_range(selection, frame, start, end);
+    }
+}
+
+fn commit_selection_range_from_runtime(
+    selection: &mut TerminalSelection,
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) -> Result<(), TerminalError> {
+    let text = selection_text_from_runtime(runtime, start, end)?;
+    commit_selection_text(selection, start, end, text);
+    Ok(())
+}
+
+fn selection_text_from_runtime(
+    runtime: &Rc<RefCell<TerminalRuntime>>,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) -> Result<String, TerminalError> {
+    let (start_col, start_row) = selection_point_for_ghostty(start)?;
+    let (end_col, end_row) = selection_point_for_ghostty(end)?;
+    runtime
+        .borrow()
+        .viewport_selection_text(start_col, start_row, end_col, end_row)
+}
+
+fn selection_point_for_ghostty(point: SelectionPoint) -> Result<(u16, u32), TerminalError> {
+    let col = u16::try_from(point.col).map_err(|_| {
+        TerminalError::Backend(format!("selection column out of range: {}", point.col))
+    })?;
+    let row = u32::try_from(point.row).map_err(|_| {
+        TerminalError::Backend(format!("selection row out of range: {}", point.row))
+    })?;
+    Ok((col, row))
+}
+
+fn commit_selection_text(
+    selection: &mut TerminalSelection,
+    start: SelectionPoint,
+    end: SelectionPoint,
+    text: String,
+) {
     selection.begin_drag(start);
     selection.extend_drag(end);
     selection.end_drag();
-    let text = selection_text_from_frame(frame, start, end);
     if text.is_empty() {
         selection.clear();
         return;
@@ -1956,6 +2022,20 @@ fn selection_text_from_frame(
         Some((text, row.wrapped))
     });
     join_rows_honoring_wrap(rows, false)
+}
+
+fn selection_range_contains_invisible_cells(
+    frame: &forktty_terminal::ghostty::core::TerminalFrame,
+    start: SelectionPoint,
+    end: SelectionPoint,
+) -> bool {
+    frame.rows.iter().enumerate().any(|(row_idx, row)| {
+        let Some((from, to)) = selection_cols_for_row(start, end, row_idx, row.cells.len()) else {
+            return false;
+        };
+        let (from, to) = expand_selection_cols_for_wide_cell(row, from, to);
+        row.cells[from..to].iter().any(|cell| cell.invisible)
+    })
 }
 
 fn expand_selection_cols_for_wide_cell(
@@ -2697,6 +2777,22 @@ mod selection_tests {
         );
 
         assert_eq!(text, "echo OK");
+    }
+
+    #[test]
+    fn selection_range_flags_invisible_cells_for_ghostty_fallback() {
+        let frame = frame_for_lines(b"echo OK\x1b[8m; hidden-cmd\x1b[0m");
+
+        assert!(selection_range_contains_invisible_cells(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 19 },
+        ));
+        assert!(!selection_range_contains_invisible_cells(
+            &frame,
+            SelectionPoint { row: 0, col: 0 },
+            SelectionPoint { row: 0, col: 6 },
+        ));
     }
 
     #[test]
