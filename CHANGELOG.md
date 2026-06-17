@@ -13,6 +13,8 @@ All notable changes to ForkTTY are documented here.
   minimal Ghostty-side GTK widget embedding API instead of more parity shims.
 - `scripts/ghostty-gtk-build-probe.sh` now records the reduced upstream Ghostty
   GTK build used before attempting the Linux renderer embedding patch.
+- A manual `Ghostty GTK Probe` GitHub Actions workflow can run that upstream
+  Ghostty GTK build on Ubuntu without blocking the normal ForkTTY CI.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,

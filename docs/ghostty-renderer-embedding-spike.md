@@ -74,6 +74,9 @@ Run the upstream GTK build probe with:
 scripts/ghostty-gtk-build-probe.sh
 ```
 
+Or run the same command on GitHub's Ubuntu runner through the manual
+`Ghostty GTK Probe` workflow.
+
 On the current Arch-style local toolchain this does not reach the Ghostty API
 work yet. Zig 0.15.2 attempts to link helper executables against GCC 16.1.1
 startup objects containing `.sframe` relocations and fails with:
@@ -88,6 +91,6 @@ fails on the same relocation. Forcing `use_lld = true` changes the command to
 `-flld`, but the helper compile terminates without a useful diagnostic. The
 submodule was restored after this probe; no unverified Ghostty patch is kept.
 
-The next implementation attempt should run the same script on CI/Ubuntu or a
-Zig/toolchain combination that can link the GTK helper executables, then add
-the minimal `GtkWidget*` embedding API there.
+If the workflow passes, the next implementation attempt is the minimal
+`GtkWidget*` embedding API. If the workflow fails the same way, fix or pin the
+Ghostty GTK build toolchain first.
