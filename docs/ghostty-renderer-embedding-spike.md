@@ -83,8 +83,8 @@ The embedded `GtkApp` is initialized directly inside the heap-owned embedding
 context instead of a temporary stack value, keeping Ghostty's internal runtime
 app pointer stable after context creation. ForkTTY's fork also exposes a
 working-directory surface constructor so a packed Ghostty widget can start in
-the same cwd as the ForkTTY surface, plus a length-delimited text input ABI
-that writes raw bytes to the initialized Ghostty core surface.
+the same cwd as the ForkTTY surface, plus length-delimited text input and
+plain-text read ABIs for socket send/read/capture operations.
 
 ## Next Cut
 
@@ -93,9 +93,10 @@ that writes raw bytes to the initialized Ghostty core surface.
    workflow. That workflow now builds `ghostty-gtk-embed.so` and starts the
    Rust probe under Xvfb with `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`.
 3. Keep the first packed Ghostty pane behind `FORKTTY_GHOSTTY_GTK_PANES=1`.
-   It remains experimental: socket input is wired through the new text input
-   ABI, while read-text, agent capture, search, title/status propagation, and
-   close/pid events still need explicit Ghostty embedding hooks.
+   It remains experimental: socket input and terminal read/capture are wired
+   through the embedding ABI, while search, copy/selection parity, title/status
+   propagation, and close/pid events still need explicit Ghostty embedding
+   hooks.
 
 Do not replace ForkTTY's current renderer until step 3 is proven locally.
 

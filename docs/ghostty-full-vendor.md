@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `eba2d75a85e4b08d6c9c6b03de1b9f9c0ceaa1a9`
+- Pin: `39effd5c71a97608a75cdf782bd536456d7a4bba`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -26,7 +26,9 @@ initialized in the heap-owned embedding context so Ghostty's runtime app
 pointer remains stable after context creation. The GTK surface ABI can also
 receive a working directory override so ForkTTY's experimental pane can start
 Ghostty in the surface cwd, and it can write explicit text bytes into an
-initialized embedded surface for ForkTTY socket input.
+initialized embedded surface for ForkTTY socket input. It can also return
+visible or full plain text from Ghostty's active screen so ForkTTY socket
+`read_text` and `capture_tail` requests work in experimental embedded panes.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.
@@ -50,11 +52,11 @@ FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
 ```
 
 This mode is intentionally incomplete: it proves that ForkTTY can pack Ghostty's
-GTK widget in a pane, pass the cwd, and forward socket `send_text` after Ghostty
-initializes the core surface. Socket `read_text`, agent capture, search, and
-title/status plumbing are not available in embedded pane mode yet. Use the
-default renderer path for those workflows until Ghostty exposes the needed
-embedding hooks.
+GTK widget in a pane, pass the cwd, forward socket `send_text`, and answer
+socket `read_text`/`capture_tail` after Ghostty initializes the core surface.
+Search, copy/selection parity, title/status plumbing, and PID/exit lifecycle are
+not complete in embedded pane mode yet. Use the default renderer path for those
+workflows until the remaining embedding hooks are wired.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.

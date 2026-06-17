@@ -147,10 +147,19 @@ impl TerminalController {
             } => {
                 let result = if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.read_text(&surface_id, capture, max_bytes)
-                } else if self.embedded_ghostty_panes.contains_key(&surface_id) {
-                    Err(TerminalError::Backend(
-                        "read-text is not supported by embedded Ghostty GTK panes yet".to_string(),
-                    ))
+                } else if let Some(widget) = self.embedded_ghostty_panes.get(&surface_id) {
+                    match &self.embedded_ghostty {
+                        Some(embedder) if embedder.supports_read_text() => unsafe {
+                            embedder.read_text_snapshot(widget, &surface_id, capture, max_bytes)
+                        },
+                        Some(_) => Err(TerminalError::Backend(
+                            "embedded Ghostty GTK library does not export read-text support"
+                                .to_string(),
+                        )),
+                        None => Err(TerminalError::Backend(
+                            "embedded Ghostty GTK surface has no embedder".to_string(),
+                        )),
+                    }
                 } else {
                     Err(TerminalError::NotReady(surface_id.clone()))
                 };

@@ -35,6 +35,9 @@ All notable changes to ForkTTY are documented here.
 - The experimental Ghostty GTK pane mode can now forward ForkTTY socket
   `send_text` input to embedded Ghostty surfaces after the Ghostty core surface
   is initialized.
+- The experimental Ghostty GTK pane mode can now service ForkTTY socket
+  `read_text` and `capture_tail` requests by reading visible/full text through
+  the vendored Ghostty GTK embedding ABI.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
