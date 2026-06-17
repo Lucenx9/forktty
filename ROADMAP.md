@@ -81,6 +81,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Auto/Light/Dark theme-source selection in Settings.
 - [x] Per-pane Ghostty scrollback and audible-bell controls.
 - [x] Ghostty config appearance import for font, colors, `theme`, `config-file`, named colors, ANSI palette entries, `scrollback-limit`, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming.
+- [x] Ghostty compatibility scope documented: terminal appearance/runtime knobs are supported where ForkTTY has a matching concept; Ghostty GUI/window/platform options remain intentionally out of scope unless mapped later.
 - [x] Sidebar position (`left`/`right`) and visibility persistence.
 
 ### Session, Config, and Security
