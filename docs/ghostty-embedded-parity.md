@@ -46,8 +46,8 @@ exercised) · `n/a`.
 
 | # | Dimension | Parity target | How verified | Status |
 | - | --------- | ------------- | ------------ | ------ |
-| 1 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pending |
-| 2 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of an echoed marker | pending |
+| 1 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
+| 2 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of an echoed marker | pass |
 | 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation; **manual**: scrollback persistence across restart | pending |
 | 4 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively) | pending |
 | 5 | Images (Kitty/iTerm) | Inline images render in the embedded surface | manual (visual; Ghostty renders natively) | pending |
@@ -55,7 +55,8 @@ exercised) · `n/a`.
 | 7 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | pending |
 | 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | pending |
 | 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): surface lifecycle; **manual**: session restore after app restart | pending |
-| 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` behave as on classic panes; child PID remains required for port discovery | auto (smoke): surfaces/read-screen/capture-tail/send-text; auto (unit): capture_tail tail derivation, child-pid symbol; **pending**: child PID appears in `surfaces` | pending |
+| 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus action and socket splits | pass |
+| 11 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; **pending**: Probe still warns that the initial surface did not expose a child pid | pending |
 
 ## Wiring already in place (so the rows above can pass)
 
@@ -66,8 +67,9 @@ exercised) · `n/a`.
   (keybinding action by name); ForkTTY routes the `Ctrl+Shift+C/V/A/F`
   accelerators and command palette to the focused embedded surface.
 - **Child PID** — `ghostty_gtk_surface_child_pid` fed by a `pid_available`
-  surface mailbox message; ForkTTY records it for listening-port discovery and
-  the socket `surfaces` PID field.
+  surface mailbox message; ForkTTY attempts to record it for listening-port
+  discovery and the socket `surfaces` PID field, but the Probe still tracks
+  reliable PID visibility as pending.
 - **Socket text** — `send_text` / `read_text` (visible + full) ABIs back the
   socket `send_text`, `read_text`, and `capture_tail` requests.
 

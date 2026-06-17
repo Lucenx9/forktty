@@ -65,15 +65,14 @@ All notable changes to ForkTTY are documented here.
 - Experimental embedded Ghostty panes now route ForkTTY zoom actions to
   Ghostty's native font-size actions, so `Ctrl+plus`, `Ctrl+minus`, reset zoom,
   and command-palette zoom affect embedded panes as well as classic panes.
-- Experimental embedded Ghostty panes now expose their child PID, so
-  listening-port discovery and the socket `surfaces` PID field reach parity with
-  classic panes. The embedding ABI gains `ghostty_gtk_surface_child_pid`, fed by
-  a new `pid_available` surface mailbox message that hands the IO-thread-owned
-  pid to the GTK main thread race-free; ForkTTY polls the getter briefly after
-  spawn to record the PID, with a Linux direct-child process fallback while the
-  embedded surface finishes startup. Older libraries without the symbol use that
-  fallback when available and otherwise leave port discovery unavailable for
-  embedded panes.
+- Experimental embedded Ghostty panes now have child-PID ABI plumbing for
+  listening-port discovery and the socket `surfaces` PID field. The embedding
+  ABI gains `ghostty_gtk_surface_child_pid`, fed by a new `pid_available`
+  surface mailbox message that hands the IO-thread-owned pid to the GTK main
+  thread race-free; ForkTTY polls the getter briefly after spawn to record the
+  PID, with a Linux direct-child process fallback while the embedded surface
+  finishes startup. Probe-visible PID parity remains tracked in the embedded
+  parity matrix.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies socket
   `capture-tail` and that embedded pane startup did not fall back to the
