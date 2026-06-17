@@ -714,6 +714,12 @@ fn collect_report(scope: DoctorScope) -> DoctorReport {
             std::env::var_os("APPIMAGE"),
             std::env::var_os("APPDIR"),
         );
+        #[cfg(feature = "gtk-ghostty")]
+        append_embedded_ghostty_lib_warnings(
+            &mut warnings,
+            crate::gtk_app::ghostty_gtk_embed::ghostty_gtk_panes_enabled_from_env(),
+            &crate::gtk_app::ghostty_gtk_embed::library_candidates(),
+        );
     }
 
     DoctorReport {
@@ -977,6 +983,35 @@ fn append_appimage_runtime_warnings(
             missing.join(", ")
         ));
     }
+}
+
+/// Warns when embedded Ghostty panes are opted in (`FORKTTY_GHOSTTY_GTK_PANES`)
+/// but `ghostty-gtk-embed.so` is on none of the loader's candidate paths, so the
+/// panes would fail to load. Silent otherwise: the default renderer never needs
+/// the library, so a normal install must not see this warning.
+#[cfg(feature = "gtk-ghostty")]
+fn append_embedded_ghostty_lib_warnings(
+    warnings: &mut Vec<String>,
+    panes_requested: bool,
+    candidates: &[PathBuf],
+) {
+    if !panes_requested {
+        return;
+    }
+    if candidates.iter().any(|path| path.exists()) {
+        return;
+    }
+    let searched = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    warnings.push(format!(
+        "embedded Ghostty panes are enabled (FORKTTY_GHOSTTY_GTK_PANES) but \
+         ghostty-gtk-embed.so was not found (searched: {searched}); panes will fail \
+         to load. Build it with scripts/ghostty-gtk-lib-probe.sh or set \
+         FORKTTY_GHOSTTY_GTK_LIB."
+    ));
 }
 
 fn trimmed_os_string(value: Option<OsString>) -> Option<String> {
@@ -2405,6 +2440,47 @@ mod tests {
                 && warning.contains("does not bundle GTK/Ghostty runtime libraries")
                 && warning.contains("libgtk-4.so")
         }));
+    }
+
+    #[cfg(feature = "gtk-ghostty")]
+    #[test]
+    fn doctor_skips_embedded_ghostty_warning_when_panes_disabled() {
+        let mut warnings = Vec::new();
+        append_embedded_ghostty_lib_warnings(
+            &mut warnings,
+            false,
+            &[PathBuf::from("/nonexistent/ghostty-gtk-embed.so")],
+        );
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[cfg(feature = "gtk-ghostty")]
+    #[test]
+    fn doctor_warns_when_panes_enabled_but_embedded_library_missing() {
+        let mut warnings = Vec::new();
+        append_embedded_ghostty_lib_warnings(
+            &mut warnings,
+            true,
+            &[PathBuf::from("/nonexistent/ghostty-gtk-embed.so")],
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("ghostty-gtk-embed.so"));
+        assert!(warnings[0].contains("FORKTTY_GHOSTTY_GTK_PANES"));
+    }
+
+    #[cfg(feature = "gtk-ghostty")]
+    #[test]
+    fn doctor_skips_embedded_ghostty_warning_when_library_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path().join("ghostty-gtk-embed.so");
+        fs::write(&lib, "").unwrap();
+        let mut warnings = Vec::new();
+        append_embedded_ghostty_lib_warnings(
+            &mut warnings,
+            true,
+            &[PathBuf::from("/nonexistent/ghostty-gtk-embed.so"), lib],
+        );
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 
     #[test]

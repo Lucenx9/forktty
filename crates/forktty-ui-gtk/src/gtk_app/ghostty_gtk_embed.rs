@@ -334,7 +334,7 @@ fn load_library() -> Result<(Library, PathBuf), String> {
     ))
 }
 
-pub(super) fn library_candidates() -> Vec<PathBuf> {
+pub(crate) fn library_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os(GHOSTTY_GTK_LIB_ENV).filter(|value| !value.is_empty()) {
         candidates.push(PathBuf::from(path));
@@ -452,7 +452,7 @@ pub(super) fn embedded_child_exit_status(exit_code: Option<i32>) -> EmbeddedChil
     }
 }
 
-pub(super) fn ghostty_gtk_panes_enabled_from_env() -> bool {
+pub(crate) fn ghostty_gtk_panes_enabled_from_env() -> bool {
     let Some(value) = std::env::var_os(GHOSTTY_GTK_PANES_ENV) else {
         return false;
     };

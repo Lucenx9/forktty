@@ -75,6 +75,17 @@ search overlay (`start_search`); mouse selection already works natively inside
 the embedded widget. A library built before that symbol degrades to a logged
 no-op.
 
+For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
+development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
+`vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so`, `scripts/build-deb.sh` and
+`scripts/build-appimage.sh` install it into `usr/lib`, and the binary loads it
+through its RUNPATH (`$ORIGIN/../lib`). The install step is best-effort:
+packaging still succeeds when the library is absent, and `forktty doctor` warns
+about the missing library only when `FORKTTY_GHOSTTY_GTK_PANES` opts the user
+into embedded panes. Release CI does not run the probe before packaging yet, so
+stable release artifacts still ship without the library until the renderer
+becomes the default.
+
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.
 

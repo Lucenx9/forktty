@@ -140,6 +140,18 @@ fi
 install -Dm755 "$GHOSTTY_LIB" "$PKG_ROOT/usr/lib/libghostty-vt.so.0.1.0"
 ln -s libghostty-vt.so.0.1.0 "$PKG_ROOT/usr/lib/libghostty-vt.so.0"
 ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
+# Experimental embedded Ghostty widget library. Optional: only present when
+# scripts/ghostty-gtk-lib-probe.sh has built it into vendor/ghostty/zig-out/lib.
+# Installed builds load it from usr/lib via the binary RUNPATH ($ORIGIN/../lib),
+# so FORKTTY_GHOSTTY_GTK_LIB is not needed.
+for ghostty_gtk_lib in \
+  "$ROOT_DIR/vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so" \
+  "$ROOT_DIR/vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so"; do
+  if [[ -f "$ghostty_gtk_lib" ]]; then
+    install -Dm755 "$ghostty_gtk_lib" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
+    break
+  fi
+done
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_terminfo
 install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"

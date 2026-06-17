@@ -75,7 +75,7 @@ mod backend;
 mod browser_bridge;
 mod command_palette;
 mod controller;
-mod ghostty_gtk_embed;
+pub(crate) mod ghostty_gtk_embed;
 mod ghostty_gtk_probe;
 mod layout;
 mod notifications_panel;
