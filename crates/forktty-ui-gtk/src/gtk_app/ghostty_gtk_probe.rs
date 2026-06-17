@@ -42,7 +42,7 @@ pub(super) fn run() -> i32 {
     app.connect_activate(move |app| {
         build_probe_ui(app, auto_exit_delay, Rc::clone(&exit_status_for_activate));
     });
-    let gtk_status: i32 = app.run().into();
+    let gtk_status: i32 = app.run_with_args(&probe_gapplication_args()).into();
     if gtk_status == 0 {
         exit_status.get()
     } else {
@@ -274,6 +274,10 @@ fn parse_auto_exit_delay(value: &str) -> Result<Option<Duration>, String> {
     }
 }
 
+fn probe_gapplication_args() -> [&'static str; 1] {
+    ["forktty-ghostty-gtk-probe"]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +318,10 @@ mod tests {
     #[test]
     fn parse_auto_exit_delay_rejects_invalid_values() {
         assert!(parse_auto_exit_delay("soon").is_err());
+    }
+
+    #[test]
+    fn probe_gapplication_args_do_not_forward_cli_subcommand() {
+        assert_eq!(probe_gapplication_args(), ["forktty-ghostty-gtk-probe"]);
     }
 }
