@@ -60,6 +60,8 @@ All notable changes to ForkTTY are documented here.
 - Ghostty `faint-opacity` now controls SGR faint text opacity in GTK terminal panes.
 - Ghostty `selection-clear-on-typing` now controls whether typing after a
   scroll-to-bottom keeps or clears a finished terminal selection.
+- Ghostty `right-click-action` now controls terminal right-click behavior for
+  context menu, copy, paste, copy-or-paste, and ignore.
 - Ghostty `mouse-scroll-multiplier` now controls GTK terminal precision and discrete scroll distance.
 - Ghostty `adjust-cell-width` and `adjust-cell-height` now adjust GTK terminal cell metrics using pixel or percentage values.
 - Ghostty `unfocused-split-opacity` and `unfocused-split-fill` now control ForkTTY's inactive split dim overlay.

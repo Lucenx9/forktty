@@ -2603,6 +2603,7 @@ fn write_terminal_input(
 pub(super) trait TerminalWidgetOps {
     fn widget(&self) -> gtk::Widget;
     fn has_terminal_focus(&self) -> bool;
+    fn has_selection(&self) -> bool;
     fn write_input(&self, input: TerminalInput);
     fn grab_terminal_focus(&self);
     fn copy_text(&self);
@@ -2639,6 +2640,10 @@ impl TerminalWidgetOps for GhosttyTerminalWidget {
 
     fn has_terminal_focus(&self) -> bool {
         self.drawing_area.has_focus()
+    }
+
+    fn has_selection(&self) -> bool {
+        self.selection.borrow().has_selected_payload()
     }
 
     fn write_input(&self, input: TerminalInput) {
@@ -2732,6 +2737,7 @@ pub(super) struct TestTerminalWidget {
     inputs: RefCell<Vec<TerminalInput>>,
     focus_calls: Cell<usize>,
     calls: RefCell<Vec<String>>,
+    has_selection: Cell<bool>,
 }
 
 #[cfg(test)]
@@ -2751,6 +2757,10 @@ impl TestTerminalWidget {
     pub(super) fn focus_calls(&self) -> usize {
         self.focus_calls.get()
     }
+
+    pub(super) fn set_has_selection(&self, has_selection: bool) {
+        self.has_selection.set(has_selection);
+    }
 }
 
 #[cfg(test)]
@@ -2761,6 +2771,10 @@ impl TerminalWidgetOps for TestTerminalWidget {
 
     fn has_terminal_focus(&self) -> bool {
         true
+    }
+
+    fn has_selection(&self) -> bool {
+        self.has_selection.get()
     }
 
     fn write_input(&self, input: TerminalInput) {
@@ -2775,7 +2789,11 @@ impl TerminalWidgetOps for TestTerminalWidget {
         self.calls.borrow_mut().push("copy_text".to_string());
     }
 
-    fn paste_from_clipboard(&self) {}
+    fn paste_from_clipboard(&self) {
+        self.calls
+            .borrow_mut()
+            .push("paste_from_clipboard".to_string());
+    }
 
     fn select_all_text(&self) {}
 

@@ -512,6 +512,38 @@ pub(super) fn build_terminal_context_menu(
     popover
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalRightClickHandling {
+    ShowContextMenu,
+    Handled,
+}
+
+fn handle_terminal_right_click_action(
+    terminal: &impl TerminalWidgetOps,
+    action: TerminalRightClickAction,
+) -> TerminalRightClickHandling {
+    match action {
+        TerminalRightClickAction::ContextMenu => TerminalRightClickHandling::ShowContextMenu,
+        TerminalRightClickAction::Ignore => TerminalRightClickHandling::Handled,
+        TerminalRightClickAction::Copy => {
+            terminal.copy_text();
+            TerminalRightClickHandling::Handled
+        }
+        TerminalRightClickAction::Paste => {
+            terminal.paste_from_clipboard();
+            TerminalRightClickHandling::Handled
+        }
+        TerminalRightClickAction::CopyOrPaste => {
+            if terminal.has_selection() {
+                terminal.copy_text();
+            } else {
+                terminal.paste_from_clipboard();
+            }
+            TerminalRightClickHandling::Handled
+        }
+    }
+}
+
 pub(super) fn install_terminal_context_menu(
     widget: &GhosttyTerminalWidget,
     surface_id: &str,
@@ -541,6 +573,14 @@ pub(super) fn install_terminal_context_menu(
         if let Ok(mut model) = state_for_menu.model.lock() {
             let _ = model.focus_surface(&surface_id_for_menu);
             let _ = model.mark_surface_unread(&surface_id_for_menu, false);
+        }
+        let config = config::load_config().unwrap_or_default();
+        if handle_terminal_right_click_action(
+            &terminal_for_menu,
+            terminal_right_click_action_for_config(&config),
+        ) == TerminalRightClickHandling::Handled
+        {
+            return;
         }
         // Drop the RefMut before popdown(): it emits `closed` synchronously and
         // its handler re-borrows the same cell.
@@ -585,4 +625,27 @@ pub(super) fn install_terminal_context_menu(
         popover.popup();
     });
     gtk_widget.add_controller(gesture);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_right_click_action_copy_or_paste_uses_selection_state() {
+        let widget = TestTerminalWidget::default();
+
+        assert_eq!(
+            handle_terminal_right_click_action(&widget, TerminalRightClickAction::CopyOrPaste),
+            TerminalRightClickHandling::Handled
+        );
+        assert_eq!(widget.calls(), vec!["paste_from_clipboard"]);
+
+        widget.set_has_selection(true);
+        assert_eq!(
+            handle_terminal_right_click_action(&widget, TerminalRightClickAction::CopyOrPaste),
+            TerminalRightClickHandling::Handled
+        );
+        assert_eq!(widget.calls(), vec!["paste_from_clipboard", "copy_text"]);
+    }
 }

@@ -33,6 +33,15 @@ pub(super) enum GhosttyMetricAdjustment {
     Percent(f64),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TerminalRightClickAction {
+    ContextMenu,
+    Paste,
+    Copy,
+    CopyOrPaste,
+    Ignore,
+}
+
 impl Default for MouseScrollMultipliers {
     fn default() -> Self {
         Self {
@@ -84,6 +93,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) cursor_style: Option<TerminalCursorStyle>,
     pub(super) cursor_style_blink: Option<bool>,
     pub(super) selection_clear_on_typing: Option<bool>,
+    pub(super) right_click_action: Option<TerminalRightClickAction>,
     pub(super) cursor_opacity: f64,
     pub(super) faint_opacity: f64,
     pub(super) mouse_scroll_multipliers: MouseScrollMultipliers,
@@ -152,6 +162,22 @@ pub(super) fn terminal_selection_clear_on_typing_for_appearance(
     appearance: &GhosttyTerminalAppearance,
 ) -> bool {
     appearance.selection_clear_on_typing.unwrap_or(true)
+}
+
+pub(super) fn terminal_right_click_action_for_config(
+    config: &config::AppConfig,
+) -> TerminalRightClickAction {
+    let appearance = ghostty_terminal_appearance_for_config(config);
+    terminal_right_click_action_for_appearance(config, &appearance)
+}
+
+pub(super) fn terminal_right_click_action_for_appearance(
+    _config: &config::AppConfig,
+    appearance: &GhosttyTerminalAppearance,
+) -> TerminalRightClickAction {
+    appearance
+        .right_click_action
+        .unwrap_or(TerminalRightClickAction::ContextMenu)
 }
 
 pub(super) fn terminal_scrollback_lines_for_appearance(
@@ -507,6 +533,7 @@ impl Default for GhosttyTerminalAppearance {
             cursor_style: None,
             cursor_style_blink: None,
             selection_clear_on_typing: None,
+            right_click_action: None,
             cursor_opacity: 1.0,
             faint_opacity: 0.5,
             mouse_scroll_multipliers: MouseScrollMultipliers::default(),
@@ -547,6 +574,7 @@ impl GhosttyTerminalAppearance {
             "selection-clear-on-typing" => {
                 self.selection_clear_on_typing = parse_ghostty_optional_bool(&value)
             }
+            "right-click-action" => self.apply_right_click_action(&value),
             "background" => {
                 set_color(&mut self.colors.background, &value);
             }
@@ -666,6 +694,22 @@ impl GhosttyTerminalAppearance {
             return;
         }
         self.cursor_style_blink = parse_ghostty_optional_bool(value).or(self.cursor_style_blink);
+    }
+
+    fn apply_right_click_action(&mut self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() {
+            self.right_click_action = None;
+            return;
+        }
+        self.right_click_action = match value {
+            "context-menu" => Some(TerminalRightClickAction::ContextMenu),
+            "paste" => Some(TerminalRightClickAction::Paste),
+            "copy" => Some(TerminalRightClickAction::Copy),
+            "copy-or-paste" => Some(TerminalRightClickAction::CopyOrPaste),
+            "ignore" => Some(TerminalRightClickAction::Ignore),
+            _ => self.right_click_action,
+        };
     }
 
     fn apply_font_family(&mut self, value: String) {
@@ -1218,5 +1262,23 @@ mod tests {
         assert!(terminal_selection_clear_on_typing_for_appearance(
             &config, &reset
         ));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_right_click_action() {
+        let config = config::AppConfig::default();
+        let appearance =
+            ghostty_terminal_appearance_from_text("right-click-action = copy-or-paste");
+
+        assert_eq!(
+            terminal_right_click_action_for_appearance(&config, &appearance),
+            TerminalRightClickAction::CopyOrPaste
+        );
+
+        let reset = ghostty_terminal_appearance_from_text("right-click-action =");
+        assert_eq!(
+            terminal_right_click_action_for_appearance(&config, &reset),
+            TerminalRightClickAction::ContextMenu
+        );
     }
 }
