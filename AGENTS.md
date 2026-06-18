@@ -83,6 +83,7 @@ Useful CLI for inspecting a running instance: `forktty doctor`, `forktty list`, 
 ## Conventions
 
 - Surgical edits only: don't reformat, restyle, or refactor code unrelated to the change (see CONTRIBUTING.md).
+- Before applying a bug fix, check current, reliable web sources for the external behavior involved: prefer official docs, upstream source/issues, standards, or maintainer notes over blog posts and forum guesses. State which source informed the fix. If the issue is purely internal to ForkTTY and no external behavior is relevant, say that explicitly and ground the fix in local code/tests instead.
 - Every user-visible change gets a `CHANGELOG.md` entry under `## [Unreleased]` (`Added`/`Changed`/`Fixed`/`Security` headings).
 - Update `SPEC.md` when changing behavior it describes (config fields, socket methods, security boundaries).
 - Prefer tests that pin observable behavior (socket responses, validation rejections) over mocking internals. Tests that read env vars must guard with the existing `with_env` helper — tests run in parallel.

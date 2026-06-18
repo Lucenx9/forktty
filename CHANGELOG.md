@@ -20,6 +20,9 @@ All notable changes to ForkTTY are documented here.
   per-placement copies on every redraw.
 
 ### Fixed
+- Embedded Ghostty panes now focus the terminal's internal focusable widget
+  after new workspace, tab, split, or pane-header selection, so typing reaches
+  the newly focused pane without an extra click inside the terminal.
 - Embedded Ghostty panes now use a native command-spawn ABI when the bundled
   library supports it, so per-surface `FORKTTY_*` environment setup no longer
   appears as a typed `exec /usr/bin/env ...` command in every new workspace.

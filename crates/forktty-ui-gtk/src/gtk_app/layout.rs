@@ -268,6 +268,35 @@ pub(super) fn queue_widget_focus(widget: gtk::Widget) {
     });
 }
 
+pub(super) fn queue_focusable_descendant_focus_when(
+    widget: gtk::Widget,
+    should_focus: Rc<dyn Fn() -> bool>,
+) {
+    for delay_ms in [0, 16, 50, 150] {
+        let widget = widget.downgrade();
+        let should_focus = Rc::clone(&should_focus);
+        glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+            let Some(widget) = widget.upgrade() else {
+                return;
+            };
+            if widget.root().is_some() && should_focus() {
+                let _ = grab_focusable_descendant(&widget);
+            }
+        });
+    }
+}
+
+fn grab_focusable_descendant(widget: &gtk::Widget) -> bool {
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if grab_focusable_descendant(&current) {
+            return true;
+        }
+        child = current.next_sibling();
+    }
+    widget.grab_focus()
+}
+
 pub(super) fn detach_widget(widget: &gtk::Widget) {
     let Some(parent) = widget.parent() else {
         return;

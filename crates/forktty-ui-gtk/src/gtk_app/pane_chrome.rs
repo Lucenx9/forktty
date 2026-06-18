@@ -395,7 +395,12 @@ fn install_pane_header_focus_click<W>(
             return;
         };
         if focus_pane_chrome_surface(&model, &surface_id) {
-            queue_widget_focus(focus_target);
+            let model = model.clone();
+            let surface_id = surface_id.clone();
+            queue_focusable_descendant_focus_when(
+                focus_target,
+                Rc::new(move || model_focus_still_targets_surface(&model, &surface_id)),
+            );
         }
     });
     header.add_controller(gesture);

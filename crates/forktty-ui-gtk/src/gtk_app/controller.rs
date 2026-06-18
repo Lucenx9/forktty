@@ -83,6 +83,17 @@ const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
 /// classic pump snapshots at most every second when content changes.
 const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
 
+pub(super) fn model_focus_still_targets_surface(
+    model: &Arc<Mutex<WorkspaceModel>>,
+    surface_id: &str,
+) -> bool {
+    model
+        .lock()
+        .ok()
+        .and_then(|model| model.active_workspace())
+        .is_some_and(|workspace| workspace.focused_surface_id == surface_id)
+}
+
 pub(super) fn remove_surface_pid_for_spawn(
     pids: &mut BTreeMap<String, SurfacePid>,
     surface_id: &str,
@@ -1113,7 +1124,12 @@ impl TerminalController {
         if let Some(widget) = self.widgets.get(surface_id) {
             queue_widget_focus(widget.widget());
         } else if let Some(widget) = self.embedded_ghostty_panes.get(surface_id) {
-            queue_widget_focus(widget.clone());
+            let model = self.model.clone();
+            let surface_id = surface_id.to_string();
+            queue_focusable_descendant_focus_when(
+                widget.clone(),
+                Rc::new(move || model_focus_still_targets_surface(&model, &surface_id)),
+            );
         } else {
             // Browser panes are not in self.widgets; hand keyboard focus to the
             // pane's focus target so keyboard-only nav reaches the browser.

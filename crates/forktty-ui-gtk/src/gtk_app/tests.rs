@@ -543,6 +543,25 @@ fn proc_stat_parent_pid_parses_process_names_with_spaces_and_parens() {
 }
 
 #[test]
+fn embedded_focus_retry_only_targets_current_model_focus() {
+    let mut model = WorkspaceModel::new();
+    let first = model.create_workspace("first", "/tmp/first");
+    let first_surface_id = first.focused_surface_id.clone();
+    let second = model.create_workspace("second", "/tmp/second");
+    let second_surface_id = second.focused_surface_id.clone();
+    let model = Arc::new(Mutex::new(model));
+
+    assert!(model_focus_still_targets_surface(
+        &model,
+        &second_surface_id
+    ));
+    assert!(!model_focus_still_targets_surface(
+        &model,
+        &first_surface_id
+    ));
+}
+
+#[test]
 fn embedded_child_exit_sets_closed_status_without_notification_for_clean_exit() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
