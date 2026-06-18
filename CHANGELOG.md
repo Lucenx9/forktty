@@ -15,6 +15,9 @@ All notable changes to ForkTTY are documented here.
   requested `max_bytes` before converting FFI text into a `String`, and tail
   reads keep using visible text so `capture_tail` cannot materialize full
   scrollback in ForkTTY before response truncation.
+- Embedded Ghostty scrollback tail capture (`tail_text`) now returns an empty
+  string for a zero-column terminal instead of erroring on an out-of-bounds grid
+  reference, matching the existing guard in `visible_screen_rows`.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added

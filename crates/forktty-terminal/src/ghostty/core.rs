@@ -714,7 +714,11 @@ impl GhosttyCore {
         trim: bool,
         unwrap: bool,
     ) -> Result<String> {
-        let end_x = self.terminal.cols()?.saturating_sub(1);
+        let cols = self.terminal.cols()?;
+        if cols == 0 {
+            return Ok(String::new());
+        }
+        let end_x = cols - 1;
         let start = self
             .terminal
             .grid_ref(Point::Screen(PointCoordinate { x: 0, y: start_y }))?;
