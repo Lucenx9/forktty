@@ -27,6 +27,14 @@ type SurfaceNewWithWorkingDirectoryAndCommand = unsafe extern "C" fn(
     *const *const c_char,
     usize,
 ) -> *mut gtk::ffi::GtkWidget;
+type SurfaceNewWithWorkingDirectoryCommandAndScrollbackLimit =
+    unsafe extern "C" fn(
+        *mut GhosttyGtkContext,
+        *const c_char,
+        *const *const c_char,
+        usize,
+        usize,
+    ) -> *mut gtk::ffi::GtkWidget;
 type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char, usize) -> i32;
 type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
@@ -104,6 +112,8 @@ pub(super) struct GhosttyGtkEmbedder {
     surface_new_with_working_directory: Option<SurfaceNewWithWorkingDirectory>,
     surface_new_with_working_directory_and_command:
         Option<SurfaceNewWithWorkingDirectoryAndCommand>,
+    surface_new_with_working_directory_command_and_scrollback_limit:
+        Option<SurfaceNewWithWorkingDirectoryCommandAndScrollbackLimit>,
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
     surface_read_text_limited: Option<SurfaceReadTextLimited>,
@@ -132,6 +142,12 @@ impl GhosttyGtkEmbedder {
             load_optional_symbol(
                 &library,
                 GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL,
+            )
+        };
+        let surface_new_with_working_directory_command_and_scrollback_limit = unsafe {
+            load_optional_symbol(
+                &library,
+                GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_COMMAND_AND_SCROLLBACK_LIMIT_SYMBOL,
             )
         };
         let surface_send_text =
@@ -169,6 +185,7 @@ impl GhosttyGtkEmbedder {
             surface_new,
             surface_new_with_working_directory,
             surface_new_with_working_directory_and_command,
+            surface_new_with_working_directory_command_and_scrollback_limit,
             surface_send_text,
             surface_read_text,
             surface_read_text_limited,
@@ -208,20 +225,28 @@ impl GhosttyGtkEmbedder {
     }
 
     pub(super) fn supports_spawn_command(&self) -> bool {
-        self.surface_new_with_working_directory_and_command
+        self.surface_new_with_working_directory_command_and_scrollback_limit
             .is_some()
+            || self
+                .surface_new_with_working_directory_and_command
+                .is_some()
     }
 
     pub(super) unsafe fn create_widget_for_cwd_and_command(
         &self,
         cwd: Option<&Path>,
         argv: &[String],
+        scrollback_limit_bytes: usize,
     ) -> Result<gtk::Widget, String> {
-        let Some(surface_new_with_working_directory_and_command) =
-            self.surface_new_with_working_directory_and_command
-        else {
+        if self
+            .surface_new_with_working_directory_command_and_scrollback_limit
+            .is_none()
+            && self
+                .surface_new_with_working_directory_and_command
+                .is_none()
+        {
             return Err("Ghostty GTK library does not export command-spawn support".to_string());
-        };
+        }
         if argv.is_empty() {
             return Err("Ghostty GTK command argv must not be empty".to_string());
         }
@@ -248,13 +273,30 @@ impl GhosttyGtkEmbedder {
             .map(|arg| arg.as_ptr())
             .collect::<Vec<*const c_char>>();
 
-        let raw = unsafe {
-            surface_new_with_working_directory_and_command(
-                self.context.as_ptr(),
-                cwd.as_ref().map_or(std::ptr::null(), |cwd| cwd.as_ptr()),
-                argv_ptrs.as_ptr(),
-                argv_ptrs.len(),
-            )
+        let raw = if let Some(surface_new_with_limit) =
+            self.surface_new_with_working_directory_command_and_scrollback_limit
+        {
+            unsafe {
+                surface_new_with_limit(
+                    self.context.as_ptr(),
+                    cwd.as_ref().map_or(std::ptr::null(), |cwd| cwd.as_ptr()),
+                    argv_ptrs.as_ptr(),
+                    argv_ptrs.len(),
+                    scrollback_limit_bytes,
+                )
+            }
+        } else {
+            let surface_new_with_working_directory_and_command = self
+                .surface_new_with_working_directory_and_command
+                .expect("checked above");
+            unsafe {
+                surface_new_with_working_directory_and_command(
+                    self.context.as_ptr(),
+                    cwd.as_ref().map_or(std::ptr::null(), |cwd| cwd.as_ptr()),
+                    argv_ptrs.as_ptr(),
+                    argv_ptrs.len(),
+                )
+            }
         };
         widget_from_raw(raw)
     }
@@ -612,6 +654,8 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
 pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
 pub(super) const GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_new_with_working_directory_and_command";
+pub(super) const GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_COMMAND_AND_SCROLLBACK_LIMIT_SYMBOL:
+    &[u8] = b"ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_read_text_limited";
@@ -884,6 +928,16 @@ mod tests {
         assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL),
             "ghostty_gtk_surface_new_with_working_directory_and_command"
+        );
+    }
+
+    #[test]
+    fn command_spawn_with_scrollback_limit_symbol_is_declared() {
+        assert_eq!(
+            symbol_name(
+                GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_COMMAND_AND_SCROLLBACK_LIMIT_SYMBOL
+            ),
+            "ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit"
         );
     }
 

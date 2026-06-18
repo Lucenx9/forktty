@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`.
+`6dd6da6f4d9d58e6fc31062da3db4174986d4685`.
 
 > **Status:** Historical spike notes plus the landed embedding ABI record.
 > Current ForkTTY terminal panes are Ghostty-only: the embedded GTK widget is the
@@ -129,7 +129,7 @@ text into terminal-ready bytes (same as classic panes), and seeds it on surface
 init, degrading to a no-op when the symbol is absent.
 
 The Ghostty fork now exports the symbol: the design below landed on
-`Lucenx9/ghostty` at `ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`, and ForkTTY's
+`Lucenx9/ghostty` at `6dd6da6f4d9d58e6fc31062da3db4174986d4685`, and ForkTTY's
 submodule pin (and `GHOSTTY_VENDOR_REV`) is bumped to it. The fork commit was
 verified locally as far as the toolchain allows — `zig fmt --check`,
 `zig ast-check`, and the full `zig build test -Dapp-runtime=none` core suite
@@ -234,7 +234,7 @@ than the existing `write_small`).
    ```
 
 This change landed on `Lucenx9/ghostty` (branch `forktty-gtk-embed`,
-`ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`), and the submodule pin +
+`6dd6da6f4d9d58e6fc31062da3db4174986d4685`), and the submodule pin +
 `GHOSTTY_VENDOR_REV` + the pin in `ghostty-full-vendor.md` are bumped to it.
 ForkTTY's loader picks up the symbol automatically with no further Rust changes.
 The end-to-end restore is covered by the Ghostty GTK Probe workflow and can also

@@ -82,6 +82,11 @@ const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
 /// loop (unlike classic panes), so this throttled poll plays that role; the
 /// classic pump snapshots at most every second when content changes.
 const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
+/// ForkTTY panes run long-lived agents that can emit very large transcripts.
+/// Keep Ghostty's embedded scrollback bounded independently of the user's
+/// standalone Ghostty config file so a single pane cannot grow the GTK process
+/// into multi-GiB heap usage.
+const EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 
 pub(super) fn model_focus_still_targets_surface(
     model: &Arc<Mutex<WorkspaceModel>>,
@@ -398,7 +403,13 @@ impl TerminalController {
         let child_pids_before_spawn = current_process_child_pids();
         let widget = if embedder.supports_spawn_command() {
             let argv = forktty_terminal::spawn::embedded_ghostty_command_argv(&request)?;
-            unsafe { embedder.create_widget_for_cwd_and_command(Some(&request.cwd), &argv)? }
+            unsafe {
+                embedder.create_widget_for_cwd_and_command(
+                    Some(&request.cwd),
+                    &argv,
+                    EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES,
+                )?
+            }
         } else {
             eprintln!(
                 "Embedded Ghostty GTK library does not export command-spawn support; \

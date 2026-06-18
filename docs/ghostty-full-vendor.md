@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`
+- Pin: `6dd6da6f4d9d58e6fc31062da3db4174986d4685`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -28,7 +28,10 @@ Ghostty in the surface cwd, and it can write explicit text bytes into an
 initialized embedded surface for ForkTTY socket input. It can also return
 bounded visible or full plain text from Ghostty's active screen so ForkTTY
 socket `read_text` and `capture_tail` requests work in embedded panes without
-materializing unbounded scrollback in the host process.
+materializing unbounded scrollback in the host process. ForkTTY can additionally
+create command-spawned embedded panes with a per-surface `scrollback-limit`
+override, keeping long agent transcripts bounded without editing the user's
+standalone Ghostty configuration file.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.

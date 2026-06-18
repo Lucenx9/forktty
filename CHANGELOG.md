@@ -25,6 +25,10 @@ All notable changes to ForkTTY are documented here.
   ForkTTY-owned behavior and appearance.
 
 ### Fixed
+- Embedded Ghostty panes now create command-spawned surfaces with a ForkTTY
+  scrollback cap, preventing long agent transcripts from growing the host GTK
+  process into multi-GiB memory usage without modifying the user's standalone
+  Ghostty configuration file.
 - The embedded Ghostty GTK library probe now builds Ghostty with the stable
   `ReleaseSafe` optimization profile and a linker-compatible Blueprint helper,
   avoiding local Zig/GCC `.sframe` linker failures and `ReleaseFast`
@@ -85,10 +89,12 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`, which adds the
+  `6dd6da6f4d9d58e6fc31062da3db4174986d4685`, which adds the
   `ghostty_gtk_surface_restore_scrollback`,
   `ghostty_gtk_surface_new_with_working_directory_and_command`, and
-  `ghostty_gtk_surface_read_text_limited` GTK embedding ABIs.
+  `ghostty_gtk_surface_read_text_limited`,
+  `ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit`
+  GTK embedding ABIs.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
   cmux-style renderer/widget integration path; release builds package the
   vendored Ghostty GTK embedding library for the default pane renderer.
