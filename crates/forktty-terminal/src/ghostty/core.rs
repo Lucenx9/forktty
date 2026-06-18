@@ -852,7 +852,20 @@ impl GhosttyCore {
             if !info.viewport_visible || info.pixel_width == 0 || info.pixel_height == 0 {
                 continue;
             }
-            let Some(rgba) = kitty_image_rgba_pixels(&image)? else {
+            let source_width = info
+                .source_width
+                .min(image.width()?.saturating_sub(info.source_x));
+            let source_height = info
+                .source_height
+                .min(image.height()?.saturating_sub(info.source_y));
+            let Some(rgba) = kitty_image_rgba_pixels(
+                &image,
+                info.source_x,
+                info.source_y,
+                source_width,
+                source_height,
+            )?
+            else {
                 continue;
             };
             images.push(TerminalKittyImage {
@@ -863,12 +876,12 @@ impl GhosttyCore {
                 y_offset: placements.y_offset()?,
                 pixel_width: info.pixel_width,
                 pixel_height: info.pixel_height,
-                source_x: info.source_x,
-                source_y: info.source_y,
-                source_width: info.source_width,
-                source_height: info.source_height,
-                image_width: image.width()?,
-                image_height: image.height()?,
+                source_x: 0,
+                source_y: 0,
+                source_width,
+                source_height,
+                image_width: source_width,
+                image_height: source_height,
                 rgba,
             });
         }
@@ -1313,61 +1326,89 @@ fn kitty_image_layer_from_z(z: i32) -> TerminalKittyImageLayer {
     }
 }
 
-fn kitty_image_rgba_pixels(image: &kitty_graphics::Image<'_>) -> Result<Option<Vec<u8>>> {
-    let width = image.width()? as usize;
-    let height = image.height()? as usize;
-    let Some(pixels) = width.checked_mul(height) else {
+fn kitty_image_rgba_pixels(
+    image: &kitty_graphics::Image<'_>,
+    source_x: u32,
+    source_y: u32,
+    source_width: u32,
+    source_height: u32,
+) -> Result<Option<Vec<u8>>> {
+    let image_width = image.width()? as usize;
+    let image_height = image.height()? as usize;
+    let source_x = source_x as usize;
+    let source_y = source_y as usize;
+    let source_width = source_width as usize;
+    let source_height = source_height as usize;
+    if source_width == 0
+        || source_height == 0
+        || source_x >= image_width
+        || source_y >= image_height
+        || source_x + source_width > image_width
+        || source_y + source_height > image_height
+    {
         return Ok(None);
-    };
+    }
+
     let data = image.data()?;
-    let rgba = match image.format()? {
-        kitty_graphics::ImageFormat::Rgba => {
-            let Some(len) = pixels.checked_mul(4) else {
-                return Ok(None);
-            };
-            if data.len() < len {
-                return Ok(None);
-            }
-            data[..len].to_vec()
-        }
-        kitty_graphics::ImageFormat::Rgb => {
-            let Some(len) = pixels.checked_mul(3) else {
-                return Ok(None);
-            };
-            if data.len() < len {
-                return Ok(None);
-            }
-            let mut out = Vec::with_capacity(pixels * 4);
-            for pixel in data[..len].chunks_exact(3) {
-                out.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
-            }
-            out
-        }
-        kitty_graphics::ImageFormat::Gray => {
-            if data.len() < pixels {
-                return Ok(None);
-            }
-            let mut out = Vec::with_capacity(pixels * 4);
-            for gray in &data[..pixels] {
-                out.extend_from_slice(&[*gray, *gray, *gray, 255]);
-            }
-            out
-        }
-        kitty_graphics::ImageFormat::GrayAlpha => {
-            let Some(len) = pixels.checked_mul(2) else {
-                return Ok(None);
-            };
-            if data.len() < len {
-                return Ok(None);
-            }
-            let mut out = Vec::with_capacity(pixels * 4);
-            for pixel in data[..len].chunks_exact(2) {
-                out.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]);
-            }
-            out
-        }
+    let bytes_per_pixel = match image.format()? {
+        kitty_graphics::ImageFormat::Rgba => 4,
+        kitty_graphics::ImageFormat::Rgb => 3,
+        kitty_graphics::ImageFormat::Gray => 1,
+        kitty_graphics::ImageFormat::GrayAlpha => 2,
         _ => return Ok(None),
     };
+    let Some(row_len) = image_width.checked_mul(bytes_per_pixel) else {
+        return Ok(None);
+    };
+    let Some(required_len) = row_len.checked_mul(image_height) else {
+        return Ok(None);
+    };
+    if data.len() < required_len {
+        return Ok(None);
+    }
+
+    let Some(output_len) = source_width
+        .checked_mul(source_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return Ok(None);
+    };
+    let mut rgba = Vec::new();
+    if rgba.try_reserve_exact(output_len).is_err() {
+        return Ok(None);
+    }
+
+    for row in source_y..source_y + source_height {
+        let Some(row_start) = row
+            .checked_mul(row_len)
+            .and_then(|offset| offset.checked_add(source_x * bytes_per_pixel))
+        else {
+            return Ok(None);
+        };
+        let Some(row_end) = row_start.checked_add(source_width * bytes_per_pixel) else {
+            return Ok(None);
+        };
+        let row = &data[row_start..row_end];
+        match bytes_per_pixel {
+            4 => rgba.extend_from_slice(row),
+            3 => {
+                for pixel in row.chunks_exact(3) {
+                    rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+                }
+            }
+            2 => {
+                for pixel in row.chunks_exact(2) {
+                    rgba.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]);
+                }
+            }
+            1 => {
+                for gray in row {
+                    rgba.extend_from_slice(&[*gray, *gray, *gray, 255]);
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
     Ok(Some(rgba))
 }
 
