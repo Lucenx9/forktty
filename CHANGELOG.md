@@ -207,6 +207,9 @@ All notable changes to ForkTTY are documented here.
   scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- Embedded Ghostty panes now intercept right-click before Ghostty's standalone
+  window context menu opens, replacing the disabled native copy/paste entries
+  with ForkTTY's context menu backed by the embedded Ghostty action ABI.
 - Embedded Ghostty panes now capture ForkTTY terminal accelerators
   (`Ctrl+Shift+C/V/A/F`) on the pane wrapper before Ghostty's internal widget
   can consume the key event, so copy, paste, select-all, and find route through

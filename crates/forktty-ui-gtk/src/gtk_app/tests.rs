@@ -385,6 +385,25 @@ fn embedded_terminal_accelerators_route_clipboard_and_search_actions() {
 }
 
 #[test]
+fn embedded_terminal_context_menu_exposes_enabled_ghostty_actions() {
+    let actions = EMBEDDED_CONTEXT_MENU_ACTIONS
+        .iter()
+        .map(|item| (item.label, item.action))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        actions,
+        vec![
+            ("Copy", EmbeddedSurfaceAction::Copy),
+            ("Paste", EmbeddedSurfaceAction::Paste),
+            ("Select All", EmbeddedSurfaceAction::SelectAll),
+            ("Find", EmbeddedSurfaceAction::StartSearch),
+            ("Reset and Clear", EmbeddedSurfaceAction::ClearScreen),
+        ]
+    );
+}
+
+#[test]
 fn terminal_navigation_forwarder_claims_focus_after_writing_input() {
     use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
 
