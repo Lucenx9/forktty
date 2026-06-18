@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
+
 ### Added
 - Embedded Ghostty panes now snapshot their scrollback tail into
   the session (on child exit, on programmatic close/restart, and via a throttled
