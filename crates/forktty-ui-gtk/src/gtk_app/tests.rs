@@ -395,6 +395,20 @@ fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
 }
 
 #[test]
+fn pending_spawn_command_protects_unmodeled_backend_until_model_commit() {
+    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
+    let backend = to_set(&["surface-2"]);
+    let mut pending = BTreeSet::new();
+
+    mark_spawn_command_pending(&mut pending, "surface-2");
+    assert!(orphaned_backend_surfaces(&backend, &BTreeSet::new(), &pending).is_empty());
+
+    let model = to_set(&["surface-2"]);
+    clear_modeled_pending_spawns(&mut pending, &model);
+    assert!(pending.is_empty());
+}
+
+#[test]
 fn orphaned_backend_surfaces_keeps_fully_modeled_backend() {
     let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
     let backend = to_set(&["surface-1", "surface-2"]);

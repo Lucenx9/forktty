@@ -207,6 +207,10 @@ All notable changes to ForkTTY are documented here.
   scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- Embedded Ghostty panes now keep a just-spawned replacement surface protected
+  from orphan reaping until the workspace model observes it, avoiding a race
+  where socket-driven root-pane close/replacement could briefly close the new
+  embedded shell as stale.
 - Debian and AppImage packaging now invoke the shared Ghostty GTK library probe
   to build or locate `ghostty-gtk-embed.so`, verify the required embedded ABI
   symbols, and install the verified library into `usr/lib` before producing

@@ -310,6 +310,7 @@ impl TerminalController {
                 }
             }
             GtkTerminalCommand::Close { surface_id } => {
+                self.pending_spawns.remove(&surface_id);
                 if let (Some(embedder), Some(widget)) = (
                     self.embedded_ghostty.as_ref(),
                     self.embedded_ghostty_panes.get(&surface_id),
@@ -348,10 +349,11 @@ impl TerminalController {
         {
             return;
         }
-        self.pending_spawns.remove(&request.surface_id);
+        mark_spawn_command_pending(&mut self.pending_spawns, &request.surface_id);
         match self.spawn_embedded_ghostty(request.clone()) {
             Ok(()) => {}
             Err(err) => {
+                self.pending_spawns.remove(&request.surface_id);
                 record_terminal_spawn_failure(
                     &self.model,
                     &request.workspace_id,
@@ -1165,6 +1167,7 @@ impl TerminalController {
                 .collect::<BTreeSet<_>>();
             (surfaces, model_surface_ids)
         };
+        clear_modeled_pending_spawns(&mut self.pending_spawns, &model_surface_ids);
         // A surface restarted or closed on the GTK thread while a socket client
         // concurrently removed it from the model can leave a backend terminal
         // (PTY + widget) with no model counterpart. Tear those orphans down;
@@ -1727,6 +1730,17 @@ pub(super) fn orphaned_backend_surfaces(
         .filter(|id| !model_ids.contains(*id) && !pending.contains(*id))
         .cloned()
         .collect()
+}
+
+pub(super) fn mark_spawn_command_pending(pending: &mut BTreeSet<String>, surface_id: &str) {
+    pending.insert(surface_id.to_string());
+}
+
+pub(super) fn clear_modeled_pending_spawns(
+    pending: &mut BTreeSet<String>,
+    model_ids: &BTreeSet<String>,
+) {
+    pending.retain(|id| !model_ids.contains(id));
 }
 
 fn tab_strip_refreshes(model: &WorkspaceModel, strip_tabs: &[Vec<String>]) -> Vec<TabStripRefresh> {
