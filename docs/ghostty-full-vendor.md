@@ -50,11 +50,9 @@ FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
   cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 ```
 
-Embedded Ghostty panes are the default renderer path. Set
-`appearance.embedded_ghostty = false` or `FORKTTY_GHOSTTY_GTK_PANES=0` to opt
-out for debugging or fallback testing. ForkTTY still falls back to the classic
-renderer at runtime if the embedding library cannot be loaded or an embedded
-surface fails to spawn.
+Embedded Ghostty panes are the terminal renderer path. If the embedding library
+cannot be loaded or an embedded surface fails to spawn, ForkTTY records a
+terminal spawn failure instead of opening a classic-renderer pane.
 
 This mode proves that ForkTTY can pack Ghostty's GTK widget in a pane, pass the
 cwd, forward socket `send_text`, and answer socket `read_text`/`capture_tail`
@@ -110,11 +108,8 @@ development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
 `scripts/build-appimage.sh` install it into `usr/lib`, and the binary loads it
 through its RUNPATH (`$ORIGIN/../lib`). The install step is required for release
 packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI
-fail if the embedding library is absent. Runtime fallback still exists for
-hosts where the shipped library cannot be loaded. `forktty doctor` warns about
-a missing library when embedded panes are enabled by default, and stays quiet
-when the user opts out with `appearance.embedded_ghostty = false` or
-`FORKTTY_GHOSTTY_GTK_PANES=0`.
+fail if the embedding library is absent. `forktty doctor` warns about a missing
+library because terminal panes cannot open without it.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.

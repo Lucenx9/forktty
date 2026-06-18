@@ -156,8 +156,7 @@ install -Dm755 "$GHOSTTY_LIB" "$PKG_ROOT/usr/lib/libghostty-vt.so.0.1.0"
 ln -s libghostty-vt.so.0.1.0 "$PKG_ROOT/usr/lib/libghostty-vt.so.0"
 ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
 # Embedded Ghostty widget library. Required for release packages because
-# embedded panes are the default renderer path; the binary still has a runtime
-# fallback to the classic renderer if the library cannot be loaded on a host.
+# terminal panes require the embedded renderer at runtime.
 GHOSTTY_GTK_LIB="$(find_required_ghostty_gtk_lib)"
 install -Dm755 "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
 copy_vendored_ghostty_shell_integration

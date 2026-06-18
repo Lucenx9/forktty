@@ -45,8 +45,9 @@ All notable changes to ForkTTY are documented here.
   state in-place so internal runtime pointers stay valid after context setup.
 - ForkTTY can pack the vendored Ghostty GTK widget into terminal panes after
   `ghostty-gtk-embed.so` has been built; this is now the default renderer path,
-  with a runtime fallback to the classic GTK/Pango/Cairo renderer if the
-  embedded library cannot be loaded or a surface fails to spawn.
+  and terminal spawn records an error instead of falling back to the classic
+  GTK/Pango/Cairo renderer if the embedded library cannot be loaded or a
+  surface fails to spawn.
 - The vendored Ghostty GTK embedding ABI can create surfaces with a working
   directory override so embedded Ghostty panes start in the ForkTTY
   surface cwd.
@@ -58,10 +59,11 @@ All notable changes to ForkTTY are documented here.
   the vendored Ghostty GTK embedding ABI.
 - Release CI now requires `ghostty-gtk-embed.so` before packaging, so the deb
   and AppImage ship the embedded Ghostty library for the default renderer path.
-- The embedded Ghostty renderer can be opted out from `config.toml` via
-  `appearance.embedded_ghostty = false`, or per process with
-  `FORKTTY_GHOSTTY_GTK_PANES=0`; `1`/`true`/`yes`/`on` force it on. `forktty
-  doctor` flags a missing embedding library when embedded panes are enabled.
+- The embedded Ghostty renderer is now the only terminal pane renderer in the
+  GTK runtime. The temporary alpha `appearance.embedded_ghostty` opt-out key is
+  accepted on load for compatibility but omitted from new saves and ignored at
+  runtime. `forktty doctor` flags a missing embedding library because terminal
+  panes cannot open without it.
 - Embedded Ghostty panes now wire surface lifecycle into the
   ForkTTY model: title changes mirror into the model, child-process exit drops
   the surface from the ready set, sets a closed/`Exited (n)` status, and raises
@@ -100,10 +102,9 @@ All notable changes to ForkTTY are documented here.
   still depends on Ghostty exposing a dedicated keybinding action.
 - The Ghostty GTK Probe now requires the embedded `exit_code`, `child_pid`, and
   `perform_action` ABI symbols, and its smoke test verifies socket
-  `capture-tail` and that embedded pane startup did not fall back to the
-  classic renderer. The smoke test also requires embedded panes to expose a
-  positive PID through `forktty surfaces --json` and verifies that a clean child
-  exit marks the pane non-writable with a `Closed` status.
+  `capture-tail`, embedded pane startup, and that panes expose a positive PID
+  through `forktty surfaces --json`. It also verifies that a clean child exit
+  marks the pane non-writable with a `Closed` status.
 - The deb and AppImage packagers now require `ghostty-gtk-embed.so` in
   `vendor/ghostty/zig-out/lib` and install it into `usr/lib`, so installed
   builds load the embedded Ghostty library via the binary RUNPATH
@@ -153,9 +154,9 @@ All notable changes to ForkTTY are documented here.
   in the in-app notification panel.
 
 ### Changed
-- Embedded Ghostty panes are now the default terminal renderer path. Set
-  `appearance.embedded_ghostty = false` or `FORKTTY_GHOSTTY_GTK_PANES=0` to use
-  the classic renderer fallback.
+- Embedded Ghostty panes are now the sole terminal renderer path in the GTK
+  runtime; failed embedded startup records a terminal spawn failure instead of
+  falling back to the classic renderer.
 - Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
 - Repeated Ghostty `font-family`, `font-family-bold`, `font-family-italic`, and `font-family-bold-italic` entries now build Pango fallback lists, and empty entries reset each list.
 - Ghostty `font-feature` and `font-variation*` entries now apply to GTK terminal text through Pango.

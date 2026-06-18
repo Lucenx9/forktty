@@ -4,11 +4,11 @@ This is the living checklist for the embedded Ghostty GTK pane renderer. It
 complements [`QA.md`](QA.md) (the per-release platform grid) and
 [`ghostty-full-vendor.md`](ghostty-full-vendor.md) (the fork/ABI reference).
 
-Embedded Ghostty panes are now the default renderer path, with a runtime
-fallback to the classic GTK/Pango/Cairo renderer if `ghostty-gtk-embed.so` is
-missing or fails to load. The four pointer/keyboard-only rows that could not be
-validated by automation are explicitly deferred manual follow-ups rather than
-default-switch blockers.
+Embedded Ghostty panes are the terminal renderer path. If
+`ghostty-gtk-embed.so` is missing or fails to load, panes record a terminal
+spawn failure instead of falling back to the classic GTK/Pango/Cairo renderer.
+The four pointer/keyboard-only rows that could not be validated by automation
+are explicitly deferred manual follow-ups.
 
 ## Verification constraint
 
@@ -24,10 +24,9 @@ exit-status mapping) are pinned by host-runnable Rust unit tests.
 ## How verified — legend
 
 - **auto (smoke)** — `scripts/gtk-ghostty-smoke.sh` run in the Ghostty GTK
-  Probe workflow with `FORKTTY_GHOSTTY_GTK_PANES=1` to force the embedded path
-  even if a maintainer config opts out. Drives the app through the socket API
-  (send-text, read-screen, surfaces, split, focus, zoom, notifications) against
-  live embedded panes.
+  Probe workflow. Drives the app through the socket API (send-text,
+  read-screen, surfaces, split, focus, zoom, notifications) against live
+  embedded panes.
 - **auto (unit)** — host-runnable `cargo test` that pins the ForkTTY↔ABI
   contract (no `.so` needed).
 - **probe** — covered by the `forktty ghostty-gtk-probe` widget smoke (launch /
@@ -62,9 +61,8 @@ blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 Run against the bundled embedded build
 `target/packaging/appimage/forktty-0.2.0-alpha.13-x86_64-ghostty-opengl.AppImage`
 (which ships `usr/lib/ghostty-gtk-embed.so`, so embedded panes are real here even
-though the `.so` cannot be linked from the local source toolchain). Launched
-with `FORKTTY_GHOSTTY_GTK_PANES=1` to force the embedded path; the running GUI
-process had
+though the `.so` cannot be linked from the local source toolchain). The running
+GUI process had
 `ghostty-gtk-embed.so` mapped, and the focused pane reported a child PID, so the
 panes exercised below are the embedded renderer, not the classic fallback.
 
@@ -187,12 +185,12 @@ not depend on the throttled snapshot poll.
 
 ## Default renderer gate
 
-Default-on embedded Ghostty is accepted with rows 4/6/7/8 deferred. The
-remaining release guard is:
+Embedded Ghostty is accepted with rows 4/6/7/8 deferred. The remaining release
+guard is:
 
 1. The embedding `.so` ships in the deb/AppImage and its release-CI build is
    required.
-2. A clear runtime fallback to the classic renderer remains (e.g. when the
-   library is absent or fails to load).
+2. Missing or failed embedded startup records an explicit terminal spawn
+   failure; it must not silently open a classic-renderer pane.
 3. Deferred rows 4/6/7/8 stay tracked here until a maintainer validates them
    with a real pointer/keyboard or a CI input driver.

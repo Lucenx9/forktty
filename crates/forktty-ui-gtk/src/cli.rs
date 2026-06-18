@@ -725,9 +725,6 @@ fn collect_report(scope: DoctorScope) -> DoctorReport {
         #[cfg(feature = "gtk-ghostty")]
         append_embedded_ghostty_lib_warnings(
             &mut warnings,
-            crate::gtk_app::ghostty_gtk_embed::ghostty_gtk_panes_enabled(
-                resolve_embedded_ghostty_enabled(config_path.as_deref()),
-            ),
             &crate::gtk_app::ghostty_gtk_embed::library_candidates(),
         );
     }
@@ -995,18 +992,10 @@ fn append_appimage_runtime_warnings(
     }
 }
 
-/// Warns when embedded Ghostty panes are enabled but `ghostty-gtk-embed.so` is
-/// on none of the loader's candidate paths, so the runtime will fall back to
-/// the classic renderer. Silent when the user explicitly opts out.
+/// Warns when `ghostty-gtk-embed.so` is on none of the loader's candidate paths.
+/// The GTK runtime requires this library for terminal panes.
 #[cfg(feature = "gtk-ghostty")]
-fn append_embedded_ghostty_lib_warnings(
-    warnings: &mut Vec<String>,
-    panes_requested: bool,
-    candidates: &[PathBuf],
-) {
-    if !panes_requested {
-        return;
-    }
+fn append_embedded_ghostty_lib_warnings(warnings: &mut Vec<String>, candidates: &[PathBuf]) {
     if candidates.iter().any(|path| path.exists()) {
         return;
     }
@@ -1016,11 +1005,10 @@ fn append_embedded_ghostty_lib_warnings(
         .collect::<Vec<_>>()
         .join(", ");
     warnings.push(format!(
-        "embedded Ghostty panes are enabled by default but ghostty-gtk-embed.so \
-         was not found (searched: {searched}); panes will fall back to the \
-         classic renderer. Build it with scripts/ghostty-gtk-lib-probe.sh, set \
-         FORKTTY_GHOSTTY_GTK_LIB, or opt out with appearance.embedded_ghostty = \
-         false / FORKTTY_GHOSTTY_GTK_PANES=0."
+        "ghostty-gtk-embed.so was not found (searched: {searched}); terminal \
+         panes will not open because the GTK runtime requires embedded Ghostty. \
+         Build it with scripts/ghostty-gtk-lib-probe.sh or set \
+         FORKTTY_GHOSTTY_GTK_LIB."
     ));
 }
 
@@ -1121,15 +1109,6 @@ fn resolve_telemetry_anonymous_ping(config_path: Option<&Path>) -> bool {
         .unwrap_or_default()
         .telemetry
         .anonymous_ping
-}
-
-#[cfg(feature = "gtk-ghostty")]
-fn resolve_embedded_ghostty_enabled(config_path: Option<&Path>) -> bool {
-    config_path
-        .and_then(|path| forktty_core::config::load_config_from_path(path).ok())
-        .unwrap_or_default()
-        .appearance
-        .embedded_ghostty
 }
 
 fn collect_hooks() -> Vec<HookState> {
@@ -2479,14 +2458,14 @@ mod tests {
 
     #[cfg(feature = "gtk-ghostty")]
     #[test]
-    fn doctor_skips_embedded_ghostty_warning_when_panes_disabled_by_opt_out() {
+    fn doctor_warns_when_library_missing_even_if_old_opt_out_would_disable_panes() {
         let mut warnings = Vec::new();
         append_embedded_ghostty_lib_warnings(
             &mut warnings,
-            false,
             &[PathBuf::from("/nonexistent/ghostty-gtk-embed.so")],
         );
-        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("terminal panes will not open"));
     }
 
     #[cfg(feature = "gtk-ghostty")]
@@ -2495,13 +2474,12 @@ mod tests {
         let mut warnings = Vec::new();
         append_embedded_ghostty_lib_warnings(
             &mut warnings,
-            true,
             &[PathBuf::from("/nonexistent/ghostty-gtk-embed.so")],
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("ghostty-gtk-embed.so"));
-        assert!(warnings[0].contains("FORKTTY_GHOSTTY_GTK_PANES"));
-        assert!(warnings[0].contains("fall back to the classic renderer"));
+        assert!(warnings[0].contains("terminal panes will not open"));
+        assert!(!warnings[0].contains("fall back to the classic renderer"));
     }
 
     #[cfg(feature = "gtk-ghostty")]
@@ -2513,7 +2491,6 @@ mod tests {
         let mut warnings = Vec::new();
         append_embedded_ghostty_lib_warnings(
             &mut warnings,
-            true,
             &[PathBuf::from("/nonexistent/ghostty-gtk-embed.so"), lib],
         );
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");

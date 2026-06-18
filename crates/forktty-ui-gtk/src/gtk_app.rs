@@ -84,15 +84,21 @@ mod placeholders;
 mod settings_dialog;
 mod sidebar;
 mod socket_server;
+#[allow(dead_code)]
 mod terminal_appearance;
+#[allow(dead_code)]
 mod terminal_clipboard;
 mod terminal_geometry;
 mod terminal_input;
 mod terminal_links;
+#[allow(dead_code)]
 mod terminal_renderer;
+#[allow(dead_code)]
 mod terminal_runtime;
 mod terminal_search;
+#[allow(dead_code)]
 mod terminal_signals;
+#[allow(dead_code)]
 mod terminal_widget;
 mod ui_common;
 mod updater;

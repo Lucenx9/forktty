@@ -32,9 +32,9 @@ git submodule update --init vendor/ghostty
 ```
 
 Release artifacts build and package the fork's `ghostty-gtk-embed.so` library.
-ForkTTY uses that embedded Ghostty GTK widget as the default pane renderer, with
-the classic GTK/Pango/Cairo renderer kept as a runtime fallback if the library
-is unavailable or a surface fails to spawn.
+ForkTTY uses that embedded Ghostty GTK widget as the terminal pane renderer. If
+the library is unavailable or a surface fails to spawn, the pane records a
+terminal spawn failure instead of falling back to the old renderer.
 
 For the experimental source-only browser pane, install WebKitGTK 6 development
 files and opt in:

@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(dead_code)]
 pub(super) fn build_pane_chrome(
     surface_id: &str,
     widget: &GhosttyTerminalWidget,

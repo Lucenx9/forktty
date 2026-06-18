@@ -171,9 +171,8 @@ jobs:
           workspaces: .
 
       # Embedded Ghostty panes are the default renderer path, so release
-      # artifacts must contain the embedding library. Runtime still falls back
-      # to the classic renderer if loading the library fails on a host, but a
-      # release build may not silently omit the library.
+      # artifacts must contain the embedding library. A release build may not
+      # silently omit it because terminal panes require it at runtime.
       - name: Build embedded Ghostty library
         run: |
           set -euo pipefail
@@ -301,8 +300,8 @@ jobs:
           env -u LD_LIBRARY_PATH "$approot/usr/bin/forktty" --version
           env -u LD_LIBRARY_PATH "$approot/usr/bin/forktty" doctor
 
-          # The embedded Ghostty library must reach both artifacts, or default
-          # embedded panes would immediately fall back to the classic renderer.
+          # The embedded Ghostty library must reach both artifacts, or terminal
+          # panes cannot open in installed builds.
           if [[ -f vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
                 || -f vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so ]]; then
             test -f "$deb_root/usr/lib/ghostty-gtk-embed.so"

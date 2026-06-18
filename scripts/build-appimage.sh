@@ -139,9 +139,7 @@ copy_vendored_ghostty_runtime_lib() {
   ln -s libghostty-vt.so.0 "$lib_dir/libghostty-vt.so"
 
   # Embedded Ghostty widget library. Required for release AppImages because
-  # embedded panes are the default renderer path; the binary still has a
-  # runtime fallback to the classic renderer if the library cannot be loaded on
-  # a host.
+  # terminal panes require the embedded renderer at runtime.
   local candidate ghostty_gtk_lib=""
   for candidate in \
     "$ROOT_DIR/vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so" \

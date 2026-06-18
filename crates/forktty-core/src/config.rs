@@ -80,12 +80,10 @@ pub struct AppearanceConfig {
     pub terminal_theme: String,
     #[serde(default = "default_window_mode")]
     pub window_mode: String,
-    /// Render terminal panes with the embedded Ghostty GTK widget instead of
-    /// ForkTTY's GTK/Pango/Cairo renderer. Defaults to on; set this to false,
-    /// or set `FORKTTY_GHOSTTY_GTK_PANES=0`, to opt out. Requires the
-    /// `ghostty-gtk-embed.so` library to be present, otherwise panes fall back
-    /// to the classic renderer.
-    #[serde(default = "default_true")]
+    /// Legacy alpha key kept only so older config files load. Terminal panes
+    /// always use the embedded Ghostty GTK widget in current builds, and new
+    /// saves omit this non-functional switch.
+    #[serde(default = "default_true", skip_serializing)]
     pub embedded_ghostty: bool,
 }
 
@@ -875,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_ghostty_can_be_disabled_from_toml() {
+    fn embedded_ghostty_legacy_key_can_be_loaded_from_toml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(
@@ -893,10 +891,11 @@ mod tests {
     }
 
     #[test]
-    fn embedded_ghostty_opt_out_survives_an_unrelated_settings_update() {
+    fn embedded_ghostty_legacy_opt_out_is_not_preserved_on_save() {
         // The settings dialog saves via update_config_*, which loads then
-        // mutates then writes the whole config. A hand-set opt-out must survive
-        // an unrelated change rather than being clobbered back to the default.
+        // mutates then writes the whole config. The old temporary opt-out key
+        // is accepted on load, but saves should drop it and return to the
+        // current always-embedded runtime behavior.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(
@@ -914,8 +913,36 @@ mod tests {
         .unwrap();
 
         let config = load_config_from_path(&path).unwrap();
-        assert!(!config.appearance.embedded_ghostty);
+        assert!(config.appearance.embedded_ghostty);
         assert!(config.general.enable_pr_lookup);
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("embedded_ghostty"));
+    }
+
+    #[test]
+    fn embedded_ghostty_legacy_key_is_dropped_on_save() {
+        // Embedded Ghostty is the only runtime renderer now. Older config files
+        // with the temporary opt-out key should load without failing, but new
+        // saves should remove the key instead of preserving a non-functional
+        // switch.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [appearance]
+            embedded_ghostty = false
+            "#,
+        )
+        .unwrap();
+
+        update_config_at_path_if_changed(&path, |config| {
+            config.general.enable_pr_lookup = true;
+        })
+        .unwrap();
+
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("embedded_ghostty"));
     }
 
     #[test]

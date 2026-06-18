@@ -349,128 +349,14 @@ impl TerminalController {
             return;
         }
         self.pending_spawns.remove(&request.surface_id);
-        let embedded_enabled = config::load_config()
-            .map(|config| config.appearance.embedded_ghostty)
-            .unwrap_or_else(|_| config::AppConfig::default().appearance.embedded_ghostty);
-        if ghostty_gtk_panes_enabled(embedded_enabled) {
-            match self.spawn_embedded_ghostty(request.clone()) {
-                Ok(()) => return,
-                Err(err) => {
-                    eprintln!(
-                        "Failed to spawn embedded Ghostty GTK pane {}; falling back: {err}",
-                        request.surface_id
-                    );
-                }
-            }
-        }
-        let spawn_model = self.model.clone();
-        let spawn_workspace_id = request.workspace_id.clone();
-        let spawn_surface_id = request.surface_id.clone();
-        let spawn_state_for_error = self.state.clone();
-        let spawn_state_for_ready = self.state.clone();
-        let spawn_model_for_error = spawn_model.clone();
-        let spawn_pids = self.surface_pids.clone();
-        let spawn_pid_surface_id = request.surface_id.clone();
-        self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
-        let spawn_token = self.next_spawn_token;
-        match spawn_terminal_with_callback(&request, self.toast_handle.clone(), move |result| {
-            match result {
-                Ok(pid) => {
-                    spawn_pids.borrow_mut().insert(
-                        spawn_pid_surface_id.clone(),
-                        SurfacePid {
-                            pid: pid.0,
-                            spawn_token,
-                        },
-                    );
-                    if let Some(state) = &spawn_state_for_ready {
-                        if let Ok(pid) = u32::try_from(pid.0) {
-                            if let Err(err) =
-                                state.terminal.mark_surface_pid(&spawn_surface_id, pid)
-                            {
-                                eprintln!(
-                                    "Failed to record terminal surface pid {}: {err}",
-                                    spawn_surface_id
-                                );
-                            }
-                        }
-                        if let Err(err) = state.terminal.mark_surface_ready(&spawn_surface_id) {
-                            eprintln!(
-                                "Failed to mark terminal surface ready {}: {err}",
-                                spawn_surface_id
-                            );
-                        }
-                    }
-                }
-                Err(err) => {
-                    record_terminal_spawn_failure(
-                        &spawn_model,
-                        &spawn_workspace_id,
-                        &spawn_surface_id,
-                        &err.to_string(),
-                        spawn_state_for_error
-                            .as_ref()
-                            .is_none_or(|state| state.notification_dispatch),
-                    );
-                    if let Some(state) = &spawn_state_for_error {
-                        let _ = state.terminal.close(&spawn_surface_id);
-                    }
-                }
-            }
-        }) {
-            Ok(widget) => {
-                if let Ok(mut model) = self.model.lock() {
-                    let _ = model.clear_status(
-                        &request.workspace_id,
-                        Some(&surface_status_key(&request.surface_id)),
-                    );
-                }
-                apply_terminal_appearance(&widget);
-                if self.terminal_zoom_level.get() != 0 {
-                    widget.set_zoom_level(self.terminal_zoom_level.get());
-                }
-                let persistent_scrollback_lines = match config::load_config() {
-                    Ok(config) => Some(config.appearance.persistent_scrollback_lines),
-                    Err(err) => {
-                        eprintln!("Failed to load config for scrollback persistence: {err}");
-                        None
-                    }
-                };
-                if let Ok(model) = self.model.lock() {
-                    if let Some(surface) = model.surface(&request.surface_id) {
-                        widget
-                            .set_local_selection_on_mouse_drag(surface_has_agent_session(surface));
-                        if persistent_scrollback_lines.is_some_and(|lines| lines > 0) {
-                            if let Some(scrollback) = surface.persisted_scrollback.as_deref() {
-                                widget.restore_persisted_scrollback(scrollback);
-                            }
-                        }
-                    }
-                }
-                attach_terminal_signal_handlers(
-                    &widget,
-                    &self.model,
-                    &request,
-                    &self.surface_pids,
-                    self.state.clone(),
-                    spawn_token,
-                );
-                let chrome = build_pane_chrome(
-                    &request.surface_id,
-                    &widget,
-                    self.state.as_ref(),
-                    &self.parent_window,
-                );
-                self.chromes.insert(request.surface_id.clone(), chrome);
-                self.widgets.insert(request.surface_id, widget);
-                self.rebuild_layout();
-            }
+        match self.spawn_embedded_ghostty(request.clone()) {
+            Ok(()) => {}
             Err(err) => {
                 record_terminal_spawn_failure(
-                    &spawn_model_for_error,
+                    &self.model,
                     &request.workspace_id,
                     &request.surface_id,
-                    &err.to_string(),
+                    &format!("Failed to spawn embedded Ghostty GTK pane: {err}"),
                     self.state
                         .as_ref()
                         .is_none_or(|state| state.notification_dispatch),

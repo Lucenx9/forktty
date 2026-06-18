@@ -93,8 +93,8 @@ plain-text read ABIs for socket send/read/capture operations.
    workflow. That workflow now builds `ghostty-gtk-embed.so` and starts the
    Rust probe under Xvfb with `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`.
 3. Keep release packaging strict: `ghostty-gtk-embed.so` is required for deb and
-   AppImage builds, while the classic renderer remains a runtime fallback for
-   hosts where the shipped library cannot be loaded.
+   AppImage builds, and missing/failed embedded startup must surface as a
+   terminal spawn failure rather than silently opening the old renderer.
 
 Embedded Ghostty panes are now the default renderer path. Socket
 input/read/capture, title/status propagation, child-exit lifecycle,
