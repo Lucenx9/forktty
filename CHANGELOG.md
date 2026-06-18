@@ -264,6 +264,9 @@ All notable changes to ForkTTY are documented here.
 - Embedded Ghostty panes now clear cached child PIDs when the child exits and
   ignore stale PID poll results after exit, close, or respawn, preventing exited
   panes from exposing or using reused PIDs for port discovery.
+- `feed.list` now applies its response limit while reading live status and
+  progress metadata, avoiding unbounded JSON aggregation and sorting under the
+  workspace model lock when many metadata keys exist.
 - ForkTTY and dialog titlebars now stay on the app's neutral dark chrome even
   when a GTK user theme defines a blue/purple titlebar color.
 - Clicking a split pane's top bar now focuses that pane and routes subsequent

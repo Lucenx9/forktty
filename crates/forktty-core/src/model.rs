@@ -1581,6 +1581,13 @@ impl WorkspaceModel {
         self.statuses.get(workspace_id).cloned().unwrap_or_default()
     }
 
+    pub fn list_status_limited(&self, workspace_id: &str, limit: usize) -> Vec<StatusEntry> {
+        self.statuses
+            .get(workspace_id)
+            .map(|entries| entries[entries.len().saturating_sub(limit)..].to_vec())
+            .unwrap_or_default()
+    }
+
     pub fn clear_status(&mut self, workspace_id: &str, key: Option<&str>) -> bool {
         self.clear_status_ordered(workspace_id, key, None)
     }
@@ -1690,6 +1697,13 @@ impl WorkspaceModel {
 
     pub fn list_progress(&self, workspace_id: &str) -> Vec<ProgressEntry> {
         self.progress.get(workspace_id).cloned().unwrap_or_default()
+    }
+
+    pub fn list_progress_limited(&self, workspace_id: &str, limit: usize) -> Vec<ProgressEntry> {
+        self.progress
+            .get(workspace_id)
+            .map(|entries| entries[entries.len().saturating_sub(limit)..].to_vec())
+            .unwrap_or_default()
     }
 
     pub fn clear_progress(&mut self, workspace_id: &str, key: Option<&str>) -> bool {
@@ -3670,6 +3684,47 @@ mod tests {
             model.list_progress(&workspace.id).len(),
             MAX_PROGRESS_ENTRIES
         );
+    }
+
+    #[test]
+    fn status_and_progress_limited_return_newest_entries() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        for i in 0..5 {
+            model
+                .set_status(
+                    &workspace.id,
+                    format!("status-{i}"),
+                    "Status",
+                    "Value",
+                    None,
+                )
+                .unwrap();
+            model
+                .set_progress(
+                    &workspace.id,
+                    format!("progress-{i}"),
+                    "Progress",
+                    i as f64,
+                    None,
+                )
+                .unwrap();
+        }
+
+        let statuses = model
+            .list_status_limited(&workspace.id, 2)
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>();
+        assert_eq!(statuses, vec!["status-3", "status-4"]);
+
+        let progress = model
+            .list_progress_limited(&workspace.id, 2)
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>();
+        assert_eq!(progress, vec!["progress-3", "progress-4"]);
     }
 
     #[test]
