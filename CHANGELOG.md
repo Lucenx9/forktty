@@ -29,6 +29,9 @@ All notable changes to ForkTTY are documented here.
 - Bounded the `forktty remote-helper pty` stdin relay queue so
   non-draining PTY children apply backpressure instead of allowing unbounded
   memory growth.
+- Feed approval rows now use durable notification feed IDs and avoid carrying
+  approval decisions across newer entries with reused transient notification
+  IDs.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added

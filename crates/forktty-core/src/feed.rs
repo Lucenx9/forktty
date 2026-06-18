@@ -128,6 +128,7 @@ impl FeedStore {
         let entry = match self.entries.iter().find(|existing| existing.id == entry.id) {
             Some(existing)
                 if existing.entry_type == FeedEntryType::Approval
+                    && existing.created_at_ms == entry.created_at_ms
                     && existing.approval_state != Some(FeedApprovalState::Pending) =>
             {
                 let mut entry = entry;
@@ -377,6 +378,28 @@ mod tests {
             store.list(None, 10)[0].approval_state,
             Some(FeedApprovalState::Approved)
         );
+    }
+
+    #[test]
+    fn append_does_not_reuse_approval_decision_for_newer_entry_with_same_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&path).unwrap();
+        let mut approval = entry("feed-1", "w1");
+        approval.entry_type = FeedEntryType::Approval;
+        approval.approval_state = Some(FeedApprovalState::Pending);
+        store.append(approval.clone()).unwrap();
+        store
+            .decide_approval("feed-1", FeedApprovalState::Approved)
+            .unwrap();
+
+        approval.title = "new prompt".to_string();
+        approval.created_at_ms += 1;
+        store.append(approval).unwrap();
+
+        let listed = store.list(None, 10);
+        assert_eq!(listed[0].title, "new prompt");
+        assert_eq!(listed[0].approval_state, Some(FeedApprovalState::Pending));
     }
 
     #[test]
