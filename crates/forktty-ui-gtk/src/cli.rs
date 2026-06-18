@@ -341,6 +341,7 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "tree"
             | "topology-tree"
             | "topology:tree"
+            | "topology.tree"
             | "remotes"
             | "remote-list"
             | "remote:list"
@@ -1857,7 +1858,7 @@ mod tests {
 
     #[test]
     fn tree_command_is_recognized_as_socket_cli_command() {
-        for command in ["tree", "topology-tree", "topology:tree"] {
+        for command in ["tree", "topology-tree", "topology:tree", "topology.tree"] {
             assert!(is_socket_cli_command(command), "{command}");
         }
         // Regression: `forktty tree` used to fall through to `Unknown` and exit 2

@@ -823,7 +823,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "capture-tail" | "capture_tail" | "surface-capture-tail" | "surface:capture-tail" => {
             handle_capture_tail(&context, args)
         }
-        "tree" | "topology-tree" | "topology:tree" => handle_tree(&context, args),
+        "tree" | "topology-tree" | "topology:tree" | "topology.tree" => handle_tree(&context, args),
         "top" => handle_top(&context, args),
         "remotes" | "remote-list" | "remote:list" | "remote.list" => handle_remotes(&context, args),
         "remote-status" | "remote:status" | "remote.status" => handle_remote_status(&context, args),
