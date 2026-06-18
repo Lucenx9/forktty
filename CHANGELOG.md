@@ -207,6 +207,11 @@ All notable changes to ForkTTY are documented here.
   scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- Embedded Ghostty bounded text reads no longer materialize the full scrollback
+  for visible or tail captures, which prevents long agent panes from exhausting
+  ForkTTY memory during HUD/socket polling. Until Ghostty exposes a native
+  bounded-tail embedding ABI, embedded tail captures are bounded to the visible
+  viewport; explicit full reads still use the full-scrollback ABI.
 - Embedded Ghostty panes now keep a just-spawned replacement surface protected
   from orphan reaping until the workspace model observes it, avoiding a race
   where socket-driven root-pane close/replacement could briefly close the new

@@ -329,24 +329,26 @@ impl GhosttyGtkEmbedder {
         max_bytes: usize,
     ) -> Result<TerminalTextSnapshot, TerminalError> {
         match capture {
-            TerminalTextCapture::Visible => {
-                let visible = unsafe { self.read_text(widget, EmbeddedGhosttyTextScope::Visible) }
-                    .map_err(|err| {
-                        TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
-                    })?;
-                let all = unsafe { self.read_text(widget, EmbeddedGhosttyTextScope::All) }
-                    .map_err(|err| {
-                        TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
-                    })?;
+            TerminalTextCapture::Visible | TerminalTextCapture::Tail { .. } => {
+                let text = unsafe {
+                    self.read_text(
+                        widget,
+                        embedded_ghostty_read_scope_for_capture(capture.clone()),
+                    )
+                }
+                .map_err(|err| {
+                    TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
+                })?;
+                let total_lines = text_line_count(&text.text);
                 Ok(embedded_ghostty_snapshot_from_text(
                     surface_id,
                     capture,
                     max_bytes,
-                    visible,
-                    text_line_count(&all.text),
+                    text,
+                    total_lines,
                 ))
             }
-            TerminalTextCapture::All | TerminalTextCapture::Tail { .. } => {
+            TerminalTextCapture::All => {
                 let all = unsafe { self.read_text(widget, EmbeddedGhosttyTextScope::All) }
                     .map_err(|err| {
                         TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
@@ -361,6 +363,17 @@ impl GhosttyGtkEmbedder {
                 ))
             }
         }
+    }
+}
+
+fn embedded_ghostty_read_scope_for_capture(
+    capture: TerminalTextCapture,
+) -> EmbeddedGhosttyTextScope {
+    match capture {
+        TerminalTextCapture::Visible | TerminalTextCapture::Tail { .. } => {
+            EmbeddedGhosttyTextScope::Visible
+        }
+        TerminalTextCapture::All => EmbeddedGhosttyTextScope::All,
     }
 }
 
@@ -785,5 +798,21 @@ mod tests {
         assert_eq!(snapshot.text, "two\nthree\n");
         assert_eq!(snapshot.lines, 2);
         assert_eq!(snapshot.total_lines, 3);
+    }
+
+    #[test]
+    fn embedded_bounded_reads_do_not_request_full_scrollback() {
+        assert_eq!(
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Visible),
+            EmbeddedGhosttyTextScope::Visible
+        );
+        assert_eq!(
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }),
+            EmbeddedGhosttyTextScope::Visible
+        );
+        assert_eq!(
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::All),
+            EmbeddedGhosttyTextScope::All
+        );
     }
 }

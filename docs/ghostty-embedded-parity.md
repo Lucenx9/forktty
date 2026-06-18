@@ -151,15 +151,20 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
   the socket `surfaces` PID field, and the Probe requires the initial embedded
   pane to expose a positive PID.
 - **Socket and agent text** — `send_text` / `read_text` (visible + full) ABIs
-  back the socket `send_text`, `read_text`, and `capture_tail` requests, plus
-  Agent HUD tail reads and inline agent replies.
+  back the socket `send_text`, `read_text`, and inline agent replies. Automatic
+  visible/tail reads use the visible-text ABI only, so Agent HUD polling and
+  `capture_tail` cannot materialize a very large embedded scrollback in the
+  ForkTTY host process. Full scrollback remains available through explicit
+  `read_text(all)`; a true full-scrollback `capture_tail` needs a future native
+  bounded-tail Ghostty embedding ABI.
 - **Scrollback snapshot** — when `appearance.persistent_scrollback_lines > 0`,
   embedded panes snapshot their scrollback tail into
   `surface.persisted_scrollback` on child exit, on programmatic close/restart,
   and via a throttled poll (`read_text_snapshot(Tail)` +
   `set_surface_persisted_scrollback`), so a later session save keeps recent
-  embedded output. The ABI read never holds the model lock, and an unchanged
-  tail skips the model write.
+  visible embedded output. The ABI read never holds the model lock, never asks
+  Ghostty for full scrollback on the polling path, and an unchanged tail skips
+  the model write.
 - **Scrollback restore (gated)** — on respawn ForkTTY computes terminal-ready
   bytes from `persisted_scrollback` (same CR/LF normalization as classic panes)
   and seeds them through the optional `ghostty_gtk_surface_restore_scrollback`
