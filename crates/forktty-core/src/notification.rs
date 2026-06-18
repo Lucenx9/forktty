@@ -38,6 +38,24 @@ fn dedupe_cache() -> &'static Mutex<VecDeque<(DedupeKey, Instant)>> {
 }
 
 fn should_dispatch(notification: &NotificationItem, now: Instant) -> bool {
+    let mut cache = dedupe_cache()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    // Calls can race before taking the mutex, so insertion order is not a
+    // reliable proxy for timestamp order.
+    cache.retain(|(_, ts)| now.duration_since(*ts) < NOTIFICATION_DEDUPE_WINDOW);
+    // Compare fields directly by reference to avoid allocating a DedupeKey tuple.
+    // This saves 4 heap allocations (from String/Option<String> cloning) per
+    // skipped notification when checking the cache.
+    if cache.iter().any(|(existing, _)| {
+        existing.0 == notification.kind
+            && existing.1 == notification.title
+            && existing.2 == notification.body
+            && existing.3 == notification.workspace_id
+            && existing.4 == notification.surface_id
+    }) {
+        return false;
+    }
     let key: DedupeKey = (
         notification.kind,
         notification.title.clone(),
@@ -45,15 +63,6 @@ fn should_dispatch(notification: &NotificationItem, now: Instant) -> bool {
         notification.workspace_id.clone(),
         notification.surface_id.clone(),
     );
-    let mut cache = dedupe_cache()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    // Calls can race before taking the mutex, so insertion order is not a
-    // reliable proxy for timestamp order.
-    cache.retain(|(_, ts)| now.duration_since(*ts) < NOTIFICATION_DEDUPE_WINDOW);
-    if cache.iter().any(|(existing, _)| existing == &key) {
-        return false;
-    }
     if cache.len() >= NOTIFICATION_DEDUPE_CAPACITY {
         cache.pop_front();
     }
