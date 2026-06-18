@@ -11,6 +11,10 @@ All notable changes to ForkTTY are documented here.
   allowing packaged AppImage libraries below sticky `/tmp` mounts.
 
 ### Fixed
+- Embedded Ghostty socket text reads now bound the Rust-side copy to the
+  requested `max_bytes` before converting FFI text into a `String`, and tail
+  reads keep using visible text so `capture_tail` cannot materialize full
+  scrollback in ForkTTY before response truncation.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added
