@@ -421,7 +421,9 @@ the same local socket pipeline. Manual hook-event commands can pass
 
 ## Configuration
 
-Config file: `~/.config/forktty/config.toml`. All fields are optional.
+Config file: `~/.config/forktty/config.toml`. All fields are optional. The
+Settings dialog intentionally does not edit `general.shell`; change the shell by
+editing this file or your login shell environment.
 
 ```toml
 [general]

@@ -67,7 +67,7 @@ should be one of:
 | Session restore after restart         |                           |                       |                  |                          |
 | Corrupted config quarantined          |                           |                       |                  |                          |
 | Corrupted session quarantined         |                           |                       |                  |                          |
-| Settings dialog: change shell, theme  |                           |                       |                  |                          |
+| Settings dialog: scrollback, sidebar, privacy |                  |                       |                  |                          |
 | Source-only browser pane smoke (`--features browser`) |             |                       |                  |                          |
 
 ## Negative / hardening checks

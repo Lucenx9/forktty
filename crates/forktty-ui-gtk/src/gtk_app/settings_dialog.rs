@@ -57,7 +57,7 @@ pub(super) fn show_settings_dialog(
     let terminal_nav = settings_nav_button(
         "forktty-terminal-symbolic",
         "Terminal",
-        "Shell, scrollback, behavior",
+        "Scrollback, behavior",
     );
     let interface_nav = settings_nav_button(
         "forktty-theme-symbolic",
@@ -101,18 +101,7 @@ pub(super) fn show_settings_dialog(
     nav.append(&advanced_nav);
 
     let (terminal_page, terminal_content) =
-        settings_page("Terminal", "Shell, scrollback, and terminal behavior.");
-    let (shell_section, shell_list) = settings_section("Shell", "");
-    let shell_entry = adw::EntryRow::builder()
-        .title("Shell command")
-        .text(&loaded.general.shell)
-        .show_apply_button(true)
-        .tooltip_text("Absolute path to the shell executable")
-        .build();
-    shell_entry.add_css_class("settings-row");
-    shell_entry.set_input_purpose(gtk::InputPurpose::Terminal);
-    shell_list.append(&shell_entry);
-    terminal_content.append(&shell_section);
+        settings_page("Terminal", "Scrollback and terminal behavior.");
 
     let (behavior_section, behavior_list) = settings_section("Behavior", "");
     let scrollback_lines = settings_spin_row(
@@ -279,29 +268,6 @@ pub(super) fn show_settings_dialog(
     terminal_nav.set_active(true);
     stack.set_visible_child_name("terminal");
 
-    shell_entry.connect_changed(|row| {
-        row.remove_css_class("error");
-    });
-    shell_entry.connect_apply({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        move |row: &adw::EntryRow| {
-            let shell = normalized_settings_entry_text(row);
-            let saved = persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.general.shell = shell,
-                "Shell saved. Restart ForkTTY to use it.",
-            );
-            if saved {
-                row.remove_css_class("error");
-            } else {
-                row.add_css_class("error");
-            }
-        }
-    });
     scrollback_lines.connect_notify_local(Some("value"), {
         let dialog = dialog.clone();
         let current = current.clone();
@@ -523,7 +489,6 @@ pub(super) fn show_settings_dialog(
             let current_for_reset = current.clone();
             let on_apply_for_reset = on_apply.clone();
             let suppress_updates_for_reset = suppress_updates.clone();
-            let shell_entry_for_reset = shell_entry.clone();
             let scrollback_lines_for_reset = scrollback_lines.clone();
             let terminal_audible_bell_for_reset = terminal_audible_bell.clone();
             let window_mode_for_reset = window_mode.clone();
@@ -538,7 +503,7 @@ pub(super) fn show_settings_dialog(
             show_destructive_confirmation(
                 &confirmation_parent,
                 "Reset Settings?",
-                "Restore ForkTTY settings to their default values. This changes the saved shell, appearance, workspace, privacy, and notification preferences.",
+                "Restore ForkTTY settings to their default values. This changes appearance, workspace, privacy, and notification preferences.",
                 "Reset Settings",
                 move || {
                     let defaults = config::AppConfig::default();
@@ -556,8 +521,6 @@ pub(super) fn show_settings_dialog(
                         return;
                     }
                     suppress_updates_for_reset.set(true);
-                    shell_entry_for_reset.set_text(&defaults.general.shell);
-                    shell_entry_for_reset.remove_css_class("error");
                     scrollback_lines_for_reset
                         .set_value(f64::from(defaults.appearance.scrollback_lines));
                     terminal_audible_bell_for_reset

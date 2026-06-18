@@ -3397,6 +3397,15 @@ fn settings_change_preserves_telemetry_config() {
 }
 
 #[test]
+fn settings_dialog_does_not_expose_shell_editor() {
+    let source = include_str!("settings_dialog.rs");
+
+    assert!(!source.contains("Shell command"));
+    assert!(!source.contains("Shell saved."));
+    assert!(!source.contains("saved shell"));
+}
+
+#[test]
 fn maximized_layout_signature_tracks_focused_pane() {
     // In maximize mode only the focused pane is rendered, so a focus-only
     // change must produce a different signature and trigger a rebuild.

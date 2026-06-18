@@ -19,6 +19,11 @@ All notable changes to ForkTTY are documented here.
   preventing malicious terminal output from forcing full-source-image
   per-placement copies on every redraw.
 
+### Changed
+- Settings no longer exposes a shell editor; advanced users can still set
+  `general.shell` manually in `config.toml`, while the dialog focuses on
+  ForkTTY-owned behavior and appearance.
+
 ### Fixed
 - Refined the per-pane tab close button styling so hover changes only the X
   color instead of drawing a filled control around it.

@@ -219,11 +219,11 @@ pub(super) fn terminal_failure_guidance(message: &str) -> String {
         || lower.contains("not found")
         || lower.contains("permission denied")
     {
-        "Check the shell path and permissions in Settings, then restart this pane."
+        "Check the configured shell path and permissions, then restart this pane."
     } else if lower.contains("pty") {
         "The Ghostty/PTY backend failed. Restart this pane after checking the terminal backend."
     } else {
-        "Check Settings, then restart this pane."
+        "Check the terminal configuration, then restart this pane."
     };
     format!("{summary}. {hint}")
 }
