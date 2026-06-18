@@ -864,6 +864,8 @@ impl GhosttyCore {
                 info.source_y,
                 source_width,
                 source_height,
+                info.pixel_width,
+                info.pixel_height,
             )?
             else {
                 continue;
@@ -878,10 +880,10 @@ impl GhosttyCore {
                 pixel_height: info.pixel_height,
                 source_x: 0,
                 source_y: 0,
-                source_width,
-                source_height,
-                image_width: source_width,
-                image_height: source_height,
+                source_width: info.pixel_width,
+                source_height: info.pixel_height,
+                image_width: info.pixel_width,
+                image_height: info.pixel_height,
                 rgba,
             });
         }
@@ -1332,6 +1334,8 @@ fn kitty_image_rgba_pixels(
     source_y: u32,
     source_width: u32,
     source_height: u32,
+    render_width: u32,
+    render_height: u32,
 ) -> Result<Option<Vec<u8>>> {
     let image_width = image.width()? as usize;
     let image_height = image.height()? as usize;
@@ -1339,12 +1343,22 @@ fn kitty_image_rgba_pixels(
     let source_y = source_y as usize;
     let source_width = source_width as usize;
     let source_height = source_height as usize;
+    let render_width = render_width as usize;
+    let render_height = render_height as usize;
+    let Some(source_end_x) = source_x.checked_add(source_width) else {
+        return Ok(None);
+    };
+    let Some(source_end_y) = source_y.checked_add(source_height) else {
+        return Ok(None);
+    };
     if source_width == 0
         || source_height == 0
+        || render_width == 0
+        || render_height == 0
         || source_x >= image_width
         || source_y >= image_height
-        || source_x + source_width > image_width
-        || source_y + source_height > image_height
+        || source_end_x > image_width
+        || source_end_y > image_height
     {
         return Ok(None);
     }
@@ -1367,8 +1381,8 @@ fn kitty_image_rgba_pixels(
         return Ok(None);
     }
 
-    let Some(output_len) = source_width
-        .checked_mul(source_height)
+    let Some(output_len) = render_width
+        .checked_mul(render_height)
         .and_then(|pixels| pixels.checked_mul(4))
     else {
         return Ok(None);
@@ -1378,37 +1392,51 @@ fn kitty_image_rgba_pixels(
         return Ok(None);
     }
 
-    for row in source_y..source_y + source_height {
-        let Some(row_start) = row
-            .checked_mul(row_len)
-            .and_then(|offset| offset.checked_add(source_x * bytes_per_pixel))
+    for render_y in 0..render_height {
+        let Some(source_y_offset) = render_y
+            .checked_mul(source_height)
+            .map(|offset| offset / render_height)
         else {
             return Ok(None);
         };
-        let Some(row_end) = row_start.checked_add(source_width * bytes_per_pixel) else {
+        let Some(source_row) = source_y.checked_add(source_y_offset) else {
             return Ok(None);
         };
-        let row = &data[row_start..row_end];
-        match bytes_per_pixel {
-            4 => rgba.extend_from_slice(row),
-            3 => {
-                for pixel in row.chunks_exact(3) {
-                    rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
-                }
+        let Some(row_start) = source_row.checked_mul(row_len) else {
+            return Ok(None);
+        };
+        for render_x in 0..render_width {
+            let Some(source_x_offset) = render_x
+                .checked_mul(source_width)
+                .map(|offset| offset / render_width)
+            else {
+                return Ok(None);
+            };
+            let Some(source_col) = source_x.checked_add(source_x_offset) else {
+                return Ok(None);
+            };
+            let Some(pixel_start) = source_col
+                .checked_mul(bytes_per_pixel)
+                .and_then(|offset| row_start.checked_add(offset))
+            else {
+                return Ok(None);
+            };
+            let Some(pixel_end) = pixel_start.checked_add(bytes_per_pixel) else {
+                return Ok(None);
+            };
+            let Some(pixel) = data.get(pixel_start..pixel_end) else {
+                return Ok(None);
+            };
+            match bytes_per_pixel {
+                4 => rgba.extend_from_slice(pixel),
+                3 => rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]),
+                2 => rgba.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]),
+                1 => rgba.extend_from_slice(&[pixel[0], pixel[0], pixel[0], 255]),
+                _ => unreachable!(),
             }
-            2 => {
-                for pixel in row.chunks_exact(2) {
-                    rgba.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]);
-                }
-            }
-            1 => {
-                for gray in row {
-                    rgba.extend_from_slice(&[*gray, *gray, *gray, 255]);
-                }
-            }
-            _ => unreachable!(),
         }
     }
+    debug_assert_eq!(rgba.len(), output_len);
     Ok(Some(rgba))
 }
 
@@ -1819,6 +1847,37 @@ mod tests {
         assert_eq!(image.image_width, 1);
         assert_eq!(image.image_height, 1);
         assert_eq!(image.rgba, vec![255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn core_render_frame_bounds_kitty_image_snapshots_to_rendered_pixels() {
+        let mut core = GhosttyCore::new(GhosttyCoreOptions {
+            cols: 80,
+            rows: 24,
+            scrollback_lines: 100,
+        })
+        .unwrap();
+        core.resize(80, 24, 1, 1).unwrap();
+
+        core.feed(
+            b"\x1b_Ga=T,t=d,f=32,i=1,p=1,s=4,v=4,c=1,r=1,q=1;\
+              AACA/ygAgP9QAID/eACA/wAogP8oKID/UCiA/3gogP8AUID/KFCA/1BQgP94UID/AHiA/yh4gP9QeID/eHiA/w==\
+              \x1b\\",
+        )
+        .unwrap();
+
+        let frame = core.render_frame().unwrap();
+
+        assert_eq!(frame.kitty_images.len(), 1);
+        let image = &frame.kitty_images[0];
+        assert_eq!(image.pixel_width, 1);
+        assert_eq!(image.pixel_height, 1);
+        assert_eq!(image.source_width, 1);
+        assert_eq!(image.source_height, 1);
+        assert_eq!(image.image_width, 1);
+        assert_eq!(image.image_height, 1);
+        assert_eq!(image.rgba.len(), 4);
+        assert_eq!(image.rgba, vec![0, 0, 128, 255]);
     }
 
     #[test]
