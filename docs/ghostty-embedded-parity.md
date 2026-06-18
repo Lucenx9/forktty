@@ -72,6 +72,10 @@ Observation method in this environment: pane content was driven through the
 socket API (`forktty send-text --surface-id <id> --text …`, newline appended to
 execute), screen rendering was captured with `spectacle -b -n -a -o <png>` and
 read back, and surface/exit state was read with `forktty surfaces [--json]`.
+Follow-up readback on the same date also confirmed the shipped embedded
+AppImage maps `ghostty-gtk-embed.so`, exposes a positive child PID through
+`surfaces --json`, and serves embedded `read-screen` / `capture-tail` through the
+socket CLI once those documented commands are routed by the top-level CLI.
 
 **Validated:**
 
@@ -101,13 +105,21 @@ read back, and surface/exit state was read with `forktty surfaces [--json]`.
 
 **Could not validate in this environment (left `pending`):**
 
-The validating agent cannot synthesize pointer or keyboard input into the GUI:
-the session has no running `ydotoold` and the account is not in the `input`
-group, so `/dev/uinput` (`root:input`) is inaccessible; the socket/CLI exposes no
+The validating agent cannot synthesize trusted pointer or keyboard input into
+the GUI. `wtype` fails because the compositor does not expose the
+virtual-keyboard protocol. `/dev/uinput` has an ACL for this user, but
+`ydotoold` is not usable in this session: with its default mouse setup it exits
+after an Xwayland virtual-device error, and in keyboard-only/no-display mode the
+server process still exits and leaves a stale socket that refuses client
+connections. Activating the exported GTK actions over DBus is not a valid
+substitute for the accelerator path: app-level copy/paste/select-all actions
+intentionally require real GTK focus inside the terminal, while DBus activation
+only focuses the application window. The socket/CLI also exposes no
 clicked-selection, clipboard, or Ghostty-action verb (`action-run` is for
 *project* commands, not terminal keybinding actions), and socket `send_text`
 reaches only the child PTY, not GTK accelerators. Therefore these rows require a
-maintainer at a real pointer/keyboard (or the runner Probe):
+maintainer at a real pointer/keyboard, a working input-injection daemon, or a
+Probe extension that can drive GTK input directly:
 
 - **Row 4 (OSC 8)** — pointer hover/click on the rendered link (render already
   confirmed above).

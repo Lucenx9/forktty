@@ -199,6 +199,14 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "pane:select-tab"
             | "send-text"
             | "send_text"
+            | "read-screen"
+            | "read_screen"
+            | "surface-read-text"
+            | "surface:read-text"
+            | "capture-tail"
+            | "capture_tail"
+            | "surface-capture-tail"
+            | "surface:capture-tail"
             | "worktree-list"
             | "worktree:list"
             | "worktree-status"
@@ -1624,6 +1632,22 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "capabilities"]),
             CliAction::SocketCli(vec![OsString::from("capabilities")])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "read-screen", "--surface-id", "surface-1"]),
+            CliAction::SocketCli(vec![
+                OsString::from("read-screen"),
+                OsString::from("--surface-id"),
+                OsString::from("surface-1")
+            ])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "capture-tail", "--lines", "5"]),
+            CliAction::SocketCli(vec![
+                OsString::from("capture-tail"),
+                OsString::from("--lines"),
+                OsString::from("5")
+            ])
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "actions", "--cwd", "/repo"]),

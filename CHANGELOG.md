@@ -208,6 +208,9 @@ All notable changes to ForkTTY are documented here.
 - The GTK/Ghostty smoke script now verifies GTK action split/focus behavior, socket split readback, and the socket notification create/list/clear flow.
 
 ### Fixed
+- The documented `forktty read-screen` and `forktty capture-tail` socket CLI
+  commands now route through the top-level CLI instead of being rejected before
+  reaching the socket client.
 - Embedded Ghostty panes now apply Ghostty's GTK OpenGL context defaults before
   GTK initializes, disabling GLES/Vulkan context selection so packaged/AppImage
   panes do not show "Unable to acquire an OpenGL context for rendering" on
