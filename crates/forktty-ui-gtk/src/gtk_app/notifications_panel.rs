@@ -258,6 +258,7 @@ fn terminal_notification_icon_name(metadata: &TerminalNotificationMetadata) -> O
 }
 
 fn terminal_notification_icon_pixbuf(data: &[u8]) -> Option<gtk::gdk_pixbuf::Pixbuf> {
+    forktty_core::notification::terminal_notification_icon_extension(data)?;
     gtk::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(data.to_vec())).ok()
 }
 

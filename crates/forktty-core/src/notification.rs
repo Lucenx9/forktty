@@ -23,6 +23,8 @@ const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
 const CUSTOM_COMMAND_REAPER_QUEUE_CAPACITY: usize = 8;
 const DESKTOP_NOTIFICATION_HANDLE_CAPACITY: usize = 128;
 const DESKTOP_ENTRY_ID: &str = "dev.forktty.forktty";
+const TERMINAL_ICON_MAX_DIMENSION: u32 = 128;
+const TERMINAL_ICON_MAX_PIXELS: u32 = TERMINAL_ICON_MAX_DIMENSION * TERMINAL_ICON_MAX_DIMENSION;
 
 type DedupeKey = (
     NotificationKind,
@@ -158,7 +160,7 @@ fn write_desktop_notification_icon_file(
     }
 
     for _ in 0..4 {
-        let extension = desktop_notification_icon_extension(data)?;
+        let extension = terminal_notification_icon_extension(data)?;
         let path = dir.join(format!("icon-{}.{}", uuid::Uuid::new_v4(), extension));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -178,17 +180,91 @@ fn write_desktop_notification_icon_file(
     None
 }
 
-fn desktop_notification_icon_extension(data: &[u8]) -> Option<&'static str> {
-    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("png")
+pub fn terminal_notification_icon_extension(data: &[u8]) -> Option<&'static str> {
+    let (extension, width, height) = terminal_notification_icon_metadata(data)?;
+    valid_terminal_notification_icon_dimensions(width, height).then_some(extension)
+}
+
+fn valid_terminal_notification_icon_dimensions(width: u32, height: u32) -> bool {
+    width > 0
+        && height > 0
+        && width <= TERMINAL_ICON_MAX_DIMENSION
+        && height <= TERMINAL_ICON_MAX_DIMENSION
+        && width.saturating_mul(height) <= TERMINAL_ICON_MAX_PIXELS
+}
+
+fn terminal_notification_icon_metadata(data: &[u8]) -> Option<(&'static str, u32, u32)> {
+    if data.len() >= 24 && data.starts_with(b"\x89PNG\r\n\x1a\n") && &data[12..16] == b"IHDR" {
+        Some((
+            "png",
+            u32::from_be_bytes(data[16..20].try_into().ok()?),
+            u32::from_be_bytes(data[20..24].try_into().ok()?),
+        ))
+    } else if data.len() >= 10 && (data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")) {
+        Some((
+            "gif",
+            u16::from_le_bytes(data[6..8].try_into().ok()?) as u32,
+            u16::from_le_bytes(data[8..10].try_into().ok()?) as u32,
+        ))
+    } else if data.len() >= 30 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
+        webp_dimensions(data).map(|(width, height)| ("webp", width, height))
     } else if data.starts_with(b"\xff\xd8\xff") {
-        Some("jpg")
-    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        Some("gif")
-    } else if data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
-        Some("webp")
+        jpeg_dimensions(data).map(|(width, height)| ("jpg", width, height))
     } else {
         None
+    }
+}
+
+fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let mut index = 2;
+    while index + 4 <= data.len() {
+        if data[index] != 0xff {
+            return None;
+        }
+        while index < data.len() && data[index] == 0xff {
+            index += 1;
+        }
+        let marker = *data.get(index)?;
+        index += 1;
+        if marker == 0xd8 || marker == 0xd9 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+        let segment_len = u16::from_be_bytes(data.get(index..index + 2)?.try_into().ok()?) as usize;
+        if segment_len < 2 || index + segment_len > data.len() {
+            return None;
+        }
+        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if segment_len < 7 {
+                return None;
+            }
+            let height =
+                u16::from_be_bytes(data.get(index + 3..index + 5)?.try_into().ok()?) as u32;
+            let width = u16::from_be_bytes(data.get(index + 5..index + 7)?.try_into().ok()?) as u32;
+            return Some((width, height));
+        }
+        index += segment_len;
+    }
+    None
+}
+
+fn webp_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let chunk = data.get(12..16)?;
+    match chunk {
+        b"VP8X" if data.len() >= 30 => {
+            let width = 1 + u32::from_le_bytes([data[24], data[25], data[26], 0]);
+            let height = 1 + u32::from_le_bytes([data[27], data[28], data[29], 0]);
+            Some((width, height))
+        }
+        b"VP8 " if data.len() >= 30 && data.get(23..26) == Some(b"\x9d\x01\x2a") => {
+            let width = u16::from_le_bytes(data[26..28].try_into().ok()?) as u32 & 0x3fff;
+            let height = u16::from_le_bytes(data[28..30].try_into().ok()?) as u32 & 0x3fff;
+            Some((width, height))
+        }
+        b"VP8L" if data.len() >= 25 && data[20] == 0x2f => {
+            let bits = u32::from_le_bytes(data[21..25].try_into().ok()?);
+            Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
+        }
+        _ => None,
     }
 }
 
@@ -434,6 +510,24 @@ fn notification_kind_name(notification: &NotificationItem) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ONE_BY_ONE_PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 1, 3,
+        0, 0, 0, 37, 219, 86, 202, 0, 0, 0, 32, 99, 72, 82, 77, 0, 0, 122, 38, 0, 0, 128, 132, 0,
+        0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0, 58, 152, 0, 0, 23, 112, 156,
+        186, 81, 60, 0, 0, 0, 6, 80, 76, 84, 69, 255, 0, 0, 255, 255, 255, 65, 29, 52, 17, 0, 0, 0,
+        1, 98, 75, 71, 68, 1, 255, 2, 45, 222, 0, 0, 0, 7, 116, 73, 77, 69, 7, 234, 6, 16, 21, 59,
+        23, 1, 222, 59, 31, 0, 0, 0, 37, 116, 69, 88, 116, 100, 97, 116, 101, 58, 99, 114, 101, 97,
+        116, 101, 0, 50, 48, 50, 54, 45, 48, 54, 45, 49, 54, 84, 50, 49, 58, 53, 57, 58, 50, 51,
+        43, 48, 48, 58, 48, 48, 245, 241, 18, 134, 0, 0, 0, 37, 116, 69, 88, 116, 100, 97, 116,
+        101, 58, 109, 111, 100, 105, 102, 121, 0, 50, 48, 50, 54, 45, 48, 54, 45, 49, 54, 84, 50,
+        49, 58, 53, 57, 58, 50, 51, 43, 48, 48, 58, 48, 48, 132, 172, 170, 58, 0, 0, 0, 40, 116,
+        69, 88, 116, 100, 97, 116, 101, 58, 116, 105, 109, 101, 115, 116, 97, 109, 112, 0, 50, 48,
+        50, 54, 45, 48, 54, 45, 49, 54, 84, 50, 49, 58, 53, 57, 58, 50, 51, 43, 48, 48, 58, 48, 48,
+        211, 185, 139, 229, 0, 0, 0, 10, 73, 68, 65, 84, 8, 215, 99, 96, 0, 0, 0, 2, 0, 1, 226, 33,
+        188, 51, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
     use crate::{NotificationKind, WorkspaceModel};
 
     #[test]
@@ -632,7 +726,7 @@ mod tests {
                     report_close: false,
                     buttons: Vec::new(),
                     icon_names: Vec::new(),
-                    icon_data: Some(b"\x89PNG\r\n\x1a\n".to_vec()),
+                    icon_data: Some(ONE_BY_ONE_PNG.to_vec()),
                     icon_cache_id: Some("icon-1".to_string()),
                     urgency: None,
                     sound_name: None,
@@ -646,7 +740,16 @@ mod tests {
         let path = write_desktop_notification_icon_file(&notification, dir.path()).unwrap();
 
         assert!(path.starts_with(dir.path().join("forktty-notification-icons")));
-        assert_eq!(std::fs::read(&path).unwrap(), b"\x89PNG\r\n\x1a\n");
+        assert_eq!(std::fs::read(&path).unwrap(), ONE_BY_ONE_PNG);
+    }
+
+    #[test]
+    fn terminal_notification_icon_data_rejects_oversized_png_dimensions() {
+        let mut png = ONE_BY_ONE_PNG.to_vec();
+        png[16..20].copy_from_slice(&20_000u32.to_be_bytes());
+        png[20..24].copy_from_slice(&20_000u32.to_be_bytes());
+
+        assert_eq!(terminal_notification_icon_extension(&png), None);
     }
 
     #[test]
