@@ -997,11 +997,11 @@ popover.ft-context-menu contents {
 
 .pane-tab:hover .pane-tab-close,
 .pane-tab.active .pane-tab-close {
-  opacity: 0.62;
+  opacity: 0.72;
 }
 
 button.flat.pane-tab-close:hover {
-  background: #2f1f1f;
+  background: transparent;
   border-color: transparent;
   box-shadow: none;
   color: #d36b6b;
@@ -1009,7 +1009,7 @@ button.flat.pane-tab-close:hover {
 }
 
 button.flat.pane-tab-close:active {
-  background: alpha(#d36b6b, 0.22);
+  background: transparent;
   border-color: transparent;
   box-shadow: none;
   color: #d36b6b;

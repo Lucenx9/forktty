@@ -20,6 +20,8 @@ All notable changes to ForkTTY are documented here.
   per-placement copies on every redraw.
 
 ### Fixed
+- Refined the per-pane tab close button styling so hover changes only the X
+  color instead of drawing a filled control around it.
 - Embedded Ghostty panes now focus the terminal's internal focusable widget
   after new workspace, tab, split, or pane-header selection, so typing reaches
   the newly focused pane without an extra click inside the terminal.
