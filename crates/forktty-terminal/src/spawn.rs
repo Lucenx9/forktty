@@ -68,6 +68,51 @@ pub fn child_cwd(request: &SpawnRequest) -> &Path {
     request.cwd.as_path()
 }
 
+/// Build the bootstrap text sent to an embedded Ghostty surface's default
+/// shell so the surface replaces that bootstrap shell with ForkTTY's requested
+/// argv and per-surface environment.
+pub fn embedded_ghostty_bootstrap_command(request: &SpawnRequest) -> Result<String, String> {
+    let Some(env_command) = env_command_path() else {
+        return Err("no trusted env executable found at /usr/bin/env or /bin/env".to_string());
+    };
+    let child_env = child_environment(request);
+    let path = child_env
+        .iter()
+        .find_map(|entry| entry.strip_prefix("PATH=").map(OsStr::new));
+    let mut argv = request
+        .argv()
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let Some(program) = argv.first().cloned() else {
+        return Err("empty embedded Ghostty terminal argv".to_string());
+    };
+    let resolved = resolve_child_program(&program, path).ok_or_else(|| {
+        format!("terminal child program not found on absolute PATH entries: {program}")
+    })?;
+    argv[0] = resolved.to_string_lossy().into_owned();
+
+    let env = request
+        .forktty_env()
+        .into_iter()
+        .map(|(key, value)| shell_quote(&format!("{key}={value}")));
+    let argv = argv.iter().map(|value| shell_quote(value));
+    Ok(std::iter::once("exec".to_string())
+        .chain(std::iter::once(shell_quote(&env_command)))
+        .chain(env)
+        .chain(argv)
+        .collect::<Vec<_>>()
+        .join(" ")
+        + "\r")
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 fn apply_ghostty_shell_integration_env(
     env: &mut BTreeMap<String, String>,
     request: &SpawnRequest,
@@ -666,6 +711,52 @@ mod tests {
         request.cwd = PathBuf::from("/workspace/forktty");
 
         assert_eq!(child_cwd(&request), Path::new("/workspace/forktty"));
+    }
+
+    #[test]
+    fn embedded_ghostty_bootstrap_command_preserves_argv_and_forktty_env() {
+        let mut request = spawn_request();
+        request.shell = "/usr/bin/ssh".to_string();
+        request.args = vec!["user@example.test".to_string(), "echo 'ready'".to_string()];
+        request.extra_env = vec![("CUSTOM_VALUE".to_string(), "it's here".to_string())];
+
+        let command = embedded_ghostty_bootstrap_command(&request).expect("bootstrap command");
+
+        assert!(command
+            .starts_with(format!("exec {} ", shell_quote(&env_command_path().unwrap())).as_str()));
+        assert!(command.contains("'CUSTOM_VALUE=it'\"'\"'s here'"));
+        assert!(command.contains("'FORKTTY_WORKSPACE_ID=workspace-1'"));
+        assert!(command.contains("'FORKTTY_SURFACE_ID=surface-1'"));
+        assert!(command.contains("'FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock'"));
+        assert!(command.contains("'/usr/bin/ssh' 'user@example.test' 'echo '\"'\"'ready'\"'\"''"));
+        assert!(command.ends_with('\r'));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_ghostty_bootstrap_resolves_program_with_absolute_path_entries_only() {
+        let trusted = TestDir::new("trusted-bin");
+        let trusted_tool = trusted.path().join("codex");
+        fs::write(&trusted_tool, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&trusted_tool, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut request = spawn_request();
+        request.shell = "codex".to_string();
+        request.args = vec!["resume".to_string()];
+        request.cwd = PathBuf::from("/untrusted/workspace");
+
+        let command = with_env(
+            &[(
+                "PATH",
+                Some(format!(".:{}", trusted.path().display()).as_str()),
+            )],
+            || embedded_ghostty_bootstrap_command(&request).expect("bootstrap command"),
+        );
+
+        assert!(command
+            .starts_with(format!("exec {} ", shell_quote(&env_command_path().unwrap())).as_str()));
+        assert!(command.contains(shell_quote(trusted_tool.to_str().unwrap()).as_str()));
+        assert!(!command.contains("'codex' 'resume'"));
     }
 
     #[test]

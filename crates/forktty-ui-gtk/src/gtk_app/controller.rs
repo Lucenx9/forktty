@@ -380,6 +380,7 @@ impl TerminalController {
         #[cfg(target_os = "linux")]
         let child_pids_before_spawn = current_process_child_pids();
         let widget = unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? };
+        install_embedded_spawn_command(&widget, Rc::clone(&embedder), &request);
         widget.set_hexpand(true);
         widget.set_vexpand(true);
         install_embedded_ghostty_accelerators(&widget, Rc::clone(&embedder));
@@ -1744,6 +1745,32 @@ pub(super) fn orphaned_backend_surfaces(
 
 pub(super) fn mark_spawn_command_pending(pending: &mut BTreeSet<String>, surface_id: &str) {
     pending.insert(surface_id.to_string());
+}
+
+fn install_embedded_spawn_command(
+    widget: &gtk::Widget,
+    embedder: Rc<GhosttyGtkEmbedder>,
+    request: &SpawnRequest,
+) {
+    if !embedder.supports_send_text() {
+        return;
+    }
+    let surface_id = request.surface_id.clone();
+    let command = match forktty_terminal::spawn::embedded_ghostty_bootstrap_command(request) {
+        Ok(command) => command,
+        Err(err) => {
+            eprintln!("Failed to build embedded Ghostty GTK command {surface_id}: {err}");
+            return;
+        }
+    };
+    let weak_widget = widget.downgrade();
+    widget.connect_local("init", false, move |_| {
+        let widget = weak_widget.upgrade()?;
+        if let Err(err) = unsafe { embedder.send_text(&widget, &command) } {
+            eprintln!("Failed to initialize embedded Ghostty GTK command {surface_id}: {err}");
+        }
+        None
+    });
 }
 
 pub(super) fn clear_modeled_pending_spawns(
