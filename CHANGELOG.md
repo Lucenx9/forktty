@@ -207,6 +207,10 @@ All notable changes to ForkTTY are documented here.
   scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- Embedded Ghostty panes now capture ForkTTY terminal accelerators
+  (`Ctrl+Shift+C/V/A/F`) on the pane wrapper before Ghostty's internal widget
+  can consume the key event, so copy, paste, select-all, and find route through
+  the embedded Ghostty action ABI reliably.
 - Embedded Ghostty bounded text reads no longer materialize the full scrollback
   for visible or tail captures, which prevents long agent panes from exhausting
   ForkTTY memory during HUD/socket polling. Until Ghostty exposes a native

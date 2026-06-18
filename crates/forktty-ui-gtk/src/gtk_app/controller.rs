@@ -382,6 +382,7 @@ impl TerminalController {
         let widget = unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? };
         widget.set_hexpand(true);
         widget.set_vexpand(true);
+        install_embedded_ghostty_accelerators(&widget, Rc::clone(&embedder));
 
         let focus = gtk::EventControllerFocus::new();
         {
@@ -1958,6 +1959,47 @@ pub(super) fn effective_layout_signature(
         format!("{signature}#max:{focused_surface_id}")
     } else {
         signature.to_string()
+    }
+}
+
+fn install_embedded_ghostty_accelerators(widget: &gtk::Widget, embedder: Rc<GhosttyGtkEmbedder>) {
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let widget_for_key = widget.clone();
+    key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+        let Some(action) = embedded_surface_action_for_accelerator(key, modifiers) else {
+            return glib::Propagation::Proceed;
+        };
+        match unsafe { embedder.perform_action(&widget_for_key, action) } {
+            Ok(_) => glib::Propagation::Stop,
+            Err(err) => {
+                eprintln!(
+                    "forktty: embedded Ghostty {} unavailable: {err}",
+                    action.as_ghostty_action()
+                );
+                glib::Propagation::Proceed
+            }
+        }
+    });
+    widget.add_controller(key_controller);
+}
+
+pub(super) fn embedded_surface_action_for_accelerator(
+    key: gtk::gdk::Key,
+    modifiers: gtk::gdk::ModifierType,
+) -> Option<EmbeddedSurfaceAction> {
+    let ctrl = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+    let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+    let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
+    if !ctrl || !shift || alt {
+        return None;
+    }
+    match key {
+        gtk::gdk::Key::C | gtk::gdk::Key::c => Some(EmbeddedSurfaceAction::Copy),
+        gtk::gdk::Key::V | gtk::gdk::Key::v => Some(EmbeddedSurfaceAction::Paste),
+        gtk::gdk::Key::A | gtk::gdk::Key::a => Some(EmbeddedSurfaceAction::SelectAll),
+        gtk::gdk::Key::F | gtk::gdk::Key::f => Some(EmbeddedSurfaceAction::StartSearch),
+        _ => None,
     }
 }
 

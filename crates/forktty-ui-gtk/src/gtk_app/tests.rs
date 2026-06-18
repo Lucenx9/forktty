@@ -349,6 +349,42 @@ fn context_menu_copy_targets_focused_ghostty_widget() {
 }
 
 #[test]
+fn embedded_terminal_accelerators_route_clipboard_and_search_actions() {
+    let mods = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK;
+
+    assert_eq!(
+        embedded_surface_action_for_accelerator(gtk::gdk::Key::C, mods),
+        Some(EmbeddedSurfaceAction::Copy)
+    );
+    assert_eq!(
+        embedded_surface_action_for_accelerator(gtk::gdk::Key::v, mods),
+        Some(EmbeddedSurfaceAction::Paste)
+    );
+    assert_eq!(
+        embedded_surface_action_for_accelerator(gtk::gdk::Key::A, mods),
+        Some(EmbeddedSurfaceAction::SelectAll)
+    );
+    assert_eq!(
+        embedded_surface_action_for_accelerator(gtk::gdk::Key::f, mods),
+        Some(EmbeddedSurfaceAction::StartSearch)
+    );
+    assert_eq!(
+        embedded_surface_action_for_accelerator(
+            gtk::gdk::Key::C,
+            mods | gtk::gdk::ModifierType::ALT_MASK
+        ),
+        None
+    );
+    assert_eq!(
+        embedded_surface_action_for_accelerator(
+            gtk::gdk::Key::C,
+            gtk::gdk::ModifierType::CONTROL_MASK
+        ),
+        None
+    );
+}
+
+#[test]
 fn terminal_navigation_forwarder_claims_focus_after_writing_input() {
     use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
 
