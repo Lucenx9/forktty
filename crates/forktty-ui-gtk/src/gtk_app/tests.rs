@@ -293,7 +293,9 @@ fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
     let err = backend.close("surface-1").unwrap_err();
 
     assert!(matches!(err, TerminalError::Backend(_)));
-    assert_eq!(backend.surfaces().unwrap().len(), 1);
+    let surfaces = backend.surfaces().unwrap();
+    assert_eq!(surfaces.len(), 1);
+    assert_eq!(surfaces[0].pid, None);
 }
 
 #[test]
@@ -480,7 +482,11 @@ fn gtk_backend_rejects_send_text_after_surface_exits() {
     backend.mark_surface_ready("surface-1").unwrap();
     backend.send_text("surface-1", "echo ok\n").unwrap();
 
+    backend.mark_surface_pid("surface-1", 4242).unwrap();
+    assert_eq!(backend.surfaces().unwrap()[0].pid, Some(4242));
+
     backend.mark_surface_not_ready("surface-1").unwrap();
+    backend.clear_surface_pid("surface-1").unwrap();
 
     let err = backend
         .send_text("surface-1", "echo after-exit\n")

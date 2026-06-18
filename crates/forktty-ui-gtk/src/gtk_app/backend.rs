@@ -280,6 +280,18 @@ impl TerminalBackend for GtkTerminalBackend {
         Ok(())
     }
 
+    fn clear_surface_pid(&self, surface_id: &str) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get_mut(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        surface.pid = None;
+        Ok(())
+    }
+
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.surfaces
             .lock()

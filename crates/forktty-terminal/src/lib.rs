@@ -276,6 +276,9 @@ pub trait TerminalBackend: Send + Sync {
     fn mark_surface_pid(&self, _surface_id: &str, _pid: u32) -> Result<(), TerminalError> {
         Ok(())
     }
+    fn clear_surface_pid(&self, _surface_id: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.close(surface_id)
     }

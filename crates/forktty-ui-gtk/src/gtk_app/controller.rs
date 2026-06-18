@@ -30,6 +30,10 @@ pub(super) struct TerminalController {
     maximized_pane: bool,
     /// Spawned child PID per surface, used to discover listening ports.
     pub(super) surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
+    /// Current embedded Ghostty spawn token per surface. Timers and exit
+    /// handlers use this to avoid applying stale state after a newer spawn or
+    /// close for the same surface id.
+    embedded_spawn_tokens: Rc<RefCell<BTreeMap<String, u64>>>,
     next_spawn_token: u64,
     pane_tab_strips: Rc<RefCell<Vec<PaneTabStrip>>>,
     terminal_zoom_level: Cell<i32>,
@@ -236,6 +240,7 @@ impl TerminalController {
             last_layout_signature: None,
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
+            embedded_spawn_tokens: Rc::new(RefCell::new(BTreeMap::new())),
             next_spawn_token: 0,
             pane_tab_strips: Rc::new(RefCell::new(Vec::new())),
             terminal_zoom_level: Cell::new(0),
@@ -332,6 +337,7 @@ impl TerminalController {
                 self.embedded_ghostty_panes.remove(&surface_id);
                 self.widgets.remove(&surface_id);
                 self.surface_pids.borrow_mut().remove(&surface_id);
+                self.embedded_spawn_tokens.borrow_mut().remove(&surface_id);
                 #[cfg(feature = "browser")]
                 if let Some(pane) = self.browser_panes.borrow_mut().remove(&surface_id) {
                     pane.prepare_close();
@@ -459,6 +465,12 @@ impl TerminalController {
             });
         }
 
+        self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
+        let spawn_token = self.next_spawn_token;
+        self.embedded_spawn_tokens
+            .borrow_mut()
+            .insert(request.surface_id.clone(), spawn_token);
+
         // Title parity with classic panes: mirror the Ghostty surface title
         // into the model so the pane header / surface list stay accurate.
         {
@@ -483,10 +495,18 @@ impl TerminalController {
             let model = self.model.clone();
             let state = self.state.clone();
             let embedder = Rc::clone(&embedder);
+            let surface_pids = self.surface_pids.clone();
+            let embedded_spawn_tokens = self.embedded_spawn_tokens.clone();
             let surface_id = request.surface_id.clone();
             let workspace_id = request.workspace_id.clone();
             widget.connect_notify_local(Some("child-exited"), move |widget, _| {
                 if !widget.property::<bool>("child-exited") {
+                    return;
+                }
+                if !matches!(
+                    embedded_spawn_tokens.borrow().get(&surface_id),
+                    Some(current) if *current == spawn_token
+                ) {
                     return;
                 }
                 // Capture the final scrollback before teardown so session save
@@ -499,11 +519,23 @@ impl TerminalController {
                     &surface_id,
                     persistent_scrollback_lines,
                 );
+                remove_surface_pid_for_spawn(
+                    &mut surface_pids.borrow_mut(),
+                    &surface_id,
+                    spawn_token,
+                );
+                embedded_spawn_tokens.borrow_mut().remove(&surface_id);
                 if let Some(state) = &state {
                     match state.terminal.mark_surface_not_ready(&surface_id) {
                         Ok(()) | Err(TerminalError::NotFound(_)) => {}
                         Err(err) => eprintln!(
                             "Failed to mark embedded Ghostty GTK surface not ready {surface_id}: {err}"
+                        ),
+                    }
+                    match state.terminal.clear_surface_pid(&surface_id) {
+                        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+                        Err(err) => eprintln!(
+                            "Failed to clear embedded Ghostty surface pid {surface_id}: {err}"
                         ),
                     }
                 }
@@ -545,10 +577,9 @@ impl TerminalController {
         // embedded ABI returns it. Skipped when the loaded library predates the
         // child-pid getter so older libs don't spin a pointless timer.
         if embedder.supports_child_pid() {
-            self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
-            let spawn_token = self.next_spawn_token;
             let embedder = Rc::clone(&embedder);
             let surface_pids = self.surface_pids.clone();
+            let embedded_spawn_tokens = self.embedded_spawn_tokens.clone();
             let state = self.state.clone();
             let surface_id = request.surface_id.clone();
             let weak_widget = widget.downgrade();
@@ -558,6 +589,14 @@ impl TerminalController {
                     return glib::ControlFlow::Break;
                 };
                 attempts += 1;
+                if widget.property::<bool>("child-exited")
+                    || !matches!(
+                        embedded_spawn_tokens.borrow().get(&surface_id),
+                        Some(current) if *current == spawn_token
+                    )
+                {
+                    return glib::ControlFlow::Break;
+                }
                 let mut child_pid = unsafe { embedder.surface_child_pid(&widget) };
                 #[cfg(target_os = "linux")]
                 if child_pid.is_none() {
