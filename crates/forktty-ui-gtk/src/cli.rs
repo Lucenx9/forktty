@@ -390,7 +390,10 @@ fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
     let cwd = std::env::current_dir()?;
     let request = remote_helper_pty_request(argv, cwd)?;
     let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 })?;
-    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    // Keep the stdin relay bounded so a child that stops draining its PTY
+    // applies backpressure to the helper instead of letting queued input grow
+    // without limit.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
     std::thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buf = [0u8; 8192];
