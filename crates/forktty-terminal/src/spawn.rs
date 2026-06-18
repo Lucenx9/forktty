@@ -144,10 +144,11 @@ fn ghostty_shell_integration_argv(
             Some(argv)
         }
         GhosttyShell::Nushell => {
+            let module = nushell_integration_module(resources)?;
             let mut argv = vec![
                 request.shell.clone(),
                 "--execute".to_string(),
-                "use ghostty *".to_string(),
+                format!("use {} *", nushell_raw_quoted_path(&module)?),
             ];
             argv.extend(request.args.iter().cloned());
             Some(argv)
@@ -277,6 +278,20 @@ fn ghostty_resource_candidates() -> Vec<PathBuf> {
 
 fn valid_ghostty_resources_dir(path: &Path) -> bool {
     path.join("shell-integration").is_dir()
+}
+
+fn nushell_integration_module(resources: &Path) -> Option<PathBuf> {
+    let module = resources.join("shell-integration/nushell/vendor/autoload/ghostty.nu");
+    module.is_file().then_some(module)
+}
+
+fn nushell_raw_quoted_path(path: &Path) -> Option<String> {
+    let path = path_string(path)?;
+    let mut hashes = "#".to_string();
+    while path.contains(&format!("'{}", hashes)) {
+        hashes.push('#');
+    }
+    Some(format!("r{hashes}'{path}'{hashes}"))
 }
 
 fn ghostty_terminfo_dir(resources: &Path) -> Option<PathBuf> {
@@ -831,7 +846,78 @@ mod tests {
             Vec::new(),
             Some(&ghostty_resource_path(&resources)),
         );
-        assert_eq!(argv, strings(&["nu", "--execute", "use ghostty *"]));
+        assert_eq!(
+            argv,
+            strings(&[
+                "nu",
+                "--execute",
+                format!(
+                    "use r#'{}'# *",
+                    ghostty_resource_path(&resources)
+                        .join("shell-integration/nushell/vendor/autoload/ghostty.nu")
+                        .to_str()
+                        .unwrap()
+                )
+                .as_str(),
+            ])
+        );
+    }
+
+    #[test]
+    fn ghostty_nushell_integration_requires_trusted_module() {
+        let resources = TestDir::new("ghostty-resources-no-nu");
+        fs::create_dir_all(
+            resources
+                .path()
+                .join("share/ghostty/shell-integration/nushell/vendor/autoload"),
+        )
+        .unwrap();
+        let mut request = spawn_request();
+        request.shell = "nu".to_string();
+        request.args.clear();
+
+        let argv = child_argv_with_ghostty_resources(
+            &request,
+            Vec::new(),
+            Some(&ghostty_resource_path(&resources)),
+        );
+
+        assert_eq!(argv, strings(&["nu"]));
+    }
+
+    #[test]
+    fn ghostty_nushell_integration_quotes_module_path() {
+        let resources = TestDir::new("ghostty-resources-with-raw-delimiter-'#");
+        let module_dir = resources
+            .path()
+            .join("share/ghostty/shell-integration/nushell/vendor/autoload");
+        fs::create_dir_all(&module_dir).unwrap();
+        fs::write(module_dir.join("ghostty.nu"), "").unwrap();
+        let mut request = spawn_request();
+        request.shell = "nu".to_string();
+        request.args.clear();
+
+        let argv = child_argv_with_ghostty_resources(
+            &request,
+            Vec::new(),
+            Some(&ghostty_resource_path(&resources)),
+        );
+
+        assert_eq!(
+            argv,
+            strings(&[
+                "nu",
+                "--execute",
+                format!(
+                    "use r##'{}'## *",
+                    ghostty_resource_path(&resources)
+                        .join("shell-integration/nushell/vendor/autoload/ghostty.nu")
+                        .to_str()
+                        .unwrap()
+                )
+                .as_str(),
+            ])
+        );
     }
 
     #[test]
