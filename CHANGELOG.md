@@ -26,6 +26,9 @@ All notable changes to ForkTTY are documented here.
   after one reconciliation if their backend surface never appears in the
   model, preventing hidden PTY/widget processes from surviving a
   spawn/model-removal race.
+- Bounded the `forktty remote-helper pty` stdin relay queue so
+  non-draining PTY children apply backpressure instead of allowing unbounded
+  memory growth.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added
