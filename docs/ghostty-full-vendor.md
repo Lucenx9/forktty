@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `2d6400f56af4af03cc59ac5b87754de717cf6bdc`
+- Pin: `c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -53,8 +53,13 @@ cannot be loaded or an embedded surface fails to spawn, ForkTTY records a
 terminal spawn failure instead of opening a classic-renderer pane.
 
 This mode proves that ForkTTY can pack Ghostty's GTK widget in a pane, pass the
-cwd, forward socket `send_text`, and answer socket `read_text`/`capture_tail`
-after Ghostty initializes the core surface.
+cwd, start the requested argv directly with per-surface `FORKTTY_*`
+environment, forward socket `send_text`, and answer socket
+`read_text`/`capture_tail` after Ghostty initializes the core surface.
+`ghostty_gtk_surface_new_with_working_directory_and_command` is the native
+command-spawn path; older libraries start Ghostty's default shell in the pane
+cwd without ForkTTY's per-surface environment instead of typing bootstrap text
+into the terminal.
 Surface lifecycle is wired through the Ghostty surface's `notify::title`,
 `notify::child-exited`, and `close-request` GObject signals so title changes,
 child-exit readiness/status, and clean pane teardown match the classic panes.

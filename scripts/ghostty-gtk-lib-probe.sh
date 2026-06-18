@@ -108,6 +108,7 @@ verify_ghostty_gtk_lib_symbols() {
   }
 
   for symbol in \
+    ghostty_gtk_surface_new_with_working_directory_and_command \
     ghostty_gtk_surface_exit_code \
     ghostty_gtk_surface_child_pid \
     ghostty_gtk_surface_perform_action \

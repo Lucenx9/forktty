@@ -385,8 +385,16 @@ impl TerminalController {
             .unwrap_or(0);
         #[cfg(target_os = "linux")]
         let child_pids_before_spawn = current_process_child_pids();
-        let widget = unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? };
-        install_embedded_spawn_command(&widget, Rc::clone(&embedder), &request);
+        let widget = if embedder.supports_spawn_command() {
+            let argv = forktty_terminal::spawn::embedded_ghostty_command_argv(&request)?;
+            unsafe { embedder.create_widget_for_cwd_and_command(Some(&request.cwd), &argv)? }
+        } else {
+            eprintln!(
+                "Embedded Ghostty GTK library does not export command-spawn support; \
+                 starting Ghostty's default shell without ForkTTY environment injection"
+            );
+            unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? }
+        };
         widget.set_hexpand(true);
         widget.set_vexpand(true);
         install_embedded_ghostty_accelerators(&widget, Rc::clone(&embedder));
@@ -1799,32 +1807,6 @@ pub(super) fn mark_spawn_command_pending(
     surface_id: &str,
 ) {
     pending.insert(surface_id.to_string(), PendingSpawn::default());
-}
-
-fn install_embedded_spawn_command(
-    widget: &gtk::Widget,
-    embedder: Rc<GhosttyGtkEmbedder>,
-    request: &SpawnRequest,
-) {
-    if !embedder.supports_send_text() {
-        return;
-    }
-    let surface_id = request.surface_id.clone();
-    let command = match forktty_terminal::spawn::embedded_ghostty_bootstrap_command(request) {
-        Ok(command) => command,
-        Err(err) => {
-            eprintln!("Failed to build embedded Ghostty GTK command {surface_id}: {err}");
-            return;
-        }
-    };
-    let weak_widget = widget.downgrade();
-    widget.connect_local("init", false, move |_| {
-        let widget = weak_widget.upgrade()?;
-        if let Err(err) = unsafe { embedder.send_text(&widget, &command) } {
-            eprintln!("Failed to initialize embedded Ghostty GTK command {surface_id}: {err}");
-        }
-        None
-    });
 }
 
 pub(super) fn clear_modeled_pending_spawns(

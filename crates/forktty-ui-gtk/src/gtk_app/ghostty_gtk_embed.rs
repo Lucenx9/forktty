@@ -21,6 +21,12 @@ type ContextTick = unsafe extern "C" fn(*mut GhosttyGtkContext) -> i32;
 type SurfaceNew = unsafe extern "C" fn(*mut GhosttyGtkContext) -> *mut gtk::ffi::GtkWidget;
 type SurfaceNewWithWorkingDirectory =
     unsafe extern "C" fn(*mut GhosttyGtkContext, *const c_char) -> *mut gtk::ffi::GtkWidget;
+type SurfaceNewWithWorkingDirectoryAndCommand = unsafe extern "C" fn(
+    *mut GhosttyGtkContext,
+    *const c_char,
+    *const *const c_char,
+    usize,
+) -> *mut gtk::ffi::GtkWidget;
 type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char, usize) -> i32;
 type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
@@ -94,6 +100,8 @@ pub(super) struct GhosttyGtkEmbedder {
     context_tick: ContextTick,
     surface_new: SurfaceNew,
     surface_new_with_working_directory: Option<SurfaceNewWithWorkingDirectory>,
+    surface_new_with_working_directory_and_command:
+        Option<SurfaceNewWithWorkingDirectoryAndCommand>,
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
     surface_exit_code: Option<SurfaceExitCode>,
@@ -116,6 +124,12 @@ impl GhosttyGtkEmbedder {
         let surface_new: SurfaceNew = unsafe { load_symbol(&library, b"ghostty_gtk_surface_new")? };
         let surface_new_with_working_directory = unsafe {
             load_optional_symbol(&library, b"ghostty_gtk_surface_new_with_working_directory")
+        };
+        let surface_new_with_working_directory_and_command = unsafe {
+            load_optional_symbol(
+                &library,
+                GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL,
+            )
         };
         let surface_send_text =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL) };
@@ -149,6 +163,7 @@ impl GhosttyGtkEmbedder {
             context_tick,
             surface_new,
             surface_new_with_working_directory,
+            surface_new_with_working_directory_and_command,
             surface_send_text,
             surface_read_text,
             surface_exit_code,
@@ -183,6 +198,58 @@ impl GhosttyGtkEmbedder {
         })?;
         let raw =
             unsafe { surface_new_with_working_directory(self.context.as_ptr(), cwd.as_ptr()) };
+        widget_from_raw(raw)
+    }
+
+    pub(super) fn supports_spawn_command(&self) -> bool {
+        self.surface_new_with_working_directory_and_command
+            .is_some()
+    }
+
+    pub(super) unsafe fn create_widget_for_cwd_and_command(
+        &self,
+        cwd: Option<&Path>,
+        argv: &[String],
+    ) -> Result<gtk::Widget, String> {
+        let Some(surface_new_with_working_directory_and_command) =
+            self.surface_new_with_working_directory_and_command
+        else {
+            return Err("Ghostty GTK library does not export command-spawn support".to_string());
+        };
+        if argv.is_empty() {
+            return Err("Ghostty GTK command argv must not be empty".to_string());
+        }
+
+        let cwd = cwd
+            .map(|cwd| {
+                CString::new(cwd.as_os_str().as_bytes()).map_err(|_| {
+                    format!(
+                        "Ghostty GTK cwd contains an interior NUL: {}",
+                        cwd.display()
+                    )
+                })
+            })
+            .transpose()?;
+        let argv = argv
+            .iter()
+            .map(|arg| {
+                CString::new(arg.as_str())
+                    .map_err(|_| "Ghostty GTK command argv contains an interior NUL".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let argv_ptrs = argv
+            .iter()
+            .map(|arg| arg.as_ptr())
+            .collect::<Vec<*const c_char>>();
+
+        let raw = unsafe {
+            surface_new_with_working_directory_and_command(
+                self.context.as_ptr(),
+                cwd.as_ref().map_or(std::ptr::null(), |cwd| cwd.as_ptr()),
+                argv_ptrs.as_ptr(),
+                argv_ptrs.len(),
+            )
+        };
         widget_from_raw(raw)
     }
 
@@ -524,6 +591,8 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
 }
 
 pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
+pub(super) const GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL: &[u8] =
+    b"ghostty_gtk_surface_new_with_working_directory_and_command";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
 pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_surface_exit_code";
 pub(super) const GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL: &[u8] = b"ghostty_gtk_surface_child_pid";
@@ -786,6 +855,14 @@ mod tests {
         assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL),
             "ghostty_gtk_surface_send_text"
+        );
+    }
+
+    #[test]
+    fn command_spawn_symbol_is_declared() {
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL),
+            "ghostty_gtk_surface_new_with_working_directory_and_command"
         );
     }
 

@@ -6,8 +6,8 @@ All notable changes to ForkTTY are documented here.
 
 ### Security
 - Rejected control characters in restored session identifiers and embedded
-  Ghostty bootstrap values so tampered session state cannot inject terminal
-  control input into the bootstrap shell.
+  Ghostty command-spawn values so tampered session state cannot influence
+  terminal child argv or environment setup.
 - Hardened embedded Ghostty GTK library loading by canonicalizing candidate
   paths and rejecting relative paths, non-regular files, untrusted ownership,
   or group/other-writable files and parent directories before `dlopen`, while
@@ -20,6 +20,11 @@ All notable changes to ForkTTY are documented here.
   per-placement copies on every redraw.
 
 ### Fixed
+- Embedded Ghostty panes now use a native command-spawn ABI when the bundled
+  library supports it, so per-surface `FORKTTY_*` environment setup no longer
+  appears as a typed `exec /usr/bin/env ...` command in every new workspace.
+  Older embedding libraries now start Ghostty's default shell without the
+  ForkTTY environment instead of typing a bootstrap command into the terminal.
 - Embedded Ghostty socket text reads now bound the Rust-side copy to the
   requested `max_bytes` before converting FFI text into a `String`, and tail
   reads keep using visible text so `capture_tail` cannot materialize full
@@ -66,8 +71,10 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `2d6400f56af4af03cc59ac5b87754de717cf6bdc`, which adds the
-  `ghostty_gtk_surface_restore_scrollback` GTK embedding ABI.
+  `c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`, which adds the
+  `ghostty_gtk_surface_restore_scrollback` and
+  `ghostty_gtk_surface_new_with_working_directory_and_command` GTK embedding
+  ABIs.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
   cmux-style renderer/widget integration path; release builds package the
   vendored Ghostty GTK embedding library for the default pane renderer.
@@ -272,10 +279,10 @@ All notable changes to ForkTTY are documented here.
 - The MCP `workflow_evidence_add` tool now rejects missing `kind`/`title`
   locally with a clear validation error, matching its published input schema
   and the socket server's requirements.
-- Embedded Ghostty panes now replace the bootstrap shell with the requested
-  `SpawnRequest` command and ForkTTY environment on initialization, so SSH
-  panes, agent resume panes, configured shell arguments, and per-surface
-  environment values no longer fall back to Ghostty's default shell.
+- Embedded Ghostty panes now start the requested `SpawnRequest` command and
+  ForkTTY environment through Ghostty's native command-spawn ABI, so SSH panes,
+  agent resume panes, configured shell arguments, and per-surface environment
+  values no longer fall back to Ghostty's default shell in packaged builds.
 - Embedded Ghostty panes now clear cached child PIDs when the child exits and
   ignore stale PID poll results after exit, close, or respawn, preventing exited
   panes from exposing or using reused PIDs for port discovery.

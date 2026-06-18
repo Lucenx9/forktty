@@ -68,10 +68,9 @@ pub fn child_cwd(request: &SpawnRequest) -> &Path {
     request.cwd.as_path()
 }
 
-/// Build the bootstrap text sent to an embedded Ghostty surface's default
-/// shell so the surface replaces that bootstrap shell with ForkTTY's requested
-/// argv and per-surface environment.
-pub fn embedded_ghostty_bootstrap_command(request: &SpawnRequest) -> Result<String, String> {
+/// Build the direct argv used by embedded Ghostty surfaces when the GTK
+/// embedding library can accept a command at surface creation time.
+pub fn embedded_ghostty_command_argv(request: &SpawnRequest) -> Result<Vec<String>, String> {
     let Some(env_command) = env_command_path() else {
         return Err("no trusted env executable found at /usr/bin/env or /bin/env".to_string());
     };
@@ -95,35 +94,26 @@ pub fn embedded_ghostty_bootstrap_command(request: &SpawnRequest) -> Result<Stri
     let env = request
         .forktty_env()
         .into_iter()
-        .map(|(key, value)| shell_input_atom(&format!("{key}={value}")))
+        .map(|(key, value)| embedded_ghostty_command_atom(&format!("{key}={value}")))
         .collect::<Result<Vec<_>, _>>()?;
     let argv = argv
-        .iter()
-        .map(|value| shell_input_atom(value))
+        .into_iter()
+        .map(|value| embedded_ghostty_command_atom(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(std::iter::once("exec".to_string())
-        .chain(std::iter::once(shell_quote(&env_command)))
+
+    Ok(std::iter::once(env_command)
         .chain(env)
         .chain(argv)
-        .collect::<Vec<_>>()
-        .join(" ")
-        + "\r")
+        .collect())
 }
 
-fn shell_input_atom(value: &str) -> Result<String, String> {
+fn embedded_ghostty_command_atom(value: &str) -> Result<String, String> {
     if value.chars().any(char::is_control) {
         return Err(
-            "embedded Ghostty bootstrap values must not contain control characters".to_string(),
+            "embedded Ghostty command values must not contain control characters".to_string(),
         );
     }
-    Ok(shell_quote(value))
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
+    Ok(value.to_string())
 }
 
 fn apply_ghostty_shell_integration_env(
@@ -727,37 +717,40 @@ mod tests {
     }
 
     #[test]
-    fn embedded_ghostty_bootstrap_command_preserves_argv_and_forktty_env() {
+    fn embedded_ghostty_command_argv_preserves_argv_and_forktty_env_without_shell_text() {
         let mut request = spawn_request();
         request.shell = "/usr/bin/ssh".to_string();
         request.args = vec!["user@example.test".to_string(), "echo 'ready'".to_string()];
         request.extra_env = vec![("CUSTOM_VALUE".to_string(), "it's here".to_string())];
 
-        let command = embedded_ghostty_bootstrap_command(&request).expect("bootstrap command");
+        let argv = embedded_ghostty_command_argv(&request).expect("command argv");
 
-        assert!(command
-            .starts_with(format!("exec {} ", shell_quote(&env_command_path().unwrap())).as_str()));
-        assert!(command.contains("'CUSTOM_VALUE=it'\"'\"'s here'"));
-        assert!(command.contains("'FORKTTY_WORKSPACE_ID=workspace-1'"));
-        assert!(command.contains("'FORKTTY_SURFACE_ID=surface-1'"));
-        assert!(command.contains("'FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock'"));
-        assert!(command.contains("'/usr/bin/ssh' 'user@example.test' 'echo '\"'\"'ready'\"'\"''"));
-        assert!(command.ends_with('\r'));
+        let env_command = env_command_path().unwrap();
+        assert_eq!(argv.first(), Some(&env_command));
+        assert!(argv.contains(&"CUSTOM_VALUE=it's here".to_string()));
+        assert!(argv.contains(&"FORKTTY_WORKSPACE_ID=workspace-1".to_string()));
+        assert!(argv.contains(&"FORKTTY_SURFACE_ID=surface-1".to_string()));
+        assert!(argv.contains(&"FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock".to_string()));
+        assert!(argv.ends_with(&[
+            "/usr/bin/ssh".to_string(),
+            "user@example.test".to_string(),
+            "echo 'ready'".to_string()
+        ]));
     }
 
     #[test]
-    fn embedded_ghostty_bootstrap_rejects_control_character_values() {
+    fn embedded_ghostty_command_argv_rejects_control_character_values() {
         let mut request = spawn_request();
         request.surface_id = "surface-1\u{3}touch /tmp/forktty-pwn\r#".to_string();
 
-        let err = embedded_ghostty_bootstrap_command(&request).unwrap_err();
+        let err = embedded_ghostty_command_argv(&request).unwrap_err();
 
         assert!(err.contains("control characters"));
     }
 
     #[test]
     #[cfg(unix)]
-    fn embedded_ghostty_bootstrap_resolves_program_with_absolute_path_entries_only() {
+    fn embedded_ghostty_command_argv_resolves_program_with_absolute_path_entries_only() {
         let trusted = TestDir::new("trusted-bin");
         let trusted_tool = trusted.path().join("codex");
         fs::write(&trusted_tool, "#!/bin/sh\n").unwrap();
@@ -773,13 +766,12 @@ mod tests {
                 "PATH",
                 Some(format!(".:{}", trusted.path().display()).as_str()),
             )],
-            || embedded_ghostty_bootstrap_command(&request).expect("bootstrap command"),
+            || embedded_ghostty_command_argv(&request).expect("command argv"),
         );
 
-        assert!(command
-            .starts_with(format!("exec {} ", shell_quote(&env_command_path().unwrap())).as_str()));
-        assert!(command.contains(shell_quote(trusted_tool.to_str().unwrap()).as_str()));
-        assert!(!command.contains("'codex' 'resume'"));
+        assert_eq!(command.first(), env_command_path().as_ref());
+        assert!(command.ends_with(&[trusted_tool.to_string_lossy().into_owned(), "resume".into()]));
+        assert!(!command.contains(&"codex".to_string()));
     }
 
     #[test]
