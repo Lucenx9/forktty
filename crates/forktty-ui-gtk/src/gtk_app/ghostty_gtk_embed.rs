@@ -6,6 +6,7 @@ use gtk4 as gtk;
 use libloading::Library;
 use std::ffi::{c_char, c_void, CString};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
@@ -406,6 +407,13 @@ fn load_library() -> Result<(Library, PathBuf), String> {
     let candidates = library_candidates();
     let mut errors = Vec::new();
     for path in candidates {
+        let path = match trusted_library_path(&path) {
+            Ok(path) => path,
+            Err(err) => {
+                errors.push(format!("{}: {err}", path.display()));
+                continue;
+            }
+        };
         match unsafe { Library::new(&path) } {
             Ok(library) => return Ok((library, path)),
             Err(err) => errors.push(format!("{}: {err}", path.display())),
@@ -417,6 +425,54 @@ fn load_library() -> Result<(Library, PathBuf), String> {
          or run scripts/ghostty-gtk-lib-probe.sh first.\n{}",
         errors.join("\n")
     ))
+}
+
+fn trusted_library_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("Ghostty GTK library path must be absolute".to_string());
+    }
+
+    let path = path
+        .canonicalize()
+        .map_err(|err| format!("cannot canonicalize Ghostty GTK library path: {err}"))?;
+    let metadata = path
+        .metadata()
+        .map_err(|err| format!("cannot inspect Ghostty GTK library path: {err}"))?;
+    if !metadata.is_file() {
+        return Err("Ghostty GTK library path must be a regular file".to_string());
+    }
+    validate_trusted_metadata(&path, &metadata)?;
+
+    for ancestor in path.ancestors().skip(1) {
+        let metadata = ancestor
+            .metadata()
+            .map_err(|err| format!("cannot inspect Ghostty GTK library parent: {err}"))?;
+        validate_trusted_metadata(ancestor, &metadata)?;
+    }
+
+    Ok(path)
+}
+
+fn validate_trusted_metadata(path: &Path, metadata: &std::fs::Metadata) -> Result<(), String> {
+    let mode = metadata.mode();
+    let is_sticky_directory = metadata.is_dir() && mode & 0o1000 != 0;
+    if mode & 0o022 != 0 && !is_sticky_directory {
+        return Err(format!(
+            "{} is writable by group or other users",
+            path.display()
+        ));
+    }
+
+    let owner = metadata.uid();
+    let current_uid = unsafe { libc::geteuid() };
+    if owner != 0 && owner != current_uid {
+        return Err(format!(
+            "{} is not owned by root or the current user",
+            path.display()
+        ));
+    }
+
+    Ok(())
 }
 
 pub(crate) fn library_candidates() -> Vec<PathBuf> {
@@ -591,6 +647,78 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|path| path.ends_with("vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so")));
+    }
+
+    #[test]
+    fn trusted_library_path_rejects_relative_paths() {
+        let err = trusted_library_path(Path::new("ghostty-gtk-embed.so")).unwrap_err();
+        assert!(err.contains("must be absolute"));
+    }
+
+    #[test]
+    fn trusted_library_path_rejects_world_writable_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = dir.path().join("ghostty-gtk-embed.so");
+        std::fs::write(&library, b"not a real shared object").unwrap();
+
+        let mut permissions = std::fs::metadata(&library).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o666);
+        std::fs::set_permissions(&library, permissions).unwrap();
+
+        let err = trusted_library_path(&library).unwrap_err();
+        assert!(err.contains("writable by group or other users"));
+    }
+
+    #[test]
+    fn trusted_library_path_rejects_non_sticky_world_writable_ancestors() {
+        let dir = tempfile::Builder::new()
+            .prefix("forktty-untrusted-lib-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let world_writable = dir.path().join("world-writable");
+        std::fs::create_dir(&world_writable).unwrap();
+        let mut permissions = std::fs::metadata(&world_writable).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o777);
+        std::fs::set_permissions(&world_writable, permissions).unwrap();
+        let library = world_writable.join("ghostty-gtk-embed.so");
+        std::fs::write(&library, b"not a real shared object").unwrap();
+
+        let err = trusted_library_path(&library).unwrap_err();
+        assert!(err.contains("writable by group or other users"));
+    }
+
+    #[test]
+    fn trusted_library_path_allows_sticky_mount_ancestors() {
+        let dir = tempfile::Builder::new()
+            .prefix("forktty-sticky-lib-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let sticky = dir.path().join("tmp");
+        std::fs::create_dir(&sticky).unwrap();
+        let mut permissions = std::fs::metadata(&sticky).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o1777);
+        std::fs::set_permissions(&sticky, permissions).unwrap();
+
+        let appdir_lib = sticky.join(".mount_forktty/usr/lib");
+        std::fs::create_dir_all(&appdir_lib).unwrap();
+        let library = appdir_lib.join("ghostty-gtk-embed.so");
+        std::fs::write(&library, b"not a real shared object").unwrap();
+
+        let trusted = trusted_library_path(&library).unwrap();
+        assert_eq!(trusted, library.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn trusted_library_path_canonicalizes_safe_files() {
+        let dir = tempfile::Builder::new()
+            .prefix("forktty-trusted-lib-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let library = dir.path().join("ghostty-gtk-embed.so");
+        std::fs::write(&library, b"not a real shared object").unwrap();
+
+        let trusted = trusted_library_path(&library).unwrap();
+        assert_eq!(trusted, library.canonicalize().unwrap());
     }
 
     #[test]
