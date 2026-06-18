@@ -301,12 +301,27 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "team-worker-heartbeat"
             | "team:worker-heartbeat"
             | "team.worker.heartbeat"
+            | "team-worker-launch"
+            | "team:worker-launch"
+            | "team.worker.launch"
+            | "team-worker-health"
+            | "team:worker-health"
+            | "team.worker.health"
+            | "team-worker-nudge"
+            | "team:worker-nudge"
+            | "team.worker.nudge"
+            | "team-worker-shutdown"
+            | "team:worker-shutdown"
+            | "team.worker.shutdown"
             | "team-task-upsert"
             | "team:task-upsert"
             | "team.task.upsert"
             | "team-message-send"
             | "team:message-send"
             | "team.message.send"
+            | "team-message-dispatch"
+            | "team:message-dispatch"
+            | "team.message.dispatch"
             | "team-message-ack"
             | "team:message-ack"
             | "team.message.ack"
@@ -323,6 +338,10 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "status-line"
             | "status:summary"
             | "top"
+            | "tree"
+            | "topology-tree"
+            | "topology:tree"
+            | "topology.tree"
             | "remotes"
             | "remote-list"
             | "remote:list"
@@ -1780,12 +1799,27 @@ mod tests {
             "team-worker-heartbeat",
             "team:worker-heartbeat",
             "team.worker.heartbeat",
+            "team-worker-launch",
+            "team:worker-launch",
+            "team.worker.launch",
+            "team-worker-health",
+            "team:worker-health",
+            "team.worker.health",
+            "team-worker-nudge",
+            "team:worker-nudge",
+            "team.worker.nudge",
+            "team-worker-shutdown",
+            "team:worker-shutdown",
+            "team.worker.shutdown",
             "team-task-upsert",
             "team:task-upsert",
             "team.task.upsert",
             "team-message-send",
             "team:message-send",
             "team.message.send",
+            "team-message-dispatch",
+            "team:message-dispatch",
+            "team.message.dispatch",
             "team-message-ack",
             "team:message-ack",
             "team.message.ack",
@@ -1819,6 +1853,19 @@ mod tests {
                 OsString::from("--body"),
                 OsString::from("go")
             ])
+        );
+    }
+
+    #[test]
+    fn tree_command_is_recognized_as_socket_cli_command() {
+        for command in ["tree", "topology-tree", "topology:tree", "topology.tree"] {
+            assert!(is_socket_cli_command(command), "{command}");
+        }
+        // Regression: `forktty tree` used to fall through to `Unknown` and exit 2
+        // even though the dispatch table and help text both support it.
+        assert_eq!(
+            parse::<_, &str>(["forktty", "tree"]),
+            CliAction::SocketCli(vec![OsString::from("tree")])
         );
     }
 

@@ -1974,8 +1974,14 @@ pub(super) fn effective_layout_signature(
 fn install_embedded_ghostty_accelerators(widget: &gtk::Widget, embedder: Rc<GhosttyGtkEmbedder>) {
     let key_controller = gtk::EventControllerKey::new();
     key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let widget_for_key = widget.clone();
+    // Hold the widget weakly: the controller is owned by `widget`, so a strong
+    // clone here forms a widget -> controller -> closure -> widget cycle that
+    // keeps the embedded Ghostty surface alive forever after the pane closes.
+    let widget_for_key = widget.downgrade();
     key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+        let Some(widget_for_key) = widget_for_key.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
         let Some(action) = embedded_surface_action_for_accelerator(key, modifiers) else {
             return glib::Propagation::Proceed;
         };
