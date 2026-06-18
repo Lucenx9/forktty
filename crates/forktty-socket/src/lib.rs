@@ -812,7 +812,7 @@ fn record_feed_entry(state: &SocketAppState, entry: FeedEntry) -> Result<(), Str
 fn feed_entry_from_notification(item: &NotificationItem) -> FeedEntry {
     let is_approval = item.kind == NotificationKind::Prompt;
     FeedEntry {
-        id: item.id.clone(),
+        id: feed_notification_entry_id(item),
         entry_type: if is_approval {
             FeedEntryType::Approval
         } else {
@@ -830,6 +830,10 @@ fn feed_entry_from_notification(item: &NotificationItem) -> FeedEntry {
         created_at_ms: item.created_at_ms,
         approval_state: is_approval.then_some(FeedApprovalState::Pending),
     }
+}
+
+fn feed_notification_entry_id(item: &NotificationItem) -> String {
+    format!("feed:{}:notification:{}", item.created_at_ms, item.id)
 }
 
 fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
@@ -8373,6 +8377,82 @@ mod tests {
         assert_eq!(feed[0]["type"], "approval");
         assert_eq!(feed[0]["title"], "Permission");
         assert_eq!(feed[0]["approval_state"], "pending");
+    }
+
+    #[tokio::test]
+    async fn feed_notification_approval_ids_do_not_collide_after_model_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (first_state, _) = test_state();
+        let first_state = first_state.with_feed_store_path(&feed_path).unwrap();
+        let first_workspace_id = first_state
+            .model
+            .lock()
+            .unwrap()
+            .active_workspace_id()
+            .unwrap();
+
+        dispatch(
+            &first_state,
+            "notification.create",
+            json!({
+                "workspace_id": first_workspace_id,
+                "kind": "prompt",
+                "title": "Old prompt",
+                "body": "Run old command?"
+            }),
+        )
+        .await
+        .unwrap();
+        let old_feed = dispatch(
+            &first_state,
+            "feed.list",
+            json!({"workspace_id": first_workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+        let old_approval_id = old_feed[0]["id"].as_str().unwrap();
+        dispatch(
+            &first_state,
+            "feed.approval.respond",
+            json!({"id": old_approval_id, "decision": "approved"}),
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let (second_state, _) = test_state();
+        let second_state = second_state.with_feed_store_path(&feed_path).unwrap();
+        let second_workspace_id = second_state
+            .model
+            .lock()
+            .unwrap()
+            .active_workspace_id()
+            .unwrap();
+        dispatch(
+            &second_state,
+            "notification.create",
+            json!({
+                "workspace_id": second_workspace_id,
+                "kind": "prompt",
+                "title": "New prompt",
+                "body": "Run new command?"
+            }),
+        )
+        .await
+        .unwrap();
+        let feed = dispatch(
+            &second_state,
+            "feed.list",
+            json!({"workspace_id": second_workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(feed[0]["title"], "New prompt");
+        assert_eq!(feed[0]["approval_state"], "pending");
+        assert_ne!(feed[0]["id"], old_approval_id);
     }
 
     #[tokio::test]
