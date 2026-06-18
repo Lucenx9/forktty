@@ -4,6 +4,12 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Hardened embedded Ghostty GTK library loading by canonicalizing candidate
+  paths and rejecting relative paths, non-regular files, untrusted ownership,
+  or group/other-writable files and parent directories before `dlopen`, while
+  allowing packaged AppImage libraries below sticky `/tmp` mounts.
+
 ### Fixed
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
