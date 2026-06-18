@@ -115,6 +115,7 @@ fn build_pane_chrome_with_content(
     terminal_overlay.add_overlay(&search_bar.container);
 
     if let Some(state) = state {
+        install_pane_header_focus_click(&header, &content, surface_id, &state.model);
         install_pane_reorder_dnd(&header, surface_id, state);
         if let Some(widget) = terminal_widget {
             install_terminal_context_menu(widget, surface_id, state, parent);
@@ -353,6 +354,46 @@ where
     handle.add_controller(target);
 }
 
+pub(super) fn focus_pane_chrome_surface(
+    model: &Arc<Mutex<WorkspaceModel>>,
+    surface_id: &str,
+) -> bool {
+    let Ok(mut model) = model.lock() else {
+        return false;
+    };
+    if !model.focus_surface(surface_id) {
+        return false;
+    }
+    let _ = model.mark_surface_unread(surface_id, false);
+    true
+}
+
+fn install_pane_header_focus_click<W>(
+    header: &W,
+    focus_target: &gtk::Widget,
+    surface_id: &str,
+    model: &Arc<Mutex<WorkspaceModel>>,
+) where
+    W: IsA<gtk::Widget>,
+{
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(gtk::gdk::BUTTON_PRIMARY);
+    gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+
+    let focus_target = focus_target.downgrade();
+    let model = model.clone();
+    let surface_id = surface_id.to_string();
+    gesture.connect_pressed(move |_gesture, _n_press, _x, _y| {
+        let Some(focus_target) = focus_target.upgrade() else {
+            return;
+        };
+        if focus_pane_chrome_surface(&model, &surface_id) {
+            queue_widget_focus(focus_target);
+        }
+    });
+    header.add_controller(gesture);
+}
+
 pub(super) fn focus_surface_and<F: FnOnce(&SocketAppState)>(
     state: &SocketAppState,
     surface_id: &str,
@@ -536,5 +577,35 @@ mod tests {
             .has_css_class("pane-close-action"));
         assert!(children[children.len() - 2].has_css_class("pane-action-separator"));
         assert!(children[children.len() - 3].property::<bool>("hexpand"));
+    }
+
+    #[test]
+    fn pane_chrome_focus_click_updates_model_focus_and_clears_unread() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (first_surface_id, second_surface_id) = {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("main", Path::new("/tmp"));
+            let first_surface_id = model.active_workspace().unwrap().focused_surface_id;
+            let second_surface_id = model
+                .split_surface(&first_surface_id, SplitAxis::Horizontal)
+                .unwrap()
+                .id;
+            assert_eq!(
+                model.active_workspace().unwrap().focused_surface_id,
+                second_surface_id
+            );
+            assert!(model.mark_surface_unread(&first_surface_id, true));
+            (first_surface_id, second_surface_id)
+        };
+
+        assert!(focus_pane_chrome_surface(&model, &first_surface_id));
+
+        let model = model.lock().unwrap();
+        assert_eq!(
+            model.active_workspace().unwrap().focused_surface_id,
+            first_surface_id
+        );
+        assert!(!model.surface(&first_surface_id).unwrap().unread);
+        assert!(model.surface(&second_surface_id).is_some());
     }
 }

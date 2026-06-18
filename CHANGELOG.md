@@ -207,6 +207,10 @@ All notable changes to ForkTTY are documented here.
   scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- ForkTTY and dialog titlebars now stay on the app's neutral dark chrome even
+  when a GTK user theme defines a blue/purple titlebar color.
+- Clicking a split pane's top bar now focuses that pane and routes subsequent
+  input to it, matching clicks inside the embedded terminal area.
 - Embedded Ghostty panes now intercept right-click before Ghostty's standalone
   window context menu opens, replacing the disabled native copy/paste entries
   with ForkTTY's context menu backed by the embedded Ghostty action ABI.

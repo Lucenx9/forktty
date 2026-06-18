@@ -43,16 +43,23 @@ window {
  * Header bar
  * -------------------------------------------------------------------------- */
 
+headerbar.app-header,
 .app-header {
   min-height: 30px;
   padding: 0 3px;
   background: #181818;
+  background-color: #181818;
+  background-image: none;
   color: #b7b7b7;
   border-bottom: 1px solid #292929;
   box-shadow: none;
 }
 
+headerbar.app-header windowhandle,
 .app-header windowhandle {
+  background: #181818;
+  background-color: #181818;
+  background-image: none;
   color: #b7b7b7;
 }
 
@@ -1505,6 +1512,8 @@ window.ft-dialog,
   min-height: 28px;
   padding: 0 6px;
   background: #181818;
+  background-color: #181818;
+  background-image: none;
   border-bottom: 0;
   box-shadow: none;
 }
@@ -1756,6 +1765,8 @@ window.ft-dialog,
   min-height: 42px;
   padding: 0 8px 0 14px;
   background: #181818;
+  background-color: #181818;
+  background-image: none;
   border-bottom: 1px solid #292929;
   box-shadow: none;
 }

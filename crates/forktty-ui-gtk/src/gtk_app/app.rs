@@ -37,6 +37,48 @@ fn gdk_disable_with_ghostty_opengl_defaults(value: &str) -> String {
     entries.join(",")
 }
 
+fn app_chrome_override_css() -> &'static str {
+    r#"
+window.forktty-main-window headerbar.app-header,
+window.forktty-main-window headerbar.app-header windowhandle,
+window.ft-dialog headerbar.ft-dialog-titlebar,
+window.ft-dialog headerbar.ft-dialog-titlebar windowhandle,
+window.ft-settings-window headerbar.settings-titlebar,
+window.ft-settings-window headerbar.settings-titlebar windowhandle {
+  background: #181818;
+  background-color: #181818;
+  background-image: none;
+  color: #b7b7b7;
+}
+"#
+}
+
+fn app_chrome_override_priority() -> u32 {
+    gtk::STYLE_PROVIDER_PRIORITY_USER + 1
+}
+
+fn install_app_css() {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(include_str!("../style.css"));
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
+    let chrome_provider = gtk::CssProvider::new();
+    chrome_provider.load_from_data(app_chrome_override_css());
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &chrome_provider,
+        app_chrome_override_priority(),
+    );
+}
+
 pub(super) fn build_ui(app: &adw::Application) {
     // ForkTTY is single-instance: a second launch of the binary delegates to
     // this process over DBus and fires `activate` again. Without this guard
@@ -362,6 +404,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         .default_height(default_height)
         .content(&toast_overlay)
         .build();
+    window.add_css_class("forktty-main-window");
     if quake_mode {
         if configure_quake_layer_shell(&window) {
             window.set_decorated(false);
@@ -395,15 +438,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         close.connect_clicked(move |_| window.close());
     }
 
-    let provider = gtk::CssProvider::new();
-    provider.load_from_data(include_str!("../style.css"));
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
+    install_app_css();
 
     let controller = Rc::new(RefCell::new(TerminalController::new(
         terminal_stack.borrow().clone(),
@@ -1443,7 +1478,11 @@ pub(super) fn install_global_quake_shortcut(
 
 #[cfg(test)]
 mod tests {
-    use super::gdk_disable_with_ghostty_opengl_defaults;
+    use super::{
+        app_chrome_override_css, app_chrome_override_priority,
+        gdk_disable_with_ghostty_opengl_defaults,
+    };
+    use gtk4 as gtk;
 
     #[test]
     fn gdk_disable_defaults_force_desktop_opengl_for_embedded_ghostty() {
@@ -1463,5 +1502,18 @@ mod tests {
             gdk_disable_with_ghostty_opengl_defaults("gles-api,vulkan"),
             "gles-api,vulkan"
         );
+    }
+
+    #[test]
+    fn app_chrome_override_can_beat_user_titlebar_css() {
+        assert!(app_chrome_override_priority() > gtk::STYLE_PROVIDER_PRIORITY_USER);
+
+        let css = app_chrome_override_css();
+        assert!(css.contains("window.forktty-main-window headerbar.app-header"));
+        assert!(css.contains("window.forktty-main-window headerbar.app-header windowhandle"));
+        assert!(css.contains("window.ft-dialog headerbar.ft-dialog-titlebar"));
+        assert!(css.contains("window.ft-settings-window headerbar.settings-titlebar"));
+        assert!(css.contains("background-color: #181818"));
+        assert!(css.contains("background-image: none"));
     }
 }
