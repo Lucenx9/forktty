@@ -206,6 +206,16 @@ pub(super) fn surface_status_key(surface_id: &str) -> String {
 }
 
 #[cfg(test)]
+const ONE_BY_ONE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExURf8AAP///0EdNBEAAAABYktHRAH/Ai3eAAAAB3RJTUUH6gYQFTsXAd47HwAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNi0wNi0xNlQyMTo1OToyMyswMDowMPXxEoYAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjYtMDYtMTZUMjE6NTk6MjMrMDA6MDCErKo6AAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA2LTE2VDIxOjU5OjIzKzAwOjAw07mL5QAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=";
+
+#[cfg(test)]
+fn one_by_one_png() -> Vec<u8> {
+    base64::engine::general_purpose::STANDARD
+        .decode(ONE_BY_ONE_PNG_BASE64)
+        .unwrap()
+}
+
+#[cfg(test)]
 pub(super) fn apply_ghostty_events_to_model(
     model: &Arc<Mutex<WorkspaceModel>>,
     workspace_id: &str,
@@ -982,6 +992,10 @@ impl TerminalMetadataNotificationLimiter {
                 return TerminalMetadataAction::Ignore;
             }
             TerminalMetadataAction::IconData { cache_id, data } => {
+                if forktty_core::notification::terminal_notification_icon_extension(&data).is_none()
+                {
+                    return TerminalMetadataAction::Ignore;
+                }
                 self.icon_data.insert(cache_id, data);
                 while self.icon_data.len() > OSC99_MAX_ICON_DATA_CACHE_ENTRIES {
                     if let Some(key) = self.icon_data.keys().next().cloned() {
@@ -2120,7 +2134,7 @@ mod ghostty_tests {
             &workspace_id,
             &surface_id,
             &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
-                payload: "g=icon-1:e=1:p=icon:i=build;UE5H".to_string(),
+                payload: format!("g=icon-1:e=1:p=icon:i=build;{ONE_BY_ONE_PNG_BASE64}"),
             })],
             &mut limiter,
         );
@@ -2136,7 +2150,7 @@ mod ghostty_tests {
 
         let notifications = model.lock().unwrap().list_notifications();
         let metadata = notifications[0].terminal_metadata.as_ref().unwrap();
-        assert_eq!(metadata.icon_data.as_deref(), Some(b"PNG".as_slice()));
+        assert_eq!(metadata.icon_data, Some(one_by_one_png()));
     }
 
     #[test]
@@ -2155,7 +2169,7 @@ mod ghostty_tests {
                 &workspace_id,
                 &surface_id,
                 &[GhosttyEvent::Metadata(TerminalMetadataEvent::Osc99 {
-                    payload: format!("g=icon-{index}:e=1:p=icon;UE5H"),
+                    payload: format!("g=icon-{index}:e=1:p=icon;{ONE_BY_ONE_PNG_BASE64}"),
                 })],
                 &mut limiter,
             );

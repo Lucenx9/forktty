@@ -9,6 +9,8 @@ All notable changes to ForkTTY are documented here.
   paths and rejecting relative paths, non-regular files, untrusted ownership,
   or group/other-writable files and parent directories before `dlopen`, while
   allowing packaged AppImage libraries below sticky `/tmp` mounts.
+- Limited OSC99 terminal notification icon dimensions before decoding or
+  forwarding image data to desktop notification servers.
 
 ### Fixed
 - Embedded Ghostty socket text reads now bound the Rust-side copy to the
