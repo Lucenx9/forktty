@@ -3227,43 +3227,41 @@ fn remote_row(
     }))
 }
 
-struct FeedItem {
-    // ponytail: status/progress have no model timestamp; priority keeps current state visible.
-    priority: u8,
-    created_at_ms: u128,
-    value: Value,
-}
-
 fn feed_list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -> Vec<Value> {
     if limit == 0 {
         return Vec::new();
     }
 
-    let mut items = Vec::new();
+    let mut prompt_notifications = Vec::new();
+    let mut other_notifications = Vec::new();
     for notification in model.list_notifications() {
         if workspace_id.is_some_and(|id| notification.workspace_id.as_deref() != Some(id)) {
             continue;
         }
-        let item_type = if notification.kind == NotificationKind::Prompt {
-            "approval"
+        if notification.kind == NotificationKind::Prompt {
+            prompt_notifications.push(notification);
         } else {
-            "notification"
-        };
-        items.push(FeedItem {
-            priority: u8::from(notification.kind == NotificationKind::Prompt) + 1,
-            created_at_ms: notification.created_at_ms,
-            value: json!({
-                "id": notification.id,
-                "type": item_type,
-                "kind": notification.kind,
-                "title": notification.title,
-                "body": notification.body,
-                "workspace_id": notification.workspace_id,
-                "surface_id": notification.surface_id,
-                "created_at_ms": notification.created_at_ms,
-                "read": notification.read,
-            }),
-        });
+            other_notifications.push(notification);
+        }
+    }
+    prompt_notifications.sort_by_key(|notification| std::cmp::Reverse(notification.created_at_ms));
+    other_notifications.sort_by_key(|notification| std::cmp::Reverse(notification.created_at_ms));
+
+    let mut items = Vec::with_capacity(
+        limit.min(
+            prompt_notifications
+                .len()
+                .saturating_add(other_notifications.len()),
+        ),
+    );
+    items.extend(
+        prompt_notifications
+            .into_iter()
+            .take(limit)
+            .map(notification_feed_item),
+    );
+    if items.len() >= limit {
+        return items;
     }
 
     for workspace in model
@@ -3271,51 +3269,77 @@ fn feed_list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -
         .into_iter()
         .filter(|workspace| workspace_id.is_none_or(|id| workspace.id == id))
     {
-        for status in model.list_status(&workspace.id) {
-            items.push(FeedItem {
-                priority: 2,
-                created_at_ms: 0,
-                value: json!({
-                    "id": format!("status:{}:{}", workspace.id, status.key),
-                    "type": "status",
-                    "kind": "status",
-                    "key": status.key,
-                    "title": status.label,
-                    "body": status.value,
-                    "workspace_id": workspace.id,
-                    "surface_id": null,
-                    "created_at_ms": 0,
-                }),
-            });
+        let remaining = limit - items.len();
+        if remaining == 0 {
+            break;
         }
-        for progress in model.list_progress(&workspace.id) {
+        for status in model.list_status_limited(&workspace.id, remaining) {
+            items.push(json!({
+                "id": format!("status:{}:{}", workspace.id, status.key),
+                "type": "status",
+                "kind": "status",
+                "key": status.key,
+                "title": status.label,
+                "body": status.value,
+                "workspace_id": workspace.id,
+                "surface_id": null,
+                "created_at_ms": 0,
+            }));
+        }
+
+        let remaining = limit - items.len();
+        if remaining == 0 {
+            break;
+        }
+        for progress in model.list_progress_limited(&workspace.id, remaining) {
             let body = match progress.total {
                 Some(total) => format!("{}/{}", feed_number(progress.value), feed_number(total)),
                 None => feed_number(progress.value),
             };
-            items.push(FeedItem {
-                priority: 2,
-                created_at_ms: 0,
-                value: json!({
-                    "id": format!("progress:{}:{}", workspace.id, progress.key),
-                    "type": "progress",
-                    "kind": "progress",
-                    "key": progress.key,
-                    "title": progress.label,
-                    "body": body,
-                    "value": progress.value,
-                    "total": progress.total,
-                    "workspace_id": workspace.id,
-                    "surface_id": null,
-                    "created_at_ms": 0,
-                }),
-            });
+            items.push(json!({
+                "id": format!("progress:{}:{}", workspace.id, progress.key),
+                "type": "progress",
+                "kind": "progress",
+                "key": progress.key,
+                "title": progress.label,
+                "body": body,
+                "value": progress.value,
+                "total": progress.total,
+                "workspace_id": workspace.id,
+                "surface_id": null,
+                "created_at_ms": 0,
+            }));
         }
     }
 
-    items.sort_by_key(|item| std::cmp::Reverse((item.priority, item.created_at_ms)));
-    items.truncate(limit);
-    items.into_iter().map(|item| item.value).collect()
+    if items.len() < limit {
+        items.extend(
+            other_notifications
+                .into_iter()
+                .take(limit - items.len())
+                .map(notification_feed_item),
+        );
+    }
+    items
+}
+
+fn notification_feed_item(notification: NotificationItem) -> Value {
+    let item_type = if notification.kind == NotificationKind::Prompt {
+        "approval"
+    } else {
+        "notification"
+    };
+    json!({
+        "id": notification.id,
+        "type": item_type,
+        "kind": notification.kind,
+        "title": notification.title,
+        "body": notification.body,
+        "workspace_id": notification.workspace_id,
+        "surface_id": notification.surface_id,
+        "created_at_ms": notification.created_at_ms,
+        "read": notification.read,
+    })
 }
 
 fn feed_number(value: f64) -> String {
@@ -7946,6 +7970,75 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item["type"] == "progress" && item["title"] == "Build"));
+    }
+
+    #[tokio::test]
+    async fn feed_list_live_fallback_limits_status_and_progress_to_newest_entries() {
+        let (state, _) = test_state();
+        let workspace_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            for i in 0..5 {
+                model
+                    .set_status(
+                        &workspace.id,
+                        format!("status-{i}"),
+                        "Status",
+                        format!("value-{i}"),
+                        None,
+                    )
+                    .unwrap();
+            }
+            workspace.id
+        };
+
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 2}),
+        )
+        .await
+        .unwrap();
+        let status_keys = feed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["type"] == "status")
+            .map(|item| item["key"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(status_keys, vec!["status-3", "status-4"]);
+
+        {
+            let mut model = state.model.lock().unwrap();
+            assert!(model.clear_status(&workspace_id, None));
+            for i in 0..5 {
+                model
+                    .set_progress(
+                        &workspace_id,
+                        format!("progress-{i}"),
+                        "Progress",
+                        i as f64,
+                        None,
+                    )
+                    .unwrap();
+            }
+        }
+
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 2}),
+        )
+        .await
+        .unwrap();
+        let progress_keys = feed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["type"] == "progress")
+            .map(|item| item["key"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(progress_keys, vec!["progress-3", "progress-4"]);
     }
 
     #[tokio::test]
