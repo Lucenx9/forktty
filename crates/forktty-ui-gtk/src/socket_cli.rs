@@ -1556,8 +1556,7 @@ fn handle_ping(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     if context.json {
         print_json(&json!({ "result": result }))
     } else {
-        println!("{}", result.as_str().unwrap_or("pong"));
-        Ok(())
+        write_stdout_line(result.as_str().unwrap_or("pong"))
     }
 }
 
@@ -1787,8 +1786,7 @@ fn handle_create_workspace(context: &CliContext, args: Vec<String>) -> CliResult
             .filter(|_| result.get("name").is_some())
             .map(|name| format!(" ({name})"))
             .unwrap_or_default();
-        println!("Created workspace {id}{suffix}");
-        Ok(())
+        write_stdout_line(&format!("Created workspace {id}{suffix}"))
     }
 }
 
@@ -1835,8 +1833,7 @@ fn handle_ssh(context: &CliContext, args: Vec<String>) -> CliResult<()> {
             .and_then(Value::as_str)
             .map(|name| format!(" ({name})"))
             .unwrap_or_default();
-        println!("Created SSH workspace {id}{suffix}");
-        Ok(())
+        write_stdout_line(&format!("Created SSH workspace {id}{suffix}"))
     }
 }
 
@@ -3852,11 +3849,10 @@ fn handle_split_surface(context: &CliContext, args: Vec<String>) -> CliResult<()
     if context.json {
         print_json(&result)
     } else {
-        println!(
+        write_stdout_line(&format!(
             "Created surface {}",
             string_field(&result, "id").unwrap_or("(unknown)")
-        );
-        Ok(())
+        ))
     }
 }
 
@@ -3903,11 +3899,10 @@ fn handle_new_tab(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     if context.json {
         print_json(&result)
     } else {
-        println!(
+        write_stdout_line(&format!(
             "Created tab {}",
             string_field(&result, "id").unwrap_or("(unknown)")
-        );
-        Ok(())
+        ))
     }
 }
 
@@ -4378,11 +4373,10 @@ fn browser_open(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     if context.json {
         print_json(&result)
     } else {
-        println!(
+        write_stdout_line(&format!(
             "Opened browser surface {}",
             string_field(&result, "id").unwrap_or("(unknown)")
-        );
-        Ok(())
+        ))
     }
 }
 
@@ -4419,8 +4413,7 @@ fn browser_navigate(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     if context.json {
         print_json(&result)
     } else {
-        println!("Navigated");
-        Ok(())
+        write_stdout_line("Navigated")
     }
 }
 
@@ -4863,8 +4856,7 @@ fn handle_worktree_status(context: &CliContext, args: Vec<String>) -> CliResult<
     if context.json {
         print_json(&result)
     } else {
-        println!("{}", string_field(&result, "status").unwrap_or("unknown"));
-        Ok(())
+        write_stdout_line(string_field(&result, "status").unwrap_or("unknown"))
     }
 }
 
@@ -4887,8 +4879,7 @@ fn handle_worktree_open(
             .or_else(|| string_field(&result, "name"))
             .unwrap_or("(unknown)");
         let path = string_field(&result, "path").unwrap_or("(unknown)");
-        println!("Opened worktree {name} at {path}");
-        Ok(())
+        write_stdout_line(&format!("Opened worktree {name} at {path}"))
     }
 }
 
@@ -4902,11 +4893,10 @@ fn handle_worktree_remove(context: &CliContext, args: Vec<String>) -> CliResult<
     if context.json {
         print_json(&result)
     } else {
-        println!(
+        write_stdout_line(&format!(
             "Removed worktree {}",
             string_field(&result, "removed").unwrap_or("(unknown)")
-        );
-        Ok(())
+        ))
     }
 }
 
@@ -4920,11 +4910,9 @@ fn handle_worktree_merge(context: &CliContext, args: Vec<String>) -> CliResult<(
     if context.json {
         print_json(&result)
     } else if let Some(text) = result.as_str() {
-        println!("{text}");
-        Ok(())
+        write_stdout_line(text)
     } else {
-        println!("{result}");
-        Ok(())
+        write_stdout_line(&result.to_string())
     }
 }
 

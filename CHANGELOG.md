@@ -32,6 +32,14 @@ All notable changes to ForkTTY are documented here.
 - Feed approval rows now use durable notification feed IDs and avoid carrying
   approval decisions across newer entries with reused transient notification
   IDs.
+- The socket CLI now writes all success output through the broken-pipe-aware
+  writer, so piping a command into a consumer that closes early (for example
+  `forktty ping | head -1`) terminates cleanly instead of panicking on the
+  closed pipe.
+- List socket methods (`team.list`, `team.inbox`, `team.events`,
+  `workflow.list`, `workflow.replay`) now clamp an explicit `limit` to 10000,
+  matching the existing browser-history cap, so no single request can ask for an
+  unbounded result set.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added

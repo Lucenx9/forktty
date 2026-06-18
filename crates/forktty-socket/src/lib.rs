@@ -1009,7 +1009,7 @@ pub async fn dispatch(
                 workspace_id,
                 status: optional_non_blank_string_param(&params, "status")?.map(str::to_string),
                 query: optional_non_blank_string_param(&params, "query")?.map(str::to_string),
-                limit: optional_u64_param(&params, "limit")?.map(|limit| limit as usize),
+                limit: optional_limit_param(&params, "limit")?,
             };
             let store = forktty_core::load_teams_from_path(team_store_path(state)?)
                 .map_err(DispatchError::from)?;
@@ -1257,7 +1257,7 @@ pub async fn dispatch(
                         .map(str::to_string),
                     include_delivered: optional_bool_param(&params, "include_delivered")?
                         .unwrap_or(false),
-                    limit: optional_u64_param(&params, "limit")?.map(|limit| limit as usize),
+                    limit: optional_limit_param(&params, "limit")?,
                 })
                 .map_err(DispatchError::from)?;
             Ok(json!(messages))
@@ -1277,7 +1277,7 @@ pub async fn dispatch(
                     team_id: optional_non_blank_string_param(&params, "team_id")?
                         .map(str::to_string),
                     since_seq: optional_u64_param(&params, "since_seq")?,
-                    limit: optional_u64_param(&params, "limit")?.map(|limit| limit as usize),
+                    limit: optional_limit_param(&params, "limit")?,
                 })
                 .map_err(DispatchError::from)?;
             Ok(json!(events))
@@ -3354,7 +3354,7 @@ fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, Dispat
     let (workspace_id, surface_id) = workflow_target_ids(state, params)?;
     let session_id = optional_non_blank_string_param(params, "session_id")?.map(str::to_string);
     let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
-    let limit = optional_u64_param(params, "limit")?.map(|limit| limit as usize);
+    let limit = optional_limit_param(params, "limit")?;
     let path = workflow_store_path(state)?;
     let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
     Ok(json!(store.list(&WorkflowQuery {
@@ -3423,7 +3423,7 @@ fn workflow_replay(state: &SocketAppState, params: &Value) -> Result<Value, Disp
     let workflow_id = optional_workflow_id(params)?.map(str::to_string);
     let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
     let since_seq = optional_u64_param(params, "since_seq")?;
-    let limit = optional_u64_param(params, "limit")?.map(|limit| limit as usize);
+    let limit = optional_limit_param(params, "limit")?;
     let path = workflow_store_path(state)?;
     let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
     Ok(json!(store.replay(&WorkflowReplayQuery {
@@ -5779,6 +5779,19 @@ fn history_limit_from_params(params: &Value) -> Result<usize, DispatchError> {
     }
 }
 
+/// Maximum number of items an explicit `limit` parameter may request on list
+/// methods that otherwise return every match. Mirrors the cap applied to
+/// browser history (`history_limit_from_params`) so no single request can ask
+/// for an unbounded result set.
+const MAX_LIST_LIMIT: u64 = 10_000;
+
+/// Read an optional `limit` parameter, clamping any explicit value to
+/// [`MAX_LIST_LIMIT`]. Returns `None` when the caller omits `limit`, preserving
+/// the "no limit" semantics of the underlying list stores.
+fn optional_limit_param(params: &Value, key: &'static str) -> Result<Option<usize>, DispatchError> {
+    Ok(optional_u64_param(params, key)?.map(|limit| limit.min(MAX_LIST_LIMIT) as usize))
+}
+
 fn optional_u64_param(params: &Value, key: &'static str) -> Result<Option<u64>, DispatchError> {
     match params.get(key) {
         Some(Value::Number(number)) => number.as_u64().map(Some).ok_or_else(|| {
@@ -6832,6 +6845,27 @@ mod tests {
 
         let wrong_type = serde_json::json!({ "key": 7 });
         assert!(optional_non_blank_string_param(&wrong_type, "key").is_err());
+    }
+
+    #[test]
+    fn optional_limit_param_clamps_and_preserves_none() {
+        assert_eq!(optional_limit_param(&json!({}), "limit").unwrap(), None);
+        assert_eq!(
+            optional_limit_param(&json!({"limit": null}), "limit").unwrap(),
+            None
+        );
+        assert_eq!(
+            optional_limit_param(&json!({"limit": 5}), "limit").unwrap(),
+            Some(5)
+        );
+        assert_eq!(
+            optional_limit_param(&json!({"limit": u64::MAX}), "limit").unwrap(),
+            Some(10_000)
+        );
+        assert!(matches!(
+            optional_limit_param(&json!({"limit": "5"}), "limit"),
+            Err(DispatchError::InvalidParam(_))
+        ));
     }
 
     /// RAII guard that sets an environment variable for the duration of a test
