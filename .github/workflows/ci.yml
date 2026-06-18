@@ -37,7 +37,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
-            libgtk-4-dev libadwaita-1-dev git appstream
+            libgtk-4-dev libadwaita-1-dev git appstream \
+            meson ninja-build python3-gi libxml2-utils pkg-config
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -71,6 +72,19 @@ jobs:
 
       - name: Validate desktop entry
         run: desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
+
+      - name: Build embedded Ghostty library
+        run: |
+          set -euo pipefail
+          blueprint_compiler_commit=31b62c24a72c1670d2d93dcdf2d130f1ae12778e
+          git clone --filter=blob:none --no-checkout \
+            https://gitlab.gnome.org/GNOME/blueprint-compiler.git \
+            /tmp/blueprint-compiler
+          git -C /tmp/blueprint-compiler fetch --depth 1 origin "${blueprint_compiler_commit}"
+          git -C /tmp/blueprint-compiler checkout --detach "${blueprint_compiler_commit}"
+          meson setup /tmp/blueprint-compiler-build /tmp/blueprint-compiler --prefix=/usr
+          sudo ninja -C /tmp/blueprint-compiler-build install
+          scripts/ghostty-gtk-lib-probe.sh
 
       - name: Debian package
         run: bash scripts/build-deb.sh

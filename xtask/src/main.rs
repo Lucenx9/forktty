@@ -140,6 +140,7 @@ const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
 const GHOSTTY_VENDOR_REV: &str = "2d6400f56af4af03cc59ac5b87754de717cf6bdc";
 const GHOSTTY_GTK_LIB_PROBE_SCRIPT: &str = "scripts/ghostty-gtk-lib-probe.sh";
 const PACKAGING_SCRIPTS: &[&str] = &["scripts/build-deb.sh", "scripts/build-appimage.sh"];
+const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 
 fn main() -> ExitCode {
     match run() {
@@ -357,8 +358,45 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
             }
         }
     }
+    check_ci_builds_ghostty_gtk_lib_before_deb(&root)?;
     println!("Ghostty GTK packaging guard: ok");
     Ok(())
+}
+
+fn check_ci_builds_ghostty_gtk_lib_before_deb(root: &Path) -> Result<()> {
+    let path = root.join(CI_WORKFLOW);
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let check_job = section_between(&raw, "\n  check:\n", "\n  browser-feature:\n")
+        .ok_or_else(|| format!("{CI_WORKFLOW} is missing the check job before browser-feature"))?;
+    let deb_index = check_job
+        .find("- name: Debian package")
+        .ok_or_else(|| format!("{CI_WORKFLOW} check job is missing Debian package step"))?;
+    let before_deb = &check_job[..deb_index];
+
+    for needle in [
+        "blueprint_compiler_commit",
+        GHOSTTY_GTK_LIB_PROBE_SCRIPT,
+        "meson",
+        "ninja-build",
+        "python3-gi",
+        "libxml2-utils",
+        "pkg-config",
+    ] {
+        if !before_deb.contains(needle) {
+            return Err(format!(
+                "{CI_WORKFLOW} check job must prepare `{needle}` before Debian packaging"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn section_between<'a>(raw: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let start_index = raw.find(start)? + start.len();
+    let rest = &raw[start_index..];
+    let end_index = rest.find(end)?;
+    Some(&rest[..end_index])
 }
 
 fn check_hook_templates() -> Result<()> {
