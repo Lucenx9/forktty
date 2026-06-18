@@ -14,6 +14,10 @@ All notable changes to ForkTTY are documented here.
   allowing packaged AppImage libraries below sticky `/tmp` mounts.
 - Limited OSC99 terminal notification icon dimensions before decoding or
   forwarding image data to desktop notification servers.
+- Kitty image snapshots now copy and downsample only the rendered pixel
+  footprint for each placement and use fallible render-buffer allocation,
+  preventing malicious terminal output from forcing full-source-image
+  per-placement copies on every redraw.
 
 ### Fixed
 - Embedded Ghostty socket text reads now bound the Rust-side copy to the

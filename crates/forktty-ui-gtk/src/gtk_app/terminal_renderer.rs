@@ -1019,7 +1019,10 @@ fn cairo_argb32_from_rgba(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8
     if rgba.len() < len {
         return None;
     }
-    let mut out = Vec::with_capacity(len);
+    let mut out = Vec::new();
+    if out.try_reserve_exact(len).is_err() {
+        return None;
+    }
     for pixel in rgba[..len].chunks_exact(4) {
         let alpha = u16::from(pixel[3]);
         let premultiply = |value: u8| ((u16::from(value) * alpha + 127) / 255) as u8;
