@@ -210,6 +210,26 @@ All notable changes to ForkTTY are documented here.
   scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- The `tree`/`topology-tree` and `team-worker-launch`/`team-worker-health`/
+  `team-worker-nudge`/`team-worker-shutdown`/`team-message-dispatch` CLI
+  subcommands (and their `:`/`.` spellings) now work when run as the first
+  argument; previously `forktty tree` exited with `unknown argument: tree`
+  even though the commands were dispatched and documented, because the CLI
+  allow-list had drifted from the dispatch table.
+- Embedded Ghostty surfaces (and per-pane action boxes) are no longer leaked
+  when a pane is closed or restarted; their event-controller closures held a
+  strong reference to the widget that owns the controller, forming a reference
+  cycle that kept the surface alive forever.
+- The durable workflow event store no longer wedges permanently when its
+  on-disk `next_event_seq` is stale or absent (e.g. a hand-edited or
+  partially-migrated file): event sequence numbers are now minted strictly
+  above the highest existing event so saves keep validating.
+- Per-workspace status and progress entries are now capped (like logs and
+  notifications), so a misbehaving socket client posting many distinct keys can
+  no longer grow ForkTTY memory without bound.
+- The MCP `workflow_evidence_add` tool now rejects missing `kind`/`title`
+  locally with a clear validation error, matching its published input schema
+  and the socket server's requirements.
 - ForkTTY and dialog titlebars now stay on the app's neutral dark chrome even
   when a GTK user theme defines a blue/purple titlebar color.
 - Clicking a split pane's top bar now focuses that pane and routes subsequent

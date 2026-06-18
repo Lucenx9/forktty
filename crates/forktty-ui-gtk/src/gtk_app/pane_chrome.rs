@@ -216,15 +216,22 @@ fn build_pane_chrome_with_content(
 
     let focus = gtk::EventControllerFocus::new();
     {
-        let actions_for_focus = actions.clone();
+        // Weak: this controller is owned by `actions`, so a strong capture would
+        // form an actions -> controller -> closure -> actions cycle and leak the
+        // action box after the pane closes.
+        let actions_for_focus = actions.downgrade();
         focus.connect_enter(move |_| {
-            actions_for_focus.add_css_class("focus-revealed");
+            if let Some(actions_for_focus) = actions_for_focus.upgrade() {
+                actions_for_focus.add_css_class("focus-revealed");
+            }
         });
     }
     {
-        let actions_for_focus = actions.clone();
+        let actions_for_focus = actions.downgrade();
         focus.connect_leave(move |_| {
-            actions_for_focus.remove_css_class("focus-revealed");
+            if let Some(actions_for_focus) = actions_for_focus.upgrade() {
+                actions_for_focus.remove_css_class("focus-revealed");
+            }
         });
     }
     actions.add_controller(focus);

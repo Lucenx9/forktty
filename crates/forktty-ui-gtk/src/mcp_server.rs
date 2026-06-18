@@ -977,9 +977,15 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 ],
                 name,
             )?;
-            let mut params =
-                map_from_pairs([("workflow_id", required_non_blank(args, "workflow_id")?)]);
-            for key in ["evidence_id", "kind", "title", "path"] {
+            // `kind` and `title` are required by both the published input schema
+            // and the socket server (workflow.evidence.add); enforce them here so
+            // a non-schema-validating client gets a clear local invalid_params.
+            let mut params = map_from_pairs([
+                ("workflow_id", required_non_blank(args, "workflow_id")?),
+                ("kind", required_non_blank(args, "kind")?),
+                ("title", required_non_blank(args, "title")?),
+            ]);
+            for key in ["evidence_id", "path"] {
                 if let Some(value) = optional_non_blank(args, key)? {
                     params.insert(key.to_string(), Value::String(value));
                 }
@@ -2852,6 +2858,14 @@ mod tests {
         assert_eq!(method, "workflow.evidence.add");
         assert_eq!(params["evidence_id"], "tests");
         assert_eq!(params["text"], "  passed\n");
+
+        // kind and title are required: the schema declares them required and the
+        // socket server rejects requests that omit them, so reject locally too.
+        assert!(build_socket_call_for_test(
+            "workflow_evidence_add",
+            json!({"workflow_id": "workflow-1", "text": "x"}),
+        )
+        .is_err());
 
         let (method, params) = build_socket_call_for_test(
             "workflow_replay",

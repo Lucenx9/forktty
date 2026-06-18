@@ -421,8 +421,22 @@ impl WorkflowStoreData {
         summary: String,
         now_ms: u64,
     ) -> Result<(), WorkflowError> {
+        // Mint a seq that is always strictly greater than every existing event
+        // seq. `next_event_seq` can be stale or absent (e.g. a hand-edited or
+        // partially-migrated store deserializes it to 0 via #[serde(default)]),
+        // and `validate_store` enforces strictly increasing event seqs, so
+        // trusting `next_event_seq` alone could mint a colliding seq and wedge
+        // every subsequent save permanently. Reconciling against the last
+        // (highest) event seq keeps the store self-healing.
+        let seq = self
+            .events
+            .last()
+            .map(|last| last.seq.saturating_add(1))
+            .unwrap_or(1)
+            .max(self.next_event_seq)
+            .max(1);
         let event = WorkflowEvent {
-            seq: self.next_event_seq.max(1),
+            seq,
             workflow_id: clean_id("event.workflow_id", workflow_id)?,
             kind: clean_short("event.kind", kind)?,
             at_ms: now_ms,
@@ -945,6 +959,47 @@ mod tests {
                 "workflow.evidence.added"
             ]
         );
+    }
+
+    #[test]
+    fn push_event_recovers_from_stale_next_event_seq() {
+        // Simulate a hand-edited / partially-migrated store: events already
+        // carry seqs 1..=3 but next_event_seq deserialized to its serde
+        // default of 0. Before the fix this minted a colliding seq of 1 and
+        // every subsequent save failed validate_store permanently.
+        let event = |seq: u64| WorkflowEvent {
+            seq,
+            workflow_id: "session:codex:codex-session:review".to_string(),
+            kind: "workflow.created".to_string(),
+            at_ms: seq,
+            summary: "s".to_string(),
+        };
+        let mut store = WorkflowStoreData {
+            version: default_workflow_version(),
+            workflows: Vec::new(),
+            events: vec![event(1), event(2), event(3)],
+            next_event_seq: 0,
+        };
+
+        store
+            .upsert(
+                WorkflowUpsert {
+                    agent: Some("codex".to_string()),
+                    session_id: Some("codex-session".to_string()),
+                    mode: Some("review".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                100,
+            )
+            .unwrap();
+
+        let minted = store.events.last().unwrap().seq;
+        assert!(
+            minted > 3,
+            "minted seq {minted} must exceed the highest existing event seq"
+        );
+        validate_store(&store)
+            .expect("store must remain valid after recovering from a stale next_event_seq");
     }
 
     #[test]

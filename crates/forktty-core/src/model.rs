@@ -310,6 +310,13 @@ pub const MAX_PERSISTED_SCROLLBACK_BYTES: usize = 64 * 1024;
 /// instance with a flapping agent would grow this `Vec` without bound. When the
 /// cap is exceeded the oldest entries are dropped, keeping the newest.
 const MAX_NOTIFICATIONS: usize = 1_000;
+/// Upper bound on distinct status/progress keys retained per workspace. These
+/// maps are keyed and updated in place, so they only grow when a client posts
+/// new keys; without a cap a same-uid socket client could grow them without
+/// bound (a slow memory-exhaustion DoS), unlike logs and notifications which
+/// are already capped. When the cap is exceeded the oldest entry is dropped.
+const MAX_STATUS_ENTRIES: usize = 256;
+const MAX_PROGRESS_ENTRIES: usize = 256;
 const HOOK_TERMINAL_PROMPT_GUARD_NS: u128 = 2_000_000_000;
 
 impl WorkspaceModel {
@@ -1545,13 +1552,27 @@ impl WorkspaceModel {
             }
         }
         let entries = self.statuses.entry(workspace_id.to_string()).or_default();
-        if let Some(existing) = entries
+        let evicted_key = if let Some(existing) = entries
             .iter_mut()
             .find(|existing| existing.key == entry.key)
         {
             *existing = entry.clone();
+            None
         } else {
+            // A new key grows the map; cap it so a misbehaving client cannot
+            // exhaust memory. Drop the oldest entry when at capacity.
+            let evicted = (entries.len() >= MAX_STATUS_ENTRIES).then(|| entries.remove(0).key);
             entries.push(entry.clone());
+            evicted
+        };
+        // Keep the parallel hook map from outliving its evicted status entry.
+        if let Some(evicted_key) = evicted_key {
+            if let Some(hooks) = self.status_hooks.get_mut(workspace_id) {
+                hooks.remove(&evicted_key);
+                if hooks.is_empty() {
+                    self.status_hooks.remove(workspace_id);
+                }
+            }
         }
         Some(entry)
     }
@@ -1657,6 +1678,11 @@ impl WorkspaceModel {
         {
             *existing = entry.clone();
         } else {
+            // A new key grows the map; cap it so a misbehaving client cannot
+            // exhaust memory. Drop the oldest entry when at capacity.
+            if entries.len() >= MAX_PROGRESS_ENTRIES {
+                entries.remove(0);
+            }
             entries.push(entry.clone());
         }
         Some(entry)
@@ -3585,6 +3611,47 @@ mod tests {
 
         assert!(model.clear_status(&workspace.id, Some("agent:codex")));
         assert!(model.list_status(&workspace.id).is_empty());
+    }
+
+    #[test]
+    fn status_and_progress_entries_are_capped_per_workspace() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+
+        // Each distinct key adds a new entry; posting many more keys than the
+        // cap must not grow the maps without bound.
+        let overflow = MAX_STATUS_ENTRIES + 10;
+        for i in 0..overflow {
+            model
+                .set_status(&workspace.id, format!("key-{i}"), "Label", "Value", None)
+                .unwrap();
+            model
+                .set_progress(&workspace.id, format!("key-{i}"), "Label", i as f64, None)
+                .unwrap();
+        }
+
+        assert_eq!(model.list_status(&workspace.id).len(), MAX_STATUS_ENTRIES);
+        assert_eq!(
+            model.list_progress(&workspace.id).len(),
+            MAX_PROGRESS_ENTRIES
+        );
+        // The oldest keys are evicted; the newest is retained.
+        let statuses = model.list_status(&workspace.id);
+        assert!(statuses.iter().all(|entry| entry.key != "key-0"));
+        assert!(statuses
+            .iter()
+            .any(|entry| entry.key == format!("key-{}", overflow - 1)));
+        // Updating an existing key never grows past the cap.
+        model
+            .set_status(
+                &workspace.id,
+                format!("key-{}", overflow - 1),
+                "Label",
+                "Updated",
+                None,
+            )
+            .unwrap();
+        assert_eq!(model.list_status(&workspace.id).len(), MAX_STATUS_ENTRIES);
     }
 
     #[test]
