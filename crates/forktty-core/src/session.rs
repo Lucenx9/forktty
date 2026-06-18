@@ -678,6 +678,7 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         ));
     }
     if let Some(active_id) = &data.active_workspace_id {
+        validate_session_id("active workspace id", active_id)?;
         if !data
             .workspaces
             .iter()
@@ -697,11 +698,7 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         }
     }
     for workspace in &data.workspaces {
-        if workspace.id.trim().is_empty() {
-            return Err(SessionError::InvalidData(
-                "workspace id must not be empty".to_string(),
-            ));
-        }
+        validate_session_id("workspace id", &workspace.id)?;
         if workspace.name.trim().is_empty() {
             return Err(SessionError::InvalidData(
                 "workspace name must not be empty".to_string(),
@@ -726,6 +723,10 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
         }
         let mut workspace_leaf_ids = Vec::new();
         collect_pane_surface_ids(&workspace.pane_tree, &mut workspace_leaf_ids);
+        validate_session_id(
+            "workspace focused surface id",
+            &workspace.focused_surface_id,
+        )?;
         if !workspace_leaf_ids.contains(&workspace.focused_surface_id.as_str()) {
             return Err(SessionError::InvalidData(format!(
                 "workspace {} focused surface id is not present",
@@ -742,10 +743,13 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
     }
     let mut persisted_surface_ids = HashSet::new();
     for surface in &data.surfaces {
-        if surface.id.trim().is_empty() {
-            return Err(SessionError::InvalidData(
-                "persisted surface id must not be empty".to_string(),
-            ));
+        validate_session_id("persisted surface id", &surface.id)?;
+        validate_session_id("persisted surface workspace id", &surface.workspace_id)?;
+        if !workspace_ids.contains(surface.workspace_id.as_str()) {
+            return Err(SessionError::InvalidData(format!(
+                "persisted surface workspace id is not present: {}",
+                surface.workspace_id
+            )));
         }
         if !persisted_surface_ids.insert(surface.id.as_str()) {
             return Err(SessionError::InvalidData(format!(
@@ -814,6 +818,20 @@ pub fn validate_session_data(data: &SessionData) -> Result<(), SessionError> {
     Ok(())
 }
 
+fn validate_session_id(label: &str, value: &str) -> Result<(), SessionError> {
+    if value.trim().is_empty() {
+        return Err(SessionError::InvalidData(format!(
+            "{label} must not be empty"
+        )));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(SessionError::InvalidData(format!(
+            "{label} must not contain control characters"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, SessionError> {
     match node {
         PaneNode::Leaf { tabs, .. } if tabs.is_empty() => Err(SessionError::InvalidData(
@@ -826,11 +844,7 @@ fn validate_pane_tree(node: &PaneNode, split_depth: usize) -> Result<usize, Sess
                 ));
             }
             for tab in tabs {
-                if tab.trim().is_empty() {
-                    return Err(SessionError::InvalidData(
-                        "pane leaf surface id must not be empty".to_string(),
-                    ));
-                }
+                validate_session_id("pane leaf surface id", tab)?;
             }
             Ok(1)
         }
@@ -1506,6 +1520,45 @@ mod tests {
             validate_session_data(&data),
             Err(SessionError::InvalidData(_))
         ));
+    }
+
+    #[test]
+    fn rejects_session_ids_with_control_characters() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        let malicious_id = "surface-1\u{3}touch /tmp/forktty-pwn\r#".to_string();
+        data.workspaces[0].pane_tree = PaneNode::Leaf {
+            tabs: vec![malicious_id.clone()],
+            active: 0,
+        };
+        data.workspaces[0].focused_surface_id = malicious_id;
+
+        let err = validate_session_data(&data).unwrap_err();
+
+        assert!(err.to_string().contains("control characters"));
+    }
+
+    #[test]
+    fn rejects_persisted_surface_workspace_id_with_control_characters() {
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("main", "/tmp");
+        let mut data = model.to_session_data();
+        data.surfaces = vec![Surface {
+            id: data.workspaces[0].focused_surface_id.clone(),
+            workspace_id: "workspace-1\u{3}touch /tmp/forktty-pwn\r#".to_string(),
+            cwd: data.workspaces[0].working_dir.clone(),
+            title: "shell".to_string(),
+            unread: false,
+            needs_attention: false,
+            kind: SurfaceKind::Terminal,
+            agent_session: None,
+            persisted_scrollback: None,
+        }];
+
+        let err = validate_session_data(&data).unwrap_err();
+
+        assert!(err.to_string().contains("control characters"));
     }
 
     #[test]
