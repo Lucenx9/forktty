@@ -444,7 +444,8 @@ fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
     let model = to_set(&["surface-1"]);
     // surface-3 has an in-flight spawn; its backend entry is committed before the
     // model entry becomes observable, so it must not be reaped.
-    let pending = to_set(&["surface-3"]);
+    let mut pending = BTreeMap::new();
+    mark_spawn_command_pending(&mut pending, "surface-3");
 
     let orphans = orphaned_backend_surfaces(&backend, &model, &pending);
 
@@ -455,13 +456,13 @@ fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
 fn pending_spawn_command_protects_unmodeled_backend_until_model_commit() {
     let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
     let backend = to_set(&["surface-2"]);
-    let mut pending = BTreeSet::new();
+    let mut pending = BTreeMap::new();
 
     mark_spawn_command_pending(&mut pending, "surface-2");
     assert!(orphaned_backend_surfaces(&backend, &BTreeSet::new(), &pending).is_empty());
 
     let model = to_set(&["surface-2"]);
-    clear_modeled_pending_spawns(&mut pending, &model);
+    clear_modeled_pending_spawns(&mut pending, &model, &backend);
     assert!(pending.is_empty());
 }
 
@@ -471,7 +472,25 @@ fn orphaned_backend_surfaces_keeps_fully_modeled_backend() {
     let backend = to_set(&["surface-1", "surface-2"]);
     let model = to_set(&["surface-1", "surface-2", "surface-3"]);
 
-    assert!(orphaned_backend_surfaces(&backend, &model, &BTreeSet::new()).is_empty());
+    assert!(orphaned_backend_surfaces(&backend, &model, &BTreeMap::new()).is_empty());
+}
+
+#[test]
+fn pending_spawn_command_reaps_backend_if_model_commit_is_lost() {
+    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
+    let backend = to_set(&["surface-2"]);
+    let model = BTreeSet::new();
+    let mut pending = BTreeMap::new();
+
+    mark_spawn_command_pending(&mut pending, "surface-2");
+    clear_modeled_pending_spawns(&mut pending, &model, &backend);
+    assert!(orphaned_backend_surfaces(&backend, &model, &pending).is_empty());
+
+    clear_modeled_pending_spawns(&mut pending, &model, &backend);
+    assert_eq!(
+        orphaned_backend_surfaces(&backend, &model, &pending),
+        vec!["surface-2".to_string()]
+    );
 }
 
 #[test]

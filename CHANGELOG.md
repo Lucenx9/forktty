@@ -20,6 +20,10 @@ All notable changes to ForkTTY are documented here.
   reference, matching the existing guard in `visible_screen_rows`.
 - Failed `agent.hibernate` close attempts now restore the previous unread bit
   and status entry instead of leaving the running surface shown as suspended.
+- Pending embedded Ghostty spawns now lose their orphan-reaper protection
+  after one reconciliation if their backend surface never appears in the
+  model, preventing hidden PTY/widget processes from surviving a
+  spawn/model-removal race.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added

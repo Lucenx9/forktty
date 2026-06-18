@@ -25,7 +25,7 @@ pub(super) struct TerminalController {
     embedded_ghostty_panes: BTreeMap<String, gtk::Widget>,
     embedded_ghostty: Option<Rc<GhosttyGtkEmbedder>>,
     chromes: BTreeMap<String, PaneChrome>,
-    pending_spawns: BTreeSet<String>,
+    pending_spawns: BTreeMap<String, PendingSpawn>,
     last_layout_signature: Option<String>,
     maximized_pane: bool,
     /// Spawned child PID per surface, used to discover listening ports.
@@ -236,7 +236,7 @@ impl TerminalController {
             embedded_ghostty_panes: BTreeMap::new(),
             embedded_ghostty: None,
             chromes: BTreeMap::new(),
-            pending_spawns: BTreeSet::new(),
+            pending_spawns: BTreeMap::new(),
             last_layout_signature: None,
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
@@ -1217,7 +1217,11 @@ impl TerminalController {
                 .collect::<BTreeSet<_>>();
             (surfaces, model_surface_ids)
         };
-        clear_modeled_pending_spawns(&mut self.pending_spawns, &model_surface_ids);
+        clear_modeled_pending_spawns(
+            &mut self.pending_spawns,
+            &model_surface_ids,
+            &backend_surface_ids,
+        );
         // A surface restarted or closed on the GTK thread while a socket client
         // concurrently removed it from the model can leave a backend terminal
         // (PTY + widget) with no model counterpart. Tear those orphans down;
@@ -1240,7 +1244,7 @@ impl TerminalController {
             }
             if self.widgets.contains_key(&surface.id)
                 || self.embedded_ghostty_panes.contains_key(&surface.id)
-                || self.pending_spawns.contains(&surface.id)
+                || self.pending_spawns.contains_key(&surface.id)
                 || backend_surface_ids.contains(&surface.id)
             {
                 continue;
@@ -1258,7 +1262,7 @@ impl TerminalController {
             };
             let surface_id = surface.id.clone();
             let workspace_id = surface.workspace_id.clone();
-            self.pending_spawns.insert(surface_id.clone());
+            mark_spawn_command_pending(&mut self.pending_spawns, &surface_id);
             if let Err(err) = state.terminal.spawn(request) {
                 self.pending_spawns.remove(&surface_id);
                 record_terminal_spawn_failure(
@@ -1768,22 +1772,33 @@ impl TerminalController {
 /// the GTK thread while a socket client concurrently removes the same surface
 /// from the model, so the GTK path re-spawns (or pre-spawns a replacement) into
 /// the backend after the model entry is gone, stranding a hidden PTY and widget.
-/// Surfaces with an in-flight spawn are excluded because their backend entry
-/// exists before the matching `Spawn` command commits the widget.
+/// Surfaces with a freshly in-flight spawn are excluded because their backend
+/// entry exists before the matching `Spawn` command commits the widget. A
+/// pending spawn is only protected for one reconciliation after its backend
+/// appears while absent from the model; if the model commit is lost, the next
+/// reconciliation drops the pending marker and reaps the orphan.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct PendingSpawn {
+    observed_unmodeled_backend: bool,
+}
+
 pub(super) fn orphaned_backend_surfaces(
     backend_ids: &BTreeSet<String>,
     model_ids: &BTreeSet<String>,
-    pending: &BTreeSet<String>,
+    pending: &BTreeMap<String, PendingSpawn>,
 ) -> Vec<String> {
     backend_ids
         .iter()
-        .filter(|id| !model_ids.contains(*id) && !pending.contains(*id))
+        .filter(|id| !model_ids.contains(*id) && !pending.contains_key(*id))
         .cloned()
         .collect()
 }
 
-pub(super) fn mark_spawn_command_pending(pending: &mut BTreeSet<String>, surface_id: &str) {
-    pending.insert(surface_id.to_string());
+pub(super) fn mark_spawn_command_pending(
+    pending: &mut BTreeMap<String, PendingSpawn>,
+    surface_id: &str,
+) {
+    pending.insert(surface_id.to_string(), PendingSpawn::default());
 }
 
 fn install_embedded_spawn_command(
@@ -1813,10 +1828,21 @@ fn install_embedded_spawn_command(
 }
 
 pub(super) fn clear_modeled_pending_spawns(
-    pending: &mut BTreeSet<String>,
+    pending: &mut BTreeMap<String, PendingSpawn>,
     model_ids: &BTreeSet<String>,
+    backend_ids: &BTreeSet<String>,
 ) {
-    pending.retain(|id| !model_ids.contains(id));
+    pending.retain(|id, spawn| {
+        if model_ids.contains(id) {
+            return false;
+        }
+        if backend_ids.contains(id) {
+            let keep = !spawn.observed_unmodeled_backend;
+            spawn.observed_unmodeled_backend = true;
+            return keep;
+        }
+        true
+    });
 }
 
 fn tab_strip_refreshes(model: &WorkspaceModel, strip_tabs: &[Vec<String>]) -> Vec<TabStripRefresh> {
