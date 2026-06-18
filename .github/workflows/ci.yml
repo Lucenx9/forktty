@@ -170,35 +170,22 @@ jobs:
         with:
           workspaces: .
 
-      # Slice C: build and ship the experimental embedded Ghostty widget library.
-      # build-deb.sh / build-appimage.sh install it from vendor/ghostty/zig-out/lib
-      # when present (best-effort), and the binary loads it via RUNPATH. Embedded
-      # panes are still opt-in (FORKTTY_GHOSTTY_GTK_PANES=1) and not yet parity-
-      # validated (see docs/ghostty-embedded-parity.md), so the whole build is
-      # non-fatal: on failure the release ships the classic renderer only, which
-      # is the current behavior. When the embedded renderer becomes the default
-      # (roadmap item 4, once the parity matrix is all `pass`), drop the
-      # best-effort guard so a missing library blocks the release.
-      - name: Build embedded Ghostty library (best-effort)
+      # Embedded Ghostty panes are the default renderer path, so release
+      # artifacts must contain the embedding library. Runtime still falls back
+      # to the classic renderer if loading the library fails on a host, but a
+      # release build may not silently omit the library.
+      - name: Build embedded Ghostty library
         run: |
-          set +e
-          (
-            set -e
-            blueprint_compiler_commit=31b62c24a72c1670d2d93dcdf2d130f1ae12778e
-            git clone --filter=blob:none --no-checkout \
-              https://gitlab.gnome.org/GNOME/blueprint-compiler.git \
-              /tmp/blueprint-compiler
-            git -C /tmp/blueprint-compiler fetch --depth 1 origin "${blueprint_compiler_commit}"
-            git -C /tmp/blueprint-compiler checkout --detach "${blueprint_compiler_commit}"
-            meson setup /tmp/blueprint-compiler-build /tmp/blueprint-compiler --prefix=/usr
-            sudo ninja -C /tmp/blueprint-compiler-build install
-            scripts/ghostty-gtk-lib-probe.sh
-          )
-          status=$?
-          set -e
-          if [ "${status}" -ne 0 ]; then
-            echo "::warning::Embedded Ghostty library build failed (status ${status}); release ships the classic renderer only."
-          fi
+          set -euo pipefail
+          blueprint_compiler_commit=31b62c24a72c1670d2d93dcdf2d130f1ae12778e
+          git clone --filter=blob:none --no-checkout \
+            https://gitlab.gnome.org/GNOME/blueprint-compiler.git \
+            /tmp/blueprint-compiler
+          git -C /tmp/blueprint-compiler fetch --depth 1 origin "${blueprint_compiler_commit}"
+          git -C /tmp/blueprint-compiler checkout --detach "${blueprint_compiler_commit}"
+          meson setup /tmp/blueprint-compiler-build /tmp/blueprint-compiler --prefix=/usr
+          sudo ninja -C /tmp/blueprint-compiler-build install
+          scripts/ghostty-gtk-lib-probe.sh
 
       - name: Build Debian package
         run: bash scripts/build-deb.sh
@@ -314,17 +301,16 @@ jobs:
           env -u LD_LIBRARY_PATH "$approot/usr/bin/forktty" --version
           env -u LD_LIBRARY_PATH "$approot/usr/bin/forktty" doctor
 
-          # Slice C: when the embedded Ghostty library was built, it must reach
-          # both artifacts, or a silent path mismatch would defeat the shipment.
-          # The check is skipped (not failed) when the best-effort build produced
-          # no library, matching the best-effort install in the packaging scripts.
+          # The embedded Ghostty library must reach both artifacts, or default
+          # embedded panes would immediately fall back to the classic renderer.
           if [[ -f vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
                 || -f vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so ]]; then
             test -f "$deb_root/usr/lib/ghostty-gtk-embed.so"
             test -f "$approot/usr/lib/ghostty-gtk-embed.so"
             echo "Embedded Ghostty library shipped in deb and AppImage."
           else
-            echo "Embedded Ghostty library not built; artifacts ship the classic renderer only."
+            echo "Embedded Ghostty library was required but not built." >&2
+            exit 1
           fi
 
       - name: Stage release artifacts

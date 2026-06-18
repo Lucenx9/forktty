@@ -138,20 +138,25 @@ copy_vendored_ghostty_runtime_lib() {
   ln -s libghostty-vt.so.0.1.0 "$lib_dir/libghostty-vt.so.0"
   ln -s libghostty-vt.so.0 "$lib_dir/libghostty-vt.so"
 
-  # Experimental embedded Ghostty widget library. Optional: only present when
-  # scripts/ghostty-gtk-lib-probe.sh has built it. The binary loads it from
-  # usr/lib via RUNPATH ($ORIGIN/../lib), so no env var is needed; it does not
-  # match the excludelist and is installed explicitly here rather than re-bundled.
-  local ghostty_gtk_lib
-  for ghostty_gtk_lib in \
+  # Embedded Ghostty widget library. Required for release AppImages because
+  # embedded panes are the default renderer path; the binary still has a
+  # runtime fallback to the classic renderer if the library cannot be loaded on
+  # a host.
+  local candidate ghostty_gtk_lib=""
+  for candidate in \
     "$ROOT_DIR/vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so" \
     "$ROOT_DIR/vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so"; do
-    if [[ -f "$ghostty_gtk_lib" ]]; then
-      rm -f "$lib_dir/ghostty-gtk-embed.so"
-      install -Dm755 "$ghostty_gtk_lib" "$lib_dir/ghostty-gtk-embed.so"
+    if [[ -f "$candidate" ]]; then
+      ghostty_gtk_lib="$candidate"
       break
     fi
   done
+  if [[ -z "$ghostty_gtk_lib" ]]; then
+    echo "Could not find required embedded Ghostty library. Run scripts/ghostty-gtk-lib-probe.sh before packaging." >&2
+    exit 1
+  fi
+  rm -f "$lib_dir/ghostty-gtk-embed.so"
+  install -Dm755 "$ghostty_gtk_lib" "$lib_dir/ghostty-gtk-embed.so"
 }
 
 copy_vendored_ghostty_shell_integration() {

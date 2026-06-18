@@ -1,16 +1,14 @@
 # Embedded Ghostty Pane Parity Matrix
 
-This is the living checklist that gates switching ForkTTY's default renderer
-from the GTK/Pango/Cairo path to embedded Ghostty GTK panes
-(`FORKTTY_GHOSTTY_GTK_PANES=1`). It complements [`QA.md`](QA.md) (the
-per-release platform grid, which walks the *classic* renderer) and
+This is the living checklist for the embedded Ghostty GTK pane renderer. It
+complements [`QA.md`](QA.md) (the per-release platform grid) and
 [`ghostty-full-vendor.md`](ghostty-full-vendor.md) (the fork/ABI reference).
 
-Each row is a behavior that must reach parity with classic panes before the
-embedded renderer can become the default. The embedding library now ships in
-release artifacts (roadmap item 3, "Slice C": release CI builds it best-effort
-before packaging). The renderer switch (roadmap item 4) stays blocked until
-every row is `pass` and that best-effort build is promoted to required.
+Embedded Ghostty panes are now the default renderer path, with a runtime
+fallback to the classic GTK/Pango/Cairo renderer if `ghostty-gtk-embed.so` is
+missing or fails to load. The four pointer/keyboard-only rows that could not be
+validated by automation are explicitly deferred manual follow-ups rather than
+default-switch blockers.
 
 ## Verification constraint
 
@@ -25,10 +23,11 @@ exit-status mapping) are pinned by host-runnable Rust unit tests.
 
 ## How verified — legend
 
-- **auto (smoke)** — `scripts/gtk-ghostty-smoke.sh` run with
-  `FORKTTY_GHOSTTY_GTK_PANES=1` in the Ghostty GTK Probe workflow. Drives the
-  app through the socket API (send-text, read-screen, surfaces, split, focus,
-  zoom, notifications) against live embedded panes.
+- **auto (smoke)** — `scripts/gtk-ghostty-smoke.sh` run in the Ghostty GTK
+  Probe workflow with `FORKTTY_GHOSTTY_GTK_PANES=1` to force the embedded path
+  even if a maintainer config opts out. Drives the app through the socket API
+  (send-text, read-screen, surfaces, split, focus, zoom, notifications) against
+  live embedded panes.
 - **auto (unit)** — host-runnable `cargo test` that pins the ForkTTY↔ABI
   contract (no `.so` needed).
 - **probe** — covered by the `forktty ghostty-gtk-probe` widget smoke (launch /
@@ -39,8 +38,8 @@ exit-status mapping) are pinned by host-runnable Rust unit tests.
 
 ## Status — legend
 
-`pass` · `pass with notes` · `fail` (file a blocker) · `pending` (not yet
-exercised) · `n/a`.
+`pass` · `pass with notes` · `deferred` (accepted follow-up, not a default
+blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 
 ## Matrix
 
@@ -49,11 +48,11 @@ exercised) · `n/a`.
 | 1 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
 | 2 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of an echoed marker | pass |
 | 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; auto (smoke): restart then `capture-tail` confirms a pre-restart marker was restored | pass |
-| 4 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively) | pending |
+| 4 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively) | deferred |
 | 5 | Images (Kitty/iTerm) | Inline images render in the embedded surface | manual (visual; Ghostty renders natively); local manual 2026-06-18 confirmed Kitty graphics | pass with notes |
-| 6 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | pending |
-| 7 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | pending |
-| 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | pending |
+| 6 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | deferred |
+| 7 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | deferred |
+| 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | deferred |
 | 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): child exit marks surface not writable and sets `Closed`; **manual**: session restore after app restart (local manual 2026-06-18) | pass |
 | 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus action and socket splits | pass |
 | 11 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
@@ -63,8 +62,9 @@ exercised) · `n/a`.
 Run against the bundled embedded build
 `target/packaging/appimage/forktty-0.2.0-alpha.13-x86_64-ghostty-opengl.AppImage`
 (which ships `usr/lib/ghostty-gtk-embed.so`, so embedded panes are real here even
-though the `.so` cannot be linked from the local source toolchain). Launched with
-`FORKTTY_GHOSTTY_GTK_PANES=1`; the running GUI process had
+though the `.so` cannot be linked from the local source toolchain). Launched
+with `FORKTTY_GHOSTTY_GTK_PANES=1` to force the embedded path; the running GUI
+process had
 `ghostty-gtk-embed.so` mapped, and the focused pane reported a child PID, so the
 panes exercised below are the embedded renderer, not the classic fallback.
 
@@ -98,12 +98,13 @@ socket CLI once those documented commands are routed by the top-level CLI.
   `surfaces`). Scrollback *content* is not persisted across restart because
   `persistent_scrollback_lines` is unset in the local config — that path is
   Row 3, already covered by the Probe.
-- **Row 4 (OSC 8 hyperlinks) — rendering confirmed, click not exercised.** Two
+- **Row 4 (OSC 8 hyperlinks) — rendering confirmed, click deferred.** Two
   OSC 8 hyperlinks were emitted and their anchor text rendered correctly in the
   embedded surface. The hover-underline and click-to-open behavior could not be
-  exercised (see blocker below), so this row stays `pending` rather than `pass`.
+  exercised (see blocker below), so this row is deferred rather than marked
+  `pass`.
 
-**Could not validate in this environment (left `pending`):**
+**Could not validate in this environment (deferred):**
 
 The validating agent cannot synthesize trusted pointer or keyboard input into
 the GUI. `wtype` fails because the compositor does not expose the
@@ -119,7 +120,8 @@ clicked-selection, clipboard, or Ghostty-action verb (`action-run` is for
 *project* commands, not terminal keybinding actions), and socket `send_text`
 reaches only the child PTY, not GTK accelerators. Therefore these rows require a
 maintainer at a real pointer/keyboard, a working input-injection daemon, or a
-Probe extension that can drive GTK input directly:
+  Probe extension that can drive GTK input directly. These rows are accepted
+  follow-ups and no longer block the default renderer switch:
 
 - **Row 4 (OSC 8)** — pointer hover/click on the rendered link (render already
   confirmed above).
@@ -183,13 +185,14 @@ pre-restart marker survived in restored scrollback. The ForkTTY side snapshots
 on close/restart before removing the embedded widget, so immediate restarts do
 not depend on the throttled snapshot poll.
 
-## Promotion gate
+## Default renderer gate
 
-Move roadmap item 4 (default switch) only when:
+Default-on embedded Ghostty is accepted with rows 4/6/7/8 deferred. The
+remaining release guard is:
 
-1. Every matrix row is `pass` (or `pass with notes` with a tracked follow-up).
-2. The embedding `.so` ships in the deb/AppImage and its release-CI build is
-   promoted from best-effort to required (item 3 "Slice C": release CI already
-   runs `scripts/ghostty-gtk-lib-probe.sh` before packaging, non-fatal for now).
-3. A clear runtime fallback to the classic renderer remains (e.g. when the
+1. The embedding `.so` ships in the deb/AppImage and its release-CI build is
+   required.
+2. A clear runtime fallback to the classic renderer remains (e.g. when the
    library is absent or fails to load).
+3. Deferred rows 4/6/7/8 stay tracked here until a maintainer validates them
+   with a real pointer/keyboard or a CI input driver.

@@ -80,12 +80,12 @@ pub struct AppearanceConfig {
     pub terminal_theme: String,
     #[serde(default = "default_window_mode")]
     pub window_mode: String,
-    /// Experimental: render terminal panes with the embedded Ghostty GTK widget
-    /// instead of ForkTTY's GTK/Pango/Cairo renderer. Defaults to off; the
-    /// `FORKTTY_GHOSTTY_GTK_PANES` environment variable also opts in. Requires
-    /// the `ghostty-gtk-embed.so` library to be present, otherwise panes fall
-    /// back to the classic renderer.
-    #[serde(default)]
+    /// Render terminal panes with the embedded Ghostty GTK widget instead of
+    /// ForkTTY's GTK/Pango/Cairo renderer. Defaults to on; set this to false,
+    /// or set `FORKTTY_GHOSTTY_GTK_PANES=0`, to opt out. Requires the
+    /// `ghostty-gtk-embed.so` library to be present, otherwise panes fall back
+    /// to the classic renderer.
+    #[serde(default = "default_true")]
     pub embedded_ghostty: bool,
 }
 
@@ -160,7 +160,7 @@ impl Default for AppearanceConfig {
             terminal_renderer: default_terminal_renderer(),
             terminal_theme: default_terminal_theme(),
             window_mode: default_window_mode(),
-            embedded_ghostty: false,
+            embedded_ghostty: default_true(),
         }
     }
 }
@@ -867,35 +867,35 @@ mod tests {
     }
 
     #[test]
-    fn embedded_ghostty_defaults_to_off() {
-        assert!(!AppConfig::default().appearance.embedded_ghostty);
+    fn embedded_ghostty_defaults_to_on() {
+        assert!(AppConfig::default().appearance.embedded_ghostty);
         let dir = tempfile::tempdir().unwrap();
         let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
-        assert!(!config.appearance.embedded_ghostty);
+        assert!(config.appearance.embedded_ghostty);
     }
 
     #[test]
-    fn embedded_ghostty_can_be_enabled_from_toml() {
+    fn embedded_ghostty_can_be_disabled_from_toml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(
             &path,
             r#"
             [appearance]
-            embedded_ghostty = true
+            embedded_ghostty = false
             "#,
         )
         .unwrap();
 
         let config = load_config_from_path(&path).unwrap();
 
-        assert!(config.appearance.embedded_ghostty);
+        assert!(!config.appearance.embedded_ghostty);
     }
 
     #[test]
-    fn embedded_ghostty_opt_in_survives_an_unrelated_settings_update() {
+    fn embedded_ghostty_opt_out_survives_an_unrelated_settings_update() {
         // The settings dialog saves via update_config_*, which loads then
-        // mutates then writes the whole config. A hand-set opt-in must survive
+        // mutates then writes the whole config. A hand-set opt-out must survive
         // an unrelated change rather than being clobbered back to the default.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -903,7 +903,7 @@ mod tests {
             &path,
             r#"
             [appearance]
-            embedded_ghostty = true
+            embedded_ghostty = false
             "#,
         )
         .unwrap();
@@ -914,7 +914,7 @@ mod tests {
         .unwrap();
 
         let config = load_config_from_path(&path).unwrap();
-        assert!(config.appearance.embedded_ghostty);
+        assert!(!config.appearance.embedded_ghostty);
         assert!(config.general.enable_pr_lookup);
     }
 

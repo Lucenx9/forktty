@@ -24,16 +24,17 @@ For the exact terminal-only build used by release artifacts:
 cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 ```
 
-ForkTTY also pins a Ghostty fork at `vendor/ghostty` for the next
-renderer/widget integration spike. Initialize it after cloning with:
+ForkTTY also pins a Ghostty fork at `vendor/ghostty` for the default embedded
+Ghostty GTK pane renderer. Initialize it after cloning with:
 
 ```bash
 git submodule update --init vendor/ghostty
 ```
 
-That source pin is not the release renderer yet. The current Linux GTK runtime
-still uses `vendor/libghostty-rs` plus ForkTTY's GTK/Pango/Cairo renderer.
-The fork currently carries the experimental GTK embedding library build probe.
+Release artifacts build and package the fork's `ghostty-gtk-embed.so` library.
+ForkTTY uses that embedded Ghostty GTK widget as the default pane renderer, with
+the classic GTK/Pango/Cairo renderer kept as a runtime fallback if the library
+is unavailable or a surface fails to spawn.
 
 For the experimental source-only browser pane, install WebKitGTK 6 development
 files and opt in:

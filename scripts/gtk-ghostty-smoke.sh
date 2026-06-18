@@ -343,7 +343,7 @@ send_text_wait "$new_surface_id" $'exit\r' "split terminal exit"
 wait_surface_not_writable "$new_surface_id" "split terminal"
 wait_surface_status "$workspace_id" "$new_surface_id" "Closed"
 
-if grep -Eiq 'failed to spawn experimental embedded Ghostty GTK pane|falling back:' "$TMP_DIR/forktty.stderr"; then
+if grep -Eiq 'failed to spawn embedded Ghostty GTK pane|falling back:' "$TMP_DIR/forktty.stderr"; then
   echo "gtk-ghostty smoke: embedded Ghostty pane fell back to the classic renderer" >&2
   cat "$TMP_DIR/forktty.stderr" >&2 || true
   exit 1

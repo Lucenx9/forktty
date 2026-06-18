@@ -9,26 +9,26 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
-ForkTTY can test an upstream renderer/widget integration instead of expanding
+ForkTTY can use Ghostty's renderer/widget integration instead of expanding
 GTK/Pango/Cairo parity forever.
 
-The current Linux GTK runtime still links through `vendor/libghostty-rs` and
-draws with ForkTTY's GTK renderer. `vendor/ghostty` is the source pin for the
-next renderer bridge spike, not a release-runtime dependency yet. The fork adds
-an experimental `emit-gtk-lib` build artifact and `ghostty_gtk.h`; it does not
-replace ForkTTY panes yet. The GTK embedding library keeps Ghostty's internal
+The Linux GTK runtime still links through `vendor/libghostty-rs` for PTY/VT
+support, and the classic ForkTTY GTK/Pango/Cairo renderer remains as a runtime
+fallback. The default pane renderer is now the vendored Ghostty GTK embedding
+library built from this source pin. The fork adds an `emit-gtk-lib` build
+artifact and `ghostty_gtk.h`. The GTK embedding library keeps Ghostty's internal
 application pointer separate from the host `GApplication` default so loading
-the probe does not claim ForkTTY's process-global GTK application. The embedded
+the library does not claim ForkTTY's process-global GTK application. The embedded
 artifact skips Ghostty's pre-init GTK environment setup when GTK is already
 initialized by the host process, and avoids standalone-app theme/shell startup
 pieces that are not needed for a packed widget. The embedded GTK app state is
 initialized in the heap-owned embedding context so Ghostty's runtime app
 pointer remains stable after context creation. The GTK surface ABI can also
-receive a working directory override so ForkTTY's experimental pane can start
+receive a working directory override so ForkTTY's embedded pane can start
 Ghostty in the surface cwd, and it can write explicit text bytes into an
 initialized embedded surface for ForkTTY socket input. It can also return
 visible or full plain text from Ghostty's active screen so ForkTTY socket
-`read_text` and `capture_tail` requests work in experimental embedded panes.
+`read_text` and `capture_tail` requests work in embedded panes.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.
@@ -42,18 +42,23 @@ scripts/ghostty-gtk-build-probe.sh
 scripts/ghostty-gtk-lib-probe.sh
 ```
 
-After building the shared library, an experimental Ghostty-rendered pane can be
-enabled for local testing with:
+After building the shared library, the Ghostty-rendered default pane path can
+be run locally with:
 
 ```bash
-FORKTTY_GHOSTTY_GTK_PANES=1 \
 FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
   cargo run -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 ```
 
-This mode is intentionally incomplete: it proves that ForkTTY can pack Ghostty's
-GTK widget in a pane, pass the cwd, forward socket `send_text`, and answer
-socket `read_text`/`capture_tail` after Ghostty initializes the core surface.
+Embedded Ghostty panes are the default renderer path. Set
+`appearance.embedded_ghostty = false` or `FORKTTY_GHOSTTY_GTK_PANES=0` to opt
+out for debugging or fallback testing. ForkTTY still falls back to the classic
+renderer at runtime if the embedding library cannot be loaded or an embedded
+surface fails to spawn.
+
+This mode proves that ForkTTY can pack Ghostty's GTK widget in a pane, pass the
+cwd, forward socket `send_text`, and answer socket `read_text`/`capture_tail`
+after Ghostty initializes the core surface.
 Surface lifecycle is wired through the Ghostty surface's `notify::title`,
 `notify::child-exited`, and `close-request` GObject signals so title changes,
 child-exit readiness/status, and clean pane teardown match the classic panes.
@@ -103,15 +108,13 @@ For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
 `vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so`, `scripts/build-deb.sh` and
 `scripts/build-appimage.sh` install it into `usr/lib`, and the binary loads it
-through its RUNPATH (`$ORIGIN/../lib`). The install step is best-effort:
-packaging still succeeds when the library is absent, and `forktty doctor` warns
-about the missing library only when `appearance.embedded_ghostty = true` or
-`FORKTTY_GHOSTTY_GTK_PANES=1` opts the user into embedded panes. Release CI now
-builds the library before packaging (`scripts/ghostty-gtk-lib-probe.sh`), so
-stable release artifacts ship it; that build is best-effort and non-fatal while
-embedded panes are still opt-in, so a build failure leaves the artifacts on the
-classic renderer rather than blocking the release. When the embedded renderer
-becomes the default, that step should become required.
+through its RUNPATH (`$ORIGIN/../lib`). The install step is required for release
+packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI
+fail if the embedding library is absent. Runtime fallback still exists for
+hosts where the shipped library cannot be loaded. `forktty doctor` warns about
+a missing library when embedded panes are enabled by default, and stays quiet
+when the user opts out with `appearance.embedded_ghostty = false` or
+`FORKTTY_GHOSTTY_GTK_PANES=0`.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.

@@ -262,12 +262,12 @@ impl TerminalController {
                     if let Some(embedder) = &self.embedded_ghostty {
                         if let Err(err) = unsafe { embedder.send_text(widget, &text) } {
                             eprintln!(
-                                "Failed to send text to experimental embedded Ghostty GTK surface {surface_id}: {err}"
+                                "Failed to send text to embedded Ghostty GTK surface {surface_id}: {err}"
                             );
                         }
                     } else {
                         eprintln!(
-                            "Dropped send-text for experimental embedded Ghostty GTK surface without embedder: {surface_id}"
+                            "Dropped send-text for embedded Ghostty GTK surface without embedder: {surface_id}"
                         );
                     }
                 } else {
@@ -349,15 +349,15 @@ impl TerminalController {
             return;
         }
         self.pending_spawns.remove(&request.surface_id);
-        let embedded_opt_in = config::load_config()
+        let embedded_enabled = config::load_config()
             .map(|config| config.appearance.embedded_ghostty)
-            .unwrap_or(false);
-        if ghostty_gtk_panes_enabled(embedded_opt_in) {
+            .unwrap_or_else(|_| config::AppConfig::default().appearance.embedded_ghostty);
+        if ghostty_gtk_panes_enabled(embedded_enabled) {
             match self.spawn_embedded_ghostty(request.clone()) {
                 Ok(()) => return,
                 Err(err) => {
                     eprintln!(
-                        "Failed to spawn experimental embedded Ghostty GTK pane {}; falling back: {err}",
+                        "Failed to spawn embedded Ghostty GTK pane {}; falling back: {err}",
                         request.surface_id
                     );
                 }
@@ -522,7 +522,7 @@ impl TerminalController {
             }
         } else {
             eprintln!(
-                "Experimental embedded Ghostty GTK pane {} is not socket-ready: \
+                "Embedded Ghostty GTK pane {} is not socket-ready: \
                  library does not export send-text support",
                 request.surface_id
             );

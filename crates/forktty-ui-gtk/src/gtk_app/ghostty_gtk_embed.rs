@@ -559,26 +559,33 @@ pub(super) fn embedded_child_exit_status(exit_code: Option<i32>) -> EmbeddedChil
     }
 }
 
-pub(crate) fn ghostty_gtk_panes_enabled_from_env() -> bool {
-    let Some(value) = std::env::var_os(GHOSTTY_GTK_PANES_ENV) else {
-        return false;
-    };
-    let Some(value) = value.to_str() else {
-        return false;
-    };
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
+fn ghostty_gtk_panes_env_override_value(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
-/// Resolve whether embedded Ghostty panes are enabled. Both the
-/// `appearance.embedded_ghostty` config option and the
-/// `FORKTTY_GHOSTTY_GTK_PANES` environment variable are opt-ins; either one
-/// enables embedded panes. The renderer switch (roadmap item 4) stays off by
-/// default until the parity matrix is validated.
-pub(crate) fn ghostty_gtk_panes_enabled(config_opt_in: bool) -> bool {
-    config_opt_in || ghostty_gtk_panes_enabled_from_env()
+#[cfg(test)]
+fn ghostty_gtk_panes_enabled_with_env(config_enabled: bool, env_value: Option<&str>) -> bool {
+    env_value
+        .and_then(ghostty_gtk_panes_env_override_value)
+        .unwrap_or(config_enabled)
+}
+
+pub(crate) fn ghostty_gtk_panes_enabled_from_env() -> Option<bool> {
+    let value = std::env::var_os(GHOSTTY_GTK_PANES_ENV)?;
+    let value = value.to_str()?;
+    ghostty_gtk_panes_env_override_value(value)
+}
+
+/// Resolve whether embedded Ghostty panes are enabled. The
+/// `appearance.embedded_ghostty` config option defaults on; the
+/// `FORKTTY_GHOSTTY_GTK_PANES` environment variable can force the same decision
+/// on or off for one process.
+pub(crate) fn ghostty_gtk_panes_enabled(config_enabled: bool) -> bool {
+    ghostty_gtk_panes_enabled_from_env().unwrap_or(config_enabled)
 }
 
 #[cfg(test)]
@@ -742,12 +749,29 @@ mod tests {
     }
 
     #[test]
-    fn config_opt_in_enables_panes_regardless_of_env() {
-        // The config opt-in alone must enable embedded panes, independent of the
-        // FORKTTY_GHOSTTY_GTK_PANES environment variable (the other opt-in).
-        // `true || env` is deterministic without touching the process
-        // environment, so this stays safe under parallel test execution.
-        assert!(ghostty_gtk_panes_enabled(true));
+    fn config_default_enables_panes_without_env_override() {
+        assert!(ghostty_gtk_panes_enabled_with_env(true, None));
+    }
+
+    #[test]
+    fn config_opt_out_disables_panes_without_env_override() {
+        assert!(!ghostty_gtk_panes_enabled_with_env(false, None));
+    }
+
+    #[test]
+    fn env_override_accepts_on_off_and_invalid_spellings() {
+        for value in ["1", "true", "TRUE", "yes", "on"] {
+            assert_eq!(ghostty_gtk_panes_env_override_value(value), Some(true));
+            assert!(ghostty_gtk_panes_enabled_with_env(false, Some(value)));
+        }
+        for value in ["0", "false", "FALSE", "no", "off"] {
+            assert_eq!(ghostty_gtk_panes_env_override_value(value), Some(false));
+            assert!(!ghostty_gtk_panes_enabled_with_env(true, Some(value)));
+        }
+        assert_eq!(ghostty_gtk_panes_env_override_value(""), None);
+        assert_eq!(ghostty_gtk_panes_env_override_value("maybe"), None);
+        assert!(ghostty_gtk_panes_enabled_with_env(true, Some("maybe")));
+        assert!(!ghostty_gtk_panes_enabled_with_env(false, Some("maybe")));
     }
 
     #[test]

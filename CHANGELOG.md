@@ -5,7 +5,7 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
-- Experimental embedded Ghostty panes now snapshot their scrollback tail into
+- Embedded Ghostty panes now snapshot their scrollback tail into
   the session (on child exit, on programmatic close/restart, and via a throttled
   poll) when
   `appearance.persistent_scrollback_lines > 0`, matching classic panes, so a
@@ -24,8 +24,8 @@ All notable changes to ForkTTY are documented here.
   `2d6400f56af4af03cc59ac5b87754de717cf6bdc`, which adds the
   `ghostty_gtk_surface_restore_scrollback` GTK embedding ABI.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
-  cmux-style renderer/widget integration spike; release builds still use the
-  existing GTK/libghostty-vt runtime until that bridge is proven.
+  cmux-style renderer/widget integration path; release builds package the
+  vendored Ghostty GTK embedding library for the default pane renderer.
 - The Ghostty renderer spike is now documented: upstream's current public C
   surface embedding API is macOS/iOS-only, so ForkTTY's next renderer step is a
   minimal Ghostty-side GTK widget embedding API instead of more parity shims.
@@ -43,36 +43,33 @@ All notable changes to ForkTTY are documented here.
   reference so the Rust probe can parent the surface without premature dispose.
 - The vendored Ghostty GTK embedding context now initializes Ghostty's GTK app
   state in-place so internal runtime pointers stay valid after context setup.
-- A local experimental `FORKTTY_GHOSTTY_GTK_PANES=1` mode can pack the
-  vendored Ghostty GTK widget into terminal panes after
-  `ghostty-gtk-embed.so` has been built; this is a renderer/lifecycle spike,
-  not the default runtime path yet.
+- ForkTTY can pack the vendored Ghostty GTK widget into terminal panes after
+  `ghostty-gtk-embed.so` has been built; this is now the default renderer path,
+  with a runtime fallback to the classic GTK/Pango/Cairo renderer if the
+  embedded library cannot be loaded or a surface fails to spawn.
 - The vendored Ghostty GTK embedding ABI can create surfaces with a working
-  directory override so experimental Ghostty panes start in the ForkTTY
+  directory override so embedded Ghostty panes start in the ForkTTY
   surface cwd.
-- The experimental Ghostty GTK pane mode can now forward ForkTTY socket
+- The embedded Ghostty GTK pane mode can now forward ForkTTY socket
   `send_text` input to embedded Ghostty surfaces after the Ghostty core surface
   is initialized.
-- The experimental Ghostty GTK pane mode can now service ForkTTY socket
+- The embedded Ghostty GTK pane mode can now service ForkTTY socket
   `read_text` and `capture_tail` requests by reading visible/full text through
   the vendored Ghostty GTK embedding ABI.
-- Release CI now builds the experimental `ghostty-gtk-embed.so` before
-  packaging, so the deb and AppImage ship it and `FORKTTY_GHOSTTY_GTK_PANES=1`
-  works on installed builds without a manual library build. The build is
-  best-effort and non-fatal while embedded panes remain opt-in: if it fails, the
-  release still ships with the classic renderer only.
-- The experimental embedded Ghostty renderer can now be opted into from
-  `config.toml` via `appearance.embedded_ghostty = true` (off by default), in
-  addition to the `FORKTTY_GHOSTTY_GTK_PANES` environment variable. `forktty
-  doctor` flags a missing embedding library for either opt-in.
-- Experimental embedded Ghostty panes now wire surface lifecycle into the
+- Release CI now requires `ghostty-gtk-embed.so` before packaging, so the deb
+  and AppImage ship the embedded Ghostty library for the default renderer path.
+- The embedded Ghostty renderer can be opted out from `config.toml` via
+  `appearance.embedded_ghostty = false`, or per process with
+  `FORKTTY_GHOSTTY_GTK_PANES=0`; `1`/`true`/`yes`/`on` force it on. `forktty
+  doctor` flags a missing embedding library when embedded panes are enabled.
+- Embedded Ghostty panes now wire surface lifecycle into the
   ForkTTY model: title changes mirror into the model, child-process exit drops
   the surface from the ready set, sets a closed/`Exited (n)` status, and raises
   an abnormal-exit notification, and a Ghostty close-request tears the pane down
   cleanly so no stale pane is left behind. The embedding ABI gains
   `ghostty_gtk_surface_exit_code` so embedded panes report the real exit status;
   older libraries without the symbol fall back to the neutral "Closed".
-- Experimental embedded Ghostty panes now reach copy/paste/select-all/find
+- Embedded Ghostty panes now reach copy/paste/select-all/find
   parity with classic panes: the `Ctrl+Shift+C/V/A/F` accelerators (and the
   command palette equivalents) route to the focused embedded surface instead of
   no-opping, with find opening Ghostty's native search overlay. The embedding
@@ -80,10 +77,10 @@ All notable changes to ForkTTY are documented here.
   keybinding action by name (e.g. `copy_to_clipboard`, `start_search`); older
   libraries without the symbol degrade to a logged no-op. Mouse selection
   already works natively inside the embedded surface.
-- Experimental embedded Ghostty panes now route ForkTTY zoom actions to
+- Embedded Ghostty panes now route ForkTTY zoom actions to
   Ghostty's native font-size actions, so `Ctrl+plus`, `Ctrl+minus`, reset zoom,
   and command-palette zoom affect embedded panes as well as classic panes.
-- Experimental embedded Ghostty panes now have child-PID ABI plumbing for
+- Embedded Ghostty panes now have child-PID ABI plumbing for
   listening-port discovery and the socket `surfaces` PID field. The embedding
   ABI gains `ghostty_gtk_surface_child_pid`, fed by a new `pid_available`
   surface mailbox message that hands the IO-thread-owned pid to the GTK main
@@ -94,10 +91,10 @@ All notable changes to ForkTTY are documented here.
 - The socket `surface.list` result, and therefore `forktty surfaces --json`,
   now includes live runtime fields (`shell`, `cols`, `rows`, and `pid` when
   known) in the same rows as the model metadata.
-- Experimental embedded Ghostty panes now back ForkTTY's Agent HUD tail reads
+- Embedded Ghostty panes now back ForkTTY's Agent HUD tail reads
   and inline agent replies, so agent surfaces keep showing recent output and
   accepting panel replies when the embedded renderer is enabled.
-- Experimental embedded Ghostty panes now handle ForkTTY's reset/clear command
+- Embedded Ghostty panes now handle ForkTTY's reset/clear command
   by routing it to Ghostty's native `clear_screen` keybinding action. This
   clears the embedded surface through Ghostty; a full terminal-state reset
   still depends on Ghostty exposing a dedicated keybinding action.
@@ -107,14 +104,10 @@ All notable changes to ForkTTY are documented here.
   classic renderer. The smoke test also requires embedded panes to expose a
   positive PID through `forktty surfaces --json` and verifies that a clean child
   exit marks the pane non-writable with a `Closed` status.
-- The deb and AppImage packagers now install `ghostty-gtk-embed.so` into
-  `usr/lib` when `scripts/ghostty-gtk-lib-probe.sh` has built it, so installed
+- The deb and AppImage packagers now require `ghostty-gtk-embed.so` in
+  `vendor/ghostty/zig-out/lib` and install it into `usr/lib`, so installed
   builds load the embedded Ghostty library via the binary RUNPATH
-  (`$ORIGIN/../lib`) without needing `FORKTTY_GHOSTTY_GTK_LIB`. The step is
-  optional: packaging still succeeds when the library is absent, and `forktty
-  doctor` warns only when embedded panes are opted in via
-  `appearance.embedded_ghostty = true` or `FORKTTY_GHOSTTY_GTK_PANES=1` and the
-  library is missing from every candidate path.
+  (`$ORIGIN/../lib`) without needing `FORKTTY_GHOSTTY_GTK_LIB`.
 - Team orchestration state is now available as a provider-neutral control
   plane through `team.*` socket methods, `forktty team-*` CLI commands, and MCP
   tools, covering leader/worker metadata, task DAGs, mailbox messages,
@@ -160,6 +153,9 @@ All notable changes to ForkTTY are documented here.
   in the in-app notification panel.
 
 ### Changed
+- Embedded Ghostty panes are now the default terminal renderer path. Set
+  `appearance.embedded_ghostty = false` or `FORKTTY_GHOSTTY_GTK_PANES=0` to use
+  the classic renderer fallback.
 - Settings no longer exposes terminal font family, font size, or terminal palette controls; GTK terminal panes now read font, color, and `scrollback-limit` appearance from Ghostty's config, including `config-file`, `theme`, named colors, and ANSI palette entries, while legacy ForkTTY appearance keys are loaded only for compatibility and omitted from new saves.
 - Repeated Ghostty `font-family`, `font-family-bold`, `font-family-italic`, and `font-family-bold-italic` entries now build Pango fallback lists, and empty entries reset each list.
 - Ghostty `font-feature` and `font-variation*` entries now apply to GTK terminal text through Pango.

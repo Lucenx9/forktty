@@ -92,6 +92,21 @@ ZIG
   rm -rf "$tmp_dir"
 }
 
+find_required_ghostty_gtk_lib() {
+  local ghostty_gtk_lib
+  for ghostty_gtk_lib in \
+    "$ROOT_DIR/vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so" \
+    "$ROOT_DIR/vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so"; do
+    if [[ -f "$ghostty_gtk_lib" ]]; then
+      printf '%s\n' "$ghostty_gtk_lib"
+      return 0
+    fi
+  done
+
+  echo "Could not find required embedded Ghostty library. Run scripts/ghostty-gtk-lib-probe.sh before packaging." >&2
+  return 1
+}
+
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
   exit 1
@@ -140,18 +155,11 @@ fi
 install -Dm755 "$GHOSTTY_LIB" "$PKG_ROOT/usr/lib/libghostty-vt.so.0.1.0"
 ln -s libghostty-vt.so.0.1.0 "$PKG_ROOT/usr/lib/libghostty-vt.so.0"
 ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
-# Experimental embedded Ghostty widget library. Optional: only present when
-# scripts/ghostty-gtk-lib-probe.sh has built it into vendor/ghostty/zig-out/lib.
-# Installed builds load it from usr/lib via the binary RUNPATH ($ORIGIN/../lib),
-# so FORKTTY_GHOSTTY_GTK_LIB is not needed.
-for ghostty_gtk_lib in \
-  "$ROOT_DIR/vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so" \
-  "$ROOT_DIR/vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so"; do
-  if [[ -f "$ghostty_gtk_lib" ]]; then
-    install -Dm755 "$ghostty_gtk_lib" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
-    break
-  fi
-done
+# Embedded Ghostty widget library. Required for release packages because
+# embedded panes are the default renderer path; the binary still has a runtime
+# fallback to the classic renderer if the library cannot be loaded on a host.
+GHOSTTY_GTK_LIB="$(find_required_ghostty_gtk_lib)"
+install -Dm755 "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_terminfo
 install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"

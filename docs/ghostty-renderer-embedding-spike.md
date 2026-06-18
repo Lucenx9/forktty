@@ -92,14 +92,16 @@ plain-text read ABIs for socket send/read/capture operations.
 2. Keep `forktty ghostty-gtk-probe` covered by the manual `Ghostty GTK Probe`
    workflow. That workflow now builds `ghostty-gtk-embed.so` and starts the
    Rust probe under Xvfb with `FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS`.
-3. Keep the first packed Ghostty pane behind `FORKTTY_GHOSTTY_GTK_PANES=1`.
-   Socket input/read/capture, title/status propagation, child-exit lifecycle,
-   copy/paste/select-all/find, and child-PID/port discovery are now wired
-   through the embedding ABI. Remaining parity work and how each behavior is
-   validated live in [`ghostty-embedded-parity.md`](ghostty-embedded-parity.md).
+3. Keep release packaging strict: `ghostty-gtk-embed.so` is required for deb and
+   AppImage builds, while the classic renderer remains a runtime fallback for
+   hosts where the shipped library cannot be loaded.
 
-Do not replace ForkTTY's current renderer until the parity matrix is all `pass`
-and the embedding library ships in release artifacts by default.
+Embedded Ghostty panes are now the default renderer path. Socket
+input/read/capture, title/status propagation, child-exit lifecycle,
+copy/paste/select-all/find, zoom, reset/clear, scrollback snapshot/restore, and
+child-PID/port discovery are wired through the embedding ABI. Remaining
+manual-only checks and their deferred validation status live in
+[`ghostty-embedded-parity.md`](ghostty-embedded-parity.md).
 
 ## Landed and probe-verified: scrollback restore ABI
 
