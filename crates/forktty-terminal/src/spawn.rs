@@ -148,7 +148,7 @@ fn ghostty_shell_integration_argv(
             let mut argv = vec![
                 request.shell.clone(),
                 "--execute".to_string(),
-                format!("use {} *", nushell_single_quoted_path(&module)?),
+                format!("use {} *", nushell_raw_quoted_path(&module)?),
             ];
             argv.extend(request.args.iter().cloned());
             Some(argv)
@@ -285,9 +285,13 @@ fn nushell_integration_module(resources: &Path) -> Option<PathBuf> {
     module.is_file().then_some(module)
 }
 
-fn nushell_single_quoted_path(path: &Path) -> Option<String> {
+fn nushell_raw_quoted_path(path: &Path) -> Option<String> {
     let path = path_string(path)?;
-    Some(format!("'{}'", path.replace('\'', "''")))
+    let mut hashes = "#".to_string();
+    while path.contains(&format!("'{}", hashes)) {
+        hashes.push('#');
+    }
+    Some(format!("r{hashes}'{path}'{hashes}"))
 }
 
 fn ghostty_terminfo_dir(resources: &Path) -> Option<PathBuf> {
@@ -848,7 +852,7 @@ mod tests {
                 "nu",
                 "--execute",
                 format!(
-                    "use '{}' *",
+                    "use r#'{}'# *",
                     ghostty_resource_path(&resources)
                         .join("shell-integration/nushell/vendor/autoload/ghostty.nu")
                         .to_str()
@@ -883,7 +887,7 @@ mod tests {
 
     #[test]
     fn ghostty_nushell_integration_quotes_module_path() {
-        let resources = TestDir::new("ghostty-resources-with-quote-'");
+        let resources = TestDir::new("ghostty-resources-with-raw-delimiter-'#");
         let module_dir = resources
             .path()
             .join("share/ghostty/shell-integration/nushell/vendor/autoload");
@@ -905,12 +909,11 @@ mod tests {
                 "nu",
                 "--execute",
                 format!(
-                    "use '{}' *",
+                    "use r##'{}'## *",
                     ghostty_resource_path(&resources)
                         .join("shell-integration/nushell/vendor/autoload/ghostty.nu")
                         .to_str()
                         .unwrap()
-                        .replace('\'', "''")
                 )
                 .as_str(),
             ])
