@@ -150,13 +150,14 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
   surface mailbox message; ForkTTY records it for listening-port discovery and
   the socket `surfaces` PID field, and the Probe requires the initial embedded
   pane to expose a positive PID.
-- **Socket and agent text** — `send_text` / `read_text` (visible + full) ABIs
-  back the socket `send_text`, `read_text`, and inline agent replies. Automatic
-  visible/tail reads use the visible-text ABI only, so Agent HUD polling and
-  `capture_tail` cannot materialize a very large embedded scrollback in the
-  ForkTTY host process. Full scrollback remains available through explicit
-  `read_text(all)`; a true full-scrollback `capture_tail` needs a future native
-  bounded-tail Ghostty embedding ABI.
+- **Socket and agent text** — `send_text` / bounded `read_text` (visible + full)
+  ABIs back the socket `send_text`, `read_text`, `capture_tail`, and inline
+  agent replies. The current embedding library exports
+  `ghostty_gtk_surface_read_text_limited`, so Ghostty streams the requested text
+  into a bounded buffer before ForkTTY copies the FFI payload. Explicit
+  `read_text(all)` and full-scrollback tails may still scan scrollback, but they
+  no longer materialize more than the requested byte budget plus one
+  truncation-detection byte in either process.
 - **Scrollback snapshot** — when `appearance.persistent_scrollback_lines > 0`,
   embedded panes snapshot their scrollback tail into
   `surface.persisted_scrollback` on child exit, on programmatic close/restart,
@@ -176,7 +177,7 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
 ## Verified — scrollback restore ABI
 
 The Ghostty fork now ships the `ghostty_gtk_surface_restore_scrollback` export
-(pin `c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`): an IO-thread `inject_output`
+(pin `c26320d93448c42b78c5315a660e6d9359fcd26a`): an IO-thread `inject_output`
 mailbox message routed to `Termio.processOutput` injects bytes into the surface's
 VT stream without writing them to the child PTY. A raw GTK-main-thread feed into
 `processOutput` was rejected because it races the IO thread's PTY reader; the

@@ -35,10 +35,10 @@ All notable changes to ForkTTY are documented here.
   appears as a typed `exec /usr/bin/env ...` command in every new workspace.
   Older embedding libraries now start Ghostty's default shell without the
   ForkTTY environment instead of typing a bootstrap command into the terminal.
-- Embedded Ghostty socket text reads now bound the Rust-side copy to the
-  requested `max_bytes` before converting FFI text into a `String`, and tail
-  reads keep using visible text so `capture_tail` cannot materialize full
-  scrollback in ForkTTY before response truncation.
+- Embedded Ghostty socket text reads now use a bounded GTK ABI when the
+  embedding library supports it, so `read_text`/`capture_tail` requests do not
+  ask Ghostty to materialize unbounded scrollback in ForkTTY before response
+  truncation.
 - Embedded Ghostty scrollback tail capture (`tail_text`) now returns an empty
   string for a zero-column terminal instead of erroring on an out-of-bounds grid
   reference, matching the existing guard in `visible_screen_rows`.
@@ -81,10 +81,10 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`, which adds the
-  `ghostty_gtk_surface_restore_scrollback` and
-  `ghostty_gtk_surface_new_with_working_directory_and_command` GTK embedding
-  ABIs.
+  `c26320d93448c42b78c5315a660e6d9359fcd26a`, which adds the
+  `ghostty_gtk_surface_restore_scrollback`,
+  `ghostty_gtk_surface_new_with_working_directory_and_command`, and
+  `ghostty_gtk_surface_read_text_limited` GTK embedding ABIs.
 - ForkTTY now pins the full upstream Ghostty source as `vendor/ghostty` for the
   cmux-style renderer/widget integration path; release builds package the
   vendored Ghostty GTK embedding library for the default pane renderer.
@@ -310,11 +310,10 @@ All notable changes to ForkTTY are documented here.
   (`Ctrl+Shift+C/V/A/F`) on the pane wrapper before Ghostty's internal widget
   can consume the key event, so copy, paste, select-all, and find route through
   the embedded Ghostty action ABI reliably.
-- Embedded Ghostty bounded text reads no longer materialize the full scrollback
-  for visible or tail captures, which prevents long agent panes from exhausting
-  ForkTTY memory during HUD/socket polling. Until Ghostty exposes a native
-  bounded-tail embedding ABI, embedded tail captures are bounded to the visible
-  viewport; explicit full reads still use the full-scrollback ABI.
+- Embedded Ghostty bounded text reads now use
+  `ghostty_gtk_surface_read_text_limited` when the embedding library supports
+  it, preventing long agent panes or socket reads from materializing unbounded
+  scrollback before ForkTTY truncates the response.
 - Embedded Ghostty panes now keep a just-spawned replacement surface protected
   from orphan reaping until the workspace model observes it, avoiding a race
   where socket-driven root-pane close/replacement could briefly close the new

@@ -30,6 +30,8 @@ type SurfaceNewWithWorkingDirectoryAndCommand = unsafe extern "C" fn(
 type SurfaceSendText = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char, usize) -> i32;
 type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
+type SurfaceReadTextLimited =
+    unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, usize, i32, *mut GhosttyGtkText) -> i32;
 type SurfaceExitCode = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut u32) -> i32;
 type SurfaceChildPid = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut i64) -> i32;
 type SurfacePerformAction = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char) -> i32;
@@ -104,6 +106,7 @@ pub(super) struct GhosttyGtkEmbedder {
         Option<SurfaceNewWithWorkingDirectoryAndCommand>,
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
+    surface_read_text_limited: Option<SurfaceReadTextLimited>,
     surface_exit_code: Option<SurfaceExitCode>,
     surface_child_pid: Option<SurfaceChildPid>,
     surface_perform_action: Option<SurfacePerformAction>,
@@ -135,6 +138,8 @@ impl GhosttyGtkEmbedder {
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL) };
         let surface_read_text =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL) };
+        let surface_read_text_limited =
+            unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_SYMBOL) };
         let surface_exit_code =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL) };
         let surface_child_pid =
@@ -166,6 +171,7 @@ impl GhosttyGtkEmbedder {
             surface_new_with_working_directory_and_command,
             surface_send_text,
             surface_read_text,
+            surface_read_text_limited,
             surface_exit_code,
             surface_child_pid,
             surface_perform_action,
@@ -262,7 +268,8 @@ impl GhosttyGtkEmbedder {
     }
 
     pub(super) fn supports_read_text(&self) -> bool {
-        self.surface_read_text.is_some() && self.text_free.is_some()
+        (self.surface_read_text_limited.is_some() || self.surface_read_text.is_some())
+            && self.text_free.is_some()
     }
 
     pub(super) fn supports_child_pid(&self) -> bool {
@@ -305,14 +312,26 @@ impl GhosttyGtkEmbedder {
         max_bytes: usize,
         truncate_from_end: bool,
     ) -> Result<EmbeddedGhosttyText, String> {
-        let Some(surface_read_text) = self.surface_read_text else {
-            return Err("Ghostty GTK library does not export read-text support".to_string());
-        };
         let Some(text_free) = self.text_free else {
             return Err("Ghostty GTK library does not export text-free support".to_string());
         };
         let mut raw = GhosttyGtkText::default();
-        let ok = unsafe { surface_read_text(widget.to_glib_none().0, scope as i32, &mut raw) };
+        let ok = if let Some(surface_read_text_limited) = self.surface_read_text_limited {
+            unsafe {
+                surface_read_text_limited(
+                    widget.to_glib_none().0,
+                    scope as i32,
+                    max_bytes,
+                    i32::from(truncate_from_end),
+                    &mut raw,
+                )
+            }
+        } else {
+            let Some(surface_read_text) = self.surface_read_text else {
+                return Err("Ghostty GTK library does not export read-text support".to_string());
+            };
+            unsafe { surface_read_text(widget.to_glib_none().0, scope as i32, &mut raw) }
+        };
         if ok == 0 {
             return Err("Ghostty GTK surface rejected read-text".to_string());
         }
@@ -594,6 +613,8 @@ pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_sur
 pub(super) const GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_new_with_working_directory_and_command";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
+pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_SYMBOL: &[u8] =
+    b"ghostty_gtk_surface_read_text_limited";
 pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_surface_exit_code";
 pub(super) const GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL: &[u8] = b"ghostty_gtk_surface_child_pid";
 pub(super) const GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL: &[u8] =
@@ -871,6 +892,10 @@ mod tests {
         assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL),
             "ghostty_gtk_surface_read_text"
+        );
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_SYMBOL),
+            "ghostty_gtk_surface_read_text_limited"
         );
         assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL),

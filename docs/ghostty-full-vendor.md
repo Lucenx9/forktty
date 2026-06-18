@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`
+- Pin: `c26320d93448c42b78c5315a660e6d9359fcd26a`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -26,8 +26,9 @@ pointer remains stable after context creation. The GTK surface ABI can also
 receive a working directory override so ForkTTY's embedded pane can start
 Ghostty in the surface cwd, and it can write explicit text bytes into an
 initialized embedded surface for ForkTTY socket input. It can also return
-visible or full plain text from Ghostty's active screen so ForkTTY socket
-`read_text` and `capture_tail` requests work in embedded panes.
+bounded visible or full plain text from Ghostty's active screen so ForkTTY
+socket `read_text` and `capture_tail` requests work in embedded panes without
+materializing unbounded scrollback in the host process.
 
 See [ghostty-renderer-embedding-spike.md](ghostty-renderer-embedding-spike.md)
 for the current upstream embedding status and the next Ghostty-side API cut.
@@ -102,17 +103,19 @@ embedded restore round-trip is verified by the **Ghostty GTK Probe** workflow:
 the Ubuntu runner builds the `.so`, restarts an embedded pane, and confirms a
 pre-restart marker is present in `capture_tail` after restore. A library built
 before this symbol degrades to a safe no-op. The snapshot half reads the tail
-through `ghostty_gtk_surface_read_text` into the session on child exit,
-programmatic close/restart, and a throttled poll.
+through `ghostty_gtk_surface_read_text_limited` into the session on child exit,
+programmatic close/restart, and a throttled poll, retaining at most the
+requested byte budget plus one truncation-detection byte.
 
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. `scripts/build-deb.sh` and `scripts/build-appimage.sh` call
 `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging, which
-reuses or builds `ghostty-gtk-embed.so` and verifies the required ABI symbols.
-The packagers install the verified library into `usr/lib`, and the binary loads
-it through its RUNPATH (`$ORIGIN/../lib`). The install step is required for
-release packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and
-release CI fail if the embedding library cannot be built, located, or verified.
+reuses or builds `ghostty-gtk-embed.so` and verifies the required ABI symbols,
+including the bounded `ghostty_gtk_surface_read_text_limited` export. The
+packagers install the verified library into `usr/lib`, and the binary loads it
+through its RUNPATH (`$ORIGIN/../lib`). The install step is required for release
+packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI
+fail if the embedding library cannot be built, located, or verified.
 `forktty doctor` warns about a missing library because terminal panes cannot
 open without it.
 

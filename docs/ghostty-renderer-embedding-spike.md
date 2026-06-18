@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`.
+`c26320d93448c42b78c5315a660e6d9359fcd26a`.
 
 > **Status:** Historical spike notes plus the landed embedding ABI record.
 > Current ForkTTY terminal panes are Ghostty-only: the embedded GTK widget is the
@@ -117,8 +117,8 @@ manual-only checks and their deferred validation status live in
 ## Landed and probe-verified: scrollback restore ABI
 
 Embedded panes can already *snapshot* their scrollback into the session (ForkTTY
-reads the tail through `ghostty_gtk_surface_read_text` and stores it on the
-surface). *Restoring* that scrollback on respawn needs a Ghostty-side export
+reads the tail through `ghostty_gtk_surface_read_text_limited` and stores it on
+the surface). *Restoring* that scrollback on respawn needs a Ghostty-side export
 that pushes bytes into a surface's terminal state (scrollback/screen)
 **without** writing them to the child PTY — otherwise old output would be
 replayed as shell input.
@@ -129,7 +129,7 @@ text into terminal-ready bytes (same as classic panes), and seeds it on surface
 init, degrading to a no-op when the symbol is absent.
 
 The Ghostty fork now exports the symbol: the design below landed on
-`Lucenx9/ghostty` at `c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`, and ForkTTY's
+`Lucenx9/ghostty` at `c26320d93448c42b78c5315a660e6d9359fcd26a`, and ForkTTY's
 submodule pin (and `GHOSTTY_VENDOR_REV`) is bumped to it. The fork commit was
 verified locally as far as the toolchain allows — `zig fmt --check`,
 `zig ast-check`, and the full `zig build test -Dapp-runtime=none` core suite
@@ -234,7 +234,7 @@ than the existing `write_small`).
    ```
 
 This change landed on `Lucenx9/ghostty` (branch `forktty-gtk-embed`,
-`c92ec51f0ccc07a561f33f1c08a88d3f2fb7292b`), and the submodule pin +
+`c26320d93448c42b78c5315a660e6d9359fcd26a`), and the submodule pin +
 `GHOSTTY_VENDOR_REV` + the pin in `ghostty-full-vendor.md` are bumped to it.
 ForkTTY's loader picks up the symbol automatically with no further Rust changes.
 The end-to-end restore is covered by the Ghostty GTK Probe workflow because the
