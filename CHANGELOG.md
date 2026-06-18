@@ -236,6 +236,10 @@ All notable changes to ForkTTY are documented here.
 - The MCP `workflow_evidence_add` tool now rejects missing `kind`/`title`
   locally with a clear validation error, matching its published input schema
   and the socket server's requirements.
+- Embedded Ghostty panes now replace the bootstrap shell with the requested
+  `SpawnRequest` command and ForkTTY environment on initialization, so SSH
+  panes, agent resume panes, configured shell arguments, and per-surface
+  environment values no longer fall back to Ghostty's default shell.
 - ForkTTY and dialog titlebars now stay on the app's neutral dark chrome even
   when a GTK user theme defines a blue/purple titlebar color.
 - Clicking a split pane's top bar now focuses that pane and routes subsequent
