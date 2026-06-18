@@ -18,6 +18,8 @@ All notable changes to ForkTTY are documented here.
 - Embedded Ghostty scrollback tail capture (`tail_text`) now returns an empty
   string for a zero-column terminal instead of erroring on an out-of-bounds grid
   reference, matching the existing guard in `visible_screen_rows`.
+- Failed `agent.hibernate` close attempts now restore the previous unread bit
+  and status entry instead of leaving the running surface shown as suspended.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added

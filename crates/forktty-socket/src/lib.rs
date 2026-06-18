@@ -2822,7 +2822,13 @@ fn hibernate_agent_surface(
             )));
         }
         let previous_last_activity_ms = agent_session.last_activity_ms;
+        let previous_unread = surface.unread;
         let workspace_id = surface.workspace_id.clone();
+        let status_key = surface_status_key(surface_id);
+        let previous_status = model
+            .list_status(&workspace_id)
+            .into_iter()
+            .find(|status| status.key == status_key);
         let agent = agent_session.agent;
         let session_id = agent_session.session_id.clone();
         let permission_mode = agent_session.permission_mode.clone();
@@ -2831,7 +2837,7 @@ fn hibernate_agent_surface(
         let _ = model.mark_surface_unread(surface_id, false);
         let status = model.set_status(
             &workspace_id,
-            surface_status_key(surface_id),
+            status_key.clone(),
             "Agent",
             "Suspended",
             Some("yellow".to_string()),
@@ -2839,6 +2845,18 @@ fn hibernate_agent_surface(
         if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
             model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Idle);
             model.set_surface_agent_session_last_activity_ms(surface_id, previous_last_activity_ms);
+            let _ = model.mark_surface_unread(surface_id, previous_unread);
+            if let Some(previous_status) = previous_status {
+                let _ = model.set_status(
+                    &workspace_id,
+                    previous_status.key,
+                    previous_status.label,
+                    previous_status.value,
+                    previous_status.color,
+                );
+            } else {
+                let _ = model.clear_status(&workspace_id, Some(&status_key));
+            }
             return Err(DispatchError::Other(err));
         }
         let surface = model
@@ -10783,6 +10801,80 @@ mod tests {
             model.list_status(&surface.workspace_id)[0].value,
             "Suspended"
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn agent_hibernate_close_failure_rolls_back_visible_state() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fake_codex(dir.path());
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(FailingCloseBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let surface_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let workspace_id = workspace.id.clone();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model
+                .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+            assert!(model.mark_surface_unread(&surface_id, true));
+            assert!(model
+                .set_status(
+                    &workspace_id,
+                    surface_status_key(&surface_id),
+                    "Agent",
+                    "Running",
+                    Some("green".to_string()),
+                )
+                .is_some());
+            surface_id
+        };
+
+        let err = dispatch(
+            &state,
+            "agent.hibernate",
+            json!({"surface_id": surface_id, "min_idle_ms": 0}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "error");
+        assert!(err.to_string().contains("close failed"));
+        assert!(backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id));
+
+        let model = state.model.lock().unwrap();
+        let surface = model.surface(&surface_id).unwrap();
+        assert_eq!(
+            surface.agent_session.as_ref().unwrap().lifecycle,
+            AgentSessionLifecycle::Idle
+        );
+        assert_eq!(surface.agent_session.as_ref().unwrap().last_activity_ms, 1);
+        assert!(surface.unread);
+        let statuses = model.list_status(&surface.workspace_id);
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].key, surface_status_key(&surface_id));
+        assert_eq!(statuses[0].value, "Running");
+        assert_eq!(statuses[0].color.as_deref(), Some("green"));
     }
 
     #[tokio::test]
