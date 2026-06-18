@@ -76,6 +76,8 @@ pub(super) struct EmbeddedGhosttyText {
     text: String,
     cols: u16,
     rows: u16,
+    truncated: bool,
+    source_total_lines: usize,
 }
 
 #[repr(i32)]
@@ -233,6 +235,8 @@ impl GhosttyGtkEmbedder {
         &self,
         widget: &gtk::Widget,
         scope: EmbeddedGhosttyTextScope,
+        max_bytes: usize,
+        truncate_from_end: bool,
     ) -> Result<EmbeddedGhosttyText, String> {
         let Some(surface_read_text) = self.surface_read_text else {
             return Err("Ghostty GTK library does not export read-text support".to_string());
@@ -245,7 +249,7 @@ impl GhosttyGtkEmbedder {
         if ok == 0 {
             return Err("Ghostty GTK surface rejected read-text".to_string());
         }
-        let result = embedded_ghostty_text_from_raw(&raw);
+        let result = embedded_ghostty_text_from_raw(&raw, max_bytes, truncate_from_end);
         unsafe { text_free(&mut raw) };
         result
     }
@@ -335,12 +339,14 @@ impl GhosttyGtkEmbedder {
                     self.read_text(
                         widget,
                         embedded_ghostty_read_scope_for_capture(capture.clone()),
+                        max_bytes,
+                        embedded_ghostty_truncates_from_end(&capture),
                     )
                 }
                 .map_err(|err| {
                     TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
                 })?;
-                let total_lines = text_line_count(&text.text);
+                let total_lines = text.source_total_lines;
                 Ok(embedded_ghostty_snapshot_from_text(
                     surface_id,
                     capture,
@@ -350,11 +356,18 @@ impl GhosttyGtkEmbedder {
                 ))
             }
             TerminalTextCapture::All => {
-                let all = unsafe { self.read_text(widget, EmbeddedGhosttyTextScope::All) }
-                    .map_err(|err| {
-                        TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
-                    })?;
-                let total_lines = text_line_count(&all.text);
+                let all = unsafe {
+                    self.read_text(
+                        widget,
+                        EmbeddedGhosttyTextScope::All,
+                        max_bytes,
+                        embedded_ghostty_truncates_from_end(&capture),
+                    )
+                }
+                .map_err(|err| {
+                    TerminalError::Backend(format!("embedded Ghostty read-text failed: {err}"))
+                })?;
+                let total_lines = all.source_total_lines;
                 Ok(embedded_ghostty_snapshot_from_text(
                     surface_id,
                     capture,
@@ -376,6 +389,10 @@ fn embedded_ghostty_read_scope_for_capture(
         }
         TerminalTextCapture::All => EmbeddedGhosttyTextScope::All,
     }
+}
+
+fn embedded_ghostty_truncates_from_end(capture: &TerminalTextCapture) -> bool {
+    matches!(capture, TerminalTextCapture::Tail { .. })
 }
 
 impl Drop for GhosttyGtkEmbedder {
@@ -516,7 +533,11 @@ pub(super) const GHOSTTY_GTK_SURFACE_RESTORE_SCROLLBACK_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_restore_scrollback";
 pub(super) const GHOSTTY_GTK_TEXT_FREE_SYMBOL: &[u8] = b"ghostty_gtk_text_free";
 
-fn embedded_ghostty_text_from_raw(raw: &GhosttyGtkText) -> Result<EmbeddedGhosttyText, String> {
+fn embedded_ghostty_text_from_raw(
+    raw: &GhosttyGtkText,
+    max_bytes: usize,
+    truncate_from_end: bool,
+) -> Result<EmbeddedGhosttyText, String> {
     if raw.text.is_null() && raw.text_len > 0 {
         return Err("Ghostty GTK returned null text with nonzero length".to_string());
     }
@@ -525,11 +546,29 @@ fn embedded_ghostty_text_from_raw(raw: &GhosttyGtkText) -> Result<EmbeddedGhostt
     } else {
         unsafe { std::slice::from_raw_parts(raw.text.cast::<u8>(), raw.text_len) }
     };
+    let source_total_lines = text_line_count_bytes(bytes);
+    let (bytes, truncated) = bounded_text_bytes(bytes, max_bytes, truncate_from_end);
     Ok(EmbeddedGhosttyText {
         text: String::from_utf8_lossy(bytes).into_owned(),
         cols: u16::try_from(raw.cols).unwrap_or(u16::MAX),
         rows: u16::try_from(raw.rows).unwrap_or(u16::MAX),
+        truncated,
+        source_total_lines,
     })
+}
+
+fn bounded_text_bytes(bytes: &[u8], max_bytes: usize, from_end: bool) -> (&[u8], bool) {
+    if bytes.len() <= max_bytes {
+        return (bytes, false);
+    }
+    if max_bytes == 0 {
+        return (&[], true);
+    }
+    if from_end {
+        (&bytes[bytes.len().saturating_sub(max_bytes)..], true)
+    } else {
+        (&bytes[..max_bytes], true)
+    }
 }
 
 pub(super) fn embedded_ghostty_snapshot_from_text(
@@ -539,7 +578,8 @@ pub(super) fn embedded_ghostty_snapshot_from_text(
     captured: EmbeddedGhosttyText,
     total_lines: usize,
 ) -> TerminalTextSnapshot {
-    match capture {
+    let was_truncated = captured.truncated;
+    let mut snapshot = match capture {
         TerminalTextCapture::Visible => {
             TerminalTextSnapshot::from_captured_text(TerminalTextSnapshotParts {
                 surface_id: surface_id.to_string(),
@@ -552,21 +592,41 @@ pub(super) fn embedded_ghostty_snapshot_from_text(
                 truncate_from_end: false,
             })
         }
-        TerminalTextCapture::All | TerminalTextCapture::Tail { .. } => {
-            TerminalTextSnapshot::from_text(
-                surface_id,
-                captured.text,
-                captured.cols,
-                captured.rows,
-                capture,
+        TerminalTextCapture::All => {
+            TerminalTextSnapshot::from_captured_text(TerminalTextSnapshotParts {
+                surface_id: surface_id.to_string(),
+                scope: "all".to_string(),
+                text: captured.text,
+                cols: captured.cols,
+                rows: captured.rows,
+                total_lines,
                 max_bytes,
-            )
+                truncate_from_end: false,
+            })
         }
-    }
+        TerminalTextCapture::Tail { .. } => TerminalTextSnapshot::from_text(
+            surface_id,
+            captured.text,
+            captured.cols,
+            captured.rows,
+            capture,
+            max_bytes,
+        ),
+    };
+    snapshot.truncated |= was_truncated;
+    snapshot
 }
 
-fn text_line_count(text: &str) -> usize {
-    text.lines().count()
+fn text_line_count_bytes(bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let newlines = bytes.iter().filter(|byte| **byte == b'\n').count();
+    if bytes.last() == Some(&b'\n') {
+        newlines
+    } else {
+        newlines + 1
+    }
 }
 
 /// Decide the terminal-ready bytes to seed into a freshly spawned embedded
@@ -874,6 +934,8 @@ mod tests {
                 text: "visible one\nvisible two".to_string(),
                 cols: 100,
                 rows: 40,
+                truncated: false,
+                source_total_lines: 2,
             },
             12,
         );
@@ -886,6 +948,86 @@ mod tests {
         assert_eq!(snapshot.lines, 2);
         assert_eq!(snapshot.total_lines, 12);
         assert!(!snapshot.truncated);
+    }
+
+    #[test]
+    fn embedded_raw_text_conversion_caps_copied_bytes_from_start() {
+        let mut raw_bytes = b"abcdef".to_vec();
+        let raw = GhosttyGtkText {
+            text: raw_bytes.as_mut_ptr().cast(),
+            text_len: raw_bytes.len(),
+            cols: 80,
+            rows: 24,
+        };
+
+        let text = embedded_ghostty_text_from_raw(&raw, 3, false).expect("text");
+
+        assert_eq!(text.text, "abc");
+        assert!(text.truncated);
+        assert_eq!(text.source_total_lines, 1);
+    }
+
+    #[test]
+    fn embedded_raw_text_conversion_caps_copied_bytes_from_end() {
+        let mut raw_bytes = b"abcdef".to_vec();
+        let raw = GhosttyGtkText {
+            text: raw_bytes.as_mut_ptr().cast(),
+            text_len: raw_bytes.len(),
+            cols: 80,
+            rows: 24,
+        };
+
+        let text = embedded_ghostty_text_from_raw(&raw, 3, true).expect("text");
+
+        assert_eq!(text.text, "def");
+        assert!(text.truncated);
+        assert_eq!(text.source_total_lines, 1);
+    }
+
+    #[test]
+    fn embedded_snapshot_preserves_pretruncate_flag() {
+        let snapshot = embedded_ghostty_snapshot_from_text(
+            "surface-1",
+            TerminalTextCapture::All,
+            1024,
+            EmbeddedGhosttyText {
+                text: "abc".to_string(),
+                cols: 80,
+                rows: 24,
+                truncated: true,
+                source_total_lines: 1,
+            },
+            1,
+        );
+
+        assert!(snapshot.truncated);
+        assert_eq!(snapshot.text, "abc");
+    }
+
+    #[test]
+    fn embedded_all_snapshot_preserves_raw_total_lines_when_precapped() {
+        let mut raw_bytes = b"one\ntwo\nthree\nfour".to_vec();
+        let raw = GhosttyGtkText {
+            text: raw_bytes.as_mut_ptr().cast(),
+            text_len: raw_bytes.len(),
+            cols: 80,
+            rows: 24,
+        };
+
+        let text = embedded_ghostty_text_from_raw(&raw, 7, false).expect("text");
+        let total_lines = text.source_total_lines;
+        let snapshot = embedded_ghostty_snapshot_from_text(
+            "surface-1",
+            TerminalTextCapture::All,
+            7,
+            text,
+            total_lines,
+        );
+
+        assert_eq!(snapshot.text, "one\ntwo");
+        assert_eq!(snapshot.total_lines, 4);
+        assert_eq!(snapshot.lines, 2);
+        assert!(snapshot.truncated);
     }
 
     #[test]
@@ -918,6 +1060,8 @@ mod tests {
                 text: "one\ntwo\nthree\n".to_string(),
                 cols: 80,
                 rows: 24,
+                truncated: false,
+                source_total_lines: 3,
             },
             3,
         );
