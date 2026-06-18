@@ -4,6 +4,12 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Embedded Ghostty panes now run the Linux direct-child PID fallback even when
+  the loaded embedding library lacks the optional `ghostty_gtk_surface_child_pid`
+  ABI, restoring socket `surfaces` PID and listening-port discovery for older
+  libraries.
+
 ### Added
 - Embedded Ghostty panes now snapshot their scrollback tail into
   the session (on child exit, on programmatic close/restart, and via a throttled

@@ -509,6 +509,19 @@ fn child_exit_pid_removal_ignores_stale_spawn_tokens() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn embedded_child_pid_poll_runs_without_abi_on_linux_for_proc_fallback() {
+    assert!(should_poll_embedded_child_pid(false));
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn embedded_child_pid_poll_requires_abi_without_linux_proc_fallback() {
+    assert!(!should_poll_embedded_child_pid(false));
+    assert!(should_poll_embedded_child_pid(true));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn proc_stat_parent_pid_parses_process_names_with_spaces_and_parens() {
     assert_eq!(
         proc_stat_parent_pid("1234 (shell (worker) one) S 42 1 1 0 -1 4194304"),

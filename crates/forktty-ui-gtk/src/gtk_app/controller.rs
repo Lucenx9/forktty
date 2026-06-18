@@ -79,6 +79,16 @@ const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
 /// classic pump snapshots at most every second when content changes.
 const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
 
+#[cfg(target_os = "linux")]
+fn should_poll_embedded_child_pid(_supports_child_pid: bool) -> bool {
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn should_poll_embedded_child_pid(supports_child_pid: bool) -> bool {
+    supports_child_pid
+}
+
 pub(super) fn remove_surface_pid_for_spawn(
     pids: &mut BTreeMap<String, SurfacePid>,
     surface_id: &str,
@@ -541,9 +551,10 @@ impl TerminalController {
         // PID parity: record the child PID for listening-port discovery and the
         // socket `surfaces` PID field, matching the classic spawn callback. The
         // PID lands on the surface shortly after init, so poll briefly until the
-        // embedded ABI returns it. Skipped when the loaded library predates the
-        // child-pid getter so older libs don't spin a pointless timer.
-        if embedder.supports_child_pid() {
+        // embedded ABI returns it. On Linux, keep polling even when an older
+        // embedded library lacks the child-pid getter so the direct-child
+        // /proc fallback can still discover the spawned Ghostty process.
+        if should_poll_embedded_child_pid(embedder.supports_child_pid()) {
             self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
             let spawn_token = self.next_spawn_token;
             let embedder = Rc::clone(&embedder);
